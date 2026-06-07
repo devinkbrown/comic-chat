@@ -82,6 +82,43 @@ offset 0 : magic 0x8181 (bytes 81 81)
 
 Avatars encode the full set of emotion/gesture poses (the "emotion wheel").
 
+### Emotion-wheel pose table
+
+After the copyright string each avatar carries a table of per-pose records,
+one per drawable pose, terminated by a sentinel. Each record is laid out as:
+
+```
+i16 mouth.x, mouth.y     ; word-balloon / mouth anchor (0,0 on body poses)
+i16 mid.x,   mid.y       ; small per-pose delta (±20)
+i16 neck.x,  neck.y      ; neck-join anchor
+06  01 01 01 04 03 03    ; record marker
+u32 pointer              ; monotonic; several wheel cells share one value
+... padding ...
+i16 code                 ; emotion-wheel code (marker+18)
+```
+
+The **emotion code** is the key field (decoder: `bgb.poseTable`). Verified
+across anna/cro/bolo/hugh/tiki:
+
+- **Head poses** (mouth ≠ 0,0) use codes **1..8** — the eight spokes of the
+  emotion wheel — plus **9 = neutral/centre**, which is the most common head
+  code in every avatar.
+- **Body poses** (mouth = 0,0) use a wider gesture vocabulary, codes **1..12**.
+- The head table ends with a code-0 sentinel; the body table ends with a
+  junk-code record. Both are filtered out.
+
+The wheel's named spokes, from the original help index, are: happy, laughing,
+sad, angry, shouting, afraid/scared, coy, shy/bored (center = neutral/deadpan).
+
+**Still open:** the exact code→spoke naming and the code→bitmap linkage. The
+`u32` pointer is monotonic but shared by multiple records, and the count of
+distinct pointers does not match the count of decoded head bitmaps, so a simple
+rank correlation is unreliable. Resolving it needs RE of the loader's pose-table
+reader (`CComicCharacterEntry`). Until then `comic/emotion.zig` keeps a
+best-effort enum→index mapping (correct for the leading neutral/happy/talking/
+surprised faces, which the authored bitmap order happens to front-load) rather
+than driving selection off the unverified linkage.
+
 ## Auto-layout
 
 The famous automatic comic-strip composition (panel breaks, character

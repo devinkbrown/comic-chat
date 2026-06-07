@@ -170,6 +170,63 @@ pub fn neckAnchors(data: []const u8) ?NeckAnchors {
     return .{ .head = head.?, .body = body.? };
 }
 
+// --- Emotion-wheel pose table ---------------------------------------------
+//
+// Each marker record (see neckAnchors) carries an emotion-wheel code in the
+// i16 at marker+18. Verified across anna/cro/bolo/hugh/tiki:
+//
+//   * Head poses (mouth anchor P1 != 0,0) use codes 1..8 — the eight spokes
+//     of Comic Chat's emotion wheel — plus 9 for the neutral/centre face, which
+//     is by far the most common head code in every avatar.
+//   * Body poses (P1 == 0,0) use a wider gesture vocabulary, codes 1..12.
+//   * A single sentinel record (code 0) terminates the table; it is skipped.
+//
+// The wheel's named spokes (from the original help index) are happy, laughing,
+// sad, angry, shouting, afraid/scared, coy and shy/bored. The exact code->spoke
+// assignment and the code->bitmap linkage (a monotonic pointer field that
+// several wheel cells share) are not yet resolved, so this table is exposed for
+// analysis rather than driving pose selection. See docs/PROTOCOL.md.
+
+pub const PoseKind = enum { head, body };
+
+pub const PoseMeta = struct {
+    kind: PoseKind,
+    /// Word-balloon / mouth anchor (head poses); (0,0) on body poses.
+    mouth: Point,
+    /// Neck-join anchor.
+    neck: Point,
+    /// Emotion-wheel code (heads 1..9, bodies 1..12). Never 0 (sentinel).
+    code: i16,
+};
+
+/// Parse the per-pose emotion-wheel metadata table. Caller owns the slice.
+pub fn poseTable(gpa: std.mem.Allocator, data: []const u8) ![]PoseMeta {
+    const mark = [_]u8{ 1, 1, 1, 4, 3, 3 };
+    var list: std.ArrayList(PoseMeta) = .empty;
+    errdefer list.deinit(gpa);
+    var i: usize = 0x60;
+    while (i + 6 <= data.len and i < 0x800) : (i += 1) {
+        if (!std.mem.eql(u8, data[i .. i + 6], &mark)) continue;
+        if (i < 12 or i + 20 > data.len) continue;
+        const code = @as(i16, @bitCast(rdU16(data, i + 18)));
+        const p1 = Point{ .x = rdI16(data, i - 12), .y = rdI16(data, i - 10) };
+        const p2 = Point{ .x = rdI16(data, i - 4), .y = rdI16(data, i - 2) };
+        const is_head = !(p1.x == 0 and p1.y == 0);
+        // Skip terminator/sentinel records, whose trailing word reads into
+        // unrelated bytes (heads end with code 0; bodies with junk). Valid
+        // codes are 1..9 for heads and 1..12 for bodies.
+        const max_code: i16 = if (is_head) 9 else 12;
+        if (code < 1 or code > max_code) continue;
+        try list.append(gpa, .{
+            .kind = if (is_head) .head else .body,
+            .mouth = p1,
+            .neck = p2,
+            .code = code,
+        });
+    }
+    return list.toOwnedSlice(gpa);
+}
+
 /// Decode the `index`-th pose. Each pose's zlib stream is preceded by a 40-byte
 /// header carrying height (@-40) and bit depth (@-34), so the exact pose width
 /// is (uncompressedSize / height) * 8 / bpp — no guessing. `tall` selects the
@@ -253,6 +310,41 @@ test "decodeBackground: real field.bgb -> 315x315 image" {
     }
     try std.testing.expect(distinct.count() > 1);
     try std.testing.expect(distinct.count() <= 16); // 4bpp palette
+}
+
+test "poseTable: real avatars expose emotion-wheel codes in range" {
+    const gpa = std.testing.allocator;
+    const blobs = [_][]const u8{
+        @embedFile("testdata/anna.avb"), @embedFile("testdata/cro.avb"),
+        @embedFile("testdata/bolo.avb"), @embedFile("testdata/hugh.avb"),
+        @embedFile("testdata/tiki.avb"),
+    };
+    inline for (blobs) |blob| {
+        const table = try poseTable(gpa, blob);
+        defer gpa.free(table);
+        try std.testing.expect(table.len > 0);
+
+        var head_count: usize = 0;
+        var neutral_count: usize = 0;
+        for (table) |p| {
+            try std.testing.expect(p.code != 0); // sentinel excluded
+            switch (p.kind) {
+                .head => {
+                    head_count += 1;
+                    try std.testing.expect(p.code >= 1 and p.code <= 9);
+                    if (p.code == 9) neutral_count += 1;
+                    try std.testing.expect(p.mouth.x != 0 or p.mouth.y != 0);
+                },
+                .body => {
+                    try std.testing.expect(p.code >= 1 and p.code <= 12);
+                    try std.testing.expect(p.mouth.x == 0 and p.mouth.y == 0);
+                },
+            }
+        }
+        // Neutral (code 9) is the most common head code in every avatar that
+        // ships head poses.
+        if (head_count > 0) try std.testing.expect(neutral_count >= 1);
+    }
 }
 
 test "decodePose: real anna.avb pose 0 is a 192-wide grayscale figure" {

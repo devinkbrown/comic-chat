@@ -6,6 +6,13 @@
 //! per-avatar ordering isn't encoded in a portable way — and `figure.assemble`
 //! clamps any out-of-range index back to 0, so an unavailable emotion simply
 //! falls back to neutral rather than failing.
+//!
+//! The avatars *do* carry a real emotion-wheel code per pose (see
+//! `assets.bgb.poseTable` and docs/PROTOCOL.md): heads tag 1..8 for the eight
+//! wheel spokes and 9 for neutral. Driving selection off those codes is blocked
+//! on resolving the code→bitmap linkage, so this enum→index heuristic stands in
+//! for now. It is intentionally ordered to match the authored bitmap sequence,
+//! which front-loads neutral/happy/talking/surprised.
 
 const std = @import("std");
 
