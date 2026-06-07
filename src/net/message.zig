@@ -149,3 +149,84 @@ test "write/parse round-trip" {
     try std.testing.expectEqualStrings("bob", back.param(0).?);
     try std.testing.expectEqualStrings("watch out", back.param(1).?);
 }
+
+
+test "parse: command-only line, no prefix, no params" {
+    const m = parse("QUIT");
+    try std.testing.expect(m.prefix == null);
+    try std.testing.expectEqualStrings("QUIT", m.command);
+    try std.testing.expectEqual(@as(usize, 0), m.param_count);
+    try std.testing.expect(m.param(0) == null);
+}
+
+test "parse: tolerates extra interior spaces" {
+    const m = parse(":srv   PRIVMSG    #c    :hi");
+    try std.testing.expectEqualStrings("srv", m.prefix.?);
+    try std.testing.expectEqualStrings("PRIVMSG", m.command);
+    try std.testing.expectEqualStrings("#c", m.param(0).?);
+    try std.testing.expectEqualStrings("hi", m.param(1).?);
+}
+
+test "parse: empty trailing parameter is preserved" {
+    const m = parse("PRIVMSG #c :");
+    try std.testing.expectEqual(@as(usize, 2), m.param_count);
+    try std.testing.expectEqualStrings("#c", m.param(0).?);
+    try std.testing.expectEqualStrings("", m.param(1).?);
+}
+
+test "parse: trailing keeps embedded colons and is not re-split on spaces" {
+    const m = parse(":n!u@h PRIVMSG #c :a :b: c");
+    try std.testing.expectEqualStrings("a :b: c", m.param(1).?);
+    try std.testing.expectEqual(@as(usize, 2), m.param_count);
+}
+
+test "parse: empty and whitespace-only lines do not crash" {
+    const e = parse("");
+    try std.testing.expectEqualStrings("", e.command);
+    try std.testing.expectEqual(@as(usize, 0), e.param_count);
+    const ws = parse("   \r\n");
+    try std.testing.expectEqualStrings("", ws.command);
+}
+
+test "parse: param overflow past max_params is dropped, not corrupted" {
+    // 17 single-char middle params; only max_params (15) are retained.
+    const line = "CMD a b c d e f g h i j k l m n o p q";
+    const m = parse(line);
+    try std.testing.expectEqual(@as(usize, max_params), m.param_count);
+    try std.testing.expectEqualStrings("a", m.param(0).?);
+    try std.testing.expectEqualStrings("o", m.param(max_params - 1).?);
+}
+
+test "write: middle param with a space stays a middle param (not trailing)" {
+    const gpa = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    var m = Message{ .command = "CMD" };
+    m.addParam("with space"); // not last -> cannot use trailing
+    m.addParam("tail");
+    // Only the final param may take ':'; a non-final spaced param would corrupt
+    // the wire form, but the writer only colon-prefixes the LAST param.
+    try write(&out, gpa, m);
+    try std.testing.expectEqualStrings("CMD with space tail\r\n", out.items);
+}
+
+test "write: param starting with ':' forces trailing form when last" {
+    const gpa = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    var m = Message{ .command = "TOPIC" };
+    m.addParam("#c");
+    m.addParam(":weird"); // starts with ':' -> needs trailing
+    try write(&out, gpa, m);
+    try std.testing.expectEqualStrings("TOPIC #c ::weird\r\n", out.items);
+}
+
+test "write: empty last param emitted as ':'" {
+    const gpa = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    var m = Message{ .command = "AWAY" };
+    m.addParam("");
+    try write(&out, gpa, m);
+    try std.testing.expectEqualStrings("AWAY :\r\n", out.items);
+}

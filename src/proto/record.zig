@@ -210,3 +210,80 @@ test "DocumentIterator walks a small transcript" {
     try std.testing.expectEqualStrings("Hello world", text.field(1).?);
     try std.testing.expect(it.next() == null);
 }
+
+
+test "parseLine: keyword with no fields" {
+    const r = parseLine("starthistory");
+    try std.testing.expectEqual(RecordType.starthistory, r.type);
+    try std.testing.expectEqual(@as(usize, 0), r.field_count);
+    try std.testing.expect(r.field(0) == null);
+}
+
+test "parseLine: empty line is an unknown record with empty keyword" {
+    const r = parseLine("");
+    try std.testing.expectEqual(RecordType.unknown, r.type);
+    try std.testing.expectEqualStrings("", r.keyword);
+    try std.testing.expectEqual(@as(usize, 0), r.field_count);
+}
+
+test "parseLine: consecutive tabs yield empty fields, none dropped" {
+    const r = parseLine("Text\tAnna\t\thi");
+    try std.testing.expectEqual(RecordType.text, r.type);
+    try std.testing.expectEqual(@as(usize, 3), r.field_count);
+    try std.testing.expectEqualStrings("Anna", r.field(0).?);
+    try std.testing.expectEqualStrings("", r.field(1).?);
+    try std.testing.expectEqualStrings("hi", r.field(2).?);
+}
+
+test "parseLine: lone LF terminator is stripped" {
+    const r = parseLine("nick\tbob\n");
+    try std.testing.expectEqual(RecordType.nick, r.type);
+    try std.testing.expectEqualStrings("bob", r.field(0).?);
+}
+
+test "parseLine: field overflow stops at max_fields without corruption" {
+    // keyword + 20 fields; only max_fields are kept.
+    const line = "Text\t1\t2\t3\t4\t5\t6\t7\t8\t9\t10\t11\t12\t13\t14\t15\t16\t17\t18\t19\t20";
+    const r = parseLine(line);
+    try std.testing.expectEqual(@as(usize, max_fields), r.field_count);
+    try std.testing.expectEqualStrings("1", r.field(0).?);
+}
+
+test "writeRecord: keyword with no fields just appends CRLF" {
+    const gpa = std.testing.allocator;
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(gpa);
+    try writeRecord(&buf, gpa, "starthistory", &.{});
+    try std.testing.expectEqualStrings("starthistory\r\n", buf.items);
+}
+
+test "writeRecord: fields preserve embedded spaces (tab-delimited, not space)" {
+    const gpa = std.testing.allocator;
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(gpa);
+    try writeRecord(&buf, gpa, "Text", &.{ "Anna", "hello world" });
+    try std.testing.expectEqualStrings("Text\tAnna\thello world\r\n", buf.items);
+    const r = parseLine(buf.items);
+    try std.testing.expectEqualStrings("hello world", r.field(1).?);
+}
+
+test "DocumentIterator: handles LF-only separators and trailing newline" {
+    const doc = "nick\tbob\nText\tbob\thi\n";
+    var it = DocumentIterator.init(doc);
+    try std.testing.expectEqual(RecordType.nick, it.next().?.type);
+    const t = it.next().?;
+    try std.testing.expectEqual(RecordType.text, t.type);
+    try std.testing.expectEqualStrings("hi", t.field(1).?);
+    try std.testing.expect(it.next() == null);
+}
+
+test "DocumentIterator: a document of only blank lines yields nothing" {
+    var it = DocumentIterator.init("\r\n\n\r\n");
+    try std.testing.expect(it.next() == null);
+}
+
+test "lookup: session-tag keywords are matched with their trailing colon" {
+    try std.testing.expectEqual(RecordType.comics_data, parseLine("COMICSDATA:\tblob").type);
+    // Without the colon it is no longer a recognized keyword.
+    try std.testing.expectEqual(RecordType.unknown, parseLine("COMICSDATA\tblob").type);
+}

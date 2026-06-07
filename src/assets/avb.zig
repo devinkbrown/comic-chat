@@ -115,3 +115,88 @@ test "parse: real anna.avb and field.bgb" {
     try std.testing.expectEqual(Kind.background, f.kind);
     try std.testing.expect(std.mem.indexOf(u8, f.copyright.?, "Microsoft Corporation") != null);
 }
+
+test "parse: avatar with no name still parses (null name)" {
+    // magic, kind=2, name_offset byte is an immediate NUL -> no name.
+    const data =
+        "\x81\x81" ++ "\x02\x00" ++
+        "\x02\x00\x07\x01\x04\x00\x4f\x00\x00\x00\x01\x00" ++
+        "\x00" ++ // empty name at name_offset
+        "Copyright (c) 1998 Test\x00";
+    const a = try parse(data);
+    try std.testing.expectEqual(Kind.avatar, a.kind);
+    try std.testing.expect(a.name == null);
+    try std.testing.expectEqualStrings("Copyright (c) 1998 Test", a.copyright.?);
+}
+
+test "parse: unknown kind is preserved, not rejected" {
+    // magic ok, kind = 7 (neither avatar nor background).
+    const data = "\x81\x81" ++ "\x07\x00" ++ "aaaaaaaaaaaa" ++ "Copyright x\x00";
+    const a = try parse(data);
+    try std.testing.expectEqual(@as(u16, 7), @intFromEnum(a.kind));
+    try std.testing.expect(a.name == null); // name only read for avatars
+}
+
+test "parse: missing copyright run yields null copyright" {
+    const data = "\x81\x81" ++ "\x02\x00" ++ "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" ++ "Bob\x00";
+    const a = try parse(data);
+    try std.testing.expectEqualStrings("Bob", a.name.?);
+    try std.testing.expect(a.copyright == null);
+}
+
+test "parse: exactly name_offset+1 bytes is the minimum accepted length" {
+    // magic + kind=2 + filler, total = name_offset + 1 bytes: not Truncated.
+    const data = "\x81\x81" ++ "\x02\x00" ++ ("\x00" ** (name_offset - 4)) ++ "\x00";
+    try std.testing.expect(data.len == name_offset + 1);
+    const a = try parse(data);
+    try std.testing.expectEqual(Kind.avatar, a.kind);
+}
+
+test "parse: every real avatar exposes a name and copyright" {
+    const names = [_][]const u8{
+        "anna", "armando", "bolo", "cro", "dan", "denise", "hugh", "jordan",
+        "kevin", "kwensa", "lance", "lynnea", "margaret", "maynard", "mike",
+        "rebecca", "sage", "scotty", "susan", "tiki", "tongtyed", "xeno",
+    };
+    const blobs = [_][]const u8{
+        @embedFile("testdata/anna.avb"),    @embedFile("testdata/armando.avb"),
+        @embedFile("testdata/bolo.avb"),    @embedFile("testdata/cro.avb"),
+        @embedFile("testdata/dan.avb"),     @embedFile("testdata/denise.avb"),
+        @embedFile("testdata/hugh.avb"),    @embedFile("testdata/jordan.avb"),
+        @embedFile("testdata/kevin.avb"),   @embedFile("testdata/kwensa.avb"),
+        @embedFile("testdata/lance.avb"),   @embedFile("testdata/lynnea.avb"),
+        @embedFile("testdata/margaret.avb"),@embedFile("testdata/maynard.avb"),
+        @embedFile("testdata/mike.avb"),    @embedFile("testdata/rebecca.avb"),
+        @embedFile("testdata/sage.avb"),    @embedFile("testdata/scotty.avb"),
+        @embedFile("testdata/susan.avb"),   @embedFile("testdata/tiki.avb"),
+        @embedFile("testdata/tongtyed.avb"),@embedFile("testdata/xeno.avb"),
+    };
+    inline for (names, blobs) |nm, blob| {
+        const a = try parse(blob);
+        // All ship as avatar (kind 2) except Jordan, an alternate subtype
+        // (kind 1) for which the name field is not at name_offset.
+        try std.testing.expect(a.copyright != null);
+        if (a.kind == .avatar) {
+            try std.testing.expect(a.name != null);
+            try std.testing.expect(a.name.?.len > 0);
+            // sanity: name is printable ASCII, no embedded control bytes.
+            for (a.name.?) |ch| try std.testing.expect(ch >= 0x20 and ch < 0x7f);
+        } else {
+            try std.testing.expectEqual(@as(u16, 1), @intFromEnum(a.kind));
+        }
+        _ = nm;
+    }
+}
+
+test "parse: every real background parses as a background" {
+    const blobs = [_][]const u8{
+        @embedFile("testdata/field.bgb"),  @embedFile("testdata/volcano.bgb"),
+        @embedFile("testdata/den.bgb"),    @embedFile("testdata/room.bgb"),
+        @embedFile("testdata/pastoral.bgb"),
+    };
+    inline for (blobs) |blob| {
+        const a = try parse(blob);
+        try std.testing.expectEqual(Kind.background, a.kind);
+        try std.testing.expect(a.name == null);
+    }
+}

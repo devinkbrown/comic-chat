@@ -181,3 +181,87 @@ test "pong echoes the ping token" {
     try writePong(&out, gpa, ping.param(0).?);
     try std.testing.expectEqualStrings("PONG server1\r\n", out.items);
 }
+
+
+test "LineFramer: empty lines are returned as zero-length slices" {
+    const gpa = std.testing.allocator;
+    var fr = LineFramer.init(gpa);
+    defer fr.deinit();
+    try fr.push("\r\n\r\nPING x\r\n");
+    try std.testing.expectEqualStrings("", (try fr.next()).?);
+    try std.testing.expectEqualStrings("", (try fr.next()).?);
+    try std.testing.expectEqualStrings("PING x", (try fr.next()).?);
+    try std.testing.expect((try fr.next()) == null);
+}
+
+test "LineFramer: a line spanning three pushes reassembles correctly" {
+    const gpa = std.testing.allocator;
+    var fr = LineFramer.init(gpa);
+    defer fr.deinit();
+    try fr.push(":nick!u@h PRIV");
+    try std.testing.expect((try fr.next()) == null);
+    try fr.push("MSG #c :hel");
+    try std.testing.expect((try fr.next()) == null);
+    try fr.push("lo\n");
+    try std.testing.expectEqualStrings(":nick!u@h PRIVMSG #c :hello", (try fr.next()).?);
+}
+
+test "LineFramer: trailing partial line stays buffered until terminated" {
+    const gpa = std.testing.allocator;
+    var fr = LineFramer.init(gpa);
+    defer fr.deinit();
+    try fr.push("DONE\nPART");
+    try std.testing.expectEqualStrings("DONE", (try fr.next()).?);
+    try std.testing.expect((try fr.next()) == null); // "PART" has no newline yet
+    try fr.push("IAL\n");
+    try std.testing.expectEqualStrings("PARTIAL", (try fr.next()).?);
+}
+
+test "writeRegister without IRCX omits the IRCX probe" {
+    const gpa = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    try writeRegister(&out, gpa, "bob", "bob", "Bob B", false);
+    try std.testing.expectEqualStrings(
+        "NICK bob\r\n" ++ "USER bob 0 * :Bob B\r\n",
+        out.items,
+    );
+}
+
+test "command builders emit individual CRLF-terminated commands" {
+    const gpa = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    try writeNick(&out, gpa, "anna");
+    try writeJoin(&out, gpa, "#comics");
+    try writePong(&out, gpa, "tok123");
+    try std.testing.expectEqualStrings(
+        "NICK anna\r\n" ++ "JOIN #comics\r\n" ++ "PONG tok123\r\n",
+        out.items,
+    );
+}
+
+test "writePrivmsg keeps a single-word message as a middle param" {
+    const gpa = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    try writePrivmsg(&out, gpa, "#c", "hi");
+    // "hi" has no space, but it is the final param -> writer leaves it bare.
+    try std.testing.expectEqualStrings("PRIVMSG #c hi\r\n", out.items);
+}
+
+test "round-trip: framed line parses back into a Message" {
+    const gpa = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    try writePrivmsg(&out, gpa, "#comics", "hello there");
+
+    var fr = LineFramer.init(gpa);
+    defer fr.deinit();
+    try fr.push(out.items);
+    const line = (try fr.next()).?;
+    const m = message.parse(line);
+    try std.testing.expectEqualStrings("PRIVMSG", m.command);
+    try std.testing.expectEqualStrings("#comics", m.param(0).?);
+    try std.testing.expectEqualStrings("hello there", m.param(1).?);
+}
