@@ -64,6 +64,17 @@ pub fn main(init: std.process.Init.Minimal) !void {
         return;
     }
 
+    if (argc >= 1 and std.mem.eql(u8, argv[0], "chat-comic")) {
+        if (argc < 5) {
+            std.debug.print("usage: comicchat chat-comic <host> <port> <nick> <#channel> [maxlines]\n", .{});
+            return;
+        }
+        const port = std.fmt.parseInt(u16, argv[2], 10) catch return;
+        const maxlines: usize = if (argc >= 6) (std.fmt.parseInt(usize, argv[5], 10) catch 6) else 6;
+        try runChatComic(gpa, argv[1], port, argv[3], argv[4], maxlines);
+        return;
+    }
+
     if (argc >= 1 and std.mem.eql(u8, argv[0], "connect")) {
         if (argc < 5) {
             std.debug.print("usage: comicchat connect <host> <port> <nick> <#channel>\n", .{});
@@ -383,6 +394,43 @@ fn composite(c: *cc.render.canvas.Canvas, src: []const u32, sw: u32, sh: u32, dx
             c.px[di] = p; // upper layer occludes (head drawn on top of body)
         }
     }
+}
+
+/// Connect to IRC, gather channel messages, and render the conversation as a
+/// comic strip (each speaker mapped to an avatar). Emits PPM on stdout.
+fn runChatComic(gpa: std.mem.Allocator, host: []const u8, port: u16, nick: []const u8, channel: []const u8, maxlines: usize) !void {
+    var client = try cc.net.client.Client.connect(gpa, host, port);
+    defer client.deinit();
+    try client.register(nick, nick, "pure-Zig Comic Chat", true);
+
+    var transcript = cc.comic.session.Transcript.init(gpa);
+    defer transcript.deinit();
+
+    var joined = false;
+    var budget: usize = 0;
+    while (budget < 400 and transcript.count() < maxlines) : (budget += 1) {
+        const msg = (try client.next()) orelse break;
+        if (!joined and std.mem.eql(u8, msg.command, "001")) {
+            try client.join(channel);
+            joined = true;
+        } else if (std.mem.eql(u8, msg.command, "PRIVMSG")) {
+            const target = msg.param(0) orelse continue;
+            if (!std.mem.eql(u8, target, channel)) continue;
+            const text = msg.param(1) orelse continue;
+            const who = if (msg.prefix) |p| cc.comic.session.nickFromPrefix(p) else "someone";
+            try transcript.add(who, text);
+        }
+    }
+    elog("collected {d} lines\n", .{transcript.count()});
+    if (transcript.count() == 0) return;
+
+    var lines = try gpa.alloc(cc.comic.strip.Line, transcript.count());
+    defer gpa.free(lines);
+    for (transcript.lines.items, 0..) |l, i| lines[i] = .{ .speaker = l.avatar, .text = l.text };
+
+    var strip = try cc.comic.strip.render(gpa, lines);
+    defer strip.deinit(gpa);
+    try emitPpm(gpa, strip.pixels, strip.width, strip.height);
 }
 
 fn runRenderStrip(gpa: std.mem.Allocator) !void {

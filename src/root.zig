@@ -19,6 +19,7 @@ pub const comic = struct {
     pub const figure = @import("comic/figure.zig");
     pub const strip = @import("comic/strip.zig");
     pub const layout = @import("comic/layout.zig");
+    pub const session = @import("comic/session.zig");
 };
 
 pub const render = struct {
@@ -48,6 +49,7 @@ test {
     _ = @import("comic/figure.zig");
     _ = @import("comic/strip.zig");
     _ = @import("comic/layout.zig");
+    _ = @import("comic/session.zig");
     _ = @import("render/png.zig");
     _ = @import("platform/x11.zig");
     _ = @import("net/message.zig");
