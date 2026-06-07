@@ -7,21 +7,24 @@
 //! The GUI (hand-rolled windowing + software rasterizer) is not wired up yet.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const cc = @import("comicchat");
 
 /// Unbuffered stderr log (so progress is visible even if the process is
-/// killed mid-block). Used by the live `connect` path.
+/// killed mid-block). Linux-only; a no-op elsewhere (the CLI targets Linux).
 fn elog(comptime fmt: []const u8, args: anytype) void {
+    if (builtin.os.tag != .linux) return;
     var buf: [1024]u8 = undefined;
     const s = std.fmt.bufPrint(&buf, fmt, args) catch return;
-    _ = std.os.linux.write(2, s.ptr, s.len); // unbuffered; Linux-only diagnostic
+    _ = std.os.linux.write(2, s.ptr, s.len);
 }
 
 pub fn main(init: std.process.Init.Minimal) !void {
     const gpa = std.heap.page_allocator;
 
-    // Collect argv (Zig 0.16 delivers args via the Init parameter).
-    var it = init.args.iterate();
+    // Collect argv (Zig 0.16 delivers args via the Init parameter). The
+    // allocator-based iterator is the cross-platform form (Windows requires it).
+    var it = try init.args.iterateAllocator(gpa);
     defer it.deinit();
     _ = it.skip(); // program name
     var argv: [8][]const u8 = undefined;
@@ -45,7 +48,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
     }
 
     if (argc >= 1 and std.mem.eql(u8, argv[0], "render-figure")) {
-        try runRenderFigure(gpa, if (argc >= 2) argv[1] else "anna");
+        const emo = if (argc >= 3) (cc.comic.emotion.Emotion.fromName(argv[2]) orelse .neutral) else .neutral;
+        try runRenderFigure(gpa, if (argc >= 2) argv[1] else "anna", emo.headIndex());
         return;
     }
 
@@ -115,6 +119,7 @@ fn runCodecDemo(gpa: std.mem.Allocator) !void {
 }
 
 fn writeAllFd(fd: i32, bytes: []const u8) void {
+    if (builtin.os.tag != .linux) return; // stdout emit is Linux-only for now
     var off: usize = 0;
     while (off < bytes.len) {
         const n = std.os.linux.write(fd, bytes[off..].ptr, bytes.len - off);
@@ -272,12 +277,12 @@ fn renderSolo(gpa: std.mem.Allocator, img: cc.assets.bgb.Image) !void {
     try emitPpm(gpa, cf.px, W, H);
 }
 
-fn runRenderFigure(gpa: std.mem.Allocator, name: []const u8) !void {
+fn runRenderFigure(gpa: std.mem.Allocator, name: []const u8, emotion: usize) !void {
     const avb = avatarByName(name) orelse {
         elog("unknown avatar '{s}'\n", .{name});
         return;
     };
-    var fig = cc.comic.figure.assemble(gpa, avb, 0, 0) catch {
+    var fig = cc.comic.figure.assemble(gpa, avb, emotion, 0) catch {
         elog("could not assemble figure for '{s}'\n", .{name});
         return;
     };
