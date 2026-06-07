@@ -29,9 +29,9 @@ pub fn assemble(gpa: std.mem.Allocator, avb: []const u8, emotion: usize, gesture
         (bgb.decodePoseAuto(gpa, avb, 0, false) catch null);
     defer if (head_opt) |*h| h.deinit(gpa);
 
-    // Real head/body split only when the body is much taller than the head.
-    const real_split = if (head_opt) |h| body.height * 10 > h.height * 16 else false;
-    if (!real_split) return try solo(gpa, body);
+    // Composite whenever the avatar has a head pose. Only true "creature"
+    // avatars with NO head layer at all (e.g. Jordan) render a single pose.
+    if (head_opt == null) return try solo(gpa, body);
 
     const head = head_opt.?;
     var dx: i32 = undefined;
