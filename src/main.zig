@@ -251,58 +251,19 @@ fn runRenderFigure(gpa: std.mem.Allocator, name: []const u8) !void {
         elog("unknown avatar '{s}'\n", .{name});
         return;
     };
-
-    var body = cc.assets.bgb.decodePoseAuto(gpa, avb, 0, true) catch {
-        elog("no body pose found for '{s}'\n", .{name});
+    var fig = cc.comic.figure.assemble(gpa, avb, 0, 0) catch {
+        elog("could not assemble figure for '{s}'\n", .{name});
         return;
     };
-    defer body.deinit(gpa);
-
-    // A real head/body split (the emotion wheel) has the body much taller than
-    // the head. Creature/totem avatars (Jordan, Tiki) instead store a complete
-    // figure per pose — there's no head to stack, so render one pose directly.
-    var head_opt: ?cc.assets.bgb.Image = cc.assets.bgb.decodePoseAuto(gpa, avb, 0, false) catch null;
-    defer if (head_opt) |*h| h.deinit(gpa);
-    const real_split = if (head_opt) |h| body.height * 10 > h.height * 16 else false;
-    if (!real_split) return renderSolo(gpa, body);
-    const head = head_opt.?;
-
-    const bw: i32 = @intCast(body.width);
-    const bh: i32 = @intCast(body.height);
-    const hw: i32 = @intCast(head.width);
-    const hh: i32 = @intCast(head.height);
-
-    // Exact registration from the pose-metadata table: align the head's neck
-    // anchor (P1) to the body's neck anchor (P2). Falls back to a neck heuristic
-    // if the table can't be read.
-    var dx: i32 = undefined;
-    var dy: i32 = undefined;
-    if (cc.assets.bgb.neckAnchors(avb)) |a| {
-        dx = a.body.x - a.head.x;
-        dy = a.body.y - a.head.y + 10; // seat the chin onto the neck/collar
-    } else {
-        const bt = topInkRow(body);
-        const bnx = centroidX(body, bt, bt + 18);
-        const hnx = centroidX(head, hh - 25, hh);
-        const hb = headNeckBottom(head, hnx);
-        dx = bnx - hnx;
-        dy = (bt + 26) - hb;
-    }
+    defer fig.deinit(gpa);
 
     const pad: i32 = 10;
-    const body_x = pad + @max(@as(i32, 0), -dx);
-    const body_y = pad + @max(@as(i32, 0), -dy);
-    const head_x = body_x + dx;
-    const head_y = body_y + dy;
-    const W: u32 = @intCast(@max(body_x + bw, head_x + hw) + pad);
-    const H: u32 = @intCast(@max(body_y + bh, head_y + hh) + pad);
-
+    const W: u32 = fig.width + 2 * @as(u32, @intCast(pad));
+    const H: u32 = fig.height + 2 * @as(u32, @intCast(pad));
     var c = try cc.render.canvas.Canvas.init(gpa, W, H);
     defer c.deinit(gpa);
     c.clear(cc.render.canvas.white);
-    composite(&c, body.pixels, body.width, body.height, body_x, body_y, 14);
-    composite(&c, head.pixels, head.width, head.height, head_x, head_y, 12);
-
+    cc.comic.figure.composite(&c, fig.pixels, fig.width, fig.height, pad, pad, 0);
     try emitPpm(gpa, c.px, W, H);
 }
 

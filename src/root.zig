@@ -15,6 +15,10 @@ pub const assets = struct {
     pub const bgb = @import("assets/bgb.zig");
 };
 
+pub const comic = struct {
+    pub const figure = @import("comic/figure.zig");
+};
+
 pub const render = struct {
     pub const canvas = @import("render/canvas.zig");
     pub const font = @import("render/font.zig");
@@ -34,6 +38,7 @@ test {
     _ = @import("assets/avb.zig");
     _ = @import("assets/bgb.zig");
     _ = @import("render/canvas.zig");
+    _ = @import("comic/figure.zig");
     _ = @import("net/message.zig");
     _ = @import("net/irc.zig");
     _ = @import("net/transport.zig"); // compile-checked (no live socket test)
