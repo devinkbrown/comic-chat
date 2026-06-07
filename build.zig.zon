@@ -1,0 +1,14 @@
+.{
+    .name = .comicchat,
+    .version = "0.0.0",
+    .fingerprint = 0xd5fd484431146b5d,
+    .minimum_zig_version = "0.16.0",
+    // Pure Zig: no dependencies, no C interop, no SDL.
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "docs",
+    },
+}
