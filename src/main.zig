@@ -49,6 +49,21 @@ pub fn main(init: std.process.Init.Minimal) !void {
         return;
     }
 
+    if (argc >= 1 and std.mem.eql(u8, argv[0], "render-strip")) {
+        try runRenderStrip(gpa);
+        return;
+    }
+
+    if (argc >= 1 and std.mem.eql(u8, argv[0], "topng")) {
+        try runToPng(gpa, if (argc >= 2) argv[1] else "field");
+        return;
+    }
+
+    if (argc >= 1 and std.mem.eql(u8, argv[0], "window")) {
+        try runWindow(gpa, if (argc >= 2) argv[1] else "anna");
+        return;
+    }
+
     if (argc >= 1 and std.mem.eql(u8, argv[0], "connect")) {
         if (argc < 5) {
             std.debug.print("usage: comicchat connect <host> <port> <nick> <#channel>\n", .{});
@@ -368,6 +383,55 @@ fn composite(c: *cc.render.canvas.Canvas, src: []const u32, sw: u32, sh: u32, dx
             c.px[di] = p; // upper layer occludes (head drawn on top of body)
         }
     }
+}
+
+fn runRenderStrip(gpa: std.mem.Allocator) !void {
+    const lines = [_]cc.comic.strip.Line{
+        .{ .speaker = "anna", .text = "The field is open. Everyone gets one panel." },
+        .{ .speaker = "kevin", .text = "Volcano lighting makes even a short line feel dramatic." },
+        .{ .speaker = "sage", .text = "Keep the balloon clear so the character stands below it." },
+        .{ .speaker = "mike", .text = "Three columns, black gutters, a clean second row." },
+        .{ .speaker = "rebecca", .text = "Pure Zig: decoded backgrounds, assembled avatars." },
+        .{ .speaker = "xeno", .text = "The strip renderer returns one image for callers to emit." },
+    };
+    var strip = try cc.comic.strip.render(gpa, &lines);
+    defer strip.deinit(gpa);
+    try emitPpm(gpa, strip.pixels, strip.width, strip.height);
+}
+
+fn runToPng(gpa: std.mem.Allocator, name: []const u8) !void {
+    const data = bgByName(name) orelse {
+        elog("unknown background '{s}'\n", .{name});
+        return;
+    };
+    var img = try cc.assets.bgb.decodeBackground(gpa, data);
+    defer img.deinit(gpa);
+    const png = try cc.render.png.encode(gpa, img.pixels, img.width, img.height);
+    defer gpa.free(png);
+    writeAllFd(1, png);
+}
+
+fn runWindow(gpa: std.mem.Allocator, name: []const u8) !void {
+    const avb = avatarByName(name) orelse {
+        elog("unknown avatar '{s}'\n", .{name});
+        return;
+    };
+    var fig = cc.comic.figure.assemble(gpa, avb, 0, 0) catch {
+        elog("could not assemble figure for '{s}'\n", .{name});
+        return;
+    };
+    defer fig.deinit(gpa);
+    const pad: i32 = 18;
+    const W: u32 = fig.width + 2 * @as(u32, @intCast(pad));
+    const H: u32 = fig.height + 2 * @as(u32, @intCast(pad));
+    var c = try cc.render.canvas.Canvas.init(gpa, W, H);
+    defer c.deinit(gpa);
+    c.clear(cc.render.canvas.white);
+    cc.comic.figure.composite(&c, fig.pixels, fig.width, fig.height, pad, pad, 0);
+    cc.platform.x11.show(gpa, c.px, W, H) catch |err| {
+        elog("x11: {s}\n", .{@errorName(err)});
+        return;
+    };
 }
 
 fn runConnect(
