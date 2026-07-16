@@ -1,6 +1,8 @@
 #include "comicchat/memory.hpp"
 
+#include <atomic>
 #include <cstring>
+#include <limits>
 #include <new>
 #include <stdexcept>
 #include <utility>
@@ -11,26 +13,62 @@
 #include <windows.h>
 #else
 #include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 namespace comicchat {
 namespace {
 
-auto lock_pages(void* address, const std::size_t size) noexcept -> bool {
-    if (address == nullptr || size == 0) return false;
+std::atomic_bool fail_next_lock{};
+
+auto page_size() noexcept -> std::size_t {
 #if defined(_WIN32)
-    return VirtualLock(address, size) != 0;
+    SYSTEM_INFO information{};
+    GetSystemInfo(&information);
+    return information.dwPageSize;
 #else
-    return mlock(address, size) == 0;
+    const auto size = ::sysconf(_SC_PAGESIZE);
+    return size > 0 ? static_cast<std::size_t>(size) : 0;
 #endif
 }
 
-void unlock_pages(void* address, const std::size_t size) noexcept {
-    if (address == nullptr || size == 0) return;
+auto rounded_page_size(const std::size_t requested) noexcept -> std::optional<std::size_t> {
+    const auto page = page_size();
+    const auto minimum = std::max<std::size_t>(requested, 1);
+    if (page == 0 || minimum > std::numeric_limits<std::size_t>::max() - (page - 1)) return std::nullopt;
+    return ((minimum + page - 1) / page) * page;
+}
+
+auto allocate_pages(const std::size_t size) noexcept -> void* {
 #if defined(_WIN32)
-    (void)VirtualUnlock(address, size);
+    return VirtualAlloc(nullptr, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 #else
-    (void)munlock(address, size);
+    auto* memory = ::mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    return memory == MAP_FAILED ? nullptr : memory;
+#endif
+}
+
+auto lock_pages(void* address, const std::size_t size) noexcept -> bool {
+    if (fail_next_lock.exchange(false, std::memory_order_relaxed)) return false;
+#if defined(_WIN32)
+    return VirtualLock(address, size) != 0;
+#else
+#if defined(MADV_DONTDUMP)
+    (void)::madvise(address, size, MADV_DONTDUMP);
+#endif
+    return ::mlock(address, size) == 0;
+#endif
+}
+
+void free_pages(void* address, const std::size_t size, const bool locked) noexcept {
+    if (address == nullptr || size == 0) return;
+    mbedtls_platform_zeroize(address, size);
+#if defined(_WIN32)
+    if (locked) (void)VirtualUnlock(address, size);
+    (void)VirtualFree(address, 0, MEM_RELEASE);
+#else
+    if (locked) (void)::munlock(address, size);
+    (void)::munmap(address, size);
 #endif
 }
 
@@ -41,13 +79,16 @@ public:
     ~Impl() { clear(); }
 
     void clear() noexcept {
-        if (!bytes.empty()) mbedtls_platform_zeroize(bytes.data(), bytes.size());
-        if (locked) unlock_pages(bytes.data(), bytes.size());
+        free_pages(address, allocation_size, locked);
+        address = nullptr;
+        used_size = 0;
+        allocation_size = 0;
         locked = false;
-        bytes.clear();
     }
 
-    std::vector<std::byte> bytes;
+    void* address{};
+    std::size_t used_size{};
+    std::size_t allocation_size{};
     bool locked{};
 };
 
@@ -60,9 +101,15 @@ auto LockedSecret::operator=(LockedSecret&&) noexcept -> LockedSecret& = default
 auto LockedSecret::copy(const std::string_view value) -> std::expected<LockedSecret, SecretError> {
     try {
         auto impl = std::make_unique<Impl>();
-        impl->bytes.resize(value.size());
-        if (!value.empty()) std::memcpy(impl->bytes.data(), value.data(), value.size());
-        impl->locked = lock_pages(impl->bytes.data(), impl->bytes.size());
+        const auto allocation_size = rounded_page_size(value.size());
+        if (!allocation_size) return std::unexpected{SecretError::invalid_size};
+        impl->address = allocate_pages(*allocation_size);
+        if (impl->address == nullptr) return std::unexpected{SecretError::allocation};
+        impl->allocation_size = *allocation_size;
+        impl->used_size = value.size();
+        if (!value.empty()) std::memcpy(impl->address, value.data(), value.size());
+        impl->locked = lock_pages(impl->address, impl->allocation_size);
+        if (!impl->locked) return std::unexpected{SecretError::lock_failed};
         return LockedSecret{std::move(impl)};
     } catch (const std::bad_alloc&) {
         return std::unexpected{SecretError::allocation};
@@ -70,10 +117,15 @@ auto LockedSecret::copy(const std::string_view value) -> std::expected<LockedSec
 }
 
 auto LockedSecret::view() const noexcept -> std::span<const std::byte> {
-    return impl_ ? std::span<const std::byte>{impl_->bytes} : std::span<const std::byte>{};
+    if (!impl_ || impl_->address == nullptr) return {};
+    return {static_cast<const std::byte*>(impl_->address), impl_->used_size};
 }
-auto LockedSecret::is_locked() const noexcept -> bool { return impl_ && impl_->locked; }
+auto LockedSecret::is_locked() const noexcept -> bool { return impl_ && impl_->address != nullptr && impl_->locked; }
 void LockedSecret::clear() noexcept { if (impl_) impl_->clear(); }
+
+namespace testing {
+void fail_next_secret_lock() noexcept { fail_next_lock.store(true, std::memory_order_relaxed); }
+} // namespace testing
 
 class FrameArena::Impl final {
 public:

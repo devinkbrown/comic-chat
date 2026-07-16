@@ -13,6 +13,7 @@
 #include "ccomp.h"
 #include "query.h"
 #include "userlist.h"
+#include <comicchat/net/flood.hpp>
 
 const UINT		g_uErrVersion			= (CFileException::endOfFile+1);
 const UINT		g_uErrFormat			= (g_uErrVersion+1);
@@ -763,8 +764,7 @@ protected:
 	SHORT				m_nRefCount;
 	WORD				m_wFlags;
 	UCHAR				m_uDelay;
-	USHORT				m_uPeriodStart;		// start of current flood interval
-	UCHAR				m_uOccurrences;		// number of utterances within that period (moving average)
+	comicchat::net::MonotonicFloodWindow m_floodWindow;
 
 	CCDynaRules*		m_pDynaRules;
 	CCDaemonExt*		m_pDaemonExt;

@@ -11,6 +11,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -60,11 +61,22 @@ struct ConnectionOptions final {
 struct Connect final { GenerationId generation{}; ConnectionOptions options; };
 struct Disconnect final { GenerationId generation{}; std::string reason; };
 struct Send final {
+    Send() = default;
+    Send(GenerationId generation_value, SendId id_value, Priority priority_value,
+         std::vector<std::byte> bytes_value, bool sensitive_value,
+         std::string target_value = {})
+        : generation(generation_value), id(id_value), priority(priority_value),
+          bytes(std::move(bytes_value)), sensitive(sensitive_value),
+          target(std::move(target_value)) {}
+
     GenerationId generation{};
     SendId id{};
     Priority priority{Priority::chat};
     std::vector<std::byte> bytes;
     bool sensitive{};
+    // Optional IRC target used only for bounded per-target fairness. It is
+    // never interpreted as a network address by the transport.
+    std::string target;
 };
 using Command = std::variant<Connect, Disconnect, Send>;
 
@@ -77,18 +89,33 @@ struct Connected final {
 };
 struct BytesReceived final { std::shared_ptr<const std::vector<std::byte>> bytes; };
 struct SendComplete final { SendId id{}; };
+// Application-owned keepalive signal. The transport never invents IRC bytes;
+// the IRC policy layer may answer this event with its own labeled PING.
+struct PingDue final {};
 struct Closed final { std::string reason; std::chrono::milliseconds retry_after{}; };
 struct Diagnostic final { std::string code; std::string message; };
-using EventBody = std::variant<StateChanged, Connected, BytesReceived, SendComplete, Closed, Diagnostic>;
+using EventBody = std::variant<StateChanged, Connected, BytesReceived, SendComplete, PingDue, Closed, Diagnostic>;
 struct Event final { GenerationId generation{}; EventBody body; };
 
 struct EngineStats final {
     std::uint64_t loop_iterations{};
     std::uint64_t command_wakeups{};
     std::uint64_t rejected_sensitive_bytes_wiped{};
+    std::uint64_t peak_queued_events{};
+    std::uint64_t target_throttle_deferrals{};
+    std::size_t queued_send_bytes{};
+    std::size_t queued_commands{};
 };
 
-enum class EngineError { already_running, not_running, stale_generation, queue_full, invalid_options, crypto_unavailable };
+enum class EngineError {
+    already_running,
+    not_running,
+    stale_generation,
+    queue_full,
+    invalid_options,
+    crypto_unavailable,
+    credential_lock_failed,
+};
 
 class ConnectionEngine final {
 public:
@@ -102,6 +129,11 @@ public:
     [[nodiscard]] auto start(ConnectionOptions options) -> std::expected<GenerationId, EngineError>;
     [[nodiscard]] auto post(Command command) -> std::expected<void, EngineError>;
     [[nodiscard]] auto poll_events(std::size_t maximum = 128) -> std::vector<Event>;
+    // Called synchronously on the network thread after an event is queued.
+    // The notifier runs outside engine locks and may post/poll/reconfigure the
+    // notifier. stop() is request-only when re-entered from that thread. The
+    // callback must not destroy the ConnectionEngine that is invoking it.
+    // Exceptions are contained and ignored so transport progress continues.
     void set_wakeup(std::function<void()> wakeup);
     void stop() noexcept;
     [[nodiscard]] auto generation() const noexcept -> GenerationId;

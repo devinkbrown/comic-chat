@@ -1,5 +1,7 @@
 #include "comicchat/net/connection_engine.hpp"
+#include "comicchat/net/flood.hpp"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -9,6 +11,7 @@
 #include <functional>
 #include <mutex>
 #include <stop_token>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -51,7 +54,7 @@ void warm_mbedtls_cpu_features() {
     REQUIRE(initialized);
 }
 
-enum class ServerMode { plaintext_echo, plaintext_burst, tls_echo, tls_stall };
+enum class ServerMode { plaintext_echo, plaintext_burst, plaintext_sink, tls_echo, tls_stall };
 enum class ProxyMode { socks5, http_connect };
 
 class LoopbackServer final {
@@ -104,6 +107,11 @@ private:
                 output[index] = std::byte{static_cast<unsigned char>(index)};
             (void)::send(accepted, output.data(), output.size(), 0);
             while (!token.stop_requested()) std::this_thread::sleep_for(5ms);
+            return;
+        }
+        if (mode_ == ServerMode::plaintext_sink) {
+            std::array<std::byte, 256> input{};
+            while (!token.stop_requested() && ::recv(accepted, input.data(), input.size(), 0) > 0) {}
             return;
         }
         if (mode_ == ServerMode::tls_stall) {
@@ -201,6 +209,10 @@ public:
         std::scoped_lock lock{request_mutex_};
         return request_;
     }
+    [[nodiscard]] auto socks_request() const -> std::vector<std::byte> {
+        std::scoped_lock lock{request_mutex_};
+        return socks_request_;
+    }
 
 private:
     static auto read_exact(const int socket, std::span<std::byte> output) -> bool {
@@ -224,11 +236,26 @@ private:
             if (!read_exact(accepted, greeting)) return;
             constexpr std::array<std::byte, 2> greeting_reply{std::byte{5}, std::byte{0}};
             (void)::send(accepted, greeting_reply.data(), greeting_reply.size(), 0);
-            std::array<std::byte, 5> request{};
+            std::array<std::byte, 4> request{};
             if (!read_exact(accepted, request)) return;
-            const auto name_size = std::to_integer<unsigned char>(request[4]);
-            std::vector<std::byte> target(static_cast<std::size_t>(name_size) + 2);
-            if (!read_exact(accepted, target)) return;
+            std::vector<std::byte> target;
+            bool domain{};
+            if (request[3] == std::byte{1}) target.resize(4 + 2);
+            else if (request[3] == std::byte{4}) target.resize(16 + 2);
+            else if (request[3] == std::byte{3}) {
+                std::array<std::byte, 1> length{};
+                if (!read_exact(accepted, length)) return;
+                target.push_back(length[0]);
+                target.resize(1 + std::to_integer<unsigned char>(length[0]) + 2);
+                domain = true;
+            } else return;
+            auto target_span = std::span<std::byte>{target};
+            if (!read_exact(accepted, domain ? target_span.subspan(1) : target_span)) return;
+            {
+                std::scoped_lock lock{request_mutex_};
+                socks_request_.assign(request.begin(), request.end());
+                socks_request_.insert(socks_request_.end(), target.begin(), target.end());
+            }
             constexpr std::array<std::byte, 10> connected{
                 std::byte{5}, std::byte{0}, std::byte{0}, std::byte{1}, std::byte{127},
                 std::byte{0}, std::byte{0}, std::byte{1}, std::byte{0}, std::byte{1},
@@ -268,6 +295,7 @@ private:
     std::uint16_t port_{};
     mutable std::mutex request_mutex_;
     std::string request_;
+    std::vector<std::byte> socks_request_;
     std::jthread thread_;
 };
 
@@ -451,6 +479,23 @@ auto bytes(std::string_view value) -> std::vector<std::byte> {
 
 } // namespace
 
+TEST_CASE("flood windows use monotonic time without counter rollover") {
+    using comicchat::net::FloodThreshold;
+    comicchat::net::MonotonicFloodWindow window;
+    const auto start = comicchat::net::MonotonicFloodWindow::clock::time_point{1s};
+    CHECK_FALSE(window.record_at(start, 3, 4s, FloodThreshold::at_limit));
+    CHECK_FALSE(window.record_at(start + 1s, 3, 4s, FloodThreshold::at_limit));
+    CHECK(window.record_at(start + 2s, 3, 4s, FloodThreshold::at_limit));
+    CHECK_FALSE(window.record_at(start + 10s, 3, 4s, FloodThreshold::at_limit));
+    // A clock anomaly resets rather than using an absolute wrapped delta.
+    CHECK_FALSE(window.record_at(start, 3, 4s, FloodThreshold::at_limit));
+
+    window.reset();
+    CHECK_FALSE(window.record_at(start, 2, 4s, FloodThreshold::over_limit));
+    CHECK_FALSE(window.record_at(start + 1s, 2, 4s, FloodThreshold::over_limit));
+    CHECK(window.record_at(start + 2s, 2, 4s, FloodThreshold::over_limit));
+}
+
 TEST_CASE("libuv plaintext loopback carries bounded bytes") {
     LoopbackServer server{ServerMode::plaintext_echo};
     comicchat::net::ConnectionEngine engine;
@@ -578,6 +623,69 @@ TEST_CASE("every rejected sensitive command is explicitly zeroized") {
     CHECK(engine.stats().rejected_sensitive_bytes_wiped == 21);
 }
 
+TEST_CASE("completion reservations hard-bound an unpolled event queue") {
+    LoopbackServer server{ServerMode::plaintext_sink};
+    auto options = options_for(server, comicchat::net::Security::plaintext);
+    options.limits.queued_commands = 8;
+    options.limits.transmit_bytes = 1024;
+    comicchat::net::ConnectionEngine engine;
+    const auto generation = engine.start(options);
+    REQUIRE(generation);
+    REQUIRE(wait_for(engine, [](const auto& event) {
+        return std::holds_alternative<comicchat::net::Connected>(event.body);
+    }));
+
+    std::size_t accepted{};
+    for (std::uint64_t id = 1; id <= 1000; ++id) {
+        if (engine.post(comicchat::net::Send{*generation, id, comicchat::net::Priority::control,
+                                             bytes("x"), false})) ++accepted;
+    }
+    CHECK(accepted <= options.limits.queued_commands - 2);
+    REQUIRE(accepted > 0);
+
+    std::this_thread::sleep_for(100ms);
+    CHECK_FALSE(engine.post(comicchat::net::Send{*generation, 1001, comicchat::net::Priority::control,
+                                                  bytes("x"), false}));
+    const auto queued = engine.poll_events(128);
+    CHECK(queued.size() <= options.limits.queued_commands);
+    CHECK(static_cast<std::size_t>(std::ranges::count_if(queued, [](const auto& event) {
+        return std::holds_alternative<comicchat::net::SendComplete>(event.body);
+    })) == accepted);
+    CHECK(engine.stats().peak_queued_events <= options.limits.queued_commands);
+    engine.stop();
+}
+
+TEST_CASE("throwing and reentrant wakeup callbacks do not terminate the worker") {
+    LoopbackServer server{ServerMode::plaintext_sink};
+    comicchat::net::ConnectionEngine engine;
+    const auto generation = engine.start(options_for(server, comicchat::net::Security::plaintext));
+    REQUIRE(generation);
+    REQUIRE(wait_for(engine, [](const auto& event) {
+        return std::holds_alternative<comicchat::net::Connected>(event.body);
+    }));
+
+    engine.set_wakeup([] { throw std::runtime_error{"test notifier"}; });
+    REQUIRE(engine.post(comicchat::net::Send{*generation, 40, comicchat::net::Priority::control,
+                                             bytes("a"), false}));
+    REQUIRE(wait_for(engine, [](const auto& event) {
+        return std::holds_alternative<comicchat::net::SendComplete>(event.body);
+    }));
+
+    std::atomic_bool callback_stopped{};
+    engine.set_wakeup([&] {
+        if (!callback_stopped.exchange(true)) engine.stop();
+    });
+    REQUIRE(engine.post(comicchat::net::Send{*generation, 41, comicchat::net::Priority::control,
+                                             bytes("b"), false}));
+    const auto deadline = std::chrono::steady_clock::now() + 1s;
+    while (!callback_stopped.load() && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(2ms);
+    REQUIRE(callback_stopped.load());
+    const auto started = std::chrono::steady_clock::now();
+    engine.stop();
+    CHECK(std::chrono::steady_clock::now() - started < 500ms);
+}
+
 TEST_CASE("SOCKS5 and HTTP CONNECT proxies establish real bounded tunnels") {
     for (const auto mode : {ProxyMode::socks5, ProxyMode::http_connect}) {
         ProxyServer proxy{mode, true};
@@ -629,6 +737,146 @@ TEST_CASE("HTTP CONNECT brackets an IPv6 target authority") {
     }));
     CHECK(proxy.request().starts_with(
         "CONNECT [::1]:6667 HTTP/1.1\r\nHost: [::1]:6667\r\n"));
+    engine.stop();
+}
+
+TEST_CASE("SOCKS5 emits numeric IPv4 and IPv6 address types without DNS ambiguity") {
+    const auto check_target = [](const std::string_view host, const std::byte address_type,
+                                 const std::span<const std::byte> address) {
+        ProxyServer proxy{ProxyMode::socks5};
+        comicchat::net::ConnectionOptions options;
+        options.endpoint = {std::string{host}, 6667};
+        options.security = comicchat::net::Security::plaintext;
+        options.proxy.kind = comicchat::net::ProxyKind::socks5;
+        options.proxy.host = "127.0.0.1";
+        options.proxy.port = proxy.port();
+        options.deadlines.connect = 1s;
+        options.deadlines.handshake = 1s;
+        options.deadlines.idle = 5s;
+        comicchat::net::ConnectionEngine engine;
+        REQUIRE(engine.start(options));
+        REQUIRE(wait_for(engine, [](const auto& event) {
+            return std::holds_alternative<comicchat::net::Connected>(event.body);
+        }));
+        const auto request = proxy.socks_request();
+        REQUIRE(request.size() == 4 + address.size() + 2);
+        CHECK(request[0] == std::byte{5});
+        CHECK(request[1] == std::byte{1});
+        CHECK(request[2] == std::byte{0});
+        CHECK(request[3] == address_type);
+        CHECK(std::equal(address.begin(), address.end(), request.begin() + 4));
+        CHECK(request[request.size() - 2] == std::byte{0x1a});
+        CHECK(request.back() == std::byte{0x0b});
+        engine.stop();
+    };
+
+    constexpr std::array ipv4{std::byte{127}, std::byte{0}, std::byte{0}, std::byte{1}};
+    std::array<std::byte, 16> ipv6{};
+    ipv6.back() = std::byte{1};
+    check_target("127.0.0.1", std::byte{1}, ipv4);
+    check_target("::1", std::byte{4}, ipv6);
+}
+
+TEST_CASE("proxy authentication validates RFC1929 and HTTP Basic user identifiers") {
+    comicchat::net::ConnectionOptions options;
+    options.endpoint = {"irc.example", 6667};
+    options.security = comicchat::net::Security::plaintext;
+    options.proxy.host = "127.0.0.1";
+    options.proxy.port = 1080;
+    options.proxy.username = "";
+    options.proxy.password = "secret";
+
+    comicchat::net::ConnectionEngine engine;
+    options.proxy.kind = comicchat::net::ProxyKind::socks5;
+    CHECK(engine.start(options) == std::unexpected{comicchat::net::EngineError::invalid_options});
+    options.proxy.username = "user";
+    options.proxy.password = "";
+    CHECK(engine.start(options) == std::unexpected{comicchat::net::EngineError::invalid_options});
+    options.proxy.kind = comicchat::net::ProxyKind::http_connect;
+    options.proxy.username = "user:name";
+    options.proxy.password = "secret";
+    CHECK(engine.start(options) == std::unexpected{comicchat::net::EngineError::invalid_options});
+}
+
+TEST_CASE("idle connections emit one application-owned ping deadline event") {
+    LoopbackServer server{ServerMode::plaintext_sink};
+    auto options = options_for(server, comicchat::net::Security::plaintext);
+    options.deadlines.ping = 40ms;
+    options.deadlines.idle = 250ms;
+    comicchat::net::ConnectionEngine engine;
+    REQUIRE(engine.start(options));
+    REQUIRE(wait_for(engine, [](const auto& event) {
+        return std::holds_alternative<comicchat::net::Connected>(event.body);
+    }));
+    REQUIRE(wait_for(engine, [](const auto& event) {
+        return std::holds_alternative<comicchat::net::PingDue>(event.body);
+    }, 500ms));
+    std::this_thread::sleep_for(80ms);
+    const auto extra = engine.poll_events();
+    CHECK(std::none_of(extra.begin(), extra.end(), [](const auto& event) {
+        return std::holds_alternative<comicchat::net::PingDue>(event.body);
+    }));
+    engine.stop();
+}
+
+TEST_CASE("outbound traffic cannot suppress server liveness deadlines") {
+    LoopbackServer server{ServerMode::plaintext_sink};
+    auto options = options_for(server, comicchat::net::Security::plaintext);
+    options.deadlines.ping = 40ms;
+    options.deadlines.idle = 160ms;
+    options.reconnect_jitter_seed = 1;
+    comicchat::net::ConnectionEngine engine;
+    const auto generation = engine.start(options);
+    REQUIRE(generation);
+    REQUIRE(wait_for(engine, [](const auto& event) {
+        return std::holds_alternative<comicchat::net::Connected>(event.body);
+    }));
+
+    bool ping_due{};
+    bool idle_timeout{};
+    std::uint64_t send_id = 100;
+    const auto deadline = std::chrono::steady_clock::now() + 400ms;
+    while (std::chrono::steady_clock::now() < deadline && !idle_timeout) {
+        (void)engine.post(comicchat::net::Send{*generation, send_id++,
+            comicchat::net::Priority::control, bytes("outbound"), false});
+        for (const auto& event : engine.poll_events(128)) {
+            ping_due = ping_due || std::holds_alternative<comicchat::net::PingDue>(event.body);
+            if (const auto* diagnostic = std::get_if<comicchat::net::Diagnostic>(&event.body))
+                idle_timeout = idle_timeout || diagnostic->code == "idle-timeout";
+        }
+        std::this_thread::sleep_for(10ms);
+    }
+    CHECK(ping_due);
+    CHECK(idle_timeout);
+    engine.stop();
+}
+
+TEST_CASE("per-target chat buckets defer floods without starving another target") {
+    LoopbackServer server{ServerMode::plaintext_sink};
+    auto options = options_for(server, comicchat::net::Security::plaintext);
+    options.deadlines.ping = 2s;
+    comicchat::net::ConnectionEngine engine;
+    const auto generation = engine.start(options);
+    REQUIRE(generation);
+    REQUIRE(wait_for(engine, [](const auto& event) {
+        return std::holds_alternative<comicchat::net::Connected>(event.body);
+    }));
+
+    for (std::uint64_t id = 1; id <= 8; ++id) {
+        comicchat::net::Send send{*generation, id, comicchat::net::Priority::chat,
+            bytes("same-target"), false};
+        send.target = "#busy";
+        REQUIRE(engine.post(std::move(send)));
+    }
+    comicchat::net::Send fair{*generation, 100, comicchat::net::Priority::chat,
+        bytes("other-target"), false};
+    fair.target = "#other";
+    REQUIRE(engine.post(std::move(fair)));
+    CHECK(wait_for(engine, [](const auto& event) {
+        const auto* complete = std::get_if<comicchat::net::SendComplete>(&event.body);
+        return complete != nullptr && complete->id == 100;
+    }, 700ms));
+    CHECK(engine.stats().target_throttle_deferrals > 0);
     engine.stop();
 }
 

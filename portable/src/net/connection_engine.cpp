@@ -7,10 +7,12 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <cctype>
 #include <cstring>
 #include <deque>
 #include <filesystem>
 #include <limits>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <string_view>
@@ -46,6 +48,7 @@ using Clock = std::chrono::steady_clock;
 constexpr std::chrono::milliseconds happy_eyeballs_delay{250};
 constexpr std::size_t io_chunk = 16U * 1024U;
 constexpr std::size_t proxy_reply_limit = 16U * 1024U;
+constexpr std::size_t event_control_headroom = 2;
 constexpr std::array<std::size_t, 5> scheduling_order{2, 1, 0, 3, 4};
 constexpr std::array<unsigned int, 5> scheduling_quanta{4, 4, 4, 2, 1};
 
@@ -145,7 +148,12 @@ public:
         std::optional<LockedSecret> proxy_password;
         if (options.proxy.password) {
             auto locked = LockedSecret::copy(*options.proxy.password);
-            if (!locked) return std::unexpected{EngineError::invalid_options};
+            if (!locked) {
+                secure_clear(*options.proxy.password);
+                return std::unexpected{locked.error() == SecretError::lock_failed
+                    ? EngineError::credential_lock_failed
+                    : EngineError::invalid_options};
+            }
             proxy_password.emplace(std::move(*locked));
             secure_clear(*options.proxy.password);
             options.proxy.password.reset();
@@ -160,10 +168,15 @@ public:
             proxy_password_ = std::move(proxy_password);
             queued_bytes_ = 0;
             queued_receive_bytes_ = 0;
+            reserved_send_completions_ = 0;
+            reserved_receive_events_ = 0;
             events_.clear();
+            peak_queued_events_.store(0, std::memory_order_relaxed);
+            target_buckets_.clear();
+            target_serial_ = 0;
             stopped_ = false;
         }
-        thread_ = std::jthread{[this](const std::stop_token token) { network_loop(token); }};
+        thread_ = std::jthread{[this](const std::stop_token token) noexcept { network_thread_entry(token); }};
         const auto posted = post(Connect{generation(), options_});
         if (!posted) {
             stop();
@@ -187,6 +200,10 @@ public:
         if (command_generation(command) != generation_) return reject(EngineError::stale_generation);
         const auto* send = std::get_if<Send>(&command);
         const auto send_size = send == nullptr ? std::size_t{} : send->bytes.size();
+        if (send != nullptr && (send->target.size() > 512 ||
+            std::ranges::any_of(send->target, [](const unsigned char byte) {
+                return byte < 0x20U || byte == 0x7fU;
+            }))) return reject(EngineError::invalid_options);
         if (send != nullptr && (send_size == 0 || send_size > options_.limits.transmit_bytes ||
                                queued_bytes_ > options_.limits.transmit_bytes - send_size)) {
             return reject(EngineError::queue_full);
@@ -194,8 +211,11 @@ public:
         std::size_t queued{};
         for (const auto& queue : commands_) queued += queue.size();
         if (queued >= options_.limits.queued_commands) return reject(EngineError::queue_full);
+        if (send != nullptr && event_occupancy_locked() >= ordinary_event_capacity_locked())
+            return reject(EngineError::queue_full);
         commands_[priority_index(command)].push_back(std::move(command));
         queued_bytes_ += send_size;
+        if (send != nullptr) ++reserved_send_completions_;
         if (loop_ready_.load(std::memory_order_acquire)) (void)uv_async_send(&command_wakeup_);
         return {};
     }
@@ -229,12 +249,20 @@ public:
     void stop() noexcept {
         {
             std::scoped_lock lock{mutex_};
-            if (stopped_) return;
             stopped_ = true;
         }
+        if (!thread_.joinable()) return;
         thread_.request_stop();
         if (loop_ready_.load(std::memory_order_acquire)) (void)uv_async_send(&command_wakeup_);
-        if (thread_.joinable()) thread_.join();
+        if (thread_.get_id() == std::this_thread::get_id()) return;
+        try {
+            thread_.join();
+        } catch (...) {
+            // A detached worker captures Impl and would become a destructor
+            // use-after-free. The self-thread case is handled above; any other
+            // join failure violates the engine lifetime contract.
+            std::terminate();
+        }
         std::scoped_lock lock{mutex_};
         clear_command_queues_locked();
         queued_bytes_ = 0;
@@ -247,10 +275,17 @@ public:
     }
 
     auto stats() const noexcept -> EngineStats {
+        std::scoped_lock lock{mutex_};
+        std::size_t queued_commands{};
+        for (const auto& queue : commands_) queued_commands += queue.size();
         return {
             loop_iterations_.load(std::memory_order_relaxed),
             command_wakeups_.load(std::memory_order_relaxed),
             rejected_sensitive_bytes_wiped_.load(std::memory_order_relaxed),
+            peak_queued_events_.load(std::memory_order_relaxed),
+            target_throttle_deferrals_.load(std::memory_order_relaxed),
+            queued_bytes_,
+            queued_commands,
         };
     }
 
@@ -264,12 +299,21 @@ private:
         Impl* owner{};
     };
 
+    struct ResolveRequest final {
+        uv_getaddrinfo_t request{};
+        Impl* owner{};
+        std::uint64_t serial{};
+        bool canceled{};
+    };
+
     struct PendingWrite final {
         SendId id{};
         Priority priority{};
         std::vector<std::byte> bytes;
         std::size_t offset{};
         bool sensitive{};
+        std::string target;
+        bool target_token_charged{};
     };
 
     struct TokenBucket final {
@@ -294,21 +338,47 @@ private:
         }
     };
 
+    struct LineBucket final {
+        double tokens{4.0};
+        Clock::time_point updated{Clock::now()};
+
+        auto take() -> bool {
+            const auto now = Clock::now();
+            tokens = std::min(4.0,
+                tokens + std::chrono::duration<double>(now - updated).count());
+            updated = now;
+            if (tokens < 1.0) return false;
+            tokens -= 1.0;
+            return true;
+        }
+    };
+
+    struct TargetBucket final {
+        LineBucket bucket;
+        std::uint64_t serial{};
+    };
+
     static auto valid_options(const ConnectionOptions& options) noexcept -> bool {
         const auto proxy_invalid = options.proxy.kind != ProxyKind::none &&
             (!safe_network_name(options.proxy.host) || options.proxy.port == 0);
         const auto proxy_credentials_invalid =
             options.proxy.username.has_value() != options.proxy.password.has_value() ||
             (options.proxy.username && options.proxy.username->size() > 255) ||
-            (options.proxy.password && options.proxy.password->size() > 255);
+            (options.proxy.password && options.proxy.password->size() > 255) ||
+            (options.proxy.kind == ProxyKind::socks5 && options.proxy.username &&
+             (options.proxy.username->empty() || options.proxy.password->empty())) ||
+            (options.proxy.kind == ProxyKind::http_connect && options.proxy.username &&
+             options.proxy.username->contains(':'));
         return safe_endpoint_host(options.endpoint.host) &&
             (options.security == Security::plaintext || safe_network_name(options.server_name)) &&
             (!options.ca_file || safe_path(*options.ca_file)) &&
             options.endpoint.port != 0 && !proxy_invalid && !proxy_credentials_invalid &&
             options.limits.receive_bytes != 0 && options.limits.transmit_bytes != 0 &&
-            options.limits.queued_commands != 0 && options.deadlines.connect > std::chrono::milliseconds::zero() &&
+            options.limits.queued_commands > event_control_headroom &&
+            options.deadlines.connect > std::chrono::milliseconds::zero() &&
             options.deadlines.handshake > std::chrono::milliseconds::zero() &&
-            options.deadlines.idle > std::chrono::milliseconds::zero();
+            options.deadlines.idle > std::chrono::milliseconds::zero() &&
+            options.deadlines.ping > std::chrono::milliseconds::zero();
     }
 
     void reset_tls_configuration() noexcept {
@@ -356,36 +426,66 @@ private:
         return difference == 0;
     }
 
-    void publish(EventBody body) {
+    auto event_occupancy_locked() const noexcept -> std::size_t {
+        return events_.size() + reserved_send_completions_ + reserved_receive_events_;
+    }
+
+    auto ordinary_event_capacity_locked() const noexcept -> std::size_t {
+        return options_.limits.queued_commands - event_control_headroom;
+    }
+
+    auto publish(EventBody body) -> bool {
         std::function<void()> wakeup;
         {
             std::scoped_lock lock{mutex_};
-            if (stopped_) return;
-            if (const auto* received = std::get_if<BytesReceived>(&body); received != nullptr && received->bytes) {
+            const bool completion = std::holds_alternative<SendComplete>(body);
+            const auto* received = std::get_if<BytesReceived>(&body);
+            if (completion) {
+                if (reserved_send_completions_ == 0) return false;
+                --reserved_send_completions_;
+            } else if (received != nullptr) {
+                if (reserved_receive_events_ == 0) return false;
+                --reserved_receive_events_;
+            }
+            if (stopped_) return false;
+
+            if (received != nullptr && received->bytes) {
                 queued_receive_bytes_ += received->bytes->size();
-            } else if (events_.size() >= options_.limits.queued_commands) {
+            } else if (!completion) {
+                const bool critical = std::holds_alternative<Connected>(body) || std::holds_alternative<Closed>(body);
                 const auto body_index = body.index();
                 const auto same_kind = std::ranges::find_if(events_, [body_index](const Event& event) {
-                    return !std::holds_alternative<BytesReceived>(event.body) && event.body.index() == body_index;
+                    return !std::holds_alternative<BytesReceived>(event.body) &&
+                        !std::holds_alternative<SendComplete>(event.body) && event.body.index() == body_index;
                 });
-                if (same_kind != events_.end() && !std::holds_alternative<SendComplete>(body)) {
-                    events_.erase(same_kind);
-                } else {
-                    const auto replacement = std::ranges::find_if(events_, [](const Event& event) {
-                        return std::holds_alternative<Diagnostic>(event.body) ||
-                            std::holds_alternative<StateChanged>(event.body) ||
-                            std::holds_alternative<Connected>(event.body);
+                if (same_kind != events_.end()) events_.erase(same_kind);
+
+                const auto capacity = critical ? options_.limits.queued_commands : ordinary_event_capacity_locked();
+                if (event_occupancy_locked() >= capacity) {
+                    if (!critical) return false;
+                    const auto replaceable = std::ranges::find_if(events_, [](const Event& event) {
+                        return !std::holds_alternative<BytesReceived>(event.body) &&
+                            !std::holds_alternative<SendComplete>(event.body);
                     });
-                    if (replacement != events_.end()) events_.erase(replacement);
-                    else if (!std::holds_alternative<Closed>(body) &&
-                             !std::holds_alternative<Connected>(body) &&
-                             !std::holds_alternative<SendComplete>(body)) return;
+                    if (replaceable == events_.end()) return false;
+                    events_.erase(replaceable);
                 }
             }
             events_.push_back(Event{generation_, std::move(body)});
+            auto peak = peak_queued_events_.load(std::memory_order_relaxed);
+            while (peak < events_.size() &&
+                   !peak_queued_events_.compare_exchange_weak(
+                       peak, events_.size(), std::memory_order_relaxed, std::memory_order_relaxed)) {}
             wakeup = wakeup_;
         }
-        if (wakeup) wakeup();
+        if (wakeup) {
+            try {
+                wakeup();
+            } catch (...) {
+                // User notification is advisory; queued events remain intact.
+            }
+        }
+        return true;
     }
 
     auto take_command() -> std::optional<Command> {
@@ -412,11 +512,19 @@ private:
         queued_bytes_ = bytes > queued_bytes_ ? 0 : queued_bytes_ - bytes;
     }
 
+    void release_canceled_send(const std::size_t bytes) noexcept {
+        std::scoped_lock lock{mutex_};
+        queued_bytes_ = bytes > queued_bytes_ ? 0 : queued_bytes_ - bytes;
+        if (reserved_send_completions_ != 0) --reserved_send_completions_;
+    }
+
     void clear_command_queues_locked() noexcept {
         for (auto& queue : commands_) {
             for (auto& command : queue) {
                 if (auto* send = std::get_if<Send>(&command); send != nullptr && send->sensitive && !send->bytes.empty())
                     mbedtls_platform_zeroize(send->bytes.data(), send->bytes.size());
+                if (std::holds_alternative<Send>(command) && reserved_send_completions_ != 0)
+                    --reserved_send_completions_;
             }
             queue.clear();
         }
@@ -442,29 +550,75 @@ private:
             return;
         }
         auto send = std::get<Send>(std::move(command));
-        PendingWrite pending{send.id, send.priority, std::move(send.bytes), 0, send.sensitive};
+        PendingWrite pending{send.id, send.priority, std::move(send.bytes), 0,
+            send.sensitive, std::move(send.target), false};
         transmit_[static_cast<std::size_t>(pending.priority)].push_back(std::move(pending));
         if (pipeline_ == Pipeline::open) set_readiness((receive_paused_ ? 0 : UV_READABLE) | UV_WRITABLE);
     }
 
-    void network_loop(const std::stop_token token) {
+    void network_thread_entry(const std::stop_token token) noexcept {
+        try {
+            network_loop(token);
+        } catch (...) {
+            try {
+                publish(Diagnostic{"network-exception", "network worker stopped after an internal exception"});
+            } catch (...) {
+            }
+            cleanup_network_loop();
+            std::scoped_lock lock{mutex_};
+            stopped_ = true;
+        }
+    }
+
+    auto initialize_network_loop() -> bool {
         if (uv_loop_init(&loop_) != 0) {
             publish(Diagnostic{"uv-loop-init", "network loop initialization failed"});
-            return;
+            return false;
         }
+        loop_initialized_ = true;
         command_wakeup_.data = this;
         happy_timer_.data = this;
         reconnect_timer_.data = this;
         deadline_timer_.data = this;
         rate_timer_.data = this;
-        (void)uv_async_init(&loop_, &command_wakeup_, [](uv_async_t* wakeup) {
+        if (uv_async_init(&loop_, &command_wakeup_, [](uv_async_t* wakeup) {
             auto* self = static_cast<Impl*>(wakeup->data);
             self->command_wakeups_.fetch_add(1, std::memory_order_relaxed);
-        });
-        (void)uv_timer_init(&loop_, &happy_timer_);
-        (void)uv_timer_init(&loop_, &reconnect_timer_);
-        (void)uv_timer_init(&loop_, &deadline_timer_);
-        (void)uv_timer_init(&loop_, &rate_timer_);
+        }) != 0) {
+            publish(Diagnostic{"uv-async-init", "network command wakeup could not initialize"});
+            return false;
+        }
+        command_wakeup_initialized_ = true;
+        if (uv_timer_init(&loop_, &happy_timer_) != 0) {
+            publish(Diagnostic{"uv-timer-init", "Happy Eyeballs timer could not initialize"});
+            return false;
+        }
+        happy_timer_initialized_ = true;
+        if (uv_timer_init(&loop_, &reconnect_timer_) != 0) {
+            publish(Diagnostic{"uv-timer-init", "reconnect timer could not initialize"});
+            return false;
+        }
+        reconnect_timer_initialized_ = true;
+        if (uv_timer_init(&loop_, &deadline_timer_) != 0) {
+            publish(Diagnostic{"uv-timer-init", "deadline timer could not initialize"});
+            return false;
+        }
+        deadline_timer_initialized_ = true;
+        if (uv_timer_init(&loop_, &rate_timer_) != 0) {
+            publish(Diagnostic{"uv-timer-init", "rate timer could not initialize"});
+            return false;
+        }
+        rate_timer_initialized_ = true;
+        return true;
+    }
+
+    void network_loop(const std::stop_token token) {
+        if (!initialize_network_loop()) {
+            cleanup_network_loop();
+            std::scoped_lock lock{mutex_};
+            stopped_ = true;
+            return;
+        }
         loop_ready_.store(true, std::memory_order_release);
         while (!token.stop_requested()) {
             while (auto command = take_command()) process_command(std::move(*command));
@@ -472,22 +626,30 @@ private:
             loop_iterations_.fetch_add(1, std::memory_order_relaxed);
             pump_pipeline();
         }
+        cleanup_network_loop();
+    }
+
+    void cleanup_network_loop() noexcept {
+        if (!loop_initialized_) {
+            loop_ready_.store(false, std::memory_order_release);
+            return;
+        }
         intentional_close_ = true;
         cancel_resolve();
-        close_transport();
-        uv_timer_stop(&happy_timer_);
-        uv_timer_stop(&reconnect_timer_);
-        uv_timer_stop(&deadline_timer_);
-        uv_timer_stop(&rate_timer_);
-        if (!uv_is_closing(reinterpret_cast<uv_handle_t*>(&command_wakeup_)))
+        if (loop_ready_.load(std::memory_order_acquire)) close_transport();
+        if (happy_timer_initialized_) uv_timer_stop(&happy_timer_);
+        if (reconnect_timer_initialized_) uv_timer_stop(&reconnect_timer_);
+        if (deadline_timer_initialized_) uv_timer_stop(&deadline_timer_);
+        if (rate_timer_initialized_) uv_timer_stop(&rate_timer_);
+        if (command_wakeup_initialized_ && !uv_is_closing(reinterpret_cast<uv_handle_t*>(&command_wakeup_)))
             uv_close(reinterpret_cast<uv_handle_t*>(&command_wakeup_), nullptr);
-        if (!uv_is_closing(reinterpret_cast<uv_handle_t*>(&happy_timer_)))
+        if (happy_timer_initialized_ && !uv_is_closing(reinterpret_cast<uv_handle_t*>(&happy_timer_)))
             uv_close(reinterpret_cast<uv_handle_t*>(&happy_timer_), nullptr);
-        if (!uv_is_closing(reinterpret_cast<uv_handle_t*>(&reconnect_timer_)))
+        if (reconnect_timer_initialized_ && !uv_is_closing(reinterpret_cast<uv_handle_t*>(&reconnect_timer_)))
             uv_close(reinterpret_cast<uv_handle_t*>(&reconnect_timer_), nullptr);
-        if (!uv_is_closing(reinterpret_cast<uv_handle_t*>(&deadline_timer_)))
+        if (deadline_timer_initialized_ && !uv_is_closing(reinterpret_cast<uv_handle_t*>(&deadline_timer_)))
             uv_close(reinterpret_cast<uv_handle_t*>(&deadline_timer_), nullptr);
-        if (!uv_is_closing(reinterpret_cast<uv_handle_t*>(&rate_timer_)))
+        if (rate_timer_initialized_ && !uv_is_closing(reinterpret_cast<uv_handle_t*>(&rate_timer_)))
             uv_close(reinterpret_cast<uv_handle_t*>(&rate_timer_), nullptr);
         uv_walk(&loop_, [](uv_handle_t* handle, void*) {
             if (!uv_is_closing(handle)) uv_close(handle, close_dynamic_handle);
@@ -495,6 +657,12 @@ private:
         while (uv_run(&loop_, UV_RUN_DEFAULT) != 0) {}
         (void)uv_loop_close(&loop_);
         loop_ready_.store(false, std::memory_order_release);
+        loop_initialized_ = false;
+        command_wakeup_initialized_ = false;
+        happy_timer_initialized_ = false;
+        reconnect_timer_initialized_ = false;
+        deadline_timer_initialized_ = false;
+        rate_timer_initialized_ = false;
     }
 
     static void close_dynamic_handle(uv_handle_t* handle) {
@@ -536,6 +704,7 @@ private:
     }
 
     void arm_deadline(const std::chrono::milliseconds duration) {
+        if (!deadline_timer_initialized_) return;
         uv_timer_stop(&deadline_timer_);
         (void)uv_timer_start(&deadline_timer_, [](uv_timer_t* timer) {
             static_cast<Impl*>(timer->data)->pump_pipeline();
@@ -544,7 +713,12 @@ private:
 
     void begin_resolve() {
         if (!loop_ready_ || (pipeline_ != Pipeline::idle && pipeline_ != Pipeline::reconnect_wait)) return;
+        if (resolver_ != nullptr) {
+            resolve_restart_pending_ = pipeline_ == Pipeline::reconnect_wait;
+            return;
+        }
         intentional_close_ = false;
+        resolve_restart_pending_ = false;
         addresses_.clear();
         next_address_ = 0;
         connect_started_ = Clock::now();
@@ -556,17 +730,35 @@ private:
         hints.ai_family = AF_UNSPEC;
         hints.ai_socktype = SOCK_STREAM;
         hints.ai_protocol = IPPROTO_TCP;
-        resolver_.data = this;
+        auto* resolver = new ResolveRequest{};
+        resolver->owner = this;
+        resolver->serial = ++resolve_serial_;
+        resolver->request.data = resolver;
+        resolver_ = resolver;
         pipeline_ = Pipeline::resolving;
         publish(StateChanged{State::resolving});
-        resolver_active_ = uv_getaddrinfo(&loop_, &resolver_, resolve_callback,
-                                         resolve_host_.c_str(), resolve_service_.c_str(), &hints) == 0;
-        if (!resolver_active_) fail_connection("dns-start", "name resolution could not start");
+        if (uv_getaddrinfo(&loop_, &resolver->request, resolve_callback,
+                           resolve_host_.c_str(), resolve_service_.c_str(), &hints) != 0) {
+            resolver_ = nullptr;
+            delete resolver;
+            fail_connection("dns-start", "name resolution could not start");
+        }
     }
 
     static void resolve_callback(uv_getaddrinfo_t* request, const int status, addrinfo* result) {
-        auto* self = static_cast<Impl*>(request->data);
-        self->resolver_active_ = false;
+        auto* resolver = static_cast<ResolveRequest*>(request->data);
+        auto* self = resolver->owner;
+        const bool current = self->resolver_ == resolver;
+        if (current) self->resolver_ = nullptr;
+        const bool stale = !current || resolver->canceled || resolver->serial != self->resolve_serial_ ||
+            self->pipeline_ != Pipeline::resolving;
+        delete resolver;
+        if (stale) {
+            if (result != nullptr) uv_freeaddrinfo(result);
+            if (self->resolve_restart_pending_ && self->pipeline_ == Pipeline::reconnect_wait)
+                self->begin_resolve();
+            return;
+        }
         if (status < 0 || result == nullptr) {
             if (result != nullptr) uv_freeaddrinfo(result);
             self->fail_connection("dns-failed", "name resolution failed");
@@ -736,17 +928,31 @@ private:
     }
 
     void queue_socks_connect() {
-        if (options_.endpoint.host.size() > 255) {
-            fail_connection("proxy-target", "proxy target name is too long");
-            return;
-        }
         proxy_phase_ = ProxyPhase::socks_connect;
         clear_proxy_input();
         clear_proxy_output();
-        proxy_output_ = {std::byte{5}, std::byte{1}, std::byte{0}, std::byte{3},
-                         std::byte{static_cast<unsigned char>(options_.endpoint.host.size())}};
-        for (const auto character : options_.endpoint.host)
-            proxy_output_.push_back(std::byte{static_cast<unsigned char>(character)});
+        proxy_output_ = {std::byte{5}, std::byte{1}, std::byte{0}};
+        sockaddr_in ipv4{};
+        sockaddr_in6 ipv6{};
+        if (uv_ip4_addr(options_.endpoint.host.c_str(), 0, &ipv4) == 0) {
+            proxy_output_.push_back(std::byte{1});
+            const auto* address = reinterpret_cast<const std::byte*>(&ipv4.sin_addr);
+            proxy_output_.insert(proxy_output_.end(), address, address + sizeof(ipv4.sin_addr));
+        } else if (uv_ip6_addr(options_.endpoint.host.c_str(), 0, &ipv6) == 0) {
+            proxy_output_.push_back(std::byte{4});
+            const auto* address = reinterpret_cast<const std::byte*>(&ipv6.sin6_addr);
+            proxy_output_.insert(proxy_output_.end(), address, address + sizeof(ipv6.sin6_addr));
+        } else {
+            if (options_.endpoint.host.size() > 255) {
+                fail_connection("proxy-target", "proxy target name is too long");
+                return;
+            }
+            proxy_output_.push_back(std::byte{3});
+            proxy_output_.push_back(std::byte{
+                static_cast<unsigned char>(options_.endpoint.host.size())});
+            for (const auto character : options_.endpoint.host)
+                proxy_output_.push_back(std::byte{static_cast<unsigned char>(character)});
+        }
         proxy_output_.push_back(std::byte{static_cast<unsigned char>(options_.endpoint.port >> 8U)});
         proxy_output_.push_back(std::byte{static_cast<unsigned char>(options_.endpoint.port & 0xffU)});
         proxy_offset_ = 0;
@@ -850,13 +1056,18 @@ private:
         tunnel_offset_ = 0;
     }
 
+    void mark_server_activity() {
+        last_activity_ = Clock::now();
+        ping_notified_ = false;
+        arm_deadline(std::min(options_.deadlines.ping, options_.deadlines.idle));
+    }
+
     void begin_tls_or_open() {
         clear_proxy_output();
         if (options_.security == Security::plaintext) {
             pipeline_ = Pipeline::open;
             receive_paused_ = false;
-            last_activity_ = Clock::now();
-            arm_deadline(options_.deadlines.idle);
+            mark_server_activity();
             set_readiness(UV_READABLE);
             reconnect_failures_ = 0;
             publish(StateChanged{State::connected});
@@ -987,8 +1198,7 @@ private:
             resume_offered_ = false;
             pipeline_ = Pipeline::open;
             receive_paused_ = false;
-            last_activity_ = Clock::now();
-            arm_deadline(options_.deadlines.idle);
+            mark_server_activity();
             set_readiness(UV_READABLE);
             reconnect_failures_ = 0;
             publish(StateChanged{State::connected});
@@ -1007,7 +1217,7 @@ private:
         std::array<std::byte, io_chunk> buffer{};
         std::size_t total{};
         while (total < options_.limits.receive_bytes) {
-            const auto credit = receive_credit();
+            const auto credit = reserve_receive_credit();
             if (credit == 0) {
                 receive_paused_ = true;
                 set_readiness(has_pending_writes() ? UV_WRITABLE : 0);
@@ -1020,12 +1230,12 @@ private:
                 : raw_receive(buffer.data(), maximum);
             if (received > 0) {
                 total += static_cast<std::size_t>(received);
-                last_activity_ = Clock::now();
-                arm_deadline(options_.deadlines.idle);
+                mark_server_activity();
                 auto bytes = std::make_shared<std::vector<std::byte>>(buffer.begin(), buffer.begin() + received);
                 publish(BytesReceived{std::move(bytes)});
                 continue;
             }
+            release_receive_reservation();
             if (options_.security == Security::tls &&
                 (received == MBEDTLS_ERR_SSL_WANT_READ || received == MBEDTLS_ERR_SSL_WANT_WRITE)) {
                 set_readiness(UV_READABLE | (received == MBEDTLS_ERR_SSL_WANT_WRITE ? UV_WRITABLE : 0));
@@ -1044,11 +1254,17 @@ private:
         }
     }
 
-    auto receive_credit() const noexcept -> std::size_t {
+    auto reserve_receive_credit() noexcept -> std::size_t {
         std::scoped_lock lock{mutex_};
-        if (events_.size() >= options_.limits.queued_commands ||
+        if (event_occupancy_locked() >= ordinary_event_capacity_locked() ||
             queued_receive_bytes_ >= options_.limits.receive_bytes) return 0;
+        ++reserved_receive_events_;
         return options_.limits.receive_bytes - queued_receive_bytes_;
+    }
+
+    void release_receive_reservation() noexcept {
+        std::scoped_lock lock{mutex_};
+        if (reserved_receive_events_ != 0) --reserved_receive_events_;
     }
 
     auto has_pending_writes() const noexcept -> bool {
@@ -1056,6 +1272,7 @@ private:
     }
 
     void pump_writes() {
+        bool target_throttled{};
         for (std::size_t pass = 0; pass < scheduling_order.size() * 2; ++pass) {
             if (transmit_credit_ == 0) {
                 transmit_cursor_ = (transmit_cursor_ + 1) % scheduling_order.size();
@@ -1068,6 +1285,33 @@ private:
                 continue;
             }
             auto& pending = queue.front();
+            if (pending.priority == Priority::chat && pending.offset == 0 &&
+                !pending.target.empty() && !pending.target_token_charged) {
+                auto target = pending.target;
+                std::ranges::transform(target, target.begin(), [](const unsigned char byte) {
+                    return static_cast<char>(std::tolower(byte));
+                });
+                auto found = target_buckets_.find(target);
+                if (found == target_buckets_.end()) {
+                    if (target_buckets_.size() >= 128) {
+                        const auto oldest = std::ranges::min_element(target_buckets_, {}, [](const auto& item) {
+                            return item.second.serial;
+                        });
+                        if (oldest != target_buckets_.end()) target_buckets_.erase(oldest);
+                    }
+                    found = target_buckets_.try_emplace(std::move(target)).first;
+                }
+                found->second.serial = ++target_serial_;
+                if (!found->second.bucket.take()) {
+                    queue.push_back(std::move(queue.front()));
+                    queue.pop_front();
+                    target_throttled = true;
+                    target_throttle_deferrals_.fetch_add(1, std::memory_order_relaxed);
+                    transmit_credit_ = 0;
+                    continue;
+                }
+                pending.target_token_charged = true;
+            }
             const auto remaining = pending.bytes.size() - pending.offset;
             auto amount = remaining;
             TokenBucket* bucket{};
@@ -1099,8 +1343,6 @@ private:
             if (written > 0) {
                 pending.offset += static_cast<std::size_t>(written);
                 if (bucket != nullptr) bucket->consume(static_cast<std::size_t>(written));
-                last_activity_ = Clock::now();
-                arm_deadline(options_.deadlines.idle);
                 --transmit_credit_;
                 if (pending.offset == pending.bytes.size()) {
                     const auto id = pending.id;
@@ -1129,6 +1371,16 @@ private:
             fail_connection("write-failed", "connection write failed");
             return;
         }
+        if (target_throttled && rate_timer_initialized_) {
+            set_readiness(receive_paused_ ? 0 : UV_READABLE);
+            (void)uv_timer_start(&rate_timer_, [](uv_timer_t* timer) {
+                auto* self = static_cast<Impl*>(timer->data);
+                if (self->pipeline_ == Pipeline::open) {
+                    self->set_readiness((self->receive_paused_ ? 0 : UV_READABLE) | UV_WRITABLE);
+                    self->pump_writes();
+                }
+            }, 50, 0);
+        }
     }
 
     void pump_pipeline() {
@@ -1155,7 +1407,16 @@ private:
                 fail_connection("idle-timeout", "idle deadline expired");
                 return;
             }
-            arm_deadline(options_.deadlines.idle - elapsed);
+            if (!ping_notified_ && elapsed >= options_.deadlines.ping)
+                ping_notified_ = publish(PingDue{});
+            auto remaining = options_.deadlines.idle - elapsed;
+            if (!ping_notified_) {
+                const auto until_ping = options_.deadlines.ping - elapsed;
+                // A saturated event queue must not create a 1ms timer spin.
+                remaining = std::min(remaining, until_ping > std::chrono::milliseconds::zero()
+                    ? until_ping : std::chrono::milliseconds{250});
+            }
+            arm_deadline(remaining);
         }
         if (pipeline_ == Pipeline::proxy) pump_proxy();
         else if (pipeline_ == Pipeline::tls) pump_tls();
@@ -1182,17 +1443,17 @@ private:
     }
 
     void cancel_resolve() noexcept {
-        if (resolver_active_) {
-            (void)uv_cancel(reinterpret_cast<uv_req_t*>(&resolver_));
-            resolver_active_ = false;
+        if (resolver_ != nullptr) {
+            resolver_->canceled = true;
+            (void)uv_cancel(reinterpret_cast<uv_req_t*>(&resolver_->request));
         }
     }
 
     void close_transport() noexcept {
         if (has_socket_ && options_.security == Security::tls) (void)mbedtls_ssl_close_notify(&ssl_);
-        uv_timer_stop(&happy_timer_);
-        uv_timer_stop(&deadline_timer_);
-        uv_timer_stop(&rate_timer_);
+        if (happy_timer_initialized_) uv_timer_stop(&happy_timer_);
+        if (deadline_timer_initialized_) uv_timer_stop(&deadline_timer_);
+        if (rate_timer_initialized_) uv_timer_stop(&rate_timer_);
         if (readiness_initialized_ && !readiness_closing_) {
             (void)uv_poll_stop(&readiness_);
             readiness_closing_ = true;
@@ -1218,7 +1479,7 @@ private:
             for (auto& pending : queue) {
                 if (pending.sensitive && !pending.bytes.empty())
                     mbedtls_platform_zeroize(pending.bytes.data(), pending.bytes.size());
-                release_queued_bytes(pending.bytes.size());
+                release_canceled_send(pending.bytes.size());
             }
             queue.clear();
         }
@@ -1301,16 +1562,20 @@ private:
     GenerationId generation_{};
     std::size_t queued_bytes_{};
     std::size_t queued_receive_bytes_{};
+    std::size_t reserved_send_completions_{};
+    std::size_t reserved_receive_events_{};
     std::size_t scheduler_cursor_{};
     unsigned int scheduler_credit_{scheduling_quanta[0]};
     std::size_t transmit_cursor_{};
     unsigned int transmit_credit_{scheduling_quanta[0]};
     TokenBucket chat_bucket_;
     TokenBucket bulk_bucket_;
+    std::map<std::string, TargetBucket> target_buckets_;
+    std::uint64_t target_serial_{};
     bool stopped_{true};
 
     uv_loop_t loop_{};
-    uv_getaddrinfo_t resolver_{};
+    ResolveRequest* resolver_{};
     uv_async_t command_wakeup_{};
     uv_timer_t happy_timer_{};
     uv_timer_t reconnect_timer_{};
@@ -1328,12 +1593,21 @@ private:
     std::atomic_uint64_t loop_iterations_{};
     std::atomic_uint64_t command_wakeups_{};
     std::atomic_uint64_t rejected_sensitive_bytes_wiped_{};
-    bool resolver_active_{};
+    std::atomic_uint64_t peak_queued_events_{};
+    std::atomic_uint64_t target_throttle_deferrals_{};
+    std::uint64_t resolve_serial_{};
+    bool resolve_restart_pending_{};
     bool has_socket_{};
     bool readiness_initialized_{};
     bool readiness_closing_{};
     bool intentional_close_{};
     bool receive_paused_{};
+    bool loop_initialized_{};
+    bool command_wakeup_initialized_{};
+    bool happy_timer_initialized_{};
+    bool reconnect_timer_initialized_{};
+    bool deadline_timer_initialized_{};
+    bool rate_timer_initialized_{};
     Pipeline pipeline_{Pipeline::idle};
     ProxyPhase proxy_phase_{ProxyPhase::none};
     std::vector<std::byte> proxy_input_;
@@ -1347,6 +1621,7 @@ private:
     Clock::time_point connect_started_{};
     Clock::time_point handshake_started_{};
     Clock::time_point last_activity_{};
+    bool ping_notified_{};
 
     mbedtls_ssl_context ssl_{};
     mbedtls_ssl_config tls_config_{};

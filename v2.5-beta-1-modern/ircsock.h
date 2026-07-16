@@ -5,9 +5,13 @@
 #include "ChatProt.H"
 #include "Query.H"
 #include "Resource.H"
+#include "comicchat/memory.hpp"
 #include "comicchat/net/connection_engine.hpp"
 #include "comicchat/net/ircv3.hpp"
 
+#include <atomic>
+#include <deque>
+#include <memory>
 #include <new>
 #include <string>
 #include <string_view>
@@ -443,6 +447,11 @@ public:
 
 constexpr UINT WM_COMICCHAT_NETWORK_EVENT = WM_APP + 0x17C;
 
+struct Ircv3AdapterEvent {
+	comic_chat::ircv3::Event event;
+	std::optional<comic_chat::ircv3::Message> message;
+};
+
 class CIrcSocket {
 public:
 	CIrcSocket();
@@ -464,9 +473,16 @@ public:
 	BOOL			IsSecureTransport() const { return m_bSecureTransport; }
 	BOOL			SaslSucceeded() const { return m_ircEngine.SaslSucceeded(); }
 	BOOL			RegistrationFinished() const { return m_ircEngine.RegistrationFinished(); }
-	comic_chat::net::State GetTransportState() const { return m_transportState; }
+	comicchat::net::State GetTransportState() const { return m_transportState; }
 	int			Send(void* pData, int nBytes);
-	void			PollNetworkEvents();
+	void			PollNetworkEvents(LPARAM wakeupCookie);
+	// UI-thread-only bounded handoff of typed IRCv3 state and tag context.
+	std::vector<Ircv3AdapterEvent> PollIrcv3Events(std::size_t maximum = 128);
+	std::uint64_t DroppedIrcv3Events() const { return m_droppedIrcv3Events; }
+	const comic_chat::ircv3::ServerIdentity& GetServerIdentity() const { return m_ircEngine.Identity(); }
+	std::optional<std::size_t> GetTargetLimit(std::string_view command) const {
+		return m_ircEngine.TargetLimit(command);
+	}
 	BOOL			FormatOutput(LPCSTR pszFormat, ...);
 	CHAR*			GetOutput();
 
@@ -499,28 +515,45 @@ public:
 	};
 
 private:
-	enum class AdapterError { not_open, invalid_line, line_too_long, transport_error };
-	std::expected<comic_chat::net::GenerationId, AdapterError> StartConnection(
-		LPCSTR pszServer, UINT nPort, BOOL bSecure);
-	std::expected<comic_chat::net::SendId, AdapterError> QueueProtocolLine(std::string_view wire);
-	void DispatchProtocolMessage(const comic_chat::ircv3::Message& message);
-	comic_chat::net::Priority PriorityFor(std::string_view wire) const;
-	BOOL IsSensitive(std::string_view wire) const;
+	struct WakeupState {
+		std::atomic<HWND> hwnd{NULL};
+		std::atomic<bool> pending{false};
+		std::atomic<DWORD> cookie{0};
+	};
 
-	comic_chat::net::ConnectionEngine m_connection;
+	enum class AdapterError { not_open, invalid_line, line_too_long, transport_error };
+	std::expected<comicchat::net::GenerationId, AdapterError> StartConnection(
+		LPCSTR pszServer, UINT nPort, BOOL bSecure);
+	std::expected<comicchat::net::SendId, AdapterError> QueueProtocolLine(std::string_view wire);
+	void DispatchProtocolMessage(const comic_chat::ircv3::Message& message);
+	void DispatchProtocolEvent(comic_chat::ircv3::Event event,
+		std::optional<comic_chat::ircv3::Message> message = std::nullopt);
+	comicchat::net::Priority PriorityFor(std::string_view wire) const;
+	BOOL IsSensitive(std::string_view wire) const;
+	BOOL StorePassword(std::string_view password);
+	BOOL CopyPassword(std::string* password) const;
+	BOOL HasPassword() const;
+
+	comicchat::net::ConnectionEngine m_connection;
+	std::shared_ptr<WakeupState> m_wakeupState;
 	comic_chat::ircv3::Engine m_ircEngine;
 	comic_chat::ircv3::LineFramer m_lineFramer;
-	comic_chat::net::GenerationId m_generation = 0;
-	comic_chat::net::SendId m_nextSendId = 1;
+	comicchat::net::GenerationId m_generation = 0;
+	comicchat::net::SendId m_nextSendId = 1;
 	std::vector<char> m_outputBuffer;
 	std::string m_serverHost;
 	std::string m_localAddress;
 	std::string m_userName;
-	std::string m_password;
-	comic_chat::net::State m_transportState = comic_chat::net::State::stopped;
+	// Automatic reconnect intentionally retains the account credential, but
+	// only in OS-locked, non-dumpable storage. SetAuthentication and object
+	// destruction are the explicit lifetime boundaries.
+	comicchat::LockedSecret m_password;
+	comicchat::net::State m_transportState = comicchat::net::State::stopped;
 	BOOL m_bTransportOpen = FALSE;
 	BOOL m_bSecureTransport = FALSE;
 	BOOL m_bLoginPending = FALSE;
+	std::deque<Ircv3AdapterEvent> m_ircv3Events;
+	std::uint64_t m_droppedIrcv3Events = 0;
 };
 
 

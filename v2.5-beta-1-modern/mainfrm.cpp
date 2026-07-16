@@ -57,11 +57,11 @@ BEGIN_MESSAGE_MAP(CMainFrame, CMDIFrameWnd)
 //	ON_MESSAGE(WM_SETMESSAGESTRING, OnSetMessageString)
 END_MESSAGE_MAP()
 
-LRESULT CMainFrame::OnComicChatNetworkEvent(WPARAM, LPARAM)
+LRESULT CMainFrame::OnComicChatNetworkEvent(WPARAM, LPARAM lParam)
 {
 	// The transport thread posts only a wakeup. Immutable, generation-tagged
 	// events are drained and converted into MFC state here on the UI thread.
-	serverConn.PollNetworkEvents();
+	serverConn.PollNetworkEvents(lParam);
 	return 0;
 }
 

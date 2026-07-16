@@ -10,6 +10,7 @@
 #include "saywnd.h"
 #include "ui.h"
 #include "format.h"
+#include <comicchat/sound.hpp>
 
 #include <tchar.h>
 #include "resource.h"
@@ -263,20 +264,20 @@ struct PLAYSOUNDSTRUCT
 BOOL bTryToPlaySound(const char *szPath, void *szSound) {
 	PLAYSOUNDSTRUCT * pPlaySound = (PLAYSOUNDSTRUCT *)szSound;
 	const char *szFilename = pPlaySound->pszSound;
-	CString strCompleteFile(szPath);
-	// 03/09/98 ShankuN - don't add slash for paths like C:\ (Bugfix #1279)
-	MaybeAddSlash (strCompleteFile);
-	strCompleteFile += szFilename;
+	const auto resolved = comicchat::sound::resolve(szPath, szFilename);
+	if (!resolved)
+		return FALSE;
+	const std::string completeFile = resolved->path.string();
 	UINT flags = SND_ASYNC | SND_NODEFAULT;
 	if (!pPlaySound->bStopSound)
 		flags |= SND_NOSTOP;
 	BOOL bRet;
-	if (GetFileAttributes (strCompleteFile) != (DWORD)-1L)
+	if (GetFileAttributes (completeFile.c_str()) != (DWORD)-1L)
 	{
 		switch (pPlaySound->nType)
 		{
 			case SOUNDTYPE_WAV:
-				bRet = sndPlaySound (strCompleteFile, flags);
+				bRet = sndPlaySound (completeFile.c_str(), flags);
 				break;
 			case SOUNDTYPE_MID:
 			case SOUNDTYPE_RMI:
@@ -285,7 +286,7 @@ BOOL bTryToPlaySound(const char *szPath, void *szSound) {
 					flags |= SND_SEMISYNC;
 					flags &= ~SND_ASYNC;
 				}
-				bRet = sndPlayMidiSound (strCompleteFile, flags);
+				bRet = sndPlayMidiSound (completeFile.c_str(), flags);
 				break;
 			default:
 				// Not supported, abort.
@@ -306,7 +307,7 @@ BOOL bForPath(const char *szPath, BOOL soundFunc(const char *, void *), void *pv
 		while (my_isspace(*szPath)) szPath++;
 		if (!*szPath) return FALSE;
 		if (*szPath == '"') {
-			szEndStr = _tcschr(szPath, '"');
+			szEndStr = _tcschr(szPath + 1, '"');
 			if (!szEndStr) break;
 			CString strEntry(szPath+1, szEndStr-szPath-1);
 			if (soundFunc(strEntry, pvData)) return TRUE;
@@ -334,11 +335,12 @@ FILEENUMSTRUCT * pfileenum)
 
 
 BOOL bFindAndPlaySound(const char *szSound, BOOL bStopSound, BOOL bSemiSync)  {
-	if (OurMbsStr (szSound, "..") || OurMbsPbrk (szSound, "\\:"))
+	const auto validated = comicchat::sound::validate_name(szSound ? szSound : "");
+	if (!validated)
 		return FALSE;
 
 	PLAYSOUNDSTRUCT playsound;
-	playsound.pszSound = szSound;
+	playsound.pszSound = validated->value.c_str();
 	char szExt[_MAX_EXT];
 	LPSTR pszExt;
 	_splitpath(szSound, NULL, NULL, NULL, szExt);

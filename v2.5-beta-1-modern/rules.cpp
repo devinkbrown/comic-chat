@@ -896,8 +896,7 @@ CCRule::CCRule(CCDynaRules* pDynaRules)
 	m_pEvent					= NULL;
 	m_pAction					= NULL;	
 	m_wFlags					= 0;
-	m_uPeriodStart				= 0;
-	m_uOccurrences				= 0;
+	m_floodWindow.reset();
 	m_uDelay					= 0;
 
 	UINT uCnt;
@@ -921,8 +920,7 @@ CCRule::CCRule(CCRule* pRule, CCDynaRules* pDynaRules)
 	m_prgdwMsgFormatting		= NULL;
 	m_prgdwFinalMsgFormatting	= NULL;
 
-	m_uPeriodStart				= pRule->m_uPeriodStart;
-	m_uOccurrences				= pRule->m_uOccurrences;
+	m_floodWindow				= pRule->m_floodWindow;
 
 	if (m_pDaemonExt = pRule->m_pDaemonExt)
 		m_pDaemonExt->AddRef();
@@ -1763,19 +1761,11 @@ BOOL CCRule::bUpdateDaemonExt(BOOL bResetItemLists, enumEvents eID)
 
 BOOL CCRule::bIsFlooding()
 {
-	USHORT	uNow = time(NULL) & 0xFFFF;
-	USHORT	uInterval = abs(uNow - m_uPeriodStart);
-
 	CC_ASSERT(m_pDynaRules, "m_pDynaRules is NULL in CCRule::bIsFlooding");
-
-	if (uInterval > (USHORT) m_pDynaRules->GetFloodingInterval())
-	{
-		m_uPeriodStart = uNow;
-		m_uOccurrences = 1;
-		return FALSE;
-	}
-	else
-		return !(++m_uOccurrences <= m_pDynaRules->GetFloodingOccurrences());
+	return m_floodWindow.record(
+		m_pDynaRules->GetFloodingOccurrences(),
+		std::chrono::seconds(m_pDynaRules->GetFloodingInterval()),
+		comicchat::net::FloodThreshold::over_limit);
 }
 
 

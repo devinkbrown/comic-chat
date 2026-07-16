@@ -1,0 +1,7 @@
+:irc.unreal.test 004 Alice irc.unreal.test UnrealIRCd-6.2.1 io ov
+:irc.unreal.test 005 Alice CASEMAPPING=ascii MONITOR=100 TARGMAX=PRIVMSG:4,NOTICE:4,TAGMSG:4 :supported
+:irc.unreal.test CAP * LS :message-tags batch server-time sasl=PLAIN labeled-response bot
+@time=2026-07-17T00:00:00.000Z;msgid=unreal-1;bot :Bot!u@h PRIVMSG #room :hello
+:irc.unreal.test BATCH +unreal-history chathistory #room
+@batch=unreal-history;time=2026-07-17T00:00:01.000Z :Bot!u@h PRIVMSG #room :history
+:irc.unreal.test BATCH -unreal-history

@@ -29,6 +29,7 @@
 #include "chatview.h"
 #include "status.h"
 #include "actions.h"
+#include <comicchat/sound.hpp>
 #include <mbstring.h>
 
 // To see if people are allowed a room list
@@ -1338,7 +1339,17 @@ char* PrepareSound(CUserInfo *pui, char *szMesg, CString &strNewMesg, USHORT &uM
 	BOOL		bNeedFree = FALSE;
 	if (*szSound != '"')
 		bNeedFree = CTCPUnQuoteString(&szFile);
+	const char* szAllocatedSound = bNeedFree ? szFile : NULL;
 	TRACE("Got sound %s\n", szFile);
+
+	const auto validatedSound = comicchat::sound::validate_name(szFile ? szFile : "");
+	if (!validatedSound)
+	{
+		if (bNeedFree)
+			free ((void *) szAllocatedSound);
+		return szEmpty;
+	}
+	szFile = validatedSound->value.c_str();
 
 	if (theApp.m_bPlaySounds)
 		bFindAndPlaySound(szFile, FALSE, FALSE);	// ... and don't stop currently playing sounds
@@ -1359,7 +1370,7 @@ char* PrepareSound(CUserInfo *pui, char *szMesg, CString &strNewMesg, USHORT &uM
 	strNewMesg += ")";
 
 	if (bNeedFree)
-		free ((void *) szFile);
+		free ((void *) szAllocatedSound);
 
 	uModes &= ~BM_SAY;
 	uModes |= BM_ACTION;
@@ -3411,24 +3422,16 @@ BOOL CUserInfo::IsFlooding()
 	if (!(theApp.m_uFloodFlags & FLOOD_IGNORE) || this == g_puiSelf)
 		return FALSE;
 
-	USHORT uNow = time(NULL) & 0xffff;
-	USHORT uInterval = abs(uNow - m_uIntervalStart);
-
-	if (uInterval > theApp.m_uFloodInterval)
-	{
-		m_uIntervalStart = uNow;
-		m_uMsgCount = 1;
+	const bool flooding = m_floodWindow.record(
+		theApp.m_uFloodCount,
+		std::chrono::seconds(theApp.m_uFloodInterval),
+		comicchat::net::FloodThreshold::at_limit);
+	if (!flooding)
 		return FALSE;
-	}
-	else
-	{
-		if (++m_uMsgCount < theApp.m_uFloodCount)
-			return FALSE;
 
-		// evil flooder
-		GetDefaultProto()->DoIgnoreUser(this, TRUE, TRUE);
-		return TRUE;
-	}
+	// Preserve the configured auto-ignore UX after monotonic admission rejects.
+	GetDefaultProto()->DoIgnoreUser(this, TRUE, TRUE);
+	return TRUE;
 }
 
 

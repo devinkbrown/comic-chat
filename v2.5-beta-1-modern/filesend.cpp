@@ -15,6 +15,7 @@
 #include "comicchat/net/dcc_transfer_engine.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <charconv>
 #include <cstdlib>
 #include <cstdint>
@@ -38,6 +39,12 @@ static char THIS_FILE[] = __FILE__;
 
 extern CChatApp theApp;
 
+struct TransferNotifier final {
+	std::atomic<HWND> hwnd{NULL};
+	std::atomic_bool pending{false};
+	DWORD cookie{};
+};
+
 struct FILETXINFO final {
 	FILETXINFO();
 	~FILETXINFO();
@@ -46,18 +53,21 @@ struct FILETXINFO final {
 	FILETXINFO& operator=(const FILETXINFO&) = delete;
 
 	CFileProgress *progDlg = NULL;
-	comic_chat::net::DccTransferEngine engine;
-	comic_chat::net::DccTransferHandle handle{};
+	comicchat::net::DccTransferEngine engine;
+	comicchat::net::DccTransferHandle handle{};
 	std::string recipient;
 	std::string quotedFileName;
 	std::optional<std::string> expectedPeerAddress;
 	char pathName[MAX_PATH]{};
+	char temporaryPath[MAX_PATH]{};
 	std::uint64_t fileSize = 0;
 	std::uint64_t fileOffset = 0;
 	HANDLE hFile = INVALID_HANDLE_VALUE;
 	BOOL active = FALSE;
 	BOOL sending = FALSE;
 	BOOL offerSent = FALSE;
+	BOOL overwriteApproved = FALSE;
+	std::shared_ptr<TransferNotifier> notifier;
 };
 
 #define WM_STATCHANGE       (WM_USER + 1)
@@ -77,11 +87,21 @@ constexpr std::uint64_t kMaximumDccFileBytes = 0xffff'ffffULL;
 constexpr INT_PTR kMaximumActiveFileTransfers = 8;
 constexpr INT_PTR kMaximumStoredFileTransfers = 32;
 
+DWORD NextNotifierCookie()
+{
+	static std::atomic<DWORD> next{1};
+	DWORD cookie = next.fetch_add(1, std::memory_order_relaxed);
+	if (cookie == 0)
+		cookie = next.fetch_add(1, std::memory_order_relaxed);
+	return cookie;
+}
+
 struct DccOffer final {
 	std::string fileName;
 	std::string peerAddress;
 	std::uint16_t port{};
 	std::uint64_t fileSize{};
+	comicchat::net::DccAddressScope addressScope{comicchat::net::DccAddressScope::reserved};
 };
 
 bool IsSendCommand(std::string_view value)
@@ -193,7 +213,7 @@ std::optional<std::string> LegacyAddressString(std::uint32_t address)
 			static_cast<unsigned>((address >> 8) & 0xffU),
 			static_cast<unsigned>(address & 0xffU)))
 		return std::nullopt;
-	if (!comic_chat::net::dcc_legacy_ipv4_decimal(buffer))
+	if (!comicchat::net::dcc_legacy_ipv4_decimal(buffer))
 		return std::nullopt;
 	return std::string(buffer);
 }
@@ -223,9 +243,12 @@ std::optional<DccOffer> ParseDccOffer(const char* message)
 	auto peerAddress = LegacyAddressString(*address);
 	if (!peerAddress)
 		return std::nullopt;
+	const auto scope = comicchat::net::dcc_ipv4_scope(*peerAddress);
+	if (!scope)
+		return std::nullopt;
 
 	return DccOffer{std::move(*fileName), std::move(*peerAddress),
-		static_cast<std::uint16_t>(*port), *fileSize};
+		static_cast<std::uint16_t>(*port), *fileSize, *scope};
 }
 
 std::optional<std::string> NumericPeerAddress(CUserInfo* user)
@@ -237,7 +260,7 @@ std::optional<std::string> NumericPeerAddress(CUserInfo* user)
 	if (!at || !at[1])
 		return std::nullopt;
 	std::string address(at + 1);
-	if (!comic_chat::net::dcc_legacy_ipv4_decimal(address))
+	if (!comicchat::net::dcc_legacy_ipv4_decimal(address))
 		return std::nullopt;
 	return address;
 }
@@ -248,6 +271,105 @@ void CloseTransferFile(FILETXINFO* transfer)
 		CloseHandle(transfer->hFile);
 		transfer->hFile = INVALID_HANDLE_VALUE;
 	}
+}
+
+bool IsSafeDestinationAttributes(DWORD attributes)
+{
+	return attributes != INVALID_FILE_ATTRIBUTES &&
+		!(attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT));
+}
+
+void CleanupReceivePartial(FILETXINFO* transfer)
+{
+	if (!transfer)
+		return;
+	CloseTransferFile(transfer);
+	if (transfer->temporaryPath[0]) {
+		(void)::DeleteFile(transfer->temporaryPath);
+		transfer->temporaryPath[0] = '\0';
+	}
+}
+
+bool ReserveReceivePartial(FILETXINFO* transfer, const CString& selectedPath)
+{
+	if (!transfer)
+		return false;
+	char fullPath[MAX_PATH]{};
+	char* filePart = NULL;
+	const DWORD fullLength = ::GetFullPathName(selectedPath, MAX_PATH, fullPath, &filePart);
+	if (!fullLength || fullLength >= MAX_PATH || !filePart || filePart == fullPath)
+		return false;
+	const DWORD existing = ::GetFileAttributes(fullPath);
+	if (existing != INVALID_FILE_ATTRIBUTES && !IsSafeDestinationAttributes(existing))
+		return false;
+	if (existing == INVALID_FILE_ATTRIBUTES) {
+		const DWORD error = ::GetLastError();
+		if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND)
+			return false;
+	}
+	if (!TryCopyArray(transfer->pathName, fullPath))
+		return false;
+	transfer->overwriteApproved = existing != INVALID_FILE_ATTRIBUTES;
+
+	static std::atomic<DWORD> sequence{1};
+	const int directoryLength = static_cast<int>(filePart - fullPath);
+	for (unsigned int attempt = 0; attempt < 64; ++attempt) {
+		char partialPath[MAX_PATH]{};
+		const DWORD token = sequence.fetch_add(1, std::memory_order_relaxed);
+		if (!TryFormatBuffer(partialPath, sizeof(partialPath), "%.*s.~cc-%08lx-%08lx.part",
+			directoryLength, fullPath, static_cast<unsigned long>(::GetCurrentProcessId()),
+			static_cast<unsigned long>(token)))
+			return false;
+		const HANDLE file = ::CreateFile(partialPath, GENERIC_READ | GENERIC_WRITE, 0, NULL,
+			CREATE_NEW, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN |
+				FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+		if (file == INVALID_HANDLE_VALUE) {
+			if (::GetLastError() == ERROR_FILE_EXISTS || ::GetLastError() == ERROR_ALREADY_EXISTS)
+				continue;
+			return false;
+		}
+		BY_HANDLE_FILE_INFORMATION information{};
+		if (!::GetFileInformationByHandle(file, &information) ||
+			(information.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) ||
+			!TryCopyArray(transfer->temporaryPath, partialPath)) {
+			::CloseHandle(file);
+			(void)::DeleteFile(partialPath);
+			return false;
+		}
+		transfer->hFile = file;
+		return true;
+	}
+	return false;
+}
+
+bool FinalizeReceiveFile(FILETXINFO* transfer)
+{
+	if (!transfer || transfer->sending || transfer->hFile == INVALID_HANDLE_VALUE ||
+		!transfer->temporaryPath[0])
+		return false;
+	const BOOL flushed = ::FlushFileBuffers(transfer->hFile);
+	CloseTransferFile(transfer);
+	if (!flushed) {
+		CleanupReceivePartial(transfer);
+		return false;
+	}
+	const DWORD destination = ::GetFileAttributes(transfer->pathName);
+	if (destination != INVALID_FILE_ATTRIBUTES && !IsSafeDestinationAttributes(destination)) {
+		CleanupReceivePartial(transfer);
+		return false;
+	}
+	if (!transfer->overwriteApproved && destination != INVALID_FILE_ATTRIBUTES) {
+		CleanupReceivePartial(transfer);
+		return false;
+	}
+	const DWORD flags = MOVEFILE_WRITE_THROUGH |
+		(transfer->overwriteApproved ? MOVEFILE_REPLACE_EXISTING : 0);
+	if (!::MoveFileEx(transfer->temporaryPath, transfer->pathName, flags)) {
+		CleanupReceivePartial(transfer);
+		return false;
+	}
+	transfer->temporaryPath[0] = '\0';
+	return true;
 }
 
 bool WriteAll(HANDLE file, const std::vector<std::byte>& bytes)
@@ -263,19 +385,19 @@ bool WriteAll(HANDLE file, const std::vector<std::byte>& bytes)
 	return true;
 }
 
-FileTransferError TransferErrorCategory(comic_chat::net::DccError error)
+FileTransferError TransferErrorCategory(comicchat::net::DccError error)
 {
 	switch (error) {
-	case comic_chat::net::DccError::invalid_address:
+	case comicchat::net::DccError::invalid_address:
 		return FileTransferError::address_validation;
-	case comic_chat::net::DccError::queue_full:
+	case comicchat::net::DccError::queue_full:
 		return FileTransferError::resource_limit;
-	case comic_chat::net::DccError::invalid_options:
-	case comic_chat::net::DccError::stale_transfer:
-	case comic_chat::net::DccError::protocol_error:
+	case comicchat::net::DccError::invalid_options:
+	case comicchat::net::DccError::stale_transfer:
+	case comicchat::net::DccError::protocol_error:
 		return FileTransferError::protocol;
-	case comic_chat::net::DccError::already_running:
-	case comic_chat::net::DccError::not_running:
+	case comicchat::net::DccError::already_running:
+	case comicchat::net::DccError::not_running:
 		return FileTransferError::connection;
 	}
 	return FileTransferError::protocol;
@@ -283,13 +405,33 @@ FileTransferError TransferErrorCategory(comic_chat::net::DccError error)
 
 void InstallWakeup(FILETXINFO* transfer)
 {
-	if (!transfer || !transfer->progDlg)
+	if (!transfer || !transfer->progDlg || !transfer->notifier)
 		return;
-	const HWND hwnd = transfer->progDlg->GetSafeHwnd();
-	transfer->engine.set_wakeup([hwnd]() {
-		if (hwnd)
-			::PostMessage(hwnd, WM_STATCHANGE, WP_NETWORK_EVENT, 0);
+	auto notifier = transfer->notifier;
+	notifier->hwnd.store(transfer->progDlg->GetSafeHwnd(), std::memory_order_release);
+	notifier->pending.store(false, std::memory_order_release);
+	transfer->engine.set_wakeup([weak = std::weak_ptr<TransferNotifier>(notifier)]() {
+		const auto state = weak.lock();
+		if (!state)
+			return;
+		const HWND hwnd = state->hwnd.load(std::memory_order_acquire);
+		if (!hwnd || state->pending.exchange(true, std::memory_order_acq_rel))
+			return;
+		if (!::PostMessage(hwnd, WM_STATCHANGE, WP_NETWORK_EVENT,
+			static_cast<LPARAM>(state->cookie)))
+			state->pending.store(false, std::memory_order_release);
 	});
+}
+
+void DisableWakeup(FILETXINFO* transfer)
+{
+	if (!transfer)
+		return;
+	transfer->engine.set_wakeup({});
+	if (transfer->notifier) {
+		transfer->notifier->hwnd.store(NULL, std::memory_order_release);
+		transfer->notifier->pending.store(false, std::memory_order_release);
+	}
 }
 
 void ShowTransferCapacityMessage()
@@ -303,13 +445,21 @@ void ShowTransferCapacityMessage()
 /////////////////////////////////////////////////////////////////////////////
 // CFileProgress dialog
 
-FILETXINFO::FILETXINFO() = default;
+FILETXINFO::FILETXINFO()
+	: notifier(std::make_shared<TransferNotifier>())
+{
+	if (notifier)
+		notifier->cookie = NextNotifierCookie();
+}
 
 FILETXINFO::~FILETXINFO()
 {
-	engine.set_wakeup({});
+	DisableWakeup(this);
 	engine.stop();
-	CloseTransferFile(this);
+	if (sending)
+		CloseTransferFile(this);
+	else
+		CleanupReceivePartial(this);
 }
 
 CFileProgress::CFileProgress(CWnd* pParent /*=NULL*/)
@@ -433,7 +583,7 @@ void CRoomInfo::ChatSendFile(CUserInfo* user)
 		return;
 	}
 	const std::string localAddress = serverConn.GetLocalAddress();
-	if (!comic_chat::net::dcc_legacy_ipv4_decimal(localAddress)) {
+	if (!comicchat::net::dcc_legacy_ipv4_decimal(localAddress)) {
 		AfxMessageBox(IDS_CONNECTION_FAILED);
 		return;
 	}
@@ -516,7 +666,7 @@ void CRoomInfo::ChatSendFile(CUserInfo* user)
 	FILETXINFO* activeTransfer = transfer.release();
 	InstallWakeup(activeTransfer);
 
-	comic_chat::net::DccListenOptions options;
+	comicchat::net::DccListenOptions options;
 	options.bind_address = localAddress;
 	options.advertise_address = localAddress;
 	options.expected_peer_address = activeTransfer->expectedPeerAddress;
@@ -541,10 +691,16 @@ protected:
 	BOOL OnFileNameOK() override
 	{
 		const CString pathName = GetPathName();
-		if (GetFileAttributes(pathName) == INVALID_FILE_ATTRIBUTES)
+		const DWORD attributes = GetFileAttributes(pathName);
+		if (attributes == INVALID_FILE_ATTRIBUTES)
 			return FALSE;
+		if (!IsSafeDestinationAttributes(attributes)) {
+			AfxMessageBox("Choose a regular file, not a directory or reparse target.",
+				MB_OK | MB_ICONEXCLAMATION);
+			return TRUE;
+		}
 		const HANDLE file = ::CreateFile(pathName, GENERIC_WRITE, 0, NULL,
-			OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+			OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
 		if (file == INVALID_HANDLE_VALUE) {
 			AfxMessageBox(IDS_FILERCV_SHARE, MB_OK | MB_ICONEXCLAMATION);
 			return TRUE;
@@ -566,6 +722,12 @@ void ChatReceiveFile(CUserInfo* user, char* message)
 	auto offer = ParseDccOffer(message);
 	if (!offer)
 		return;
+	if (offer->addressScope != comicchat::net::DccAddressScope::public_unicast &&
+		offer->addressScope != comicchat::net::DccAddressScope::private_network) {
+		AfxMessageBox("Rejected a DCC file offer targeting a loopback, link-local, reserved, or broadcast address.",
+			MB_OK | MB_ICONEXCLAMATION);
+		return;
+	}
 	const auto expectedPeerAddress = NumericPeerAddress(user);
 	if (expectedPeerAddress && *expectedPeerAddress != offer->peerAddress) {
 		CString warning("Rejected a DCC file offer whose address did not match ");
@@ -574,7 +736,13 @@ void ChatReceiveFile(CUserInfo* user, char* message)
 		AfxMessageBox(warning, MB_OK | MB_ICONEXCLAMATION);
 		return;
 	}
-	if (!expectedPeerAddress) {
+	if (offer->addressScope == comicchat::net::DccAddressScope::private_network) {
+		CString warning("This DCC offer targets private/LAN address ");
+		warning += offer->peerAddress.c_str();
+		warning += ". It may connect to a local service. Accept this scoped LAN transfer?";
+		if (AfxMessageBox(warning, MB_YESNO | MB_ICONEXCLAMATION) != IDYES)
+			return;
+	} else if (!expectedPeerAddress) {
 		CString warning("The sender's IRC identity does not expose a numeric address. Connect to ");
 		warning += offer->peerAddress.c_str();
 		warning += " for this DCC file transfer?";
@@ -625,7 +793,11 @@ void ChatReceiveFile(CUserInfo* user, char* message)
 
 	auto transfer = std::make_unique<FILETXINFO>();
 	const CString pathName = dialog.GetPathName();
-	if (!TryCopyArray(transfer->pathName, static_cast<LPCTSTR>(pathName))) {
+	if (!ReserveReceivePartial(transfer.get(), pathName)) {
+		CString saveError;
+		saveError.LoadString(ID_ERR_SAVE);
+		VERIFY(ReplaceToken(saveError, CString("%1"), pathName));
+		AfxMessageBox(saveError, MB_OK | MB_ICONEXCLAMATION);
 		--dialogCount;
 		return;
 	}
@@ -668,7 +840,7 @@ void ChatReceiveFile(CUserInfo* user, char* message)
 	FILETXINFO* activeTransfer = transfer.release();
 	InstallWakeup(activeTransfer);
 
-	comic_chat::net::DccConnectOptions options;
+	comicchat::net::DccConnectOptions options;
 	options.peer_address = offer->peerAddress;
 	options.port = offer->port;
 	options.file_size = offer->fileSize;
@@ -709,7 +881,7 @@ void CFileProgress::UpdateProgress(std::uint64_t bytes)
 FileTransferSnapshot CFileProgress::GetTransferSnapshot() const
 {
 	ASSERT(AfxGetThread() == AfxGetApp());
-	const auto handle = m_fileTX ? m_fileTX->handle : comic_chat::net::DccTransferHandle{};
+	const auto handle = m_fileTX ? m_fileTX->handle : comicchat::net::DccTransferHandle{};
 	return FileTransferSnapshot{
 		handle.generation,
 		handle.transfer,
@@ -728,9 +900,22 @@ void CFileProgress::FinishTransfer(BOOL completed, FileTransferError error)
 {
 	if (!m_fileTX)
 		return;
-	m_fileTX->engine.set_wakeup({});
+	DisableWakeup(m_fileTX);
 	m_fileTX->engine.stop();
-	CloseTransferFile(m_fileTX);
+	if (completed && !m_fileTX->sending) {
+		if (m_fileTX->fileOffset != m_fileTX->fileSize || !FinalizeReceiveFile(m_fileTX)) {
+			completed = FALSE;
+			error = FileTransferError::file_io;
+			CString saveError;
+			saveError.LoadString(ID_ERR_SAVE);
+			VERIFY(ReplaceToken(saveError, CString("%1"), m_fileTX->pathName));
+			AfxMessageBox(saveError, MB_OK | MB_ICONEXCLAMATION);
+		}
+	}
+	if (m_fileTX->sending)
+		CloseTransferFile(m_fileTX);
+	else if (!completed)
+		CleanupReceivePartial(m_fileTX);
 	m_fileTX->active = FALSE;
 	m_transferError = completed ? FileTransferError::none : error;
 	m_transferPhase = completed
@@ -755,16 +940,20 @@ void CFileProgress::PumpTransferEvents()
 	}
 	m_pumpingTransferEvents = true;
 	m_transferWakePending = false;
+	bool possiblyMore = false;
 	for (std::size_t batch = 0; batch < kMaximumEventBatchesPerWake; ++batch) {
 		auto events = m_fileTX->engine.poll_events(kMaximumEventBatch);
-		if (events.empty())
+		if (events.empty()) {
+			possiblyMore = false;
 			break;
+		}
+		possiblyMore = events.size() == kMaximumEventBatch;
 		for (auto& event : events) {
 			if (!m_fileTX->active || event.handle != m_fileTX->handle)
 				continue;
 			std::visit([this](auto&& body) {
 				using Body = std::remove_cvref_t<decltype(body)>;
-				if constexpr (std::is_same_v<Body, comic_chat::net::DccListening>) {
+				if constexpr (std::is_same_v<Body, comicchat::net::DccListening>) {
 					if (!m_fileTX->sending || m_fileTX->offerSent)
 						return;
 					auto* protocol = GetIrcProto();
@@ -779,7 +968,7 @@ void CFileProgress::PumpTransferEvents()
 						return;
 					}
 					m_fileTX->offerSent = TRUE;
-				} else if constexpr (std::is_same_v<Body, comic_chat::net::DccPeerOffered>) {
+				} else if constexpr (std::is_same_v<Body, comicchat::net::DccPeerOffered>) {
 					bool accept = m_fileTX->offerSent;
 					if (accept && m_fileTX->expectedPeerAddress)
 						accept = *m_fileTX->expectedPeerAddress == body.peer_address;
@@ -790,28 +979,20 @@ void CFileProgress::PumpTransferEvents()
 						accept = AfxMessageBox(prompt, MB_YESNO | MB_ICONQUESTION) == IDYES;
 					}
 					auto posted = accept
-						? m_fileTX->engine.post(comic_chat::net::DccAcceptPeer{m_fileTX->handle, body.peer})
-						: m_fileTX->engine.post(comic_chat::net::DccRejectPeer{m_fileTX->handle, body.peer});
+						? m_fileTX->engine.post(comicchat::net::DccAcceptPeer{m_fileTX->handle, body.peer})
+						: m_fileTX->engine.post(comicchat::net::DccRejectPeer{m_fileTX->handle, body.peer});
 					if (!posted)
 						FinishTransfer(FALSE, TransferErrorCategory(posted.error()));
-				} else if constexpr (std::is_same_v<Body, comic_chat::net::DccPeerConnected>) {
+				} else if constexpr (std::is_same_v<Body, comicchat::net::DccPeerConnected>) {
 					if (!m_fileTX->sending && m_fileTX->hFile == INVALID_HANDLE_VALUE) {
-						m_fileTX->hFile = ::CreateFile(m_fileTX->pathName, GENERIC_WRITE, 0, NULL,
-							CREATE_ALWAYS, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
-						if (m_fileTX->hFile == INVALID_HANDLE_VALUE) {
-							CString saveError;
-							saveError.LoadString(ID_ERR_SAVE);
-							VERIFY(ReplaceToken(saveError, CString("%1"), m_fileTX->pathName));
-							AfxMessageBox(saveError);
-							FinishTransfer(FALSE, FileTransferError::file_io);
-							return;
-						}
+						FinishTransfer(FALSE, FileTransferError::file_io);
+						return;
 					}
 					m_transferPhase = FileTransferPhase::transferring;
 					CString status;
 					status.LoadString(IDS_FILE_CONNECT);
 					GetDlgItem(IDC_CX_STATUS)->SetWindowText(status);
-				} else if constexpr (std::is_same_v<Body, comic_chat::net::DccWritableCredit>) {
+				} else if constexpr (std::is_same_v<Body, comicchat::net::DccWritableCredit>) {
 					if (!m_fileTX->sending)
 						return;
 					std::size_t credit = body.bytes;
@@ -827,7 +1008,7 @@ void CFileProgress::PumpTransferEvents()
 						}
 						bytes.resize(static_cast<std::size_t>(read));
 						const bool final = m_fileTX->fileOffset + read == m_fileTX->fileSize;
-						auto queued = m_fileTX->engine.post(comic_chat::net::DccQueueChunk{
+						auto queued = m_fileTX->engine.post(comicchat::net::DccQueueChunk{
 							m_fileTX->handle, std::move(bytes), final});
 						if (!queued) {
 							FinishTransfer(FALSE, TransferErrorCategory(queued.error()));
@@ -836,7 +1017,7 @@ void CFileProgress::PumpTransferEvents()
 						m_fileTX->fileOffset += read;
 						credit -= read;
 					}
-				} else if constexpr (std::is_same_v<Body, comic_chat::net::DccChunkReceived>) {
+				} else if constexpr (std::is_same_v<Body, comicchat::net::DccChunkReceived>) {
 					if (m_fileTX->sending || !body.bytes || m_fileTX->fileOffset > m_fileTX->fileSize ||
 						body.offset != m_fileTX->fileOffset ||
 						body.bytes->size() > m_fileTX->fileSize - m_fileTX->fileOffset) {
@@ -848,23 +1029,23 @@ void CFileProgress::PumpTransferEvents()
 						return;
 					}
 					m_fileTX->fileOffset += body.bytes->size();
-					auto committed = m_fileTX->engine.post(comic_chat::net::DccCommitReceived{
+					auto committed = m_fileTX->engine.post(comicchat::net::DccCommitReceived{
 						m_fileTX->handle, m_fileTX->fileOffset});
 					if (!committed) {
 						FinishTransfer(FALSE, TransferErrorCategory(committed.error()));
 						return;
 					}
 					UpdateProgress(m_fileTX->fileOffset);
-				} else if constexpr (std::is_same_v<Body, comic_chat::net::DccProgress>) {
+				} else if constexpr (std::is_same_v<Body, comicchat::net::DccProgress>) {
 					if (m_fileTX->sending)
 						UpdateProgress(body.peer_committed);
-				} else if constexpr (std::is_same_v<Body, comic_chat::net::DccCompleted>) {
+				} else if constexpr (std::is_same_v<Body, comicchat::net::DccCompleted>) {
 					UpdateProgress(body.bytes);
 					FinishTransfer(TRUE);
-				} else if constexpr (std::is_same_v<Body, comic_chat::net::DccClosed>) {
+				} else if constexpr (std::is_same_v<Body, comicchat::net::DccClosed>) {
 					const bool timeout = body.reason.find("timeout") != std::string::npos;
 					FinishTransfer(FALSE, timeout ? FileTransferError::timed_out : FileTransferError::connection);
-				} else if constexpr (std::is_same_v<Body, comic_chat::net::DccDiagnostic>) {
+				} else if constexpr (std::is_same_v<Body, comicchat::net::DccDiagnostic>) {
 					TRACE("DCC diagnostic [%s].\n", body.code.c_str());
 					if (body.code == "accept-timeout" || body.code == "connect-timeout" ||
 						body.code == "idle-timeout")
@@ -876,13 +1057,18 @@ void CFileProgress::PumpTransferEvents()
 			break;
 	}
 	m_pumpingTransferEvents = false;
-	if (m_transferWakePending && m_fileTX && m_fileTX->active)
-		PostMessage(WM_STATCHANGE, WP_NETWORK_EVENT, 0);
+	if ((possiblyMore || m_transferWakePending) && m_fileTX && m_fileTX->active && m_fileTX->notifier) {
+		auto notifier = m_fileTX->notifier;
+		const HWND hwnd = notifier->hwnd.load(std::memory_order_acquire);
+		if (hwnd && !notifier->pending.exchange(true, std::memory_order_acq_rel) &&
+			!::PostMessage(hwnd, WM_STATCHANGE, WP_NETWORK_EVENT,
+				static_cast<LPARAM>(notifier->cookie)))
+			notifier->pending.store(false, std::memory_order_release);
+	}
 }
 
 LRESULT CFileProgress::OnStatChange(WPARAM wParam, LPARAM lParam)
 {
-	(void)lParam;
 	CString status;
 	switch (wParam) {
 	case WP_CONNECTED:
@@ -902,6 +1088,10 @@ LRESULT CFileProgress::OnStatChange(WPARAM wParam, LPARAM lParam)
 		UpdateProgress(0);
 		break;
 	case WP_NETWORK_EVENT:
+		if (!m_fileTX || !m_fileTX->notifier ||
+			static_cast<DWORD>(lParam) != m_fileTX->notifier->cookie)
+			break;
+		m_fileTX->notifier->pending.store(false, std::memory_order_release);
 		PumpTransferEvents();
 		break;
 	default:
@@ -924,10 +1114,13 @@ BOOL CFileProgress::OnInitDialog()
 void CFileProgress::OnCancel()
 {
 	if (m_fileTX && m_fileTX->active) {
-		(void)m_fileTX->engine.post(comic_chat::net::DccCancel{m_fileTX->handle, "user cancelled"});
-		m_fileTX->engine.set_wakeup({});
+		(void)m_fileTX->engine.post(comicchat::net::DccCancel{m_fileTX->handle, "user cancelled"});
+		DisableWakeup(m_fileTX);
 		m_fileTX->engine.stop();
-		CloseTransferFile(m_fileTX);
+		if (m_fileTX->sending)
+			CloseTransferFile(m_fileTX);
+		else
+			CleanupReceivePartial(m_fileTX);
 		m_fileTX->active = FALSE;
 		m_transferPhase = FileTransferPhase::cancelled;
 		m_transferError = FileTransferError::cancelled;

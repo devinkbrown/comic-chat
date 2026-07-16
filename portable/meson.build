@@ -222,6 +222,7 @@ core = static_library(
     'src/scheduler.cpp',
     'src/text.cpp',
     'src/assets.cpp',
+    'src/sound.cpp',
     'src/render.cpp',
     'src/memory.cpp',
   ],
@@ -257,6 +258,15 @@ core_dep = declare_dependency(
   ],
 )
 
+# Compile the exact transport API surface consumed by the legacy MFC adapters.
+# The same source is an object in chat.mak, so both Clang and MSVC reject drift.
+static_library(
+  'comicchat-adapter-api-compile',
+  '../v2.5-beta-1-modern/tests/transport_adapter_api_compile.cpp',
+  include_directories: inc,
+  install: false,
+)
+
 if get_option('frontend')
   sdl_dep = dependency('sdl3', fallback: ['sdl3', 'sdl3_dep'])
   executable(
@@ -283,6 +293,7 @@ if get_option('tests')
       'tests/assets_test.cpp',
       'tests/render_test.cpp',
       'tests/memory_test.cpp',
+      'tests/sound_test.cpp',
     ],
     dependencies: [core_dep, catch2, cairo_dep, freetype_dep, harfbuzz_dep, icu_uc_dep, icu_i18n_dep, zlib_dep],
   )
@@ -292,6 +303,7 @@ if get_option('tests')
     'comicchat-ircv3-tests',
     'tests/ircv3_test.cpp',
     dependencies: core_dep,
+    cpp_args: ['-DCOMICCHAT_IRC_FIXTURE_DIR="' + meson.project_source_root() + '/tests/fixtures/irc"'],
   )
   test('comicchat-ircv3', ircv3_tests, timeout: 30)
 

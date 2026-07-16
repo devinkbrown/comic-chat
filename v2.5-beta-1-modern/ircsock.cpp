@@ -37,6 +37,7 @@ namespace {
 constexpr std::size_t kMaximumIrcWireBytes = 8191 + 512;
 constexpr std::size_t kMaximumEventBatch = 128;
 constexpr std::size_t kMaximumEventBatchesPerWake = 8;
+constexpr std::size_t kMaximumIrcv3AdapterEvents = 512;
 
 void SecureClear(std::string* value)
 {
@@ -434,6 +435,7 @@ void GetBanString(const char *szUserName, const char *szHostName, CString& strBa
 
 
 CIrcSocket::CIrcSocket()
+	: m_wakeupState(std::make_shared<WakeupState>())
 {
 	m_nMaxMsgLength = 0;
 	m_iConnected = CX_DISCONNECTED;
@@ -447,7 +449,45 @@ CIrcSocket::~CIrcSocket()
 	Close();
 
 	SecureClear(&m_userName);
-	SecureClear(&m_password);
+	m_password.clear();
+}
+
+
+BOOL CIrcSocket::StorePassword(std::string_view password)
+{
+	if (password.empty()) {
+		m_password.clear();
+		return TRUE;
+	}
+	auto locked = comicchat::LockedSecret::copy(password);
+	if (!locked) {
+		m_password.clear();
+		return FALSE;
+	}
+	m_password = std::move(*locked);
+	return TRUE;
+}
+
+
+BOOL CIrcSocket::CopyPassword(std::string* password) const
+{
+	if (!password)
+		return FALSE;
+	SecureClear(password);
+	const auto bytes = m_password.view();
+	try {
+		password->assign(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+	} catch (const std::bad_alloc&) {
+		SecureClear(password);
+		return FALSE;
+	}
+	return TRUE;
+}
+
+
+BOOL CIrcSocket::HasPassword() const
+{
+	return !m_password.view().empty();
 }
 
 
@@ -512,7 +552,7 @@ BOOL CIrcSocket::Connect(LPCSTR pszServer, UINT nPort, BOOL bSecure)
 	return StartConnection(pszServer, nPort, bSecure).has_value();
 }
 
-std::expected<comic_chat::net::GenerationId, CIrcSocket::AdapterError>
+std::expected<comicchat::net::GenerationId, CIrcSocket::AdapterError>
 CIrcSocket::StartConnection(LPCSTR pszServer, UINT nPort, BOOL bSecure)
 {
 	if (!pszServer || !*pszServer || nPort == 0 || nPort > 65535)
@@ -522,38 +562,58 @@ CIrcSocket::StartConnection(LPCSTR pszServer, UINT nPort, BOOL bSecure)
 	// this method and the member must remain valid throughout the restart.
 	std::string serverHost = pszServer;
 	Close();
-	comic_chat::net::ConnectionOptions options;
+	comicchat::net::ConnectionOptions options;
 	options.endpoint.host = serverHost;
 	options.endpoint.port = static_cast<std::uint16_t>(nPort);
-	options.security = bSecure ? comic_chat::net::Security::tls : comic_chat::net::Security::plaintext;
+	options.security = bSecure ? comicchat::net::Security::tls : comicchat::net::Security::plaintext;
 	options.server_name = serverHost;
 	options.limits.receive_bytes = 256U * 1024U;
 	options.limits.transmit_bytes = 256U * 1024U;
 	options.limits.queued_commands = 1024;
-	HWND hwnd = AfxGetMainWnd() ? AfxGetMainWnd()->GetSafeHwnd() : NULL;
-	m_connection.set_wakeup([hwnd]() {
-		if (hwnd)
-			::PostMessage(hwnd, WM_COMICCHAT_NETWORK_EVENT, 0, 0);
+	static std::atomic<DWORD> nextWakeupCookie{1};
+	DWORD cookie = nextWakeupCookie.fetch_add(1, std::memory_order_relaxed);
+	if (cookie == 0)
+		cookie = nextWakeupCookie.fetch_add(1, std::memory_order_relaxed);
+	const HWND hwnd = AfxGetMainWnd() ? AfxGetMainWnd()->GetSafeHwnd() : NULL;
+	m_wakeupState->hwnd.store(hwnd, std::memory_order_release);
+	m_wakeupState->pending.store(false, std::memory_order_release);
+	m_wakeupState->cookie.store(cookie, std::memory_order_release);
+	m_connection.set_wakeup([weak = std::weak_ptr<WakeupState>(m_wakeupState), cookie]() {
+		const auto state = weak.lock();
+		if (!state || state->cookie.load(std::memory_order_acquire) != cookie)
+			return;
+		const HWND target = state->hwnd.load(std::memory_order_acquire);
+		if (!target || state->pending.exchange(true, std::memory_order_acq_rel))
+			return;
+		if (state->cookie.load(std::memory_order_acquire) != cookie ||
+			state->hwnd.load(std::memory_order_acquire) != target ||
+			!::PostMessage(target, WM_COMICCHAT_NETWORK_EVENT, 0, static_cast<LPARAM>(cookie)))
+			state->pending.store(false, std::memory_order_release);
 	});
 	auto generation = m_connection.start(std::move(options));
-	if (!generation)
+	if (!generation) {
+		Close();
 		return std::unexpected(AdapterError::transport_error);
+	}
 	m_serverHost = std::move(serverHost);
 	m_generation = *generation;
 	m_bSecureTransport = bSecure;
 	m_bTransportOpen = TRUE;
-	m_transportState = comic_chat::net::State::resolving;
+	m_transportState = comicchat::net::State::resolving;
 	return m_generation;
 }
 
 void CIrcSocket::Close()
 {
 	m_connection.set_wakeup({});
+	m_wakeupState->hwnd.store(NULL, std::memory_order_release);
+	m_wakeupState->cookie.store(0, std::memory_order_release);
+	m_wakeupState->pending.store(false, std::memory_order_release);
 	m_connection.stop();
 	m_bTransportOpen = FALSE;
 	m_generation = 0;
 	m_localAddress.clear();
-	m_transportState = comic_chat::net::State::stopped;
+	m_transportState = comicchat::net::State::stopped;
 	m_lineFramer.Reset();
 }
 
@@ -562,21 +622,21 @@ BOOL CIrcSocket::IsOpen() const
 	return m_bTransportOpen;
 }
 
-comic_chat::net::Priority CIrcSocket::PriorityFor(std::string_view wire) const
+comicchat::net::Priority CIrcSocket::PriorityFor(std::string_view wire) const
 {
 	auto parsed = comic_chat::ircv3::Message::Parse(wire);
 	if (!parsed)
-		return comic_chat::net::Priority::bulk;
+		return comicchat::net::Priority::bulk;
 	if (parsed->command == "AUTHENTICATE" || parsed->command == "PASS")
-		return comic_chat::net::Priority::authentication;
-	if (parsed->command == "PONG")
-		return comic_chat::net::Priority::pong;
+		return comicchat::net::Priority::authentication;
+	if (parsed->command == "PING" || parsed->command == "PONG")
+		return comicchat::net::Priority::pong;
 	if (parsed->command == "CAP" || parsed->command == "NICK" || parsed->command == "USER" ||
 		parsed->command == "QUIT" || parsed->command == "MODE")
-		return comic_chat::net::Priority::control;
+		return comicchat::net::Priority::control;
 	if (parsed->command == "PRIVMSG" || parsed->command == "NOTICE")
-		return comic_chat::net::Priority::chat;
-	return comic_chat::net::Priority::bulk;
+		return comicchat::net::Priority::chat;
+	return comicchat::net::Priority::bulk;
 }
 
 BOOL CIrcSocket::IsSensitive(std::string_view wire) const
@@ -585,7 +645,8 @@ BOOL CIrcSocket::IsSensitive(std::string_view wire) const
 	if (!parsed)
 		return TRUE;
 	return parsed->command == "AUTHENTICATE" || parsed->command == "PASS" ||
-		parsed->command == "AUTH" || parsed->command == "OPER";
+		parsed->command == "AUTH" || parsed->command == "OPER" ||
+		parsed->command == "REGISTER" || parsed->command == "VERIFY";
 }
 
 int CIrcSocket::Send(void* pData, int nBytes)
@@ -601,7 +662,7 @@ int CIrcSocket::Send(void* pData, int nBytes)
 	return result ? nBytes : SOCKET_ERROR;
 }
 
-std::expected<comic_chat::net::SendId, CIrcSocket::AdapterError>
+std::expected<comicchat::net::SendId, CIrcSocket::AdapterError>
 CIrcSocket::QueueProtocolLine(std::string_view wire)
 {
 	if (!m_bTransportOpen)
@@ -612,12 +673,16 @@ CIrcSocket::QueueProtocolLine(std::string_view wire)
 	if (!prepared)
 		return std::unexpected(AdapterError::invalid_line);
 
-	comic_chat::net::Send command;
+	comicchat::net::Send command;
 	command.generation = m_generation;
 	const auto sendId = m_nextSendId++;
 	command.id = sendId;
 	command.priority = PriorityFor(*prepared);
 	command.sensitive = IsSensitive(*prepared);
+	if (const auto parsed = comic_chat::ircv3::Message::Parse(*prepared);
+		parsed && (parsed->command == "PRIVMSG" || parsed->command == "NOTICE" ||
+			parsed->command == "TAGMSG") && !parsed->params.empty())
+		command.target = parsed->params.front();
 	command.bytes.reserve(prepared->size());
 	for (const unsigned char byte : *prepared)
 		command.bytes.push_back(static_cast<std::byte>(byte));
@@ -629,34 +694,71 @@ CIrcSocket::QueueProtocolLine(std::string_view wire)
 
 void CIrcSocket::DispatchProtocolMessage(const comic_chat::ircv3::Message& message)
 {
+	if (!message.tags.empty()) {
+		comic_chat::ircv3::Event context;
+		context.type = comic_chat::ircv3::EventType::MessageContext;
+		context.source = message.prefix ? *message.prefix : std::string{};
+		context.target = message.params.empty() ? std::string{} : message.params.front();
+		context.key = message.command;
+		DispatchProtocolEvent(std::move(context), message);
+	}
 	std::string wire = message.Serialize(false);
 	std::vector<char> dispatchBuffer(wire.begin(), wire.end());
 	dispatchBuffer.push_back('\0');
 	ProcessMessage(dispatchBuffer.data());
 }
 
-void CIrcSocket::PollNetworkEvents()
+void CIrcSocket::DispatchProtocolEvent(comic_chat::ircv3::Event event,
+	std::optional<comic_chat::ircv3::Message> message)
 {
+	if (m_ircv3Events.size() >= kMaximumIrcv3AdapterEvents) {
+		m_ircv3Events.pop_front();
+		++m_droppedIrcv3Events;
+	}
+	m_ircv3Events.push_back({std::move(event), std::move(message)});
+}
+
+std::vector<Ircv3AdapterEvent> CIrcSocket::PollIrcv3Events(std::size_t maximum)
+{
+	std::vector<Ircv3AdapterEvent> events;
+	events.reserve((std::min)(maximum, m_ircv3Events.size()));
+	while (!m_ircv3Events.empty() && events.size() < maximum) {
+		events.push_back(std::move(m_ircv3Events.front()));
+		m_ircv3Events.pop_front();
+	}
+	return events;
+}
+
+void CIrcSocket::PollNetworkEvents(LPARAM wakeupCookie)
+{
+	const auto cookie = static_cast<DWORD>(wakeupCookie);
+	if (cookie == 0 || m_wakeupState->cookie.load(std::memory_order_acquire) != cookie)
+		return;
+	m_wakeupState->pending.store(false, std::memory_order_release);
+	bool possiblyMore = false;
 	for (std::size_t batch = 0; batch < kMaximumEventBatchesPerWake; ++batch) {
 		auto events = m_connection.poll_events(kMaximumEventBatch);
-		if (events.empty())
+		if (events.empty()) {
+			possiblyMore = false;
 			break;
+		}
+		possiblyMore = events.size() == kMaximumEventBatch;
 		for (auto& event : events) {
 			if (event.generation != m_generation)
 				continue;
 			std::visit([this](auto&& body) {
 			using Body = std::remove_cvref_t<decltype(body)>;
-			if constexpr (std::is_same_v<Body, comic_chat::net::StateChanged>) {
+			if constexpr (std::is_same_v<Body, comicchat::net::StateChanged>) {
 				m_transportState = body.state;
-			} else if constexpr (std::is_same_v<Body, comic_chat::net::Connected>) {
+			} else if constexpr (std::is_same_v<Body, comicchat::net::Connected>) {
 				m_localAddress = body.local_address;
-				m_transportState = comic_chat::net::State::connected;
+				m_transportState = comicchat::net::State::connected;
 				m_bSecureTransport = body.tls;
 				m_bTransportOpen = TRUE;
 				if (AfxGetMainWnd())
 					AfxGetMainWnd()->SendMessage(WM_COMMAND, ID_CONNECT_CONNECTED, 0);
 				OnConnect(0);
-			} else if constexpr (std::is_same_v<Body, comic_chat::net::BytesReceived>) {
+			} else if constexpr (std::is_same_v<Body, comicchat::net::BytesReceived>) {
 				if (!body.bytes)
 					return;
 				auto lines = m_lineFramer.Push(std::span<const std::byte>(*body.bytes));
@@ -684,6 +786,8 @@ void CIrcSocket::PollNetworkEvents()
 							return;
 						}
 					}
+					for (auto& protocolEvent : result.events)
+						DispatchProtocolEvent(std::move(protocolEvent));
 					for (const auto& outbound : result.outbound) {
 						if (!QueueProtocolLine(outbound)) {
 							TRACE0("IRC protocol control message could not be queued; closing connection.\n");
@@ -698,22 +802,34 @@ void CIrcSocket::PollNetworkEvents()
 						(void)HrIrcXLogin(FALSE);
 					}
 				}
-			} else if constexpr (std::is_same_v<Body, comic_chat::net::Closed>) {
+			} else if constexpr (std::is_same_v<Body, comicchat::net::Closed>) {
 				m_transportState = body.retry_after.count() > 0
-					? comic_chat::net::State::reconnect_wait
-					: comic_chat::net::State::stopped;
+					? comicchat::net::State::reconnect_wait
+					: comicchat::net::State::stopped;
 				if (m_bTransportOpen) {
 					m_bTransportOpen = FALSE;
 					m_localAddress.clear();
 					OnClose(WSAECONNRESET);
 				}
-			} else if constexpr (std::is_same_v<Body, comic_chat::net::Diagnostic>) {
+			} else if constexpr (std::is_same_v<Body, comicchat::net::Diagnostic>) {
 				TRACE("IRC transport diagnostic [%s].\n", body.code.c_str());
+			} else if constexpr (std::is_same_v<Body, comicchat::net::PingDue>) {
+				auto ping = m_ircEngine.PrepareKeepalivePing();
+				if (!ping || !QueueProtocolLine(*ping)) {
+					TRACE0("IRC keepalive PONG deadline expired.\n");
+					OnClose(WSAETIMEDOUT);
+				}
 			}
 			}, event.body);
 		}
 		if (events.size() < kMaximumEventBatch)
 			break;
+	}
+	if (possiblyMore && m_wakeupState->cookie.load(std::memory_order_acquire) == cookie) {
+		const HWND target = m_wakeupState->hwnd.load(std::memory_order_acquire);
+		if (target && !m_wakeupState->pending.exchange(true, std::memory_order_acq_rel) &&
+			!::PostMessage(target, WM_COMICCHAT_NETWORK_EVENT, 0, static_cast<LPARAM>(cookie)))
+			m_wakeupState->pending.store(false, std::memory_order_release);
 	}
 }
 
@@ -726,9 +842,14 @@ BOOL bSaveInSettings)
 	CChatPasswordDialog dlg (GetMyPhysicalServer (), pszUserName, FALSE);
 	if (theApp.DoModalDlg (&dlg) == IDOK)
 	{
-		SecureClear(&m_password);
-		m_password = static_cast<LPCSTR>(dlg.m_strPassword);
-		return TRUE;
+		const int length = dlg.m_strPassword.GetLength();
+		LPSTR password = dlg.m_strPassword.GetBuffer(length);
+		const BOOL stored = StorePassword(std::string_view(
+			password ? password : "", static_cast<std::size_t>(std::max(length, 0))));
+		if (password && length > 0)
+			SecureZeroMemory(password, static_cast<std::size_t>(length));
+		dlg.m_strPassword.ReleaseBuffer(0);
+		return stored;
 	}
 	else
 	{
@@ -743,6 +864,12 @@ HRESULT CIrcSocket::HrModeIsIrcXFailure()
 
 	if (m_bJustSentModeIsIrcX)
 	{
+		for (const auto& command : m_ircEngine.FinishRegistrationAfterTimeout()) {
+			if (!QueueProtocolLine(command)) {
+				OnClose(WSAENOBUFS);
+				return HRESULT_FROM_WIN32(WSAENOBUFS);
+			}
+		}
 		POSITION	pos;
 		CCQuery*	pQuery = m_queries.FindQuery(ctModeIsIrcX, &pos);
 
@@ -754,10 +881,8 @@ HRESULT CIrcSocket::HrModeIsIrcXFailure()
 
 		// Don't want to expose this error to the user, it comes from the MODE ISIRCX\r\n command on an IRC server
 		ASSERT(m_bIrcXServer == FALSE);
-		// Login Time, on IRC Server, anonymously
-		hr = HrIrcLogin(FALSE, GetMyName(), m_userName.empty() ? NULL : m_userName.c_str(),
-			GetMyRealName(), m_password.empty() ? NULL : m_password.c_str());
-		ASSERT(NOERROR == hr);
+		hr = HrIrcXLogin(FALSE);
+		m_bLoginPending = FALSE;
 		m_bJustSentModeIsIrcX = FALSE;
 		::AfxGetMainWnd()->KillTimer(ID_ISIRCXTIMEOUT);
 	}
@@ -779,6 +904,8 @@ LPCSTR szPassword,
 BOOL bPromptForPassword)
 {
 	ASSERT(szNickname);
+	(void)szPassword;
+	(void)bPromptForPassword;
 
 	if (szUserName == NULL)
 	{
@@ -795,13 +922,6 @@ BOOL bPromptForPassword)
 		} else if (*source != ' ') {
 			user.push_back(*source);
 		}
-	}
-
-	if ((szPassword == NULL || *szPassword == '\0') && bPromptForPassword &&
-			m_nAuthenticationType != authtypeNone)
-	{
-		PromptForPassword (user.c_str(), TRUE);
-		szPassword = m_password.empty() ? NULL : m_password.c_str();
 	}
 
 	// need to add EncodeString calls...
@@ -849,11 +969,32 @@ HRESULT CIrcSocket::HrIrcXLogin(BOOL)
 }
 HRESULT CIrcSocket::HrIrcSetOper(LPCSTR szUserName, LPCSTR szPassword)
 {
+	comicchat::LockedSecret promptedPassword;
+	std::string materializedPassword;
 	if (szPassword == NULL || *szPassword == '\0')
 	{
-		if (!PromptForPassword (szUserName, FALSE))
+		CChatPasswordDialog dlg(GetMyPhysicalServer(), szUserName, FALSE);
+		if (theApp.DoModalDlg(&dlg) != IDOK)
 			return S_FALSE;
-		szPassword = m_password.empty() ? NULL : m_password.c_str();
+		const int length = dlg.m_strPassword.GetLength();
+		LPSTR password = dlg.m_strPassword.GetBuffer(length);
+		auto locked = comicchat::LockedSecret::copy(std::string_view(
+			password ? password : "", static_cast<std::size_t>(std::max(length, 0))));
+		if (password && length > 0)
+			SecureZeroMemory(password, static_cast<std::size_t>(length));
+		dlg.m_strPassword.ReleaseBuffer(0);
+		if (!locked)
+			return E_OUTOFMEMORY;
+		promptedPassword = std::move(*locked);
+		const auto bytes = promptedPassword.view();
+		try {
+			materializedPassword.assign(
+				reinterpret_cast<const char*>(bytes.data()), bytes.size());
+		} catch (const std::bad_alloc&) {
+			promptedPassword.clear();
+			return E_OUTOFMEMORY;
+		}
+		szPassword = materializedPassword.c_str();
 	}
 	if (!szPassword || !*szPassword)
 		return E_INVALIDARG;
@@ -861,9 +1002,14 @@ HRESULT CIrcSocket::HrIrcSetOper(LPCSTR szUserName, LPCSTR szPassword)
 	const std::size_t capacity = std::min(
 		static_cast<std::size_t>(GetOutBuffLen()),
 		static_cast<std::size_t>(m_nMaxMsgLength) + 1);
-	if (!TryFormatBuffer(GetOutBuff(), capacity, "OPER %s %s\r\n", szUserName, szPassword))
+	if (!TryFormatBuffer(GetOutBuff(), capacity, "OPER %s %s\r\n", szUserName, szPassword)) {
+		SecureClear(&materializedPassword);
+		promptedPassword.clear();
 		return HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER);
+	}
 	GetIrcProto()->SendMessageText(GetOutBuff ());
+	SecureClear(&materializedPassword);
+	promptedPassword.clear();
 
 	return NOERROR;
 }
@@ -882,16 +1028,26 @@ void CIrcSocket::OnConnect(int nErrorCode) {
 		return;
 	}
 	// got a connection!
+	if (m_nAuthenticationType != authtypeNone && !HasPassword() &&
+		!PromptForPassword(m_userName.empty() ? GetMyUserName() : m_userName.c_str(), TRUE)) {
+		TRACE0("IRC account password was not supplied or could not be locked.\n");
+		OnClose(ERROR_CANCELLED);
+		return;
+	}
 	comic_chat::ircv3::SaslConfig sasl;
 	if (!m_userName.empty())
 		sasl.authentication_id = m_userName;
-	else if (!m_password.empty())
+	else if (HasPassword())
 		sasl.authentication_id = GetMyUserName();
-	sasl.password = m_password;
+	if (!CopyPassword(&sasl.password)) {
+		OnClose(ERROR_OUTOFMEMORY);
+		return;
+	}
 	// EXTERNAL is only valid when a client certificate is configured. The
 	// legacy settings do not expose one, so never claim it implicitly.
 	sasl.allow_external = false;
-	auto commands = m_ircEngine.BeginRegistration(sasl, GetMyName(), m_bSecureTransport != FALSE);
+	auto commands = m_ircEngine.BeginRegistration(std::move(sasl), GetMyName(), m_bSecureTransport != FALSE);
+	m_bLoginPending = TRUE;
 	SecureClear(&sasl.authentication_id);
 	SecureClear(&sasl.password);
 	SecureClear(&sasl.authorization_id);
@@ -3351,9 +3507,11 @@ LPCSTR pszCustomPkg)
 	m_nAuthenticationType = nType;
 	m_bAnonAllowed = FALSE;
 	SecureClear(&m_userName);
-	SecureClear(&m_password);
+	m_password.clear();
 	if (pszUserName)
 		m_userName = pszUserName;
-	if (pszPassword)
-		m_password = pszPassword;
+	if (pszPassword && !StorePassword(pszPassword)) {
+		SecureClear(&m_userName);
+		m_nAuthenticationType = authtypeNone;
+	}
 }

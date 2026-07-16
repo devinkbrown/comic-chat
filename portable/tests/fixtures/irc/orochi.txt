@@ -1,0 +1,7 @@
+:irc.orochi.test 004 Alice irc.orochi.test orochi-0.9 io ov
+:irc.orochi.test 005 Alice CASEMAPPING=rfc1459 MONITOR=100 TARGMAX=PRIVMSG:8,NOTICE:8,TAGMSG:8 BOT :supported
+:irc.orochi.test CAP * LS :message-tags batch server-time sasl=PLAIN bot draft/typing draft/react draft/reply draft/channel-context draft/netsplit draft/netjoin utf8-only orochi/session-sync orochi/e2ee
+@time=2026-07-17T00:00:00.000Z;msgid=orochi-1;bot;+draft/reply=prior :Bot!u@h PRIVMSG #room :hello
+:irc.orochi.test BATCH +orochi-split draft/netsplit old.example new.example
+@batch=orochi-split :Bob!u@h QUIT :split
+:irc.orochi.test BATCH -orochi-split

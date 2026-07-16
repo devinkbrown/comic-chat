@@ -7,11 +7,27 @@
 TEST_CASE("credentials live in explicitly clearable non-copyable storage") {
     auto secret = comicchat::LockedSecret::copy("correct horse battery staple");
     REQUIRE(secret.has_value());
+    CHECK(secret->is_locked());
     const auto bytes = secret->view();
     CHECK(std::string_view{reinterpret_cast<const char*>(bytes.data()), bytes.size()} ==
           "correct horse battery staple");
     secret->clear();
     CHECK(secret->view().empty());
+    CHECK_FALSE(secret->is_locked());
+}
+
+TEST_CASE("locked secrets preserve native ownership across moves and fail closed") {
+    auto source = comicchat::LockedSecret::copy("move-only");
+    REQUIRE(source);
+    auto moved = std::move(*source);
+    CHECK(source->view().empty());
+    CHECK(moved.is_locked());
+    CHECK(std::string_view{reinterpret_cast<const char*>(moved.view().data()), moved.view().size()} == "move-only");
+
+    comicchat::testing::fail_next_secret_lock();
+    const auto rejected = comicchat::LockedSecret::copy("must-lock");
+    REQUIRE_FALSE(rejected);
+    CHECK(rejected.error() == comicchat::SecretError::lock_failed);
 }
 
 TEST_CASE("frame PMR arena fails closed at its memory bound") {

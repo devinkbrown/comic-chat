@@ -14,7 +14,7 @@
 
 namespace comicchat {
 
-enum class SecretError { allocation };
+enum class SecretError { allocation, invalid_size, lock_failed };
 
 class LockedSecret final {
 public:
@@ -94,3 +94,10 @@ private:
 };
 
 } // namespace comicchat
+
+namespace comicchat::testing {
+
+// One-shot fault injection used by the native memory/connection tests.
+void fail_next_secret_lock() noexcept;
+
+} // namespace comicchat::testing

@@ -49,9 +49,13 @@ auto same_address(const sockaddr_in& left, const sockaddr_in& right) noexcept ->
 }
 
 auto valid_limits(const DccLimits& limits, const std::uint64_t file_size) noexcept -> bool {
+    constexpr auto uv_buffer_limit = static_cast<std::size_t>(
+        (std::numeric_limits<unsigned int>::max)());
     return file_size != 0 && file_size <= 0xffff'ffffULL && file_size <= limits.maximum_file_bytes &&
         limits.maximum_queued_send_bytes != 0 && limits.maximum_uncommitted_receive_bytes != 0 &&
         limits.receive_chunk_bytes != 0 &&
+        limits.maximum_queued_send_bytes <= uv_buffer_limit &&
+        limits.receive_chunk_bytes <= uv_buffer_limit &&
         limits.receive_chunk_bytes <= limits.maximum_uncommitted_receive_bytes &&
         limits.maximum_events >= 4 && limits.maximum_commands != 0;
 }
@@ -74,6 +78,32 @@ auto dcc_legacy_ipv4_decimal(const std::string_view address)
         (static_cast<std::uint32_t>(bytes[1]) << 16U) |
         (static_cast<std::uint32_t>(bytes[2]) << 8U) |
         static_cast<std::uint32_t>(bytes[3]);
+}
+
+auto dcc_ipv4_scope(const std::string_view address)
+    -> std::expected<DccAddressScope, DccError> {
+    sockaddr_in parsed{};
+    if (!parse_ipv4(address, parsed)) return std::unexpected{DccError::invalid_address};
+    const auto bytes = octets(parsed);
+    if (bytes[0] == 0) return DccAddressScope::unspecified;
+    if (bytes[0] == 127) return DccAddressScope::loopback;
+    if (bytes[0] == 169 && bytes[1] == 254) return DccAddressScope::link_local;
+    if (bytes == std::array<unsigned char, 4>{255, 255, 255, 255})
+        return DccAddressScope::limited_broadcast;
+    if (bytes[0] >= 224 && bytes[0] <= 239) return DccAddressScope::multicast;
+    if (bytes[0] >= 240) return DccAddressScope::reserved;
+    if ((bytes[0] == 192 && bytes[1] == 0 && (bytes[2] == 0 || bytes[2] == 2)) ||
+        (bytes[0] == 192 && bytes[1] == 88 && bytes[2] == 99) ||
+        (bytes[0] == 198 && (bytes[1] == 18 || bytes[1] == 19 || bytes[1] == 51) &&
+         (bytes[1] != 51 || bytes[2] == 100)) ||
+        (bytes[0] == 203 && bytes[1] == 0 && bytes[2] == 113))
+        return DccAddressScope::reserved;
+    if (bytes[0] == 10 ||
+        (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) ||
+        (bytes[0] == 192 && bytes[1] == 168) ||
+        (bytes[0] == 100 && bytes[1] >= 64 && bytes[1] <= 127))
+        return DccAddressScope::private_network;
+    return DccAddressScope::public_unicast;
 }
 
 class DccTransferEngine::Impl final {
@@ -110,9 +140,11 @@ public:
 
     auto post(DccCommand command) -> std::expected<void, DccError> {
         std::scoped_lock lock{mutex_};
-        if (stopped_) return std::unexpected{DccError::not_running};
+        if (stopped_ || !accepting_commands_) return std::unexpected{DccError::not_running};
         if (handle_of(command) != handle_) return std::unexpected{DccError::stale_transfer};
         if (commands_.size() >= limits().maximum_commands) return std::unexpected{DccError::queue_full};
+        std::size_t chunk_size{};
+        bool chunk_final{};
         if (auto* chunk = std::get_if<DccQueueChunk>(&command)) {
             if (direction_ != Direction::send || chunk->bytes.empty() || final_posted_)
                 return std::unexpected{DccError::protocol_error};
@@ -122,15 +154,12 @@ public:
             if (accepted_send_bytes_ > file_size() ||
                 chunk->bytes.size() > file_size() - accepted_send_bytes_)
                 return std::unexpected{DccError::protocol_error};
-            accepted_send_bytes_ += chunk->bytes.size();
-            queued_send_bytes_ += chunk->bytes.size();
+            chunk_size = chunk->bytes.size();
+            chunk_final = chunk->final;
             if (chunk->final) {
-                if (accepted_send_bytes_ != file_size()) {
-                    accepted_send_bytes_ -= chunk->bytes.size();
-                    queued_send_bytes_ -= chunk->bytes.size();
+                if (accepted_send_bytes_ + chunk_size != file_size()) {
                     return std::unexpected{DccError::protocol_error};
                 }
-                final_posted_ = true;
             }
         } else if (std::holds_alternative<DccCommitReceived>(command) && direction_ != Direction::receive) {
             return std::unexpected{DccError::protocol_error};
@@ -138,7 +167,18 @@ public:
                     std::holds_alternative<DccRejectPeer>(command)) && direction_ != Direction::send) {
             return std::unexpected{DccError::protocol_error};
         }
-        commands_.push_back(std::move(command));
+        try {
+            commands_.push_back(std::move(command));
+        } catch (const std::bad_alloc&) {
+            return std::unexpected{DccError::allocation_failure};
+        } catch (...) {
+            return std::unexpected{DccError::allocation_failure};
+        }
+        if (chunk_size != 0) {
+            accepted_send_bytes_ += chunk_size;
+            queued_send_bytes_ += chunk_size;
+            final_posted_ = final_posted_ || chunk_final;
+        }
         if (loop_ready_.load(std::memory_order_acquire)) (void)uv_async_send(&wakeup_handle_);
         return {};
     }
@@ -162,12 +202,20 @@ public:
     void stop() noexcept {
         {
             std::scoped_lock lock{mutex_};
-            if (stopped_) return;
             stopped_ = true;
         }
         thread_.request_stop();
         if (loop_ready_.load(std::memory_order_acquire)) (void)uv_async_send(&wakeup_handle_);
-        if (thread_.joinable()) thread_.join();
+        if (thread_.joinable() && std::this_thread::get_id() == thread_.get_id()) return;
+        if (thread_.joinable()) {
+            try {
+                thread_.join();
+            } catch (...) {
+                // Detaching is unsafe because the worker captures Impl.
+                // Self-thread stop is handled above, so fail closed.
+                std::terminate();
+            }
+        }
         std::scoped_lock lock{mutex_};
         commands_.clear();
         queued_send_bytes_ = 0;
@@ -195,8 +243,20 @@ private:
 
     auto start_common(const Direction direction, DccListenOptions listen, DccConnectOptions connect)
         -> std::expected<DccTransferHandle, DccError> {
-        std::scoped_lock lock{mutex_};
-        if (!stopped_) return std::unexpected{DccError::already_running};
+        std::unique_lock lock{mutex_};
+        if (!stopped_) {
+            if (accepting_commands_ || !thread_.joinable() ||
+                thread_.get_id() == std::this_thread::get_id())
+                return std::unexpected{DccError::already_running};
+            lock.unlock();
+            try {
+                thread_.join();
+            } catch (...) {
+                return std::unexpected{DccError::already_running};
+            }
+            lock.lock();
+            if (!stopped_) return std::unexpected{DccError::already_running};
+        }
         direction_ = direction;
         listen_options_ = std::move(listen);
         connect_options_ = std::move(connect);
@@ -228,9 +288,15 @@ private:
         ack_inflight_ = 0;
         ack_sent_ = 0;
         read_paused_ = false;
+        loop_initialized_ = false;
+        wakeup_initialized_ = false;
+        deadline_initialized_ = false;
         stopped_ = false;
+        accepting_commands_ = true;
         terminal_ = false;
-        thread_ = std::jthread{[this](const std::stop_token token) { network_loop(token); }};
+        thread_ = std::jthread{[this](const std::stop_token token) noexcept {
+            network_thread_entry(token);
+        }};
         return handle_;
     }
 
@@ -259,38 +325,130 @@ private:
         {
             std::scoped_lock lock{mutex_};
             if (stopped_) return false;
-            const bool terminal = std::holds_alternative<DccCompleted>(body) ||
-                std::holds_alternative<DccClosed>(body) || std::holds_alternative<DccDiagnostic>(body);
-            if (events_.size() >= limits().maximum_events && !terminal) return false;
-            // At most a diagnostic and a terminal state may use the reserved
-            // overflow slots. Payload events are always kept within the limit.
-            if (events_.size() >= limits().maximum_events + 2) return false;
-            events_.push_back(DccEvent{handle_, std::move(body)});
+            const auto is_terminal = [](const DccEventBody& value) {
+                return std::holds_alternative<DccCompleted>(value) ||
+                    std::holds_alternative<DccClosed>(value);
+            };
+            const bool terminal = is_terminal(body);
+            const bool diagnostic = std::holds_alternative<DccDiagnostic>(body);
+
+            auto replace_matching = [&](const auto predicate) {
+                const auto found = std::find_if(events_.begin(), events_.end(), [&](const DccEvent& event) {
+                    return predicate(event.body);
+                });
+                if (found == events_.end()) return false;
+                found->body = std::move(body);
+                return true;
+            };
+
+            bool replaced{};
+            if (terminal) {
+                // Completion and closure share one exactly-once reserved slot.
+                // The first terminal outcome is authoritative.
+                if (std::any_of(events_.begin(), events_.end(), [&](const DccEvent& event) {
+                        return is_terminal(event.body);
+                    }))
+                    return true;
+            } else if (diagnostic) {
+                replaced = replace_matching([](const DccEventBody& event) {
+                    return std::holds_alternative<DccDiagnostic>(event);
+                });
+            } else if (std::holds_alternative<DccProgress>(body)) {
+                replaced = replace_matching([](const DccEventBody& event) {
+                    return std::holds_alternative<DccProgress>(event);
+                });
+            } else if (std::holds_alternative<DccWritableCredit>(body)) {
+                const auto incoming = std::get<DccWritableCredit>(body).bytes;
+                const auto found = std::find_if(events_.begin(), events_.end(), [](const DccEvent& event) {
+                    return std::holds_alternative<DccWritableCredit>(event.body);
+                });
+                if (found != events_.end()) {
+                    auto& credit = std::get<DccWritableCredit>(found->body).bytes;
+                    const auto cap = limits().maximum_queued_send_bytes;
+                    credit = incoming > cap - std::min(credit, cap) ? cap : credit + incoming;
+                    replaced = true;
+                }
+            }
+
+            if (!replaced) {
+                const auto capacity = limits().maximum_events;
+                const auto ordinary_capacity = capacity - 2;
+                if (!terminal && !diagnostic && events_.size() >= ordinary_capacity) return false;
+                if (events_.size() >= capacity) return false;
+                events_.push_back(DccEvent{handle_, std::move(body)});
+            }
             wakeup = wakeup_;
         }
-        if (wakeup) wakeup();
+        if (wakeup) {
+            try { wakeup(); } catch (...) {}
+        }
         return true;
+    }
+
+    void publish_initialization_failure(const char* code, const char* message) noexcept {
+        terminal_ = true;
+        phase_ = Phase::terminal;
+        set_accepting_commands(false);
+        try { (void)publish(DccDiagnostic{code, message}); } catch (...) {}
+        try { (void)publish(DccClosed{"transfer initialization failed"}); } catch (...) {}
+    }
+
+    void fail_noexcept(const char* code, const char* message) noexcept {
+        try {
+            fail(code, message);
+        } catch (...) {
+            terminal_ = true;
+            phase_ = Phase::terminal;
+            set_accepting_commands(false);
+        }
+        thread_.request_stop();
+        close_network();
+    }
+
+    template <typename Function>
+    static void callback_boundary(Impl* self, Function&& function) noexcept {
+        try {
+            function();
+        } catch (...) {
+            self->fail_noexcept("callback-exception", "DCC callback failed safely");
+        }
+    }
+
+    void network_thread_entry(const std::stop_token token) noexcept {
+        try {
+            network_loop(token);
+        } catch (...) {
+            fail_noexcept("network-exception", "DCC network thread failed safely");
+        }
+        cleanup_network_loop();
+        loop_ready_.store(false, std::memory_order_release);
+        {
+            std::scoped_lock lock{mutex_};
+            stopped_ = true;
+            accepting_commands_ = false;
+            commands_.clear();
+            queued_send_bytes_ = 0;
+        }
     }
 
     void network_loop(const std::stop_token token) {
         if (uv_loop_init(&loop_) != 0) {
-            (void)publish(DccDiagnostic{"loop-init", "DCC event loop initialization failed"});
+            publish_initialization_failure("loop-init", "DCC event loop initialization failed");
             return;
         }
+        loop_initialized_ = true;
         wakeup_handle_.data = this;
         deadline_timer_.data = this;
         if (uv_async_init(&loop_, &wakeup_handle_, [](uv_async_t*) {}) != 0) {
-            (void)publish(DccDiagnostic{"handle-init", "DCC event handles could not initialize"});
-            (void)uv_loop_close(&loop_);
+            publish_initialization_failure("handle-init", "DCC event handles could not initialize");
             return;
         }
+        wakeup_initialized_ = true;
         if (uv_timer_init(&loop_, &deadline_timer_) != 0) {
-            (void)publish(DccDiagnostic{"handle-init", "DCC event handles could not initialize"});
-            uv_close(reinterpret_cast<uv_handle_t*>(&wakeup_handle_), nullptr);
-            while (uv_run(&loop_, UV_RUN_DEFAULT) != 0) {}
-            (void)uv_loop_close(&loop_);
+            publish_initialization_failure("handle-init", "DCC event handles could not initialize");
             return;
         }
+        deadline_initialized_ = true;
         loop_ready_.store(true, std::memory_order_release);
         if (direction_ == Direction::send) begin_listen();
         else begin_connect();
@@ -300,13 +458,20 @@ private:
         }
         terminal_ = true;
         close_network();
-        if (!uv_is_closing(reinterpret_cast<uv_handle_t*>(&wakeup_handle_)))
+    }
+
+    void cleanup_network_loop() noexcept {
+        if (!loop_initialized_) return;
+        close_network();
+        if (wakeup_initialized_ && !uv_is_closing(reinterpret_cast<uv_handle_t*>(&wakeup_handle_)))
             uv_close(reinterpret_cast<uv_handle_t*>(&wakeup_handle_), nullptr);
-        if (!uv_is_closing(reinterpret_cast<uv_handle_t*>(&deadline_timer_)))
+        if (deadline_initialized_ && !uv_is_closing(reinterpret_cast<uv_handle_t*>(&deadline_timer_)))
             uv_close(reinterpret_cast<uv_handle_t*>(&deadline_timer_), nullptr);
         while (uv_run(&loop_, UV_RUN_DEFAULT) != 0) {}
         (void)uv_loop_close(&loop_);
-        loop_ready_.store(false, std::memory_order_release);
+        loop_initialized_ = false;
+        wakeup_initialized_ = false;
+        deadline_initialized_ = false;
     }
 
     void begin_listen() {
@@ -355,8 +520,10 @@ private:
 
     static void listener_callback(uv_stream_t* stream, const int status) {
         auto* self = static_cast<Impl*>(stream->data);
-        if (status < 0) self->fail("accept", "DCC listener reported an accept error");
-        else self->offer_peer();
+        callback_boundary(self, [&] {
+            if (status < 0) self->fail("accept", "DCC listener reported an accept error");
+            else self->offer_peer();
+        });
     }
 
     void offer_peer() {
@@ -425,8 +592,10 @@ private:
 
     static void connect_callback(uv_connect_t* request, const int status) {
         auto* self = static_cast<Impl*>(request->data);
-        if (status < 0) self->fail("connect", "DCC connection failed");
-        else self->connected(self->connect_options_.peer_address);
+        callback_boundary(self, [&] {
+            if (status < 0) self->fail("connect", "DCC connection failed");
+            else self->connected(self->connect_options_.peer_address);
+        });
     }
 
     void connected(std::string address) {
@@ -488,15 +657,29 @@ private:
 
     static void allocate_read(uv_handle_t* handle, const std::size_t suggested, uv_buf_t* buffer) {
         auto* peer = static_cast<Peer*>(handle->data);
-        const auto* self = peer->owner;
+        auto* self = peer->owner;
+        if (self->direction_ == Direction::send) {
+            const auto amount = std::max<std::size_t>(1, std::min({
+                suggested, self->limits().receive_chunk_bytes,
+                static_cast<std::size_t>(64U * 1024U)}));
+            buffer->base = new (std::nothrow) char[amount];
+            buffer->len = buffer->base == nullptr ? 0 : amount;
+            return;
+        }
         const auto uncommitted = self->received_ - self->committed_;
         const auto receive_credit = self->limits().maximum_uncommitted_receive_bytes -
             static_cast<std::size_t>(uncommitted);
         const auto file_credit = static_cast<std::size_t>(std::min<std::uint64_t>(
             self->file_size() - self->received_, std::numeric_limits<std::size_t>::max()));
-        const auto amount = std::max<std::size_t>(1, std::min({suggested,
+        const auto amount = std::min({suggested,
             self->limits().receive_chunk_bytes, receive_credit, file_credit,
-            static_cast<std::size_t>(64U * 1024U)}));
+            static_cast<std::size_t>(64U * 1024U)});
+        if (amount == 0) {
+            (void)uv_read_stop(reinterpret_cast<uv_stream_t*>(handle));
+            self->read_paused_ = true;
+            *buffer = uv_buf_init(nullptr, 0);
+            return;
+        }
         buffer->base = new (std::nothrow) char[amount];
         buffer->len = buffer->base == nullptr ? 0 : amount;
     }
@@ -505,21 +688,30 @@ private:
         auto* peer = static_cast<Peer*>(stream->data);
         auto* self = peer->owner;
         std::unique_ptr<char[]> storage{buffer->base};
-        if (self->terminal_) return;
-        if (count < 0) {
-            self->fail(count == UV_EOF ? "early-eof" : "read",
-                       count == UV_EOF ? "DCC peer closed before completion" : "DCC read failed");
-            return;
-        }
-        if (count == 0) return;
-        self->arm_deadline(self->deadlines().idle);
-        const auto size = static_cast<std::size_t>(count);
-        if (self->direction_ == Direction::send) self->read_acknowledgements(buffer->base, size);
-        else self->read_file_bytes(buffer->base, size);
+        callback_boundary(self, [&] {
+            if (self->terminal_) return;
+            if (count == UV_ENOBUFS && self->read_paused_) return;
+            if (count < 0) {
+                self->fail(count == UV_EOF ? "early-eof" : "read",
+                           count == UV_EOF ? "DCC peer closed before completion" : "DCC read failed");
+                return;
+            }
+            if (count == 0) return;
+            self->arm_deadline(self->deadlines().idle);
+            const auto size = static_cast<std::size_t>(count);
+            if (self->direction_ == Direction::send) self->read_acknowledgements(buffer->base, size);
+            else self->read_file_bytes(buffer->base, size);
+        });
     }
 
     void start_reading() {
         if (peer_ == nullptr || terminal_) return;
+        if (direction_ == Direction::receive &&
+            (received_ == file_size() ||
+             received_ - committed_ >= limits().maximum_uncommitted_receive_bytes)) {
+            read_paused_ = true;
+            return;
+        }
         if (uv_read_start(reinterpret_cast<uv_stream_t*>(&peer_->tcp), allocate_read, read_callback) != 0) {
             fail("read-start", "DCC reading could not start");
             return;
@@ -540,6 +732,7 @@ private:
                 fail("ack-range", "DCC peer acknowledgement exceeded transmitted bytes");
                 return;
             }
+            if (value == peer_committed_) continue;
             peer_committed_ = value;
             if (!publish(DccProgress{transferred_, peer_committed_, file_size()})) {
                 fail("event-backpressure", "DCC event queue is full");
@@ -604,7 +797,8 @@ private:
             std::byte{static_cast<unsigned char>(ack_inflight_ & 0xffU)},
         };
         write_request_.data = this;
-        uv_buf_t buffer = uv_buf_init(reinterpret_cast<char*>(ack_bytes_.data()), ack_bytes_.size());
+        uv_buf_t buffer = uv_buf_init(reinterpret_cast<char*>(ack_bytes_.data()),
+                                      static_cast<unsigned int>(ack_bytes_.size()));
         write_kind_ = WriteKind::acknowledgement;
         if (uv_write(&write_request_, reinterpret_cast<uv_stream_t*>(&peer_->tcp), &buffer, 1, write_callback) != 0)
             fail("ack-write", "DCC acknowledgement could not start");
@@ -612,52 +806,56 @@ private:
 
     static void write_callback(uv_write_t* request, const int status) {
         auto* self = static_cast<Impl*>(request->data);
-        if (self->terminal_) return;
-        if (status < 0) {
-            self->fail("write", "DCC write failed");
-            return;
-        }
-        self->arm_deadline(self->deadlines().idle);
-        if (self->write_kind_ == WriteKind::file) {
-            const auto count = self->write_bytes_.size();
-            self->transferred_ += count;
-            std::size_t credit{};
-            {
-                std::scoped_lock lock{self->mutex_};
-                self->queued_send_bytes_ = count > self->queued_send_bytes_ ? 0 : self->queued_send_bytes_ - count;
-                credit = count;
-            }
-            self->write_bytes_.clear();
-            self->final_written_ = self->final_written_ || self->write_final_;
-            self->write_kind_ = WriteKind::none;
-            if (!self->publish(DccProgress{self->transferred_, self->peer_committed_, self->file_size()}) ||
-                !self->publish(DccWritableCredit{credit})) {
-                self->fail("event-backpressure", "DCC event queue is full");
+        callback_boundary(self, [&] {
+            if (self->terminal_) return;
+            if (status < 0) {
+                self->fail("write", "DCC write failed");
                 return;
             }
-            self->pump_send();
-        } else {
-            self->ack_sent_ = self->ack_inflight_;
-            self->write_kind_ = WriteKind::none;
-            if (!self->publish(DccProgress{self->received_, self->ack_sent_, self->file_size()})) {
-                self->fail("event-backpressure", "DCC event queue is full");
-                return;
+            self->arm_deadline(self->deadlines().idle);
+            if (self->write_kind_ == WriteKind::file) {
+                const auto count = self->write_bytes_.size();
+                self->transferred_ += count;
+                std::size_t credit{};
+                {
+                    std::scoped_lock lock{self->mutex_};
+                    self->queued_send_bytes_ = count > self->queued_send_bytes_ ? 0 : self->queued_send_bytes_ - count;
+                    credit = count;
+                }
+                self->write_bytes_.clear();
+                self->final_written_ = self->final_written_ || self->write_final_;
+                self->write_kind_ = WriteKind::none;
+                if (!self->publish(DccProgress{self->transferred_, self->peer_committed_, self->file_size()}) ||
+                    !self->publish(DccWritableCredit{credit})) {
+                    self->fail("event-backpressure", "DCC event queue is full");
+                    return;
+                }
+                self->pump_send();
+            } else {
+                self->ack_sent_ = self->ack_inflight_;
+                self->write_kind_ = WriteKind::none;
+                if (!self->publish(DccProgress{self->received_, self->ack_sent_, self->file_size()})) {
+                    self->fail("event-backpressure", "DCC event queue is full");
+                    return;
+                }
+                if (self->received_ == self->file_size() && self->ack_sent_ == self->file_size()) self->complete();
+                else self->pump_ack();
             }
-            if (self->received_ == self->file_size() && self->ack_sent_ == self->file_size()) self->complete();
-            else self->pump_ack();
-        }
+        });
     }
 
     void arm_deadline(const std::chrono::milliseconds duration) {
         (void)uv_timer_stop(&deadline_timer_);
         (void)uv_timer_start(&deadline_timer_, [](uv_timer_t* timer) {
             auto* self = static_cast<Impl*>(timer->data);
-            if (self->phase_ == Phase::listening || self->phase_ == Phase::offered)
-                self->fail("accept-timeout", "DCC accept deadline expired");
-            else if (self->phase_ == Phase::connecting)
-                self->fail("connect-timeout", "DCC connect deadline expired");
-            else if (self->phase_ == Phase::connected)
-                self->fail("idle-timeout", "DCC idle deadline expired");
+            callback_boundary(self, [&] {
+                if (self->phase_ == Phase::listening || self->phase_ == Phase::offered)
+                    self->fail("accept-timeout", "DCC accept deadline expired");
+                else if (self->phase_ == Phase::connecting)
+                    self->fail("connect-timeout", "DCC connect deadline expired");
+                else if (self->phase_ == Phase::connected)
+                    self->fail("idle-timeout", "DCC idle deadline expired");
+            });
         }, static_cast<std::uint64_t>(duration.count()), 0);
     }
 
@@ -666,7 +864,9 @@ private:
         terminal_ = true;
         phase_ = Phase::terminal;
         (void)uv_timer_stop(&deadline_timer_);
+        set_accepting_commands(false);
         (void)publish(DccCompleted{file_size()});
+        thread_.request_stop();
         close_network();
     }
 
@@ -675,8 +875,10 @@ private:
         terminal_ = true;
         phase_ = Phase::terminal;
         (void)uv_timer_stop(&deadline_timer_);
+        set_accepting_commands(false);
         (void)publish(DccDiagnostic{std::move(code), std::move(message)});
         (void)publish(DccClosed{"transfer failed"});
+        thread_.request_stop();
         close_network();
     }
 
@@ -685,7 +887,9 @@ private:
         terminal_ = true;
         phase_ = Phase::terminal;
         (void)uv_timer_stop(&deadline_timer_);
+        set_accepting_commands(false);
         (void)publish(DccClosed{std::move(reason)});
+        thread_.request_stop();
         close_network();
     }
 
@@ -711,6 +915,11 @@ private:
         close_peer(peer_);
     }
 
+    void set_accepting_commands(const bool accepting) noexcept {
+        std::scoped_lock lock{mutex_};
+        accepting_commands_ = accepting;
+    }
+
     mutable std::mutex mutex_;
     std::deque<DccCommand> commands_;
     std::deque<DccEvent> events_;
@@ -721,6 +930,7 @@ private:
     Direction direction_{Direction::send};
     std::jthread thread_;
     bool stopped_{true};
+    bool accepting_commands_{};
     std::size_t queued_send_bytes_{};
     std::uint64_t accepted_send_bytes_{};
     bool final_posted_{};
@@ -732,6 +942,9 @@ private:
     uv_connect_t connect_request_{};
     uv_write_t write_request_{};
     std::atomic_bool loop_ready_{};
+    bool loop_initialized_{};
+    bool wakeup_initialized_{};
+    bool deadline_initialized_{};
     bool listener_initialized_{};
     Peer* peer_{};
     Peer* pending_peer_{};

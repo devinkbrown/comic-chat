@@ -1,6 +1,8 @@
 #ifndef __USERINFO_H__
 #define __USERINFO_H__
 
+#include <comicchat/net/flood.hpp>
+
 #define UF_IGNORED		1
 #define UF_COMICUSER	2
 #define UF_DEPARTED		4
@@ -72,8 +74,7 @@ protected:
 	USHORT		m_avatarID;
 	CString     m_strAvatarRealName;
 	CString     m_strAvatarRealURL;
-	USHORT		m_uIntervalStart;		// start of current flood interval
-	UCHAR		m_uMsgCount;			// number of utterances within that period (moving average)
+	comicchat::net::MonotonicFloodWindow m_floodWindow;
 public:
 	CUserInfo();
 	CUserInfo(const char *nick, const char *fullName = NULL);

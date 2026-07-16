@@ -118,9 +118,12 @@ OBJS= \
 	"$(INTDIR)\ircproto.obj" \
 	"$(INTDIR)\ircsock.obj" \
 	"$(INTDIR)\crypto_runtime.obj" \
+	"$(INTDIR)\memory.obj" \
 	"$(INTDIR)\connection_engine.obj" \
 	"$(INTDIR)\dcc_transfer_engine.obj" \
 	"$(INTDIR)\ircv3.obj" \
+	"$(INTDIR)\sound_resolver.obj" \
+	"$(INTDIR)\transport_adapter_api_compile.obj" \
 	"$(INTDIR)\modernui.obj" \
 	"$(INTDIR)\MainFrm.obj" \
 	"$(INTDIR)\memblst.obj" \
@@ -192,6 +195,9 @@ $(LINK32_FLAGS) $(OBJS)
 "$(INTDIR)\crypto_runtime.obj" : ..\portable\src\crypto_runtime.cpp
 	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\crypto_runtime.obj" ..\portable\src\crypto_runtime.cpp
 
+"$(INTDIR)\memory.obj" : ..\portable\src\memory.cpp
+	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\memory.obj" ..\portable\src\memory.cpp
+
 "$(INTDIR)\connection_engine.obj" : ..\portable\src\net\connection_engine.cpp
 	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\connection_engine.obj" ..\portable\src\net\connection_engine.cpp
 
@@ -200,6 +206,12 @@ $(LINK32_FLAGS) $(OBJS)
 
 "$(INTDIR)\ircv3.obj" : ..\portable\src\net\ircv3.cpp
 	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\ircv3.obj" ..\portable\src\net\ircv3.cpp
+
+"$(INTDIR)\sound_resolver.obj" : ..\portable\src\sound.cpp
+	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\sound_resolver.obj" ..\portable\src\sound.cpp
+
+"$(INTDIR)\transport_adapter_api_compile.obj" : tests\transport_adapter_api_compile.cpp
+	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\transport_adapter_api_compile.obj" tests\transport_adapter_api_compile.cpp
 
 # ---- C sources ----
 {.}.c{$(INTDIR)}.obj:

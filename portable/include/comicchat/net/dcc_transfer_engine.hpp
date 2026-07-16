@@ -124,10 +124,24 @@ enum class DccError {
     invalid_address,
     invalid_options,
     protocol_error,
+    allocation_failure,
+};
+
+enum class DccAddressScope {
+    public_unicast,
+    private_network,
+    loopback,
+    link_local,
+    unspecified,
+    multicast,
+    limited_broadcast,
+    reserved,
 };
 
 [[nodiscard]] auto dcc_legacy_ipv4_decimal(std::string_view address)
     -> std::expected<std::uint32_t, DccError>;
+[[nodiscard]] auto dcc_ipv4_scope(std::string_view address)
+    -> std::expected<DccAddressScope, DccError>;
 
 class DccTransferEngine final {
 public:
@@ -144,6 +158,10 @@ public:
         -> std::expected<DccTransferHandle, DccError>;
     [[nodiscard]] auto post(DccCommand command) -> std::expected<void, DccError>;
     [[nodiscard]] auto poll_events(std::size_t maximum = 128) -> std::vector<DccEvent>;
+    // Invoked on the DCC network thread after an event is queued and after all
+    // engine locks are released. Re-entry is allowed; stop() is request-only
+    // from that thread and an external stop joins it. Exceptions are ignored.
+    // The callback must not destroy this engine while it is executing.
     void set_wakeup(std::function<void()> wakeup);
     void stop() noexcept;
     [[nodiscard]] auto handle() const noexcept -> DccTransferHandle;
