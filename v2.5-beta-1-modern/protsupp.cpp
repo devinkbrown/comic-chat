@@ -3121,7 +3121,7 @@ void ProcessNonComicsMsg(CString &str, USHORT &uModes)
 }
 
 
-BOOL bChatSendText(CString& str, USHORT uModes, BOOL bEcho, CDWordArray* prgdwFormatting, LPCTSTR szEncodedChannelName, BOOL bWhispereesFilled, BOOL bInvokedByWhisperBox)
+BOOL bChatSendText(CString str, USHORT uModes, BOOL bEcho, CDWordArray* prgdwFormatting, LPCTSTR szEncodedChannelName, BOOL bWhispereesFilled, BOOL bInvokedByWhisperBox)
 {
 	SHORT		nLenBefore = str.GetLength();
 	BOOL		bFreeTmp = FALSE;

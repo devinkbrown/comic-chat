@@ -139,7 +139,7 @@ BOOL CRtfCtrl::bShowDosKeyEntry(BOOL bPrevious)
 	CString			strText = bPrevious ? m_pDosKey->StrGetPrevEntry(&prgdwFormatting) : m_pDosKey->StrGetNextEntry(&prgdwFormatting);
 	LONG			cbLen = strText.GetLength();
 	BOOL			bRet = bSetWindowFormattedText(strText, prgdwFormatting);
-	ASSERT(bRet, "bSetWindowFormattedText failed in CRtfCtrl::bShowDosKeyEntry");
+	CC_ASSERT(bRet, "bSetWindowFormattedText failed in CRtfCtrl::bShowDosKeyEntry");
 
 	SetSel(cbLen, cbLen);
 
@@ -816,7 +816,7 @@ BOOL CRtfCtrl::bSetWindowFormattedText(CString strIn, CDWordArray *prgdwFormatti
 				//	byteBackground = wNextFormat & 0x000F;
 				//	cf2.crBackColor = GetRBGColor(byteBackground);
 				//	lr = ::SendMessage(m_hwnd, EM_SETCHARFORMAT, (WPARAM) SCF_SELECTION, (LPARAM) &cf2);		
-				//	ASSERT(lr, "EM_SETCHARFORMAT >2< failed in CTextView::iDisplayMsgText");
+				//	CC_ASSERT(lr, "EM_SETCHARFORMAT >2< failed in CTextView::iDisplayMsgText");
 				//}
 			}
 			else

@@ -200,13 +200,13 @@ BOOL CCRulesData::bLoadStrings()
 {
 	UINT uCnt, uCnt2;
 
-	ASSERT(m_bInitAlloc, "m_bInitAlloc is FALSE in CCRulesData::bLoadStrings");
+	CC_ASSERT(m_bInitAlloc, "m_bInitAlloc is FALSE in CCRulesData::bLoadStrings");
 	if (m_bStringsLoaded)
 		return TRUE;
 
 	for (uCnt = 0; uCnt < eMax; uCnt++)
 	{
-		ASSERT(m_rgpEvents[uCnt], "m_rgpEvents[uCnt] is NULL in CCRulesData::bLoadStrings");
+		CC_ASSERT(m_rgpEvents[uCnt], "m_rgpEvents[uCnt] is NULL in CCRulesData::bLoadStrings");
 
 		for (uCnt2 = 0; uCnt2 < m_rgpEvents[uCnt]->m_uParamNum; uCnt2++)
 			if (!m_rgpEvents[uCnt]->m_rgstrParamDesc[uCnt2].LoadString(m_rgpEvents[uCnt]->m_rguIDS_ParamDesc[uCnt2]))
@@ -221,7 +221,7 @@ BOOL CCRulesData::bLoadStrings()
 
 	for (uCnt = 0; uCnt < aMax; uCnt++)
 	{
-		ASSERT(m_rgpActions[uCnt], "m_rgpActions[uCnt] is NULL in CCRulesData::bLoadStrings");
+		CC_ASSERT(m_rgpActions[uCnt], "m_rgpActions[uCnt] is NULL in CCRulesData::bLoadStrings");
 
 		for (uCnt2 = 0; uCnt2 < m_rgpActions[uCnt]->m_uParamNum; uCnt2++)
 			if (!m_rgpActions[uCnt]->m_rgstrParamDesc[uCnt2].LoadString(m_rgpActions[uCnt]->m_rguIDS_ParamDesc[uCnt2]))
@@ -255,7 +255,7 @@ BOOL CCRulesData::bLoadStrings()
 
 CCEvent* CCRulesData::GetEvent(UINT uIndex)
 {
-	ASSERT(m_bInitAlloc, "m_bInitAlloc is FALSE in CCRulesData::GetEvent");
+	CC_ASSERT(m_bInitAlloc, "m_bInitAlloc is FALSE in CCRulesData::GetEvent");
 
 	return m_rgpEvents[uIndex];
 }
@@ -263,7 +263,7 @@ CCEvent* CCRulesData::GetEvent(UINT uIndex)
 
 CCAction* CCRulesData::GetAction(UINT uIndex)
 {
-	ASSERT(m_bInitAlloc, "m_bInitAlloc is FALSE in CCRulesData::GetAction");
+	CC_ASSERT(m_bInitAlloc, "m_bInitAlloc is FALSE in CCRulesData::GetAction");
 
 	return m_rgpActions[uIndex];
 }
@@ -336,16 +336,16 @@ void CCItemPtrArray::FreeRemoveAll()
 		{
 		case itUser:
 			pUser = (CUser*) GetAt(uCnt);
-			ASSERT(pUser, "pUser is NULL in CCItemPtrArray::FreeRemoveAll");
+			CC_ASSERT(pUser, "pUser is NULL in CCItemPtrArray::FreeRemoveAll");
 			pUser->Release();
 			break;
 		case itChannel:
 			pChannel = (CCChannel*) GetAt(uCnt);
-			ASSERT(pChannel, "pChannel is NULL in CCItemPtrArray::FreeRemoveAll");
+			CC_ASSERT(pChannel, "pChannel is NULL in CCItemPtrArray::FreeRemoveAll");
 			delete pChannel;
 			break;
 		default:
-			ASSERT(FALSE, "Unexpected item type in CCItemPtrArray::FreeRemoveAll");
+			CC_ASSERT(FALSE, "Unexpected item type in CCItemPtrArray::FreeRemoveAll");
 		}
 	}
 
@@ -387,11 +387,11 @@ void CCDaemonExt::AddRef()
 void CCDaemonExt::Release()
 {
 	#ifdef DEBUG
-		ASSERT(g_nDaemonsRefCount > 0, "g_nDaemonsRefCount <= 0 in CCDaemonExt::Release");
+		CC_ASSERT(g_nDaemonsRefCount > 0, "g_nDaemonsRefCount <= 0 in CCDaemonExt::Release");
 		g_nDaemonsRefCount--;
 	#endif
 
-	ASSERT(m_nRefCount > 0, "m_nRefCount <= 0 in CCDaemonExt::Release");
+	CC_ASSERT(m_nRefCount > 0, "m_nRefCount <= 0 in CCDaemonExt::Release");
 
 	if (--m_nRefCount == 0)
 		delete this;
@@ -400,14 +400,14 @@ void CCDaemonExt::Release()
 
 BOOL CCDaemonExt::bAllocNewItemList(UINT uListCount = 1)
 {
-	ASSERT(uListCount == 1 || uListCount == 2, "uListCount out of range in CCDaemonExt::bAllocNewItemList");
+	CC_ASSERT(uListCount == 1 || uListCount == 2, "uListCount out of range in CCDaemonExt::bAllocNewItemList");
 
 	BOOL bRet = TRUE;
 	CCItemPtrArray* pNewItemList;
 
 	for (UINT uCnt = 0; uCnt < uListCount && bRet; uCnt++)
 	{
-		ASSERT(m_it == itUser || m_it == itChannel, "Unexpected item type in CCDaemonExt::bAllocNewItemList");
+		CC_ASSERT(m_it == itUser || m_it == itChannel, "Unexpected item type in CCDaemonExt::bAllocNewItemList");
 		pNewItemList = (CCItemPtrArray*) new CCItemPtrArray(m_it);
 		if (!pNewItemList)
 			return FALSE;
@@ -432,7 +432,7 @@ BOOL CCDaemonExt::bCleanUpItemLists()
     for (pos = m_itemLists.GetHeadPosition(); pos != NULL; )
     {
 		pItemList = (CCItemPtrArray*) m_itemLists.GetNext(pos);
-		ASSERT(pItemList, "pItemList is NULL in CCDaemonExt::bCleanUpItemLists");
+		CC_ASSERT(pItemList, "pItemList is NULL in CCDaemonExt::bCleanUpItemLists");
 		delete pItemList;	// does a call to FreeRemoveAll()
 	}
 
@@ -453,31 +453,31 @@ BOOL CCDaemonExt::bAddChannelToCurrentList(CString& strChannelName)
 	pChannel->m_strChannelName = strChannelName;
 
 	// Current list is most recently add channel list in m_itemLists
-	ASSERT(m_itemLists.GetCount() >= 2, "Unexpected channel list count in CCDaemonExt::bAddChannelToCurrentList");
+	CC_ASSERT(m_itemLists.GetCount() >= 2, "Unexpected channel list count in CCDaemonExt::bAddChannelToCurrentList");
 	CCItemPtrArray	*pCurrentItemList = (CCItemPtrArray*) m_itemLists.GetTail();
 
-	ASSERT(pCurrentItemList, "pCurrentItemList is NULL in CCDaemonExt::bAddChannelToCurrentList");
+	CC_ASSERT(pCurrentItemList, "pCurrentItemList is NULL in CCDaemonExt::bAddChannelToCurrentList");
 	return pCurrentItemList->Add((void*) pChannel) >= 0;
 }
 
 
 BOOL CCDaemonExt::bAddUserToCurrentList(CUser* pUser)
 {	
-	ASSERT(pUser, "pUser is NULL in CCDaemonExt::bAddUserToCurrentList");
+	CC_ASSERT(pUser, "pUser is NULL in CCDaemonExt::bAddUserToCurrentList");
 
 	// Current list is most recently add user list in m_itemLists
-	ASSERT(m_itemLists.GetCount() >= 2, "Unexpected user list count in CCDaemonExt::bAddUserToCurrentList");
+	CC_ASSERT(m_itemLists.GetCount() >= 2, "Unexpected user list count in CCDaemonExt::bAddUserToCurrentList");
 	CCItemPtrArray	*pCurrentItemList = (CCItemPtrArray*) m_itemLists.GetTail();
 
-	ASSERT(pCurrentItemList, "pCurrentItemList is NULL in CCDaemonExt::bAddUserToCurrentList");
+	CC_ASSERT(pCurrentItemList, "pCurrentItemList is NULL in CCDaemonExt::bAddUserToCurrentList");
 	return pCurrentItemList->Add((void*) pUser) >= 0;
 }
 
 
 BOOL CCDaemonExt::bOnEndOfListing(CCDynaRules* pDynaRules, CCRule* pRule, enumQueryPurpose qp)
 {
-	ASSERT(pDynaRules, "pDynaRules is NULL in CCDaemonExt::bOnEndOfListing");
-	ASSERT(pRule, "pRule is NULL in CCDaemonExt::bOnEndOfListing");
+	CC_ASSERT(pDynaRules, "pDynaRules is NULL in CCDaemonExt::bOnEndOfListing");
+	CC_ASSERT(pRule, "pRule is NULL in CCDaemonExt::bOnEndOfListing");
 	
 	BOOL			bRet;
 	POSITION		posPrevious, posCurrent;
@@ -489,20 +489,20 @@ BOOL CCDaemonExt::bOnEndOfListing(CCDynaRules* pDynaRules, CCRule* pRule, enumQu
 		case qpOnDisconnectEvent:
 		case qpOnNewRoomEvent:
 		{
-			ASSERT(m_itemLists.GetCount() >= 2, "Unexpected list count in CCDaemonExt::bOnEndOfListing");
+			CC_ASSERT(m_itemLists.GetCount() >= 2, "Unexpected list count in CCDaemonExt::bOnEndOfListing");
 
 			// pPreviousItemList and pCurrentItemList are the two most recent user lists
 			posPrevious = posCurrent = m_itemLists.GetTailPosition();
-			ASSERT(posCurrent, "posCurrent is NULL in CCDaemonExt::bOnEndOfListing");
+			CC_ASSERT(posCurrent, "posCurrent is NULL in CCDaemonExt::bOnEndOfListing");
 			pCurrentItemList = (CCItemPtrArray*) m_itemLists.GetPrev(posPrevious);
-			ASSERT(posPrevious, "posPrevious is NULL in CCDaemonExt::bOnEndOfListing");
+			CC_ASSERT(posPrevious, "posPrevious is NULL in CCDaemonExt::bOnEndOfListing");
 			pPreviousItemList = (CCItemPtrArray*) m_itemLists.GetAt(posPrevious);
 
-			ASSERT(pCurrentItemList, "pCurrentItemList is NULL in CCDaemonExt::bOnEndOfListing");
-			ASSERT(pPreviousItemList, "pPreviousItemList is NULL in CCDaemonExt::bOnEndOfListing");
+			CC_ASSERT(pCurrentItemList, "pCurrentItemList is NULL in CCDaemonExt::bOnEndOfListing");
+			CC_ASSERT(pPreviousItemList, "pPreviousItemList is NULL in CCDaemonExt::bOnEndOfListing");
 
-			ASSERT(pPreviousItemList->m_nCredits > 0, "pPreviousItemList->m_nCredits <= 0 in CCDaemonExt::bOnEndOfListing");
-			ASSERT(pCurrentItemList->m_nCredits > 0, "pCurrentItemList->m_nCredits <= 0 in CCDaemonExt::bOnEndOfListing");
+			CC_ASSERT(pPreviousItemList->m_nCredits > 0, "pPreviousItemList->m_nCredits <= 0 in CCDaemonExt::bOnEndOfListing");
+			CC_ASSERT(pCurrentItemList->m_nCredits > 0, "pCurrentItemList->m_nCredits <= 0 in CCDaemonExt::bOnEndOfListing");
 
 			// Prepare next iteration: Add a new list to the user list list
 			if (!bAllocNewItemList())
@@ -517,14 +517,14 @@ BOOL CCDaemonExt::bOnEndOfListing(CCDynaRules* pDynaRules, CCRule* pRule, enumQu
 				// Check which users are in the previous list and not in the current one
 				bRet = bTreatOldItems(pDynaRules, pRule, pPreviousItemList, pCurrentItemList);
 
-			ASSERT(bRet, "bTreat<New|Old>Items call failed in CCDaemonExt::bOnEndOfListing");
+			CC_ASSERT(bRet, "bTreat<New|Old>Items call failed in CCDaemonExt::bOnEndOfListing");
 
 			// An action might have emptied the m_itemLists - Fix for #2542
 			if (!m_bClearedItemLists)
 			{
 				// Empty and remove oldest user list
 				pPreviousItemList->m_nCredits--;
-				ASSERT(pPreviousItemList->m_nCredits >= 0, "pPreviousItemList->m_nCredits < 0 in CCDaemonExt::bOnEndOfListing");
+				CC_ASSERT(pPreviousItemList->m_nCredits >= 0, "pPreviousItemList->m_nCredits < 0 in CCDaemonExt::bOnEndOfListing");
 				if (0 == pPreviousItemList->m_nCredits)
 				{
 					pPreviousItemList->FreeRemoveAll();
@@ -533,7 +533,7 @@ BOOL CCDaemonExt::bOnEndOfListing(CCDynaRules* pDynaRules, CCRule* pRule, enumQu
 				}
 
 				pCurrentItemList->m_nCredits--;
-				ASSERT(pCurrentItemList->m_nCredits >= 0, "pCurrentItemList->m_nCredits < 0 in CCDaemonExt::bOnEndOfListing");
+				CC_ASSERT(pCurrentItemList->m_nCredits >= 0, "pCurrentItemList->m_nCredits < 0 in CCDaemonExt::bOnEndOfListing");
 				if (0 == pCurrentItemList->m_nCredits)
 				{
 					pCurrentItemList->FreeRemoveAll();
@@ -544,7 +544,7 @@ BOOL CCDaemonExt::bOnEndOfListing(CCDynaRules* pDynaRules, CCRule* pRule, enumQu
 			return bRet;
 		}
 		default:
-			ASSERT(FALSE, "Unexpected qp value in CCDaemonExt::bOnEndOfListing");
+			CC_ASSERT(FALSE, "Unexpected qp value in CCDaemonExt::bOnEndOfListing");
 	}
 	return TRUE;
 }
@@ -553,12 +553,12 @@ BOOL CCDaemonExt::bOnEndOfListing(CCDynaRules* pDynaRules, CCRule* pRule, enumQu
 BOOL CCDaemonExt::bTreatNewItems(CCDynaRules* pDynaRules, CCRule* pRule, CCItemPtrArray* pPreviousItemList, CCItemPtrArray* pCurrentItemList)
 {
 	// Find and treat users that are in pCurrentItemList but not in pPreviousItemList
-	ASSERT(m_it == itUser || m_it == itChannel, "Unexpected item type in CCDaemonExt::bTreatNewItems");
-	ASSERT(pDynaRules, "pDynaRules is NULL in CCDaemonExt::bTreatNewItems");
-	ASSERT(pRule, "pRule is NULL in CCDaemonExt::bTreatNewItems");
+	CC_ASSERT(m_it == itUser || m_it == itChannel, "Unexpected item type in CCDaemonExt::bTreatNewItems");
+	CC_ASSERT(pDynaRules, "pDynaRules is NULL in CCDaemonExt::bTreatNewItems");
+	CC_ASSERT(pRule, "pRule is NULL in CCDaemonExt::bTreatNewItems");
 
-	ASSERT(pPreviousItemList, "pPreviousItemList is NULL in CCDaemonExt::bTreatNewItems");
-	ASSERT(pCurrentItemList, "pCurrentItemList is NULL in CCDaemonExt::bTreatNewItems");
+	CC_ASSERT(pPreviousItemList, "pPreviousItemList is NULL in CCDaemonExt::bTreatNewItems");
+	CC_ASSERT(pCurrentItemList, "pCurrentItemList is NULL in CCDaemonExt::bTreatNewItems");
 
 	BOOL		bFoundPrevious;
 
@@ -574,7 +574,7 @@ BOOL CCDaemonExt::bTreatNewItems(CCDynaRules* pDynaRules, CCRule* pRule, CCItemP
 	for (uCurrentCnt = 0; uCurrentCnt < uCurrentItems; uCurrentCnt++)
 	{
 		pvCurrentItem = pCurrentItemList->GetAt(uCurrentCnt);
-		ASSERT(pvCurrentItem, "pvCurrentItem is NULL in CCDaemonExt::bTreatNewItems");
+		CC_ASSERT(pvCurrentItem, "pvCurrentItem is NULL in CCDaemonExt::bTreatNewItems");
 
 		if (itUser == m_it)
 			pCurrentUser = (CUser*) pvCurrentItem;
@@ -585,7 +585,7 @@ BOOL CCDaemonExt::bTreatNewItems(CCDynaRules* pDynaRules, CCRule* pRule, CCItemP
 		for (uPreviousCnt = 0; uPreviousCnt < uPreviousItems; uPreviousCnt++)
 		{
 			pvPreviousItem = pPreviousItemList->GetAt(uPreviousCnt);
-			ASSERT(pvPreviousItem, "pvPreviousItem is NULL in CCDaemonExt::bTreatNewItems");
+			CC_ASSERT(pvPreviousItem, "pvPreviousItem is NULL in CCDaemonExt::bTreatNewItems");
 			if (itUser == m_it)
 			{
 				pPreviousUser = (CUser*) pvPreviousItem;
@@ -613,12 +613,12 @@ BOOL CCDaemonExt::bTreatNewItems(CCDynaRules* pDynaRules, CCRule* pRule, CCItemP
 			
 			if (m_it == itUser)
 			{
-				ASSERT(pCurrentUser, "pCurrentUser is NULL in CCDaemonExt::bTreatNewItems");
+				CC_ASSERT(pCurrentUser, "pCurrentUser is NULL in CCDaemonExt::bTreatNewItems");
 				strCurrentIdentity = pCurrentUser->m_strNickname + "!" + pCurrentUser->m_strIdentity;
 			}
 			else
 			{
-				ASSERT(pCurrentChannel, "pCurrentChannel is NULL in CCDaemonExt::bTreatNewItems");
+				CC_ASSERT(pCurrentChannel, "pCurrentChannel is NULL in CCDaemonExt::bTreatNewItems");
 				strCurrentChannelTmp = pCurrentChannel->m_strChannelName;
 			}
 
@@ -632,7 +632,7 @@ BOOL CCDaemonExt::bTreatNewItems(CCDynaRules* pDynaRules, CCRule* pRule, CCItemP
 
 			pDynaRules->bReplaceKeyActionParams(pRule);
 
-			ASSERT(pDynaRules->m_pfExecuteAction, "m_pfExecuteAction is NULL in CCDaemonExt::bTreatNewItems");
+			CC_ASSERT(pDynaRules->m_pfExecuteAction, "m_pfExecuteAction is NULL in CCDaemonExt::bTreatNewItems");
 
 			CCActionContext actCtx;
 
@@ -647,12 +647,12 @@ BOOL CCDaemonExt::bTreatNewItems(CCDynaRules* pDynaRules, CCRule* pRule, CCItemP
 BOOL CCDaemonExt::bTreatOldItems(CCDynaRules* pDynaRules, CCRule* pRule, CCItemPtrArray* pPreviousItemList, CCItemPtrArray* pCurrentItemList)
 {
 	// Find and treat users that are in pPreviousItemList but not in pCurrentItemList
-	ASSERT(pDynaRules, "pDynaRules is NULL in CCDaemonExt::bTreatOldItems");
-	ASSERT(pRule, "pRule is NULL in CCDaemonExt::bTreatOldItems");
+	CC_ASSERT(pDynaRules, "pDynaRules is NULL in CCDaemonExt::bTreatOldItems");
+	CC_ASSERT(pRule, "pRule is NULL in CCDaemonExt::bTreatOldItems");
 
-	ASSERT(pPreviousItemList, "pPreviousItemList is NULL in CCDaemonExt::bTreatOldItems");
-	ASSERT(pCurrentItemList, "pCurrentItemList is NULL in CCDaemonExt::bTreatOldItems");
-	ASSERT(m_it == itUser, "Unexpected item type in CCDaemonExt::bTreatOldItems");	// for now there is no OnRoomClosed event
+	CC_ASSERT(pPreviousItemList, "pPreviousItemList is NULL in CCDaemonExt::bTreatOldItems");
+	CC_ASSERT(pCurrentItemList, "pCurrentItemList is NULL in CCDaemonExt::bTreatOldItems");
+	CC_ASSERT(m_it == itUser, "Unexpected item type in CCDaemonExt::bTreatOldItems");	// for now there is no OnRoomClosed event
 
 	BOOL	bFoundCurrent;
 
@@ -666,12 +666,12 @@ BOOL CCDaemonExt::bTreatOldItems(CCDynaRules* pDynaRules, CCRule* pRule, CCItemP
 	for (uPreviousCnt = 0; uPreviousCnt < uPreviousItems; uPreviousCnt++)
 	{
 		pPreviousUser = (CUser*) pPreviousItemList->GetAt(uPreviousCnt);
-		ASSERT(pPreviousUser, "pPreviousUser is NULL in CCDaemonExt::bTreatOldItems");
+		CC_ASSERT(pPreviousUser, "pPreviousUser is NULL in CCDaemonExt::bTreatOldItems");
 		bFoundCurrent = FALSE;
 		for (uCurrentCnt = 0; uCurrentCnt < uCurrentItems; uCurrentCnt++)
 		{
 			pCurrentUser = (CUser*) pCurrentItemList->GetAt(uCurrentCnt);
-			ASSERT(pCurrentUser, "pCurrentUser is NULL in CCDaemonExt::bTreatOldItems");
+			CC_ASSERT(pCurrentUser, "pCurrentUser is NULL in CCDaemonExt::bTreatOldItems");
 			if (pCurrentUser->m_strIdentity == pPreviousUser->m_strIdentity)
 			{
 				bFoundCurrent = TRUE;
@@ -694,7 +694,7 @@ BOOL CCDaemonExt::bTreatOldItems(CCDynaRules* pDynaRules, CCRule* pRule, CCItemP
 
 			pDynaRules->bReplaceKeyActionParams(pRule);
 
-			ASSERT(pDynaRules->m_pfExecuteAction, "m_pfExecuteAction is NULL in CCDaemonExt::bTreatOldItems");
+			CC_ASSERT(pDynaRules->m_pfExecuteAction, "m_pfExecuteAction is NULL in CCDaemonExt::bTreatOldItems");
 
 			CCActionContext actCtx;
 
@@ -708,9 +708,9 @@ BOOL CCDaemonExt::bTreatOldItems(CCDynaRules* pDynaRules, CCRule* pRule, CCItemP
 
 BOOL CCDaemonExt::bOnEndOfListing(CCDynaNotifs* pDynaNotifs, CCNotif* pNotif)
 {
-	ASSERT(pDynaNotifs, "pDynaNotifs is NULL in CCDaemonExt::bOnEndOfListing");
-	ASSERT(pNotif, "pNotif is NULL in CCDaemonExt::bOnEndOfListing");
-	ASSERT(m_itemLists.GetCount() >= 2, "Unexpected list count in CCDaemonExt::bOnEndOfListing");
+	CC_ASSERT(pDynaNotifs, "pDynaNotifs is NULL in CCDaemonExt::bOnEndOfListing");
+	CC_ASSERT(pNotif, "pNotif is NULL in CCDaemonExt::bOnEndOfListing");
+	CC_ASSERT(m_itemLists.GetCount() >= 2, "Unexpected list count in CCDaemonExt::bOnEndOfListing");
 
 	BOOL			bRet;
 	POSITION		posPrevious, posCurrent;
@@ -720,16 +720,16 @@ BOOL CCDaemonExt::bOnEndOfListing(CCDynaNotifs* pDynaNotifs, CCNotif* pNotif)
 
 	// pPreviousItemList and pCurrentItemList are the two most recent user lists
 	posPrevious = posCurrent = m_itemLists.GetTailPosition();
-	ASSERT(posCurrent, "posCurrent is NULL in CCDaemonExt::bOnEndOfListing");
+	CC_ASSERT(posCurrent, "posCurrent is NULL in CCDaemonExt::bOnEndOfListing");
 	pCurrentItemList = (CCItemPtrArray*) m_itemLists.GetPrev(posPrevious);
-	ASSERT(posPrevious, "posPrevious is NULL in CCDaemonExt::bOnEndOfListing");
+	CC_ASSERT(posPrevious, "posPrevious is NULL in CCDaemonExt::bOnEndOfListing");
 	pPreviousItemList = (CCItemPtrArray*) m_itemLists.GetAt(posPrevious);
 
-	ASSERT(pCurrentItemList, "pCurrentItemList is NULL in CCDaemonExt::bOnEndOfListing");
-	ASSERT(pPreviousItemList, "pPreviousItemList is NULL in CCDaemonExt::bOnEndOfListing");
+	CC_ASSERT(pCurrentItemList, "pCurrentItemList is NULL in CCDaemonExt::bOnEndOfListing");
+	CC_ASSERT(pPreviousItemList, "pPreviousItemList is NULL in CCDaemonExt::bOnEndOfListing");
 
-	ASSERT(pPreviousItemList->m_nCredits > 0, "pPreviousItemList->m_nCredits <= 0 in CCDaemonExt::bOnEndOfListing");
-	ASSERT(pCurrentItemList->m_nCredits > 0, "pCurrentItemList->m_nCredits <= 0 in CCDaemonExt::bOnEndOfListing");
+	CC_ASSERT(pPreviousItemList->m_nCredits > 0, "pPreviousItemList->m_nCredits <= 0 in CCDaemonExt::bOnEndOfListing");
+	CC_ASSERT(pCurrentItemList->m_nCredits > 0, "pCurrentItemList->m_nCredits <= 0 in CCDaemonExt::bOnEndOfListing");
 
 	// Prepare next iteration: Add a new list to the user list list
 	if (!bAllocNewItemList())
@@ -737,15 +737,15 @@ BOOL CCDaemonExt::bOnEndOfListing(CCDynaNotifs* pDynaNotifs, CCNotif* pNotif)
 
 	// Check which users are in the previous list and not in the current one -> gone users
 	bRet = bTreatOldItems(pDynaNotifs, pNotif, pPreviousItemList, pCurrentItemList);
-	ASSERT(bRet, "bTreatOldItems call failed in CCDaemonExt::bOnEndOfListing");
+	CC_ASSERT(bRet, "bTreatOldItems call failed in CCDaemonExt::bOnEndOfListing");
 
 	// Check which users are in the current list and not in the previous one -. new users
 	bRet = bTreatNewItems(pDynaNotifs, pNotif, pPreviousItemList, pCurrentItemList);
-	ASSERT(bRet, "bTreatNewItems call failed in CCDaemonExt::bOnEndOfListing");
+	CC_ASSERT(bRet, "bTreatNewItems call failed in CCDaemonExt::bOnEndOfListing");
 
 	// Empty and remove oldest user list
 	pPreviousItemList->m_nCredits--;
-	ASSERT(pPreviousItemList->m_nCredits >= 0, "pPreviousItemList->m_nCredits < 0 in CCDaemonExt::bOnEndOfListing");
+	CC_ASSERT(pPreviousItemList->m_nCredits >= 0, "pPreviousItemList->m_nCredits < 0 in CCDaemonExt::bOnEndOfListing");
 	if (0 == pPreviousItemList->m_nCredits)
 	{
 		pPreviousItemList->FreeRemoveAll();
@@ -754,7 +754,7 @@ BOOL CCDaemonExt::bOnEndOfListing(CCDynaNotifs* pDynaNotifs, CCNotif* pNotif)
 	}
 
 	pCurrentItemList->m_nCredits--;
-	ASSERT(pCurrentItemList->m_nCredits >= 0, "pCurrentItemList->m_nCredits < 0 in CCDaemonExt::bOnEndOfListing");
+	CC_ASSERT(pCurrentItemList->m_nCredits >= 0, "pCurrentItemList->m_nCredits < 0 in CCDaemonExt::bOnEndOfListing");
 	if (0 == pCurrentItemList->m_nCredits)
 	{
 		pCurrentItemList->FreeRemoveAll();
@@ -781,12 +781,12 @@ BOOL CCDaemonExt::bOnEndOfListing(CCDynaNotifs* pDynaNotifs, CCNotif* pNotif)
 BOOL CCDaemonExt::bTreatNewItems(CCDynaNotifs* pDynaNotifs, CCNotif* pNotif, CCItemPtrArray* pPreviousItemList, CCItemPtrArray* pCurrentItemList)
 {
 	// Find and treat users that are in pCurrentItemList but not in pPreviousItemList
-	ASSERT(m_it == itUser, "Unexpected item type in CCDaemonExt::bTreatNewItems");
-	ASSERT(pDynaNotifs, "pDynaNotifs is NULL in CCDaemonExt::bTreatNewItems");
-	ASSERT(pNotif, "pNotif is NULL in CCDaemonExt::bTreatNewItems");
+	CC_ASSERT(m_it == itUser, "Unexpected item type in CCDaemonExt::bTreatNewItems");
+	CC_ASSERT(pDynaNotifs, "pDynaNotifs is NULL in CCDaemonExt::bTreatNewItems");
+	CC_ASSERT(pNotif, "pNotif is NULL in CCDaemonExt::bTreatNewItems");
 
-	ASSERT(pPreviousItemList, "pPreviousItemList is NULL in CCDaemonExt::bTreatNewItems");
-	ASSERT(pCurrentItemList, "pCurrentItemList is NULL in CCDaemonExt::bTreatNewItems");
+	CC_ASSERT(pPreviousItemList, "pPreviousItemList is NULL in CCDaemonExt::bTreatNewItems");
+	CC_ASSERT(pCurrentItemList, "pCurrentItemList is NULL in CCDaemonExt::bTreatNewItems");
 
 	BOOL		bFoundPrevious;
 	UINT		uPreviousItems = pPreviousItemList->GetSize();
@@ -797,13 +797,13 @@ BOOL CCDaemonExt::bTreatNewItems(CCDynaNotifs* pDynaNotifs, CCNotif* pNotif, CCI
 	for (uCurrentCnt = 0; uCurrentCnt < uCurrentItems; uCurrentCnt++)
 	{
 		pCurrentUser = (CUser*) pCurrentItemList->GetAt(uCurrentCnt);
-		ASSERT(pCurrentUser, "pCurrentUser is NULL in CCDaemonExt::bTreatNewItems");
+		CC_ASSERT(pCurrentUser, "pCurrentUser is NULL in CCDaemonExt::bTreatNewItems");
 
 		bFoundPrevious = FALSE;
 		for (uPreviousCnt = 0; uPreviousCnt < uPreviousItems; uPreviousCnt++)
 		{
 			pPreviousUser = (CUser*) pPreviousItemList->GetAt(uPreviousCnt);
-			ASSERT(pPreviousUser, "pPreviousUser is NULL in CCDaemonExt::bTreatNewItems");
+			CC_ASSERT(pPreviousUser, "pPreviousUser is NULL in CCDaemonExt::bTreatNewItems");
 			if (pCurrentUser->m_strNickname == pPreviousUser->m_strNickname &&
 				pCurrentUser->m_strIdentity == pPreviousUser->m_strIdentity &&
 				pCurrentUser->m_strPrettyRoom == pPreviousUser->m_strPrettyRoom)
@@ -831,12 +831,12 @@ BOOL CCDaemonExt::bTreatNewItems(CCDynaNotifs* pDynaNotifs, CCNotif* pNotif, CCI
 BOOL CCDaemonExt::bTreatOldItems(CCDynaNotifs* pDynaNotifs, CCNotif* pNotif, CCItemPtrArray* pPreviousItemList, CCItemPtrArray* pCurrentItemList)
 {
 	// Find and treat users that are in pPreviousItemList but not in pCurrentItemList
-	ASSERT(pDynaNotifs, "pDynaNotifs is NULL in CCDaemonExt::bTreatOldItems");
-	ASSERT(pNotif, "pNotif is NULL in CCDaemonExt::bTreatOldItems");
+	CC_ASSERT(pDynaNotifs, "pDynaNotifs is NULL in CCDaemonExt::bTreatOldItems");
+	CC_ASSERT(pNotif, "pNotif is NULL in CCDaemonExt::bTreatOldItems");
 
-	ASSERT(pPreviousItemList, "pPreviousItemList is NULL in CCDaemonExt::bTreatOldItems");
-	ASSERT(pCurrentItemList, "pCurrentItemList is NULL in CCDaemonExt::bTreatOldItems");
-	ASSERT(m_it == itUser, "Unexpected item type in CCDaemonExt::bTreatOldItems");
+	CC_ASSERT(pPreviousItemList, "pPreviousItemList is NULL in CCDaemonExt::bTreatOldItems");
+	CC_ASSERT(pCurrentItemList, "pCurrentItemList is NULL in CCDaemonExt::bTreatOldItems");
+	CC_ASSERT(m_it == itUser, "Unexpected item type in CCDaemonExt::bTreatOldItems");
 
 	BOOL	bFoundCurrent;
 
@@ -850,12 +850,12 @@ BOOL CCDaemonExt::bTreatOldItems(CCDynaNotifs* pDynaNotifs, CCNotif* pNotif, CCI
 	for (uPreviousCnt = 0; uPreviousCnt < uPreviousItems; uPreviousCnt++)
 	{
 		pPreviousUser = (CUser*) pPreviousItemList->GetAt(uPreviousCnt);
-		ASSERT(pPreviousUser, "pPreviousUser is NULL in CCDaemonExt::bTreatOldItems");
+		CC_ASSERT(pPreviousUser, "pPreviousUser is NULL in CCDaemonExt::bTreatOldItems");
 		bFoundCurrent = FALSE;
 		for (uCurrentCnt = 0; uCurrentCnt < uCurrentItems; uCurrentCnt++)
 		{
 			pCurrentUser = (CUser*) pCurrentItemList->GetAt(uCurrentCnt);
-			ASSERT(pCurrentUser, "pCurrentUser is NULL in CCDaemonExt::bTreatOldItems");
+			CC_ASSERT(pCurrentUser, "pCurrentUser is NULL in CCDaemonExt::bTreatOldItems");
 			if (pCurrentUser->m_strNickname == pPreviousUser->m_strNickname &&
 				pCurrentUser->m_strIdentity == pPreviousUser->m_strIdentity &&
 				pCurrentUser->m_strPrettyRoom == pPreviousUser->m_strPrettyRoom)
@@ -910,7 +910,7 @@ CCRule::CCRule(CCDynaRules* pDynaRules)
 
 CCRule::CCRule(CCRule* pRule, CCDynaRules* pDynaRules)
 {
-	ASSERT(pRule, "pRule is NULL in CCRule::CCRule");
+	CC_ASSERT(pRule, "pRule is NULL in CCRule::CCRule");
 	m_nRefCount = 1;
 	#ifdef DEBUG
 		g_nRulesRefCount++;
@@ -935,7 +935,7 @@ CCRule::CCRule(CCRule* pRule, CCDynaRules* pDynaRules)
 void CCRule::CopyRule(CCRule* pRule)
 {
 	// Copy of all parameters that can change in the EditRule dialog
-	ASSERT(pRule, "pRule is NULL in CCRule::CopyRule");
+	CC_ASSERT(pRule, "pRule is NULL in CCRule::CopyRule");
 
 	m_pEvent	= pRule->m_pEvent;
 	m_pAction	= pRule->m_pAction;	
@@ -985,11 +985,11 @@ void CCRule::AddRef()
 void CCRule::Release()
 {
 	#ifdef DEBUG
-		ASSERT(g_nRulesRefCount > 0, "m_nRefCount <= 0 in CCRule::Release");
+		CC_ASSERT(g_nRulesRefCount > 0, "m_nRefCount <= 0 in CCRule::Release");
 		g_nRulesRefCount--;
 	#endif
 
-	ASSERT(m_nRefCount > 0, "m_nRefCount <= 0 in CCRule::Release");
+	CC_ASSERT(m_nRefCount > 0, "m_nRefCount <= 0 in CCRule::Release");
 
 	if (--m_nRefCount == 0)
 		delete this;	
@@ -1007,7 +1007,7 @@ void CCRule::SetMsgFormatting(CDWordArray* prgdwMsgFormatting, BOOL bMakeCopy)
 }
 
 
-void CCRule::SetEventParam(UINT uIndex, CString& strParam)
+void CCRule::SetEventParam(UINT uIndex, const CString& strParam)
 {
 	m_rgstrEventParams[uIndex] = strParam;
 	if (m_pEvent->m_rgpt[uIndex] == ptNickname && m_rgkep[uIndex] == kepMax)
@@ -1031,7 +1031,7 @@ CString CCRule::StrGetEventDisplay()
 	CString strRet;
 	UINT	uCnt;
 
-	ASSERT(m_pEvent, "m_pEvent is NULL in CCRule::StrGetEventDisplay");
+	CC_ASSERT(m_pEvent, "m_pEvent is NULL in CCRule::StrGetEventDisplay");
 
 	strRet = m_pEvent->m_strShortDesc + g_szBeginParams;
 
@@ -1053,7 +1053,7 @@ CString CCRule::StrGetActionDisplay()
 	CString strRet;
 	UINT	uCnt;
 
-	ASSERT(m_pAction, "m_pAction is NULL in CCRule::StrGetActionDisplay");
+	CC_ASSERT(m_pAction, "m_pAction is NULL in CCRule::StrGetActionDisplay");
 
 	strRet = m_pAction->m_strShortDesc + g_szBeginParams;
 
@@ -1085,7 +1085,7 @@ void CCRule::InitRuleDaemon()
 			it = itChannel;
 			break;
 		default:
-			ASSERT(FALSE, "Unexpected event ID in CCRule::InitRuleDaemon");
+			CC_ASSERT(FALSE, "Unexpected event ID in CCRule::InitRuleDaemon");
 		}
 		m_pDaemonExt = new CCDaemonExt(it);
 		if (m_pDaemonExt)
@@ -1093,7 +1093,7 @@ void CCRule::InitRuleDaemon()
 			if (!m_pDaemonExt->bAllocNewItemList(2))
 			{
 				TRACE("Could not allocate m_pDaemonExt's user list in CCRule::InitRuleDaemon\n");
-				ASSERT(m_pDaemonExt->m_nRefCount == 1, "m_pDaemonExt->m_nRefCount != 1 in CCRule::InitRuleDaemon");
+				CC_ASSERT(m_pDaemonExt->m_nRefCount == 1, "m_pDaemonExt->m_nRefCount != 1 in CCRule::InitRuleDaemon");
 				m_pDaemonExt->Release();
 				m_pDaemonExt = NULL;
 			}
@@ -1113,9 +1113,9 @@ INT CCRule::Serialize(LPTSTR szBuff, INT cbBuffLen)
 	CString rgstrEventParamsTmp[g_uMaxEventParams];
 	CString rgstrActionParamsTmp[g_uMaxActionParams];
 
-	ASSERT(szBuff, "szBuff is NULL in CCRule::Serialize");
-	ASSERT(m_pDynaRules, "m_pDynaRules is NULL in CCRule::Serialize");
-	ASSERT(m_pDynaRules->GetRulesData(), "m_pDynaRules->GetRulesData() is NULL in CCRule::Serialize");
+	CC_ASSERT(szBuff, "szBuff is NULL in CCRule::Serialize");
+	CC_ASSERT(m_pDynaRules, "m_pDynaRules is NULL in CCRule::Serialize");
+	CC_ASSERT(m_pDynaRules->GetRulesData(), "m_pDynaRules->GetRulesData() is NULL in CCRule::Serialize");
 
 	// 1 byte for rule version
 	// 2 bytes for rule length in bytes
@@ -1149,7 +1149,7 @@ INT CCRule::Serialize(LPTSTR szBuff, INT cbBuffLen)
 		{
 			if (RTFParam(m_pAction->m_rgpt[uIndex], m_pAction->m_aID) && m_prgdwMsgFormatting)
 			{
-				ASSERT(!szControlFull, "szControlFull NOT NULL in CCRule::Serialize");
+				CC_ASSERT(!szControlFull, "szControlFull NOT NULL in CCRule::Serialize");
 				szControlFull = SzControlFull((LPCTSTR) m_rgstrActionParams[uIndex], m_prgdwMsgFormatting);
 				rgstrActionParamsTmp[uIndex] = m_pDynaRules->GetRulesData()->StrFindAndReplaceKeyParams(szControlFull, FALSE /*bIncoming*/);
 			}
@@ -1161,7 +1161,7 @@ INT CCRule::Serialize(LPTSTR szBuff, INT cbBuffLen)
 
 	if (cbTotal > cbBuffLen)
 	{
-		ASSERT(FALSE, "buffer too small in CCRule::Serialize");
+		CC_ASSERT(FALSE, "buffer too small in CCRule::Serialize");
 		cbTotal = -1;
 		goto exit;
 	}
@@ -1242,7 +1242,7 @@ INT CCRule::Serialize(LPTSTR szBuff, INT cbBuffLen)
 			szTmp += rguActionParamLen[uIndex];
 		}
 
-	ASSERT(cbTotal == (szTmp-szBuff), "cbTotal != (szTmp-szBuff) in CCRule::Serialize");
+	CC_ASSERT(cbTotal == (szTmp-szBuff), "cbTotal != (szTmp-szBuff) in CCRule::Serialize");
 
 exit:
 	if (szControlFull)
@@ -1256,8 +1256,8 @@ exit:
 //        -N if wrong version number or format (N length of rule)
 INT CCRule::UnSerialize(LPBYTE pbBuff, INT cbBuffLen)
 {
-	ASSERT(pbBuff, "pbBuff is NULL in CCRule::UnSerialize");
-	ASSERT(m_pDynaRules, "m_pDynaRules is NULL in CCRule::UnSerialize");
+	CC_ASSERT(pbBuff, "pbBuff is NULL in CCRule::UnSerialize");
+	CC_ASSERT(m_pDynaRules, "m_pDynaRules is NULL in CCRule::UnSerialize");
 
 	CString	strTmp;
 	RULEX	ex;
@@ -1309,7 +1309,7 @@ INT CCRule::UnSerialize(LPBYTE pbBuff, INT cbBuffLen)
 	pbTmp += sizeof(WORD);
 	cbLeft -= sizeof(WORD);
 
-	ASSERT(m_pEvent, "m_pEvent is NULL in CCRule::UnSerialize");
+	CC_ASSERT(m_pEvent, "m_pEvent is NULL in CCRule::UnSerialize");
 
 	// read event param number
 	uEventParamNum = (UINT) *pbTmp;
@@ -1370,7 +1370,7 @@ INT CCRule::UnSerialize(LPBYTE pbBuff, INT cbBuffLen)
 	pbTmp += sizeof(WORD);
 	cbLeft -= sizeof(WORD);
 
-	ASSERT(m_pAction, "m_pAction is NULL in CCRule::UnSerialize");
+	CC_ASSERT(m_pAction, "m_pAction is NULL in CCRule::UnSerialize");
 
 	// skip the unused action status
 	pbTmp += sizeof(WORD);
@@ -1412,7 +1412,7 @@ INT CCRule::UnSerialize(LPBYTE pbBuff, INT cbBuffLen)
 			strTmp = m_pDynaRules->GetRulesData()->StrFindAndReplaceKeyParams((LPTSTR) pbTmp, TRUE /*bIncoming*/);
 			if (RTFParam(m_pAction->m_rgpt[uIndex], m_pAction->m_aID))
 			{
-				ASSERT(!m_prgdwMsgFormatting, "m_prgdwMsgFormatting NOT NULL in CCRule::UnSerialize");
+				CC_ASSERT(!m_prgdwMsgFormatting, "m_prgdwMsgFormatting NOT NULL in CCRule::UnSerialize");
 				m_prgdwMsgFormatting = new CDWordArray;
 
 				char*	szControlFull = strdup((const char*) strTmp);
@@ -1465,7 +1465,7 @@ exit:
 
 BOOL CCRule::bUnSerialize(LPCTSTR szRule)
 {
-	ASSERT(szRule, "szRule is NULL in CCRule::bUnSerialize");
+	CC_ASSERT(szRule, "szRule is NULL in CCRule::bUnSerialize");
 	LPTSTR	szToken, szTmp = (LPTSTR) szRule;
 	INT		iToken;
 	UINT	uParam;
@@ -1586,8 +1586,8 @@ INT CCRule::iGetHighlightTypeIndex(CString strParam)
 
 BOOL CCRule::bValidateRuleEvent(UINT uIndex, CString& strParam, UINT *puErrorIDS)
 {
-	ASSERT(m_pEvent, "m_pEvent is NULL in CCRule::bValidateRuleEvent");
-	ASSERT(m_pAction, "m_pAction is NULL in CCRule::bValidateRuleEvent");
+	CC_ASSERT(m_pEvent, "m_pEvent is NULL in CCRule::bValidateRuleEvent");
+	CC_ASSERT(m_pAction, "m_pAction is NULL in CCRule::bValidateRuleEvent");
 
 	switch (m_pEvent->m_eID)
 	{
@@ -1624,8 +1624,8 @@ BOOL CCRule::bValidateRuleEvent(UINT uIndex, CString& strParam, UINT *puErrorIDS
 
 BOOL CCRule::bValidateRuleAction(UINT uIndex, CString& strParam, UINT *puErrorIDS)
 {
-	ASSERT(m_pEvent, "m_pEvent is NULL in CCRule::bValidateRuleAction");
-	ASSERT(m_pAction, "m_pAction is NULL in CCRule::bValidateRuleAction");
+	CC_ASSERT(m_pEvent, "m_pEvent is NULL in CCRule::bValidateRuleAction");
+	CC_ASSERT(m_pAction, "m_pAction is NULL in CCRule::bValidateRuleAction");
 
 	switch (m_pAction->m_aID)
 	{
@@ -1636,7 +1636,7 @@ BOOL CCRule::bValidateRuleAction(UINT uIndex, CString& strParam, UINT *puErrorID
 			{
 				UINT	uMinLine, uMaxLine;
 				LPTSTR	szLineNumber = (LPTSTR) (LPCTSTR) strParam;
-				ASSERT(szLineNumber, "szLineNumber is NULL in CCRule::bValidateRuleAction");
+				CC_ASSERT(szLineNumber, "szLineNumber is NULL in CCRule::bValidateRuleAction");
 
 				while (*szLineNumber)
 				{
@@ -1664,7 +1664,7 @@ BOOL CCRule::bValidateRuleAction(UINT uIndex, CString& strParam, UINT *puErrorID
 		}
 		case aHighlightMessage:
 		{
-			ASSERT(0 == uIndex, "0 != uIndex in CCRule::bValidateRuleAction");
+			CC_ASSERT(0 == uIndex, "0 != uIndex in CCRule::bValidateRuleAction");
 			if (iGetHighlightTypeIndex(strParam) < 0)
 			{
 				TRACE("Bad highlighting format type in CCRule::bValidateRuleAction\n");
@@ -1684,8 +1684,8 @@ BOOL CCRule::bValidateRuleAction(UINT uIndex, CString& strParam, UINT *puErrorID
 
 BOOL CCRule::bDaemonNeeded()
 {
-	ASSERT(m_pEvent, "m_pEvent is NULL in CCRule::bDaemonNeeded");
-	ASSERT(m_pAction, "m_pAction is NULL in CCRule::bDaemonNeeded");
+	CC_ASSERT(m_pEvent, "m_pEvent is NULL in CCRule::bDaemonNeeded");
+	CC_ASSERT(m_pAction, "m_pAction is NULL in CCRule::bDaemonNeeded");
 
 	if (bActive() && !bStopped() && m_pEvent->m_bNeedDaemon)
 	{
@@ -1699,7 +1699,7 @@ BOOL CCRule::bDaemonNeeded()
 		case eOnNewRoom:
 			return TRUE;
 		default:
-			ASSERT(FALSE, "Unexpected event ID in CCRule::bDaemonNeeded");
+			CC_ASSERT(FALSE, "Unexpected event ID in CCRule::bDaemonNeeded");
 		}
 	}
 	return FALSE;
@@ -1733,7 +1733,7 @@ BOOL CCRule::bUpdateDaemonExt(BOOL bResetItemLists, enumEvents eID)
 				it = itChannel;
 				break;
 			default:
-				ASSERT(FALSE, "Unexpected event ID in CCRule::bUpdateDaemonExt");
+				CC_ASSERT(FALSE, "Unexpected event ID in CCRule::bUpdateDaemonExt");
 			}
 			m_pDaemonExt = new CCDaemonExt(it);
 			bResetItemLists = TRUE;
@@ -1763,7 +1763,7 @@ BOOL CCRule::bIsFlooding()
 	USHORT	uNow = time(NULL) & 0xFFFF;
 	USHORT	uInterval = abs(uNow - m_uPeriodStart);
 
-	ASSERT(m_pDynaRules, "m_pDynaRules is NULL in CCRule::bIsFlooding");
+	CC_ASSERT(m_pDynaRules, "m_pDynaRules is NULL in CCRule::bIsFlooding");
 
 	if (uInterval > (USHORT) m_pDynaRules->GetFloodingInterval())
 	{
@@ -1789,7 +1789,7 @@ CCRuleSet::CCRuleSet(CCDynaRules* pDynaRules)
 // CCRuleSet::CCRuleSet(CCRuleSet*)
 CCRuleSet::CCRuleSet(CCRuleSet* pRuleSet, CCDynaRules* pDynaRules)
 {
-	ASSERT(pRuleSet, "pRuleSet is NULL in CCRuleSet::CCRuleSet");
+	CC_ASSERT(pRuleSet, "pRuleSet is NULL in CCRuleSet::CCRuleSet");
 
 	CCRule	*pRule, *pRuleCopy;
 	INT		iRules, iIndex;
@@ -1799,7 +1799,7 @@ CCRuleSet::CCRuleSet(CCRuleSet* pRuleSet, CCDynaRules* pDynaRules)
 		for (iIndex = 0; iIndex < iRules; iIndex++)
 		{
 			pRule = (CCRule*) pRuleSet->m_rgpRules.GetAt(iIndex);
-			ASSERT(pRule, "pRule is NULL in CCRuleSet::CCRuleSet");
+			CC_ASSERT(pRule, "pRule is NULL in CCRuleSet::CCRuleSet");
 			if (pRuleCopy = new CCRule(pRule, pDynaRules))
 				m_rgpRules.Add((void*) pRuleCopy);
 		}
@@ -1831,7 +1831,7 @@ void CCRuleSet::CleanUpRulesArray()
 		for (iIndex = 0; iIndex < iRules; iIndex++)
 		{
 			pRule = (CCRule*) m_rgpRules.GetAt(iIndex);
-			ASSERT(pRule, "pRule is NULL in CCRuleSet::CleanUpRulesArray");
+			CC_ASSERT(pRule, "pRule is NULL in CCRuleSet::CleanUpRulesArray");
 			pRule->Desactivate();
 			pRule->Release();
 		}
@@ -1853,7 +1853,7 @@ BOOL CCRuleSet::bUpdateRulesDaemonExt(BOOL bResetItemLists)
 		for (iIndex = 0; iIndex < iRules; iIndex++)
 		{
 			pRule = (CCRule*) m_rgpRules.GetAt(iIndex);
-			ASSERT(pRule, "pRule is NULL in CCRuleSet::bUpdateRulesDaemonExt");
+			CC_ASSERT(pRule, "pRule is NULL in CCRuleSet::bUpdateRulesDaemonExt");
 			bRet &= pRule->bUpdateDaemonExt(bResetItemLists, pRule->GetEvent()->GetID());
 		}
 	}
@@ -1865,7 +1865,7 @@ BOOL CCRuleSet::bUpdateRulesDaemonExt(BOOL bResetItemLists)
 // CCRuleSet::bAddRule - Adds a rule at the end of the rules array
 BOOL CCRuleSet::bAddRule(CCRule* pRule, INT iIndex /* = -1 */)
 {
-	ASSERT(pRule, "pRule is NULL in CCRuleSet::bAddRule");
+	CC_ASSERT(pRule, "pRule is NULL in CCRuleSet::bAddRule");
 
 	if (iIndex < 0)
 		m_rgpRules.Add((void*) pRule);				// Append rule at the end of the array
@@ -1881,7 +1881,7 @@ BOOL CCRuleSet::bRemoveRule(CCRule* pRule, INT iIndex /* = -1 */)
 {
 	INT	iIndexTmp, iRules;
 
-	ASSERT(pRule || iIndex >= 0, "pRule is NULL and iIndex < 0 in CCRuleSet::bRemoveRule");
+	CC_ASSERT(pRule || iIndex >= 0, "pRule is NULL and iIndex < 0 in CCRuleSet::bRemoveRule");
 
 	if (iIndex < 0)
 	{
@@ -1897,9 +1897,9 @@ BOOL CCRuleSet::bRemoveRule(CCRule* pRule, INT iIndex /* = -1 */)
 	else
 	{
 		iIndexTmp = iIndex;
-		ASSERT(iIndexTmp < m_rgpRules.GetSize(), "iIndexTmp >= m_rgpRules.GetSize() in CCRuleSet::bRemoveRule");
+		CC_ASSERT(iIndexTmp < m_rgpRules.GetSize(), "iIndexTmp >= m_rgpRules.GetSize() in CCRuleSet::bRemoveRule");
 		pRule = (CCRule*) m_rgpRules.GetAt(iIndexTmp);
-		ASSERT(pRule, "pRule is NULL in CCRuleSet::bRemoveRule");
+		CC_ASSERT(pRule, "pRule is NULL in CCRuleSet::bRemoveRule");
 	}
 
 	pRule->Desactivate();
@@ -1916,14 +1916,14 @@ BOOL CCRuleSet::bDuplicateRule(INT iIndex, CCRule** ppRule)
 {
 	CCRule	*pRule, *pOriRule;
 
-	ASSERT(iIndex >= 0, "iIndex < 0 in CCRuleSet::bDuplicateRule");
-	ASSERT(ppRule, "ppRule is NULL in CCRuleSet::bDuplicateRule");
+	CC_ASSERT(iIndex >= 0, "iIndex < 0 in CCRuleSet::bDuplicateRule");
+	CC_ASSERT(ppRule, "ppRule is NULL in CCRuleSet::bDuplicateRule");
 
 	*ppRule = NULL;
 
 	pOriRule = (CCRule*) m_rgpRules.GetAt(iIndex);
 
-	ASSERT(pOriRule, "pOriRule is NULL in CCRuleSet::bDuplicateRule");
+	CC_ASSERT(pOriRule, "pOriRule is NULL in CCRuleSet::bDuplicateRule");
 
 	if (!(pRule = new CCRule(m_pDynaRules)))
 		return FALSE;
@@ -1947,7 +1947,7 @@ BOOL CCRuleSet::bUpRule(CCRule* pRule, INT iIndex /* = -1 */)
 	INT		iIndexTmp, iRules;
 	void	*pCurrent, *pPrevious = NULL;
 
-	ASSERT(pRule || iIndex >= 0, "pRule is NULL and iIndex < 0 in CCRuleSet::bUpRule");
+	CC_ASSERT(pRule || iIndex >= 0, "pRule is NULL and iIndex < 0 in CCRuleSet::bUpRule");
 
 	if (iIndex < 0)
 	{
@@ -1985,7 +1985,7 @@ BOOL CCRuleSet::bDownRule(CCRule* pRule, INT iIndex /* = -1 */)
 	INT		iIndexTmp, iRules;
 	void	*pCurrent;
 
-	ASSERT(pRule || iIndex >= 0, "pRule is NULL and iIndex < 0 in CCRuleSet::bDownRule");
+	CC_ASSERT(pRule || iIndex >= 0, "pRule is NULL and iIndex < 0 in CCRuleSet::bDownRule");
 
 	iRules = m_rgpRules.GetSize();
 
@@ -2024,7 +2024,7 @@ BOOL CCRuleSet::bDaemonNeeded()
 	while (iIndex < iRules)
 	{
 		pRule = (CCRule*) m_rgpRules.GetAt(iIndex);
-		ASSERT(pRule, "pRule is NULL in CCRuleSet::bDaemonNeeded");
+		CC_ASSERT(pRule, "pRule is NULL in CCRuleSet::bDaemonNeeded");
 		if (pRule->bDaemonNeeded())
 			return TRUE;
 		else
@@ -2044,8 +2044,8 @@ BOOL CCRuleSet::bSaveToFile(UINT* puError, CWnd* pParentWnd)
 	OPENFILENAME		ofn;
 	AFX_EXCEPTION_LINK	_afxExceptionLink;
 
-	ASSERT(puError, "puError is NULL in CCRuleSet::bSaveToFile");
-	ASSERT(pParentWnd, "pParentWnd is NULL in CCRuleSet::bSaveToFile");
+	CC_ASSERT(puError, "puError is NULL in CCRuleSet::bSaveToFile");
+	CC_ASSERT(pParentWnd, "pParentWnd is NULL in CCRuleSet::bSaveToFile");
 
 	strcpy(szFilename, (LPCTSTR) m_strSetName);
 	strFilter.LoadString(IDS_CRS_FILTER);
@@ -2102,12 +2102,12 @@ BOOL CCRuleSet::bSaveToFile(UINT* puError, CWnd* pParentWnd)
 		for (iIndex = 0; iIndex < iRules; iIndex++)
 		{
 			pRule = (CCRule*) m_rgpRules.GetAt(iIndex);
-			ASSERT(pRule, "pRule is NULL in CCRuleSet::bSaveToFile");
+			CC_ASSERT(pRule, "pRule is NULL in CCRuleSet::bSaveToFile");
 			
 			if ((cbRule = pRule->Serialize(szBuff, g_uMaxSerializedRule)) > 0)
 				file.Write((const void*) szBuff, cbRule);
 
-			ASSERT(cbRule, "Serialize failed in CCRuleSet::bSaveToFile");
+			CC_ASSERT(cbRule, "Serialize failed in CCRuleSet::bSaveToFile");
 		}
 
 		file.Flush();
@@ -2136,8 +2136,8 @@ BOOL CCRuleSet::bLoadFromFile(UINT* puError, CWnd* pParentWnd)
 	AFX_EXCEPTION_LINK	_afxExceptionLink;
 	BOOL				bRulesSkipped = FALSE;
 
-	ASSERT(puError, "puError is NULL in CCRuleSet::bLoadFromFile");
-	ASSERT(pParentWnd, "pParentWnd is NULL in CCRuleSet::bLoadFromFile");
+	CC_ASSERT(puError, "puError is NULL in CCRuleSet::bLoadFromFile");
+	CC_ASSERT(pParentWnd, "pParentWnd is NULL in CCRuleSet::bLoadFromFile");
 
 	*puError = CFileException::none;
 
@@ -2213,7 +2213,7 @@ BOOL CCRuleSet::bLoadFromFile(UINT* puError, CWnd* pParentWnd)
 			goto error;
 
 		m_strSetName = CString(szRead);
-		ASSERT(m_strSetName.GetLength() <= g_uMaxSetNameLength, "m_strSetName.GetLength() > g_uMaxSetNameLength in CCRuleSet::bLoadFromFile");
+		CC_ASSERT(m_strSetName.GetLength() <= g_uMaxSetNameLength, "m_strSetName.GetLength() > g_uMaxSetNameLength in CCRuleSet::bLoadFromFile");
 
 		uRead -= cbLen+1;
 		CopyMemory((PVOID) szBuff, (CONST VOID*) (szBuff+cbLen+1), (DWORD) uRead);
@@ -2342,7 +2342,7 @@ const CCDynaRules& CCDynaRules::operator=(const CCDynaRules& dynaRules)
 		for (iIndex = 0; iIndex < iRuleSets; iIndex++)
 		{
 			pRuleSet = (CCRuleSet*) dynaRules.m_rgpRuleSets.GetAt(iIndex);
-			ASSERT(pRuleSet, "pRuleSet is NULL in CCDynaRules::operator=");
+			CC_ASSERT(pRuleSet, "pRuleSet is NULL in CCDynaRules::operator=");
 			if (pRuleSetCopy = new CCRuleSet(pRuleSet, this))
 				m_rgpRuleSets.Add((void*) pRuleSetCopy);
 			if (dynaRules.m_pSelectedRuleSet == pRuleSet)
@@ -2386,7 +2386,7 @@ const CCDynaRules& CCDynaRules::operator=(const CCDynaRules& dynaRules)
 }
 
 
-void CCDynaRules::SetCachVariables(enumEvents eID, CString& strIdentity, CString& strServer, CString& strChannel)
+void CCDynaRules::SetCachVariables(enumEvents eID, const CString& strIdentity, const CString& strServer, const CString& strChannel)
 {
 	OutputDebugThreadIdString("CCDynaRules::SetCachVariables - Enter\n");
 	m_eIDCach			= eID;
@@ -2412,7 +2412,7 @@ void CCDynaRules::CleanUpRuleSetsArray()
 		for (iIndex = 0; iIndex < iRuleSets; iIndex++)
 		{
 			pRuleSet = (CCRuleSet*) m_rgpRuleSets.GetAt(iIndex);
-			ASSERT(pRuleSet, "pRuleSet is NULL in CCDynaRules::CleanUpRuleSetsArray");
+			CC_ASSERT(pRuleSet, "pRuleSet is NULL in CCDynaRules::CleanUpRuleSetsArray");
 			delete pRuleSet;	// calls CleanUpRulesArray()
 		}
 		m_rgpRuleSets.RemoveAll();
@@ -2431,7 +2431,7 @@ BOOL CCDynaRules::bUpdateRuleSetsDaemonExt(BOOL bResetItemLists)
 		for (iIndex = 0; iIndex < iRuleSets; iIndex++)
 		{
 			pRuleSet = (CCRuleSet*) m_rgpRuleSets.GetAt(iIndex);
-			ASSERT(pRuleSet, "pRuleSet is NULL in CCDynaRules::bUpdateRuleSetsDaemonExt");
+			CC_ASSERT(pRuleSet, "pRuleSet is NULL in CCDynaRules::bUpdateRuleSetsDaemonExt");
 			bRet &= pRuleSet->bUpdateRulesDaemonExt(bResetItemLists);
 		}
 	}
@@ -2479,10 +2479,10 @@ BOOL CCDynaRules::bReplaceKeyEventParams(CString& strEventParam)
 BOOL CCDynaRules::bReplaceKeyActionParams(CCRule* pRule /*, CString& strEventServer, CString& strEventIdentity, CString& strEventChannel, CString& strEventMessage*/)
 {
 	// fill in m_rgstrActionFinalParams array by replacing action keywords in m_rgstrActionParams
-	ASSERT(pRule, "pRule in NULL in CCDynaRules::bReplaceKeyActionParams");
-	ASSERT(m_pfGetKeyEventParam, "m_pfGetKeyEventParam is NULL in CCDynaRules::bReplaceKeyActionParams");
-	ASSERT(m_pfGetKeyActionParam, "m_pfGetKeyActionParam is NULL in CCDynaRules::bReplaceKeyActionParams");
-	ASSERT(m_pRulesData, "m_pRulesData is NULL in CCDynaRules::bReplaceKeyActionParams");
+	CC_ASSERT(pRule, "pRule in NULL in CCDynaRules::bReplaceKeyActionParams");
+	CC_ASSERT(m_pfGetKeyEventParam, "m_pfGetKeyEventParam is NULL in CCDynaRules::bReplaceKeyActionParams");
+	CC_ASSERT(m_pfGetKeyActionParam, "m_pfGetKeyActionParam is NULL in CCDynaRules::bReplaceKeyActionParams");
+	CC_ASSERT(m_pRulesData, "m_pRulesData is NULL in CCDynaRules::bReplaceKeyActionParams");
 
 	BOOL	bNeedControlFull;
 	UINT	uIndexParam, uIndexKey;
@@ -2585,19 +2585,19 @@ BOOL CCDynaRules::bReplaceKeyActionParams(CCRule* pRule /*, CString& strEventSer
 }
 
 
-BOOL CCDynaRules::bMatchAndApplyRules(enumEvents eID, enumActions* paApprovedIDs, enumActions* paRejectedIDs, CString& strServer, CString& strIdentity, CString& strChannel, CString& strMessage)
+BOOL CCDynaRules::bMatchAndApplyRules(enumEvents eID, enumActions* paApprovedIDs, enumActions* paRejectedIDs, const CString& strServer, const CString& strIdentity, const CString& strChannel, const CString& strMessage)
 {
 	CCRuleSet*	pRuleSet;
 	CCRule*		pRule = NULL;
 	INT			iRule, iRuleSet = -1;
 
-	ASSERT(m_pfRuleFailure, "m_pfRuleFailure is NULL in CCDynaRules::bMatchAndApplyRules");
-	ASSERT(m_pfExecuteAction, "m_pfExecuteAction is NULL in CCDynaRules::bMatchAndApplyRules");
+	CC_ASSERT(m_pfRuleFailure, "m_pfRuleFailure is NULL in CCDynaRules::bMatchAndApplyRules");
+	CC_ASSERT(m_pfExecuteAction, "m_pfExecuteAction is NULL in CCDynaRules::bMatchAndApplyRules");
 	ResetFlags();
 
 	if ((iRule = iGetFirstMatchingRule(&iRuleSet, eID, paApprovedIDs, paRejectedIDs, strServer, strIdentity, strChannel, strMessage, &pRule)) >= 0)
 	{
-		ASSERT(pRule, "pRule is NULL in CCDynaRules::bMatchAndApplyRules");
+		CC_ASSERT(pRule, "pRule is NULL in CCDynaRules::bMatchAndApplyRules");
 		OutputDebugThreadIdString((LPTSTR) (LPCTSTR) (CString("CCDynaRules::bMatchAndApplyRules - Match event: ") + pRule->StrGetEventDisplay() + "\n"));
 
 		if (pRule->bIsFlooding())
@@ -2605,7 +2605,7 @@ BOOL CCDynaRules::bMatchAndApplyRules(enumEvents eID, enumActions* paApprovedIDs
 			OutputDebugThreadIdString("CCDynaRules::bMatchAndApplyRules - Rule Flooding...\n");
 			pRule->SetFlags(pRule->wGetFlags() | g_wStopped);
 			pRuleSet = (CCRuleSet*) m_rgpRuleSets.GetAt(iRuleSet);
-			ASSERT(pRuleSet, "pRuleSet is NULL in CCDynaRules::bMatchAndApplyRules");
+			CC_ASSERT(pRuleSet, "pRuleSet is NULL in CCDynaRules::bMatchAndApplyRules");
 			m_pfRuleFailure(pRuleSet, pRule, g_uErrFlooding);
 		}
 		else
@@ -2628,7 +2628,7 @@ BOOL CCDynaRules::bMatchAndApplyRules(enumEvents eID, enumActions* paApprovedIDs
 				if (pActionCtx = new CCActionContext)
 				{
 					pActionCtx->bInitActionContext(this, pRule);
-					ASSERT(m_pDelayedRules, "m_pDelayedRules is NULL in CCDynaRules::bMatchAndApplyRules");
+					CC_ASSERT(m_pDelayedRules, "m_pDelayedRules is NULL in CCDynaRules::bMatchAndApplyRules");
 					if (!m_pDelayedRules->bAddActionCtx(pActionCtx))
 						delete pActionCtx;
 				}
@@ -2637,7 +2637,7 @@ BOOL CCDynaRules::bMatchAndApplyRules(enumEvents eID, enumActions* paApprovedIDs
 
 		while (!(pRule->m_wFlags & g_wNoSubsequent) && (iRule = iGetNextMatchingRule(&iRuleSet, iRule, &pRule)) >= 0)
 		{
-			ASSERT(pRule, "pRule is NULL in CCDynaRules::bMatchAndApplyRules");
+			CC_ASSERT(pRule, "pRule is NULL in CCDynaRules::bMatchAndApplyRules");
 			OutputDebugThreadIdString((LPTSTR) (LPCTSTR) (CString("CCDynaRules::bMatchAndApplyRules - Match event: ") + pRule->StrGetEventDisplay() + "\n"));
 
 			if (pRule->bIsFlooding())
@@ -2645,7 +2645,7 @@ BOOL CCDynaRules::bMatchAndApplyRules(enumEvents eID, enumActions* paApprovedIDs
 				OutputDebugThreadIdString("CCDynaRules::bMatchAndApplyRules - Rule Flooding...\n");
 				pRule->SetFlags(pRule->wGetFlags() | g_wStopped);
 				pRuleSet = (CCRuleSet*) m_rgpRuleSets.GetAt(iRuleSet);
-				ASSERT(pRuleSet, "pRuleSet is NULL in CCDynaRules::bMatchAndApplyRules");
+				CC_ASSERT(pRuleSet, "pRuleSet is NULL in CCDynaRules::bMatchAndApplyRules");
 				m_pfRuleFailure(pRuleSet, pRule, g_uErrFlooding);
 			}
 			else
@@ -2668,7 +2668,7 @@ BOOL CCDynaRules::bMatchAndApplyRules(enumEvents eID, enumActions* paApprovedIDs
 					if (pActionCtx = new CCActionContext)
 					{
 						pActionCtx->bInitActionContext(this, pRule);
-						ASSERT(m_pDelayedRules, "m_pDelayedRules is NULL in CCDynaRules::bMatchAndApplyRules");
+						CC_ASSERT(m_pDelayedRules, "m_pDelayedRules is NULL in CCDynaRules::bMatchAndApplyRules");
 						if (!m_pDelayedRules->bAddActionCtx(pActionCtx))
 							delete pActionCtx;
 					}
@@ -2680,9 +2680,9 @@ BOOL CCDynaRules::bMatchAndApplyRules(enumEvents eID, enumActions* paApprovedIDs
 }
 
 
-INT CCDynaRules::iGetFirstMatchingRule(PINT piRuleSet, enumEvents eID, enumActions* paApprovedIDs, enumActions* paRejectedIDs, CString& strServer, CString& strIdentity, CString& strChannel, CString& strMessage, CCRule** ppRule)
+INT CCDynaRules::iGetFirstMatchingRule(PINT piRuleSet, enumEvents eID, enumActions* paApprovedIDs, enumActions* paRejectedIDs, const CString& strServer, const CString& strIdentity, const CString& strChannel, const CString& strMessage, CCRule** ppRule)
 {
-	ASSERT(piRuleSet, "piRuleSet is NULL in CCDynaRules::iGetFirstMatchingRule");
+	CC_ASSERT(piRuleSet, "piRuleSet is NULL in CCDynaRules::iGetFirstMatchingRule");
 
 	CCRule*		pRule = NULL;
 	CCRuleSet*	pRuleSet;
@@ -2718,7 +2718,7 @@ INT CCDynaRules::iGetFirstMatchingRule(PINT piRuleSet, enumEvents eID, enumActio
 	while (iIndexRuleSet < iRuleSets)
 	{
 		pRuleSet = (CCRuleSet*) m_rgpRuleSets.GetAt(iIndexRuleSet);
-		ASSERT(pRuleSet, "pRuleSet is NULL in CCDynaRules::iGetFirstMatchingRule");
+		CC_ASSERT(pRuleSet, "pRuleSet is NULL in CCDynaRules::iGetFirstMatchingRule");
 
 		if (pRuleSet->bActive())
 		{
@@ -2728,7 +2728,7 @@ INT CCDynaRules::iGetFirstMatchingRule(PINT piRuleSet, enumEvents eID, enumActio
 			while (iIndexRule < iRules && !bStop)
 			{
 				pRule = (CCRule*) pRuleSet->m_rgpRules.GetAt(iIndexRule);
-				ASSERT(pRule, "pRule is NULL in CCDynaRules::iGetFirstMatchingRule");
+				CC_ASSERT(pRule, "pRule is NULL in CCDynaRules::iGetFirstMatchingRule");
 				if (bMatchingRule(pRule))
 				{
 					if (bRuleFilteredOut(pRule))
@@ -2758,7 +2758,7 @@ INT CCDynaRules::iGetFirstMatchingRule(PINT piRuleSet, enumEvents eID, enumActio
 
 INT CCDynaRules::iGetNextMatchingRule(PINT piPreviousRuleSet, INT iPreviousRule, CCRule** ppRule)
 {
-	ASSERT(piPreviousRuleSet, "piPreviousRuleSet is NULL in CCDynaRules::iGetNextMatchingRule");
+	CC_ASSERT(piPreviousRuleSet, "piPreviousRuleSet is NULL in CCDynaRules::iGetNextMatchingRule");
 
 	CCRule*		pRule;
 	CCRuleSet*	pRuleSet;
@@ -2769,12 +2769,12 @@ INT CCDynaRules::iGetNextMatchingRule(PINT piPreviousRuleSet, INT iPreviousRule,
 		*ppRule = NULL;
 
 	iRuleSets = m_rgpRuleSets.GetSize();
-	ASSERT(iIndexRuleSet < iRuleSets, "iIndexRuleSet >= iRuleSets in CCDynaRules::iGetNextMatchingRule");
+	CC_ASSERT(iIndexRuleSet < iRuleSets, "iIndexRuleSet >= iRuleSets in CCDynaRules::iGetNextMatchingRule");
 
 	while (iIndexRuleSet < iRuleSets)
 	{
 		pRuleSet = (CCRuleSet*) m_rgpRuleSets.GetAt(iIndexRuleSet);
-		ASSERT(pRuleSet, "pRuleSet is NULL in CCDynaRules::iGetNextMatchingRule");
+		CC_ASSERT(pRuleSet, "pRuleSet is NULL in CCDynaRules::iGetNextMatchingRule");
 
 		if (pRuleSet->bActive())
 		{
@@ -2783,7 +2783,7 @@ INT CCDynaRules::iGetNextMatchingRule(PINT piPreviousRuleSet, INT iPreviousRule,
 			while (iIndexRule < iRules && !bStop)
 			{
 				pRule = (CCRule*) pRuleSet->m_rgpRules.GetAt(iIndexRule);
-				ASSERT(pRule, "pRule is NULL in CCDynaRules::iGetNextMatchingRule");
+				CC_ASSERT(pRule, "pRule is NULL in CCDynaRules::iGetNextMatchingRule");
 				if (bMatchingRule(pRule))
 				{
 					if (bRuleFilteredOut(pRule))
@@ -2845,9 +2845,9 @@ BOOL CCDynaRules::bMatchingRule(CCRule* pRule)
 	BOOL			bPass = TRUE;
 	PPRUSERMATCH	pPrUserMatch = NULL;
 
-	ASSERT(pRule, "pRule is NULL in CCDynaRules::bMatchingRule");
-	ASSERT(pRule->m_pEvent, "pRule->pEvent is NULL in CCDynaRules::bMatchingRule");
-	ASSERT(pRule->m_pAction, "pRule->pAction is NULL in CCDynaRules::bMatchingRule");
+	CC_ASSERT(pRule, "pRule is NULL in CCDynaRules::bMatchingRule");
+	CC_ASSERT(pRule->m_pEvent, "pRule->pEvent is NULL in CCDynaRules::bMatchingRule");
+	CC_ASSERT(pRule->m_pAction, "pRule->pAction is NULL in CCDynaRules::bMatchingRule");
 
 	if (m_eIDCach != pRule->m_pEvent->m_eID || !pRule->bActive() || pRule->bStopped())
 		return FALSE;
@@ -2870,23 +2870,23 @@ BOOL CCDynaRules::bMatchingRule(CCRule* pRule)
 				pstrTmp = &m_strServerCach;
 				break;
 			default:
-				ASSERT(FALSE, "Unexpected parameter type in CCDynaRules::bMatchingRule");
+				CC_ASSERT(FALSE, "Unexpected parameter type in CCDynaRules::bMatchingRule");
 				return FALSE;
 		}
 
-		ASSERT(pstrTmp, "pstrTmp is NULL in CCDynaRules::bMatchingRule");
+		CC_ASSERT(pstrTmp, "pstrTmp is NULL in CCDynaRules::bMatchingRule");
 
 		if (pRule->m_rgkep[uIndex] != kepMax)
 		{
 			// rule uses a keyword for this parameter
-			ASSERT(m_pfEventKeyParam, "m_pfEventKeyParam is NULL in CCDynaRules::bMatchingRule");
+			CC_ASSERT(m_pfEventKeyParam, "m_pfEventKeyParam is NULL in CCDynaRules::bMatchingRule");
 			bPass = m_pfEventKeyParam(*pstrTmp, pRule->m_rgkep[uIndex]);
 		}
 		else
 		{
 			// rule uses specific textual value for this parameter
-			ASSERT(!pRule->m_rgstrEventParams[uIndex].IsEmpty(), "pRule->m_rgstrEventParams[uIndex] is empty in CCDynaRules::bMatchingRule");
-			ASSERT(m_pfEventRndParam, "m_pfEventRndParam is NULL in CCDynaRules::bMatchingRule");
+			CC_ASSERT(!pRule->m_rgstrEventParams[uIndex].IsEmpty(), "pRule->m_rgstrEventParams[uIndex] is empty in CCDynaRules::bMatchingRule");
+			CC_ASSERT(m_pfEventRndParam, "m_pfEventRndParam is NULL in CCDynaRules::bMatchingRule");
 
 			strEventParam = pRule->m_rgstrEventParams[uIndex];
 			// some event key params might have to be replaced by their values
@@ -2906,12 +2906,12 @@ CCRuleSet* CCDynaRules::GetRuleSetFromName(LPCTSTR szSetName)
 	CCRuleSet*	pRuleSet;
 	INT			iRuleSet = m_rgpRuleSets.GetSize() - 1;
 
-	ASSERT(szSetName, "szSetName is NULL in CCDynaRules::GetRuleSetFromName");
+	CC_ASSERT(szSetName, "szSetName is NULL in CCDynaRules::GetRuleSetFromName");
 
 	while (iRuleSet >= 0)
 	{
 		pRuleSet = (CCRuleSet*) m_rgpRuleSets.GetAt(iRuleSet);
-		ASSERT(pRuleSet, "pRuleSet is NULL in CCDynaRules::GetRuleSetFromName");
+		CC_ASSERT(pRuleSet, "pRuleSet is NULL in CCDynaRules::GetRuleSetFromName");
 		if (0 == pRuleSet->GetName().CompareNoCase(szSetName))
 			return pRuleSet;
 		iRuleSet--;
@@ -2953,15 +2953,15 @@ BOOL CCDynaRules::bSaveRulesToReg(/*BOOL bToHKCU /*=TRUE*/)
 		for (iIndexRuleSet = 0; iIndexRuleSet < iRuleSets; iIndexRuleSet++)
 		{
 			pRuleSet = (CCRuleSet*) m_rgpRuleSets.GetAt(iIndexRuleSet);
-			ASSERT(pRuleSet, "pRuleSet is NULL in CCDynaRules::bSaveRulesToReg");
-			ASSERT(!pRuleSet->m_strSetName.IsEmpty(), "pRuleSet->m_strSetName.IsEmpty() in CCDynaRules::bSaveRulesToReg");
+			CC_ASSERT(pRuleSet, "pRuleSet is NULL in CCDynaRules::bSaveRulesToReg");
+			CC_ASSERT(!pRuleSet->m_strSetName.IsEmpty(), "pRuleSet->m_strSetName.IsEmpty() in CCDynaRules::bSaveRulesToReg");
 
 			// if ((bToHKCU && !(pRuleSet->wGetFlags() & g_wGeneral)) || (!bToHKCU && (pRuleSet->wGetFlags() & g_wGeneral)))
 				if (RegCreateKeyEx(hKeySet, pRuleSet->m_strSetName,
 								   0, (LPTSTR) g_szRulesClass, REG_OPTION_NON_VOLATILE,
 								   KEY_ALL_ACCESS, NULL, &hKey, NULL) == ERROR_SUCCESS)
 				{
-					ASSERT(hKey, "hKey is NULL in CCDynaRules::bSaveRulesToReg");
+					CC_ASSERT(hKey, "hKey is NULL in CCDynaRules::bSaveRulesToReg");
 					iRules = pRuleSet->m_rgpRules.GetSize();
 
 					dwFlags = MAKELONG(pRuleSet->m_wFlags & g_wActive, g_wVersion);	// low + high
@@ -2970,7 +2970,7 @@ BOOL CCDynaRules::bSaveRulesToReg(/*BOOL bToHKCU /*=TRUE*/)
 						{
 							strRegName.Format("%d", iIndexRule);
 							pRule = (CCRule*) pRuleSet->m_rgpRules.GetAt(iIndexRule);
-							ASSERT(pRule, "pRule is NULL in CCDynaRules::bSaveRulesToReg");
+							CC_ASSERT(pRule, "pRule is NULL in CCDynaRules::bSaveRulesToReg");
 							if ((cbRule = pRule->Serialize(szBuff, g_uMaxSerializedRule)) > 0)
 								RegSetValueEx(hKey, strRegName, 0, REG_BINARY, (const unsigned char*)(LPCTSTR) szBuff, cbRule);
 						}
@@ -2983,7 +2983,7 @@ BOOL CCDynaRules::bSaveRulesToReg(/*BOOL bToHKCU /*=TRUE*/)
 	}
 	else
 	{
-		ASSERT(FALSE, "Couldn't open regkey for rule sets in CCDynaRules::bSaveRulesToReg");
+		CC_ASSERT(FALSE, "Couldn't open regkey for rule sets in CCDynaRules::bSaveRulesToReg");
 		return FALSE;
 	}
 }
@@ -3003,7 +3003,7 @@ BOOL CCDynaRules::bLoadRulesFromReg(/*BOOL bFromHKCU /*=TRUE*/)
 	DWORD		dwIndex, dwIndexSet = 0L, dwType, cbValueName = g_uMaxSetNameLength, cbClassName = 16, cbData = g_uMaxSerializedRule;
 	BOOL		bRet = FALSE;
 
-	ASSERT(m_pRulesData, "m_pRulesData is NULL in CCDynaRules::bLoadRulesFromReg");
+	CC_ASSERT(m_pRulesData, "m_pRulesData is NULL in CCDynaRules::bLoadRulesFromReg");
 
 	strRulesKey += g_szRuleSetsSubKey;
 	//if (ERROR_SUCCESS == RegOpenKeyEx(bFromHKCU ? HKEY_CURRENT_USER : HKEY_LOCAL_MACHINE, strRulesKey, 
@@ -3012,9 +3012,9 @@ BOOL CCDynaRules::bLoadRulesFromReg(/*BOOL bFromHKCU /*=TRUE*/)
 									  0, KEY_ENUMERATE_SUB_KEYS | KEY_EXECUTE | KEY_QUERY_VALUE, &hKeySet))
 	{
 		BOOL b = m_pRulesData->bInitAlloc();
-		ASSERT(b, "bInitAlloc failed in CCDynaRules::bLoadRulesFromReg");
+		CC_ASSERT(b, "bInitAlloc failed in CCDynaRules::bLoadRulesFromReg");
 		b = m_pRulesData->bLoadStrings();
-		ASSERT(b, "bLoadStrings failed in CCDynaRules::bLoadRulesFromReg");
+		CC_ASSERT(b, "bLoadStrings failed in CCDynaRules::bLoadRulesFromReg");
 
 		while (ERROR_SUCCESS == RegEnumKeyEx(hKeySet, dwIndexSet, szValueName, &cbValueName, NULL, szClassName, &cbClassName, &ftLastWriteTime))
 		{
@@ -3022,7 +3022,7 @@ BOOL CCDynaRules::bLoadRulesFromReg(/*BOOL bFromHKCU /*=TRUE*/)
 			{
 				if (!GetRuleSetFromName((LPCTSTR) szValueName))
 				{
-					ASSERT(!pRuleSet, "pRuleSet is NOT NULL in CCDynaRules::bLoadRulesFromReg");
+					CC_ASSERT(!pRuleSet, "pRuleSet is NOT NULL in CCDynaRules::bLoadRulesFromReg");
 					pRuleSet = (CCRuleSet*) new CCRuleSet(this);
 					if (!pRuleSet)
 						goto exit;
@@ -3112,9 +3112,9 @@ BOOL CCDynaRules::bLoadRulesFromResource()
 	CCRule		*pRule;
 
 	bRet = m_pRulesData->bInitAlloc();
-	ASSERT(bRet, "bInitAlloc failed in CCDynaRules::bLoadRulesFromResource");
+	CC_ASSERT(bRet, "bInitAlloc failed in CCDynaRules::bLoadRulesFromResource");
 	bRet = m_pRulesData->bLoadStrings();
-	ASSERT(bRet, "bLoadStrings failed in CCDynaRules::bLoadRulesFromResource");
+	CC_ASSERT(bRet, "bLoadStrings failed in CCDynaRules::bLoadRulesFromResource");
 
 	for (UINT uIDS = IDS_SAMPLES_RULESET; uIDS <= IDS_GENERAL_RULESET; uIDS++)
 	{
@@ -3124,14 +3124,14 @@ BOOL CCDynaRules::bLoadRulesFromResource()
 		szTmp = (LPTSTR) (LPCTSTR) strRuleSet;
 		if (!(szToken = GetToken1(szTmp, &szTmp, "|")))
 		{
-			ASSERT(FALSE, "Unexpected rule set format in CCDynaRules::bLoadRulesFromResource");
+			CC_ASSERT(FALSE, "Unexpected rule set format in CCDynaRules::bLoadRulesFromResource");
 			return FALSE;
 		}
 
 		wFlags = atoi(szToken);
 		if (wFlags & ~g_wActive)
 		{
-			ASSERT(FALSE, "Unexpected rule set format in CCDynaRules::bLoadRulesFromResource");
+			CC_ASSERT(FALSE, "Unexpected rule set format in CCDynaRules::bLoadRulesFromResource");
 			return FALSE;
 		}
 
@@ -3167,12 +3167,12 @@ BOOL CCDynaRules::bLoadRulesFromResource()
 		bRet &= bAddRuleSet(pRuleSet);
 	}
 
-	ASSERT(bRet, "CCDynaRules::bLoadRulesFromResource failed");
+	CC_ASSERT(bRet, "CCDynaRules::bLoadRulesFromResource failed");
 	return bRet; 
 
 exit:
-	ASSERT(pRuleSet, "pRuleSet is NULL in CCDynaRules::bLoadRulesFromResource");
-	ASSERT(!pRule, "pRule is NOT NULL in CCDynaRules::bLoadRulesFromResource");
+	CC_ASSERT(pRuleSet, "pRuleSet is NULL in CCDynaRules::bLoadRulesFromResource");
+	CC_ASSERT(!pRule, "pRule is NOT NULL in CCDynaRules::bLoadRulesFromResource");
 	delete pRuleSet;
 	return FALSE;
 }
@@ -3184,20 +3184,20 @@ BOOL CCDynaRules::bReplaceMessage(CCRule* pRule)
 	CString strCLReplaceBy;	// might want to add a rgdwReplaceByFormatting
 	UINT	uFlags = 0;	
 
-	ASSERT(pRule, "pRule is NULL in CCDynaRules::bReplaceMessage");
-	ASSERT(pRule->m_pEvent, "pRule->m_pEvent is NULL in CCDynaRules::bReplaceMessage");
-	ASSERT(pRule->m_pAction, "pRule->m_pAction is NULL in CCDynaRules::bReplaceMessage");
+	CC_ASSERT(pRule, "pRule is NULL in CCDynaRules::bReplaceMessage");
+	CC_ASSERT(pRule->m_pEvent, "pRule->m_pEvent is NULL in CCDynaRules::bReplaceMessage");
+	CC_ASSERT(pRule->m_pAction, "pRule->m_pAction is NULL in CCDynaRules::bReplaceMessage");
 
 	for (UINT uIndex = 0; uIndex < pRule->m_pEvent->m_uParamNum; uIndex++)
 		if (pRule->m_pEvent->m_rgpt[uIndex] == ptMessage)
 			break;
-	ASSERT(uIndex < pRule->m_pEvent->m_uParamNum, "uIndex >= pRule->m_pEvent->m_uParamNum in CCDynaRules::bReplaceMessage");
+	CC_ASSERT(uIndex < pRule->m_pEvent->m_uParamNum, "uIndex >= pRule->m_pEvent->m_uParamNum in CCDynaRules::bReplaceMessage");
 
 	if (pRule->m_rgkep[uIndex] == kepMax)
 		strCLReplaceWhat = pRule->m_rgstrEventParams[uIndex];
 	else
 	{
-		ASSERT(pRule->m_rgkep[uIndex] == kepAny, "pRule->m_rgkep[uIndex] != kepAny in CCDynaRules::bReplaceMessage");
+		CC_ASSERT(pRule->m_rgkep[uIndex] == kepAny, "pRule->m_rgkep[uIndex] != kepAny in CCDynaRules::bReplaceMessage");
 		strCLReplaceWhat = m_strCLMessageCach;
 	}
 
@@ -3205,7 +3205,7 @@ BOOL CCDynaRules::bReplaceMessage(CCRule* pRule)
 		if (pRule->m_pAction->m_rgpt[uIndex] == ptMessage)
 			break;
 
-	ASSERT(uIndex < pRule->m_pAction->m_uParamNum, "uIndex >= pRule->m_pAction->m_uParamNum in CCDynaRules::bReplaceMessage");
+	CC_ASSERT(uIndex < pRule->m_pAction->m_uParamNum, "uIndex >= pRule->m_pAction->m_uParamNum in CCDynaRules::bReplaceMessage");
 
 	strCLReplaceBy = pRule->m_rgstrActionFinalParams[uIndex];
 
@@ -3234,14 +3234,14 @@ BOOL CCDynaRules::bStartRulesDaemon(UINT uRulesDaemonElapse, BOOL bForceReset)
 	if (m_bDaemonRunning && !bForceReset)
 		return TRUE;
 
-	ASSERT(GetFrame(), "GetFrame() return NULL in CCDynaRules::bStartRulesDaemon");
+	CC_ASSERT(GetFrame(), "GetFrame() return NULL in CCDynaRules::bStartRulesDaemon");
 
 	bStopRulesDaemon();
 
 	if (GetFrame())
 		m_bDaemonRunning = (g_uRulesDaemonTimer == GetFrame()->SetTimer(g_uRulesDaemonTimer, 1000 * uRulesDaemonElapse, NULL));
 
-	ASSERT(m_bDaemonRunning, "m_bDaemonRunning is FALSE in CCDynaRules::bStartRulesDaemon()");
+	CC_ASSERT(m_bDaemonRunning, "m_bDaemonRunning is FALSE in CCDynaRules::bStartRulesDaemon()");
 
 	return m_bDaemonRunning;
 }
@@ -3271,7 +3271,7 @@ BOOL CCDynaRules::bDaemonNeeded()
 	while (iIndex < iRuleSets)
 	{
 		pRuleSet = (CCRuleSet*) m_rgpRuleSets.GetAt(iIndex);
-		ASSERT(pRuleSet, "pRuleSet is NULL in CCDynaRules::bDaemonNeeded");
+		CC_ASSERT(pRuleSet, "pRuleSet is NULL in CCDynaRules::bDaemonNeeded");
 		if (pRuleSet->bDaemonNeeded())
 			return TRUE;
 		else
@@ -3291,7 +3291,7 @@ void CCDynaRules::OnRulesDaemonTimer()
 	BOOL		bPass = TRUE;
 
 	// Switch to the long period
-	ASSERT(m_bDaemonRunning, "m_bDaemonRunning is FALSE in CCDynaRules::OnRulesDaemonTimer");
+	CC_ASSERT(m_bDaemonRunning, "m_bDaemonRunning is FALSE in CCDynaRules::OnRulesDaemonTimer");
 	bStartRulesDaemon(g_uRulesDaemonLongElapse, TRUE);
 
 	iRuleSets = m_rgpRuleSets.GetSize();
@@ -3299,7 +3299,7 @@ void CCDynaRules::OnRulesDaemonTimer()
 	while (iIndexRuleSet < iRuleSets)
 	{
 		pRuleSet = (CCRuleSet*) m_rgpRuleSets.GetAt(iIndexRuleSet);
-		ASSERT(pRuleSet, "pRuleSet is NULL in CCDynaRules::OnRulesDaemonTimer");
+		CC_ASSERT(pRuleSet, "pRuleSet is NULL in CCDynaRules::OnRulesDaemonTimer");
 
 		if (pRuleSet->bActive())
 		{
@@ -3309,7 +3309,7 @@ void CCDynaRules::OnRulesDaemonTimer()
 			while (iIndexRule < iRules)
 			{
 				pRule = (CCRule*) pRuleSet->m_rgpRules.GetAt(iIndexRule);
-				ASSERT(pRule, "pRule is NULL in CCDynaRules::OnRulesDaemonTimer");
+				CC_ASSERT(pRule, "pRule is NULL in CCDynaRules::OnRulesDaemonTimer");
 				if (pRule->bActive() && !pRule->bStopped() && pRule->bDaemonNeeded() && pRule->m_pDaemonExt)
 				{
 					if (pRule->bIsFlooding())
@@ -3323,28 +3323,28 @@ void CCDynaRules::OnRulesDaemonTimer()
 						if (pRule->m_pDaemonExt->GetIT() == itUser)
 						{
 							// eID == eOnConnect || eID == eOnDisconnect
-							ASSERT(m_pfGetKeyEventParam, "m_pfGetKeyEventParam is NULL in CCDynaRules::OnRulesDaemonTimer");
+							CC_ASSERT(m_pfGetKeyEventParam, "m_pfGetKeyEventParam is NULL in CCDynaRules::OnRulesDaemonTimer");
 							CString strCurrentServer = m_pfGetKeyEventParam(ptServerName);
 							if (pRule->m_rgkep[1] != kepMax)	// checking if server parameter matches with current server
 							{
 								// rule uses a keyword for server parameter
-								ASSERT(m_pfEventKeyParam, "m_pfEventKeyParam is NULL in CCDynaRules::OnRulesDaemonTimer");
+								CC_ASSERT(m_pfEventKeyParam, "m_pfEventKeyParam is NULL in CCDynaRules::OnRulesDaemonTimer");
 								bPass = m_pfEventKeyParam(strCurrentServer, pRule->m_rgkep[1]);
 							}
 							else
 							{
 								// rule uses specific textual value for the server name parameter
-								ASSERT(!pRule->m_rgstrEventParams[1].IsEmpty(), "pRule->m_rgstrEventParams[uIndex] is empty in CCDynaRules::OnRulesDaemonTimer");
-								ASSERT(m_pfEventRndParam, "m_pfEventRndParam is NULL in CCDynaRules::OnRulesDaemonTimer");
+								CC_ASSERT(!pRule->m_rgstrEventParams[1].IsEmpty(), "pRule->m_rgstrEventParams[uIndex] is empty in CCDynaRules::OnRulesDaemonTimer");
+								CC_ASSERT(m_pfEventRndParam, "m_pfEventRndParam is NULL in CCDynaRules::OnRulesDaemonTimer");
 								bPass = m_pfEventRndParam(strCurrentServer, pRule->m_rgstrEventParams[1], NULL, pRule->m_wFlags, ptServerName);
 							}
 						}
 
-						ASSERT(m_pfDaemonQuery, "m_pfDaemonQuery is NULL in CCDynaRules::OnRulesDaemonTimer");
+						CC_ASSERT(m_pfDaemonQuery, "m_pfDaemonQuery is NULL in CCDynaRules::OnRulesDaemonTimer");
 						if (bPass)
 						{
 							BOOL bRet = m_pfDaemonQuery(pRule);
-							ASSERT(bRet, "m_pfDaemonQuery call failed in CCDynaRules::OnRulesDaemonTimer");
+							CC_ASSERT(bRet, "m_pfDaemonQuery call failed in CCDynaRules::OnRulesDaemonTimer");
 						}
 					}
 				}
@@ -3360,7 +3360,7 @@ void CCDynaRules::OnRulesDaemonTimer()
 // CCDynaRules::bAddRuleSet - Adds a rule set at the end of the rule sets array
 BOOL CCDynaRules::bAddRuleSet(CCRuleSet* pRuleSet, INT iIndex /* = -1 */)
 {
-	ASSERT(pRuleSet, "pRuleSet is NULL in CCDynaRules::bAddRuleSet");
+	CC_ASSERT(pRuleSet, "pRuleSet is NULL in CCDynaRules::bAddRuleSet");
 
 	if (iIndex < 0)
 		m_rgpRuleSets.Add((void*) pRuleSet);				// Append rule set at the end of the array
@@ -3377,7 +3377,7 @@ BOOL CCDynaRules::bRemoveRuleSet(CCRuleSet* pRuleSet, INT iIndex /* = -1 */)
 	INT	iIndexTmp, iRuleSets; // , iIndexRule, iRules;
 	// CCRule*	pRule;
 
-	ASSERT(pRuleSet || iIndex >= 0, "pRuleSet is NULL and iIndex < 0 in CCDynaRules::bRemoveRuleSet");
+	CC_ASSERT(pRuleSet || iIndex >= 0, "pRuleSet is NULL and iIndex < 0 in CCDynaRules::bRemoveRuleSet");
 
 	if (iIndex < 0)
 	{
@@ -3393,9 +3393,9 @@ BOOL CCDynaRules::bRemoveRuleSet(CCRuleSet* pRuleSet, INT iIndex /* = -1 */)
 	else
 	{
 		iIndexTmp = iIndex;
-		ASSERT(iIndexTmp < m_rgpRuleSets.GetSize(), "iIndexTmp >= m_rgpRuleSets.GetSize() in CCDynaRules::bRemoveRuleSet");
+		CC_ASSERT(iIndexTmp < m_rgpRuleSets.GetSize(), "iIndexTmp >= m_rgpRuleSets.GetSize() in CCDynaRules::bRemoveRuleSet");
 		pRuleSet = (CCRuleSet*) m_rgpRuleSets.GetAt(iIndexTmp);
-		ASSERT(pRuleSet, "pRuleSet is NULL in CCDynaRules::bRemoveRuleSet");
+		CC_ASSERT(pRuleSet, "pRuleSet is NULL in CCDynaRules::bRemoveRuleSet");
 	}
 
 	//iRules = pRuleSet->m_rgpRules.GetSize();
@@ -3403,7 +3403,7 @@ BOOL CCDynaRules::bRemoveRuleSet(CCRuleSet* pRuleSet, INT iIndex /* = -1 */)
 	//for (iIndexRule = 0; iIndexRule < iRules; iIndexRule++)
 	//{
 	//	pRule = (CCRule*) pRuleSet->m_rgpRules.GetAt(iIndex);
-	//	ASSERT(pRule, "pRule is NULL in CCDynaRules::bRemoveRuleSet");
+	//	CC_ASSERT(pRule, "pRule is NULL in CCDynaRules::bRemoveRuleSet");
 	//	pRule->Desactivate();
 	//	pRule->Release();
 	//}
@@ -3420,7 +3420,7 @@ BOOL CCDynaRules::bUpRuleSet(CCRuleSet* pRuleSet, INT iIndex /* = -1 */)
 	INT		iIndexTmp, iRuleSets;
 	void	*pCurrent, *pPrevious = NULL;
 
-	ASSERT(pRuleSet || iIndex >= 0, "pRuleSet is NULL and iIndex < 0 in CCDynaRules::bUpRuleSet");
+	CC_ASSERT(pRuleSet || iIndex >= 0, "pRuleSet is NULL and iIndex < 0 in CCDynaRules::bUpRuleSet");
 
 	if (iIndex < 0)
 	{
@@ -3458,7 +3458,7 @@ BOOL CCDynaRules::bDownRuleSet(CCRuleSet* pRuleSet, INT iIndex /* = -1 */)
 	INT		iIndexTmp, iRuleSets;
 	void	*pCurrent;
 
-	ASSERT(pRuleSet || iIndex >= 0, "pRuleSet is NULL and iIndex < 0 in CCDynaRules::bDownRuleSet");
+	CC_ASSERT(pRuleSet || iIndex >= 0, "pRuleSet is NULL and iIndex < 0 in CCDynaRules::bDownRuleSet");
 
 	iRuleSets = m_rgpRuleSets.GetSize();
 
@@ -3505,9 +3505,9 @@ CCActionContext::~CCActionContext()
 
 BOOL CCActionContext::bInitActionContext(CCDynaRules* pDynaRules, CCRule* pRule)
 {
-	ASSERT(pDynaRules, "pDynaRules is NULL in CCActionContext::bInitActionContext");
-	ASSERT(pRule, "pRule is NULL in CCActionContext::bInitActionContext");
-	ASSERT(pRule->GetAction(), "pRule->GetAction() is NULL in CCActionContext::bInitActionContext");
+	CC_ASSERT(pDynaRules, "pDynaRules is NULL in CCActionContext::bInitActionContext");
+	CC_ASSERT(pRule, "pRule is NULL in CCActionContext::bInitActionContext");
+	CC_ASSERT(pRule->GetAction(), "pRule->GetAction() is NULL in CCActionContext::bInitActionContext");
 
 	UINT uIndex;
 
@@ -3547,7 +3547,7 @@ CCDelayedRules::~CCDelayedRules()
 
 BOOL CCDelayedRules::bAddActionCtx(CCActionContext* pActionCtx)
 {
-	ASSERT(pActionCtx, "pActionCtx is NULL in CCDelayedRules::bAddActionCtx");
+	CC_ASSERT(pActionCtx, "pActionCtx is NULL in CCDelayedRules::bAddActionCtx");
 
 	if (m_plActionCtx.AddHead((PVOID) pActionCtx))
 	{
@@ -3556,7 +3556,7 @@ BOOL CCDelayedRules::bAddActionCtx(CCActionContext* pActionCtx)
 	}
 	else
 	{
-		ASSERT(FALSE, "CCDelayedRules::bAddActionCtx failed.");
+		CC_ASSERT(FALSE, "CCDelayedRules::bAddActionCtx failed.");
 		return FALSE;
 	}
 }
@@ -3571,14 +3571,14 @@ BOOL CCDelayedRules::bExecuteActions()
     {
 		prevPos = pos;
 		pActionCtx = (CCActionContext*) m_plActionCtx.GetNext(pos);
-		ASSERT(pActionCtx, "pActionCtx is NULL in CCDelayedRules::bExecuteActions");
-		ASSERT(pActionCtx->GetDelay() > 0, "pActionCtx->GetDelay() == 0 in CCDelayedRules::bExecuteActions");
+		CC_ASSERT(pActionCtx, "pActionCtx is NULL in CCDelayedRules::bExecuteActions");
+		CC_ASSERT(pActionCtx->GetDelay() > 0, "pActionCtx->GetDelay() == 0 in CCDelayedRules::bExecuteActions");
 		if (!pActionCtx->GetDecrementedDelay())
 		{
-			ASSERT(prevPos, "prevPos is NULL in CCDelayedRules::bExecuteActions");
+			CC_ASSERT(prevPos, "prevPos is NULL in CCDelayedRules::bExecuteActions");
 			m_plActionCtx.RemoveAt(prevPos);	// removing cell first because the action could be blocking like a DisplayNotification
 			// and we only want to execute the action once!
-			ASSERT(m_pfExecuteAction, "m_pfExecuteAction is NULL in CCDelayedRules::bExecuteActions");
+			CC_ASSERT(m_pfExecuteAction, "m_pfExecuteAction is NULL in CCDelayedRules::bExecuteActions");
 			// it's time to execute this action!
 			m_pfExecuteAction(NULL /*pDynaRules*/, NULL /*pRule*/, pActionCtx);
 			// remove this cell from the list - the job is done
@@ -3598,12 +3598,12 @@ BOOL CCDelayedRules::bStartTimer()
 	if (m_bTimerRunning)
 		return TRUE;
 
-	ASSERT(GetFrame(), "GetFrame() return NULL in CCDelayedRules::bStartTimer");
+	CC_ASSERT(GetFrame(), "GetFrame() return NULL in CCDelayedRules::bStartTimer");
 
 	if (GetFrame())
 		m_bTimerRunning = (g_uDelayedRulesTimer == GetFrame()->SetTimer(g_uDelayedRulesTimer, 1000 * g_uDelayedRulesElapse, NULL));
 
-	ASSERT(m_bTimerRunning, "m_bTimerRunning is FALSE in CCDelayedRules::bStartTimer()");
+	CC_ASSERT(m_bTimerRunning, "m_bTimerRunning is FALSE in CCDelayedRules::bStartTimer()");
 
 	return m_bTimerRunning;
 }
@@ -3631,7 +3631,7 @@ void CCDelayedRules::FreeRemoveAll()
 	for (pos = m_plActionCtx.GetHeadPosition(); pos; )
     {
 		pActionCtx = (CCActionContext*) m_plActionCtx.GetNext(pos);
-		ASSERT(pActionCtx, "pActionCtx is NULL in CCDelayedRules::FreeRemoveAll");
+		CC_ASSERT(pActionCtx, "pActionCtx is NULL in CCDelayedRules::FreeRemoveAll");
 		delete pActionCtx;
 	}
 	

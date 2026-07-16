@@ -47,3 +47,19 @@ extern LOGPALETTE      *gpLogPal;
 
 #include "chicdial.h"
 #include "coolbar.h"
+
+// The original source used a private two-argument ASSERT(expression, message)
+// extension. Current MFC exposes the standard single-argument ASSERT macro,
+// and the conforming preprocessor correctly rejects the extra argument. Keep
+// the diagnostic text without relying on the legacy preprocessor extension.
+#ifdef _DEBUG
+#define CC_ASSERT(expression, message) \
+	do { \
+		if (!(expression)) { \
+			TRACE("Comic Chat assertion: %s\n", (message)); \
+			ASSERT(expression); \
+		} \
+	} while (false)
+#else
+#define CC_ASSERT(expression, message) ((void)0)
+#endif

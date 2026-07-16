@@ -419,7 +419,7 @@ DWORD dwAdditionalStyles)
     // Verify that the window is, indeed, a combobox.
 	char szClass[32];
 	::GetClassName (pOrigCombo->m_hWnd, szClass, sizeof(szClass));
-	ASSERT(!lstrcmpi (szClass, "combobox"));
+	CC_ASSERT(!lstrcmpi (szClass, "combobox"));
    #endif
    
 	DWORD dwOrigStyle, dwOrigStyleEx;

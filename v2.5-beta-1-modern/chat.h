@@ -303,7 +303,7 @@ public:
 extern CChatApp theApp;
 
 BOOL ChatInitialize(SHORT *pnCXKeepServer, BOOL *pbCXPrompt);
-void ChatPreSendText(CString & str, int avID = 0);
+void ChatPreSendText(const CString& str, int avID = 0);
 void SetMyAvatar(UINT avatarID, BOOL bBroadcast = TRUE);
 BOOL SetMyAvatar(const char *avName, BOOL bBroadcast = TRUE);
 void StartNewPanel();

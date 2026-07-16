@@ -33,10 +33,10 @@ INT CALLBACK CompareNotifs(LPARAM lParam1, LPARAM lParam2, LPARAM lParamSort)
 	BOOL		bAscending = lParamSort & 0x0F;
 	INT			iRet = 0;
 
-	ASSERT(pNotif1, "pNotif1 is NULL in CompareNotifs");
-	ASSERT(pNotif2, "pNotif2 is NULL in CompareNotifs");
-	ASSERT(uColumn >= g_uNickname, "Unexpected uColumn value in CompareNotifs");
-	ASSERT(uColumn <= g_uNetName, "Unexpected uColumn value in CompareNotifs");
+	CC_ASSERT(pNotif1, "pNotif1 is NULL in CompareNotifs");
+	CC_ASSERT(pNotif2, "pNotif2 is NULL in CompareNotifs");
+	CC_ASSERT(uColumn >= g_uNickname, "Unexpected uColumn value in CompareNotifs");
+	CC_ASSERT(uColumn <= g_uNetName, "Unexpected uColumn value in CompareNotifs");
 
 	iRet = pNotif1->GetParam(uColumn).CompareNoCase(pNotif2->GetParam(uColumn));
 
@@ -53,10 +53,10 @@ INT CALLBACK CompareUsers(LPARAM lParam1, LPARAM lParam2, LPARAM lParamSort)
 	BOOL	bAscending = lParamSort & 0x0F;
 	INT		iRet = 0;
 
-	ASSERT(pUser1, "pUser1 is NULL in CompareUsers");
-	ASSERT(pUser2, "pUser2 is NULL in CompareUsers");
-	ASSERT(uColumn >= g_uNickname, "Unexpected uColumn value in CompareUsers");
-	ASSERT(uColumn <= g_uNetName, "Unexpected uColumn value in CompareUsers");
+	CC_ASSERT(pUser1, "pUser1 is NULL in CompareUsers");
+	CC_ASSERT(pUser2, "pUser2 is NULL in CompareUsers");
+	CC_ASSERT(uColumn >= g_uNickname, "Unexpected uColumn value in CompareUsers");
+	CC_ASSERT(uColumn <= g_uNetName, "Unexpected uColumn value in CompareUsers");
 
 	strPrettyNick1 = pUser1->GetPrettyNick();
 	strPrettyNick2 = pUser2->GetPrettyNick();
@@ -79,7 +79,7 @@ INT CALLBACK CompareUsers(LPARAM lParam1, LPARAM lParam2, LPARAM lParamSort)
 		iRet = pUser1->m_strPrettyRoom.CompareNoCase(pUser2->m_strPrettyRoom);
 		break;
 	default:
-		ASSERT(FALSE, "Unexpected column in CompareUsers");
+		CC_ASSERT(FALSE, "Unexpected column in CompareUsers");
 	}
 
 	if (!iRet && uColumn != 0)
@@ -141,8 +141,8 @@ INT CNotifsListCtrl::iGetSelectedNotif(CCNotif **ppNotif)
 
 INT CNotifsListCtrl::iGetSortPosition(CCNotif* pNotif)
 {
-	ASSERT(pNotif, "pNotif is NULL in CNotifsListCtrl::iGetSortPosition");
-	ASSERT(m_uSortColumn >= 0 && m_uSortColumn <= g_uNotifParamNum, "Unexpected m_uSortColumn in CNotifsListCtrl::iGetSortPosition");
+	CC_ASSERT(pNotif, "pNotif is NULL in CNotifsListCtrl::iGetSortPosition");
+	CC_ASSERT(m_uSortColumn >= 0 && m_uSortColumn <= g_uNotifParamNum, "Unexpected m_uSortColumn in CNotifsListCtrl::iGetSortPosition");
 
 	INT			iOrder, iNotifs = GetItemCount();
 	CCNotif*	pNotif2;
@@ -150,7 +150,7 @@ INT CNotifsListCtrl::iGetSortPosition(CCNotif* pNotif)
 	for (INT iItem = 0; iItem < iNotifs; iItem++)
 	{
 		pNotif2 = (CCNotif*) GetItemData(iItem);
-		ASSERT(pNotif2, "pNotif2 is NULL in CNotifsListCtrl::iGetSortPosition");
+		CC_ASSERT(pNotif2, "pNotif2 is NULL in CNotifsListCtrl::iGetSortPosition");
 		iOrder = pNotif->GetParam(m_uSortColumn).CompareNoCase(pNotif2->GetParam(m_uSortColumn));
 		if ((iOrder <= 0 && m_bSortAscending) || (iOrder >= 0 && !m_bSortAscending))
 			break;
@@ -162,7 +162,7 @@ INT CNotifsListCtrl::iGetSortPosition(CCNotif* pNotif)
 void CNotifsListCtrl::SwitchActivation(INT iIndex)
 {
 	CCNotif*	pNotif = (CCNotif*) GetItemData(iIndex);
-	ASSERT(pNotif, "pNotif is NULL in CNotifsListCtrl::SwitchActivation");
+	CC_ASSERT(pNotif, "pNotif is NULL in CNotifsListCtrl::SwitchActivation");
 	if (pNotif->bActive())
 		pNotif->Desactivate();
 	else
@@ -178,10 +178,10 @@ void CNotifsListCtrl::OnGetdispinfo(NMHDR* pNMHDR, LRESULT* pResult)
 {
 	LV_DISPINFO*	pDispInfo = (LV_DISPINFO*) pNMHDR;
 	LV_ITEM*		pItem = &pDispInfo->item;
-	ASSERT(pItem, "pItem is NULL in CNotifsListCtrl::OnGetdispinfo");
+	CC_ASSERT(pItem, "pItem is NULL in CNotifsListCtrl::OnGetdispinfo");
 
 	CCNotif*		pNotif = (CCNotif*) pItem->lParam;
-	ASSERT(pNotif, "pNotif is NULL in CNotifsListCtrl::OnGetdispinfo");
+	CC_ASSERT(pNotif, "pNotif is NULL in CNotifsListCtrl::OnGetdispinfo");
 
 	if (pItem->mask & LVIF_TEXT)
 	{
@@ -199,7 +199,7 @@ void CNotifsListCtrl::OnGetdispinfo(NMHDR* pNMHDR, LRESULT* pResult)
 				strncpy(pItem->pszText, (LPCTSTR) pNotif->GetParam(pItem->iSubItem), cchMax);
 				break;
 			default:
-				ASSERT(FALSE, "Unexpected pItem->iSubItem in CNotifsListCtrl::OnGetdispinfo");
+				CC_ASSERT(FALSE, "Unexpected pItem->iSubItem in CNotifsListCtrl::OnGetdispinfo");
 			}
 
 		pItem->pszText[cchMax] = g_chEOS;
@@ -217,7 +217,7 @@ void CNotifsListCtrl::OnColumnClick(NMHDR* pNMHDR, LRESULT* pResult)
 	NM_LISTVIEW*		pNMListView = (NM_LISTVIEW*) pNMHDR;
 	CNotificationsPage*	np = (CNotificationsPage*) GetParent();
 
-	ASSERT(np, "np is NULL in CNotifsListCtrl::OnColumnClick");
+	CC_ASSERT(np, "np is NULL in CNotifsListCtrl::OnColumnClick");
 
 	if (m_uSortColumn == pNMListView->iSubItem)			// toggle sort order
 		m_bSortAscending = !m_bSortAscending;
@@ -265,7 +265,7 @@ BOOL CNotifsListCtrl::bFill(CCDynaNotifs* pDynaNotifs)
 	INT			iNotifs;
 	CPtrArray*	pNotifsArray;
 
-	ASSERT(pDynaNotifs, "pDynaNotifs is NULL in CNotifsListCtrl::bFill");
+	CC_ASSERT(pDynaNotifs, "pDynaNotifs is NULL in CNotifsListCtrl::bFill");
 
 	DeleteAllItems();
 
@@ -275,7 +275,7 @@ BOOL CNotifsListCtrl::bFill(CCDynaNotifs* pDynaNotifs)
 	for (INT iIndex = 0; iIndex < iNotifs && bRet; iIndex++)
 		bRet = bAddNotif((CCNotif*) pNotifsArray->GetAt(iIndex), iIndex);
 
-	ASSERT(bRet, "bRet is FALSE in CNotifsListCtrl::bFill");
+	CC_ASSERT(bRet, "bRet is FALSE in CNotifsListCtrl::bFill");
 
 	return bRet;
 }
@@ -283,7 +283,7 @@ BOOL CNotifsListCtrl::bFill(CCDynaNotifs* pDynaNotifs)
 
 BOOL CNotifsListCtrl::bAddNotif(CCNotif* pNotif, INT iIndex /*=-1*/)
 {
-	ASSERT(pNotif, "pNotif is NULL in CNotifsListCtrl::bAddNotif");
+	CC_ASSERT(pNotif, "pNotif is NULL in CNotifsListCtrl::bAddNotif");
 
 	LV_ITEM item;
 	BOOL	bRet;
@@ -306,7 +306,7 @@ BOOL CNotifsListCtrl::bAddNotif(CCNotif* pNotif, INT iIndex /*=-1*/)
 		bRet &= (SetItem(&item) != -1);
 	}
 
-	ASSERT(bRet, "bRet is FALSE in CNotifsListCtrl::bAddNotif");
+	CC_ASSERT(bRet, "bRet is FALSE in CNotifsListCtrl::bAddNotif");
 
 	return bRet;
 }
@@ -421,14 +421,14 @@ void CNotificationsPage::FillUpCombos()
 		for (UINT uIndex = g_uAny; uIndex <= g_uEndsWith; uIndex++)
 		{
 			strOperator.LoadString(IDS_OP_ANY + uIndex);
-			ASSERT(!strOperator.IsEmpty(), "strOperator.IsEmpty() in CNotificationsPage::FillUpCombos");
+			CC_ASSERT(!strOperator.IsEmpty(), "strOperator.IsEmpty() in CNotificationsPage::FillUpCombos");
 			m_cmbOperators[uParam].AddString(strOperator);
 		}
 		m_cmbOperators[uParam].SetCurSel(g_uAny);
 	}
 
 	m_strNetArg.LoadString(IDS_KEY_EVENT_PARAM0 + (UINT) kepAny);
-	ASSERT(!m_strNetArg.IsEmpty(), "m_strNetArg.IsEmpty() in CNotificationsPage::FillUpCombos");
+	CC_ASSERT(!m_strNetArg.IsEmpty(), "m_strNetArg.IsEmpty() in CNotificationsPage::FillUpCombos");
 	// first add %Any% keyword 
 	m_cmbNetArg.AddString(m_strNetArg);
 	// load server list.
@@ -447,7 +447,7 @@ void CNotificationsPage::FillUpParamsFromIdent(CString& strIdent)
 
 	CString strUserName, strHostName;
 
-	ASSERT(szUserNameEnd, "szUserNameEnd is NULL in CNotificationsPage::FillUpParamsFromIdent");
+	CC_ASSERT(szUserNameEnd, "szUserNameEnd is NULL in CNotificationsPage::FillUpParamsFromIdent");
 
 	if (szUserNameEnd)
 	{
@@ -480,7 +480,7 @@ void CNotificationsPage::SortNotifs(UCHAR uSortColumn, BOOL bSortAscending)
 		wFlags |= g_wSortDescending;
 	m_pDynaCopy->SetFlags(wFlags);
 	BOOL bRet = m_pDynaCopy->bSortNotifs();
-	ASSERT(bRet, "bSortNotifs() failed in CNotificationsPage::SortNotifs");
+	CC_ASSERT(bRet, "bSortNotifs() failed in CNotificationsPage::SortNotifs");
 }
 
 
@@ -491,7 +491,7 @@ BOOL CNotificationsPage::OnSetActive()
 {
 	// OutputDebugString("CNotificationsPage::OnSetActive - Enter\n");
 
-	ASSERT(m_pDynaCopy, "m_pDynaCopy is NULL in CNotificationsPage::OnSetActive");
+	CC_ASSERT(m_pDynaCopy, "m_pDynaCopy is NULL in CNotificationsPage::OnSetActive");
 
 	if (!m_bNotifsColumnSet)
 	{
@@ -546,7 +546,7 @@ void CNotificationsPage::OnOK()
 {
 	// OutputDebugString("CNotificationsPage::OnOK - Enter\n");
 
-	ASSERT(m_pDynaCopy, "m_pDynaCopy is NULL in CNotificationsPage::OnOK");
+	CC_ASSERT(m_pDynaCopy, "m_pDynaCopy is NULL in CNotificationsPage::OnOK");
 
 	// save the changes made to the notifications...
 	theApp.m_dynaNotifs = *m_pDynaCopy;
@@ -571,7 +571,7 @@ void CNotificationsPage::OnNotifItemChanged(NMHDR* pNMHDR, LRESULT* pResult)
 	{
 		CCNotif* pNotif = (CCNotif*) m_lstNotifs.GetItemData(pNMListView->iItem);
 
-		ASSERT(pNotif, "pNotif is NULL in CNotificationsPage::OnNotifItemChanged");
+		CC_ASSERT(pNotif, "pNotif is NULL in CNotificationsPage::OnNotifItemChanged");
 
 		for (UCHAR uParam = g_uNickname; uParam <= g_uHostName; uParam++)
 		{
@@ -665,7 +665,7 @@ void CNotificationsPage::OnAddNotifClick()
 	{
 		if (!m_pDynaCopy->bAddNotif(pNotif, iIndex))
 		{
-			ASSERT(FALSE, "bAddNotif failed in CNotificationsPage::OnAddNotifClick");
+			CC_ASSERT(FALSE, "bAddNotif failed in CNotificationsPage::OnAddNotifClick");
 			m_lstNotifs.DeleteItem(iIndex);
 			delete pNotif;
 		}
@@ -680,7 +680,7 @@ void CNotificationsPage::OnAddNotifClick()
 	}
 	else
 	{
-		ASSERT(FALSE, "bAddNotif failed in CNotificationsPage::OnAddNotifClick");
+		CC_ASSERT(FALSE, "bAddNotif failed in CNotificationsPage::OnAddNotifClick");
 		delete pNotif;
 	}
 }
@@ -694,13 +694,13 @@ void CNotificationsPage::OnModifyNotifClick()
 		return;
 	}
 
-	ASSERT(m_lstNotifs.GetSelectedCount() == 1, "m_lstNotifs.GetSelectedCount() != 1 in CNotificationsPage::OnModifyNotifClick");
+	CC_ASSERT(m_lstNotifs.GetSelectedCount() == 1, "m_lstNotifs.GetSelectedCount() != 1 in CNotificationsPage::OnModifyNotifClick");
 
 	CCNotif*	pNotif;
 	INT			iIndex = m_lstNotifs.iGetSelectedNotif(&pNotif);
 
-	ASSERT(iIndex >= 0, "iIndex < 0 in CNotificationsPage::OnModifyNotifClick()");
-	ASSERT(pNotif, "pNotif is NULL in CNotificationsPage::OnModifyNotifClick()");
+	CC_ASSERT(iIndex >= 0, "iIndex < 0 in CNotificationsPage::OnModifyNotifClick()");
+	CC_ASSERT(pNotif, "pNotif is NULL in CNotificationsPage::OnModifyNotifClick()");
 
 	m_bActivateNew = pNotif->bActive();
 	m_bFreezeButtons = TRUE;
@@ -714,12 +714,12 @@ void CNotificationsPage::OnModifyNotifClick()
 
 void CNotificationsPage::OnDeleteNotifClick()
 {
-	ASSERT(m_lstNotifs.GetSelectedCount() == 1, "m_lstNotifs.GetSelectedCount() != 1 in CNotificationsPage::OnDeleteNotifClick");
+	CC_ASSERT(m_lstNotifs.GetSelectedCount() == 1, "m_lstNotifs.GetSelectedCount() != 1 in CNotificationsPage::OnDeleteNotifClick");
 
 	CCNotif*	pNotif;
 	INT			iIndex = m_lstNotifs.iGetSelectedNotif(&pNotif);
 
-	ASSERT(iIndex >= 0, "iIndex < 0 in CNotificationsPage::OnDeleteNotifClick()");
+	CC_ASSERT(iIndex >= 0, "iIndex < 0 in CNotificationsPage::OnDeleteNotifClick()");
 
 	m_lstNotifs.DeleteItem(iIndex);			// Remove notif from the list control
 
@@ -837,18 +837,18 @@ void CNotificationUsers::RedirectFocus()
 
 INT CNotificationUsers::iFindUserIndex(CUser* pUser, INT iLastItemsCount)
 {
-	ASSERT(pUser, "pUser is NULL in CNotificationUsers::iFindUserIndex");
-	ASSERT(iLastItemsCount > 0, "iLastItemsCount <= 0 in CNotificationUsers::iFindUserIndex");
+	CC_ASSERT(pUser, "pUser is NULL in CNotificationUsers::iFindUserIndex");
+	CC_ASSERT(iLastItemsCount > 0, "iLastItemsCount <= 0 in CNotificationUsers::iFindUserIndex");
 
 	CUser*	pUserTmp;
 	INT		iIndex, iUserCount = m_lstUsers.GetItemCount();
 
-	ASSERT(iUserCount - iLastItemsCount >= 0, "iUserCount - iLastItemsCount < 0 in CNotificationUsers::iFindUserIndex");
+	CC_ASSERT(iUserCount - iLastItemsCount >= 0, "iUserCount - iLastItemsCount < 0 in CNotificationUsers::iFindUserIndex");
 
 	for (iIndex = iUserCount - iLastItemsCount; iIndex < iUserCount; iIndex++)
 	{
 		pUserTmp = (CUser*) m_lstUsers.GetItemData(iIndex);
-		ASSERT(pUserTmp, "pUserTmp is NULL in CNotificationUsers::iFindUserIndex");
+		CC_ASSERT(pUserTmp, "pUserTmp is NULL in CNotificationUsers::iFindUserIndex");
 		if (pUserTmp == pUser)
 			return iIndex;
 	}
@@ -859,21 +859,21 @@ INT CNotificationUsers::iFindUserIndex(CUser* pUser, INT iLastItemsCount)
 
 BOOL CNotificationUsers::bFillList(CCItemPtrArray* prgpNotifUsers, UINT uModifiedUsersCount)
 {
-	ASSERT(prgpNotifUsers, "prgpNotifUsers is NULL in CNotificationUsers::bFillList");
+	CC_ASSERT(prgpNotifUsers, "prgpNotifUsers is NULL in CNotificationUsers::bFillList");
 
 	INT		iIndexModif, iIndexFound, iNotifUsers = prgpNotifUsers->GetSize(), iInitialItemCount = m_lstUsers.GetItemCount();
 	LV_ITEM item;
 	BOOL	bRet = TRUE;
 
-	ASSERT(iNotifUsers >= uModifiedUsersCount, "iNotifUsers < uModifiedUsersCount in CNotificationUsers::bFillList");
+	CC_ASSERT(iNotifUsers >= uModifiedUsersCount, "iNotifUsers < uModifiedUsersCount in CNotificationUsers::bFillList");
 
 	for (iIndexModif = iNotifUsers - uModifiedUsersCount; iIndexModif < iNotifUsers; iIndexModif++)
 	{
 		CUser*	pUser = (CUser*) prgpNotifUsers->GetAt(iIndexModif);
-		ASSERT(pUser, "pUser is NULL in CNotificationUsers::bFillList");
-		ASSERT(pUser->GetFlags() & g_wVisible, "!(pUser->GetFlags() & g_wVisible) in CNotificationUsers::bFillList");
-		ASSERT(pUser->GetFlags() & g_wNew, "!(pUser->GetFlags() & g_wNew) in CNotificationUsers::bFillList");
-		ASSERT(pUser->GetFlags() & g_wAltered, "!(pUser->GetFlags() & g_wAltered) in CNotificationUsers::bFillList");
+		CC_ASSERT(pUser, "pUser is NULL in CNotificationUsers::bFillList");
+		CC_ASSERT(pUser->GetFlags() & g_wVisible, "!(pUser->GetFlags() & g_wVisible) in CNotificationUsers::bFillList");
+		CC_ASSERT(pUser->GetFlags() & g_wNew, "!(pUser->GetFlags() & g_wNew) in CNotificationUsers::bFillList");
+		CC_ASSERT(pUser->GetFlags() & g_wAltered, "!(pUser->GetFlags() & g_wAltered) in CNotificationUsers::bFillList");
 
 		WORD	wFlags = pUser->GetFlags();
 
@@ -888,7 +888,7 @@ BOOL CNotificationUsers::bFillList(CCItemPtrArray* prgpNotifUsers, UINT uModifie
 			{
 				m_lstUsers.DeleteItem(iIndexFound);
 				iInitialItemCount--;
-				ASSERT(iInitialItemCount >= 0, "iInitialItemCount < 0 in CNotificationUsers::bFillList"); 
+				CC_ASSERT(iInitialItemCount >= 0, "iInitialItemCount < 0 in CNotificationUsers::bFillList");
 			}
 		}
 
@@ -910,7 +910,7 @@ BOOL CNotificationUsers::bFillList(CCItemPtrArray* prgpNotifUsers, UINT uModifie
 			bRet &= (m_lstUsers.SetItem(&item) != -1);
 		}
 
-		ASSERT(bRet, "bRet is FALSE in CNotificationUsers::bFillList");
+		CC_ASSERT(bRet, "bRet is FALSE in CNotificationUsers::bFillList");
 	}
 
 	GetDlgItem(IDC_NOTIFCLEAR)->EnableWindow(m_lstUsers.GetItemCount() > 0);
@@ -988,9 +988,9 @@ CUser* CNotificationUsers::GetSelectedUser()
 	if (m_lstUsers.GetSelectedCount() == 1)
 	{
 		INT iIndex = m_lstUsers.GetNextItem(-1, LVNI_SELECTED);
-		ASSERT(iIndex >= 0, "iIndex < 0 in CNotificationUsers::GetSelectedUser");
+		CC_ASSERT(iIndex >= 0, "iIndex < 0 in CNotificationUsers::GetSelectedUser");
 		pUser = (CUser*) m_lstUsers.GetItemData(iIndex);
-		ASSERT(pUser, "pUser is NULL in CNotificationUsers::GetSelectedUser");
+		CC_ASSERT(pUser, "pUser is NULL in CNotificationUsers::GetSelectedUser");
 	}
 
 	return pUser;
@@ -1117,10 +1117,10 @@ void CNotificationUsers::OnGetdispinfo(NMHDR* pNMHDR, LRESULT* pResult)
 {
 	LV_DISPINFO*	pDispInfo = (LV_DISPINFO*) pNMHDR;
 	LV_ITEM*		pItem = &pDispInfo->item;
-	ASSERT(pItem, "pItem is NULL in CNotificationUsers::OnGetdispinfo");
+	CC_ASSERT(pItem, "pItem is NULL in CNotificationUsers::OnGetdispinfo");
 
 	CUser*			pUser = (CUser*) pItem->lParam;
-	ASSERT(pUser, "pUser is NULL in CNotificationUsers::OnGetdispinfo");
+	CC_ASSERT(pUser, "pUser is NULL in CNotificationUsers::OnGetdispinfo");
 
 	if (pItem->mask & LVIF_TEXT)
 	{
@@ -1141,7 +1141,7 @@ void CNotificationUsers::OnGetdispinfo(NMHDR* pNMHDR, LRESULT* pResult)
 			strncpy(pItem->pszText, (LPCTSTR) pUser->m_strPrettyRoom, cchMax);
 			break;
 		default:
-			ASSERT(FALSE, "Unexpected pItem->iSubItem in CNotificationUsers::OnGetdispinfo");
+			CC_ASSERT(FALSE, "Unexpected pItem->iSubItem in CNotificationUsers::OnGetdispinfo");
 		}
 
 		pItem->pszText[cchMax] = g_chEOS;
@@ -1272,7 +1272,7 @@ void CNotificationUsers::OnNotifInvite()
 		const char *szNick = GetSelectedNickname();
 		if (!szNick)
 		{
-			ASSERT(FALSE, "!szNick in CNotificationUsers::OnNotifInvite");
+			CC_ASSERT(FALSE, "!szNick in CNotificationUsers::OnNotifInvite");
 			return;
 		}
 		currentRoom->ChatSendInvitation(UnConst(szNick));
@@ -1286,11 +1286,11 @@ void CNotificationUsers::OnNotifWhisper()
 
 	if (!pUser)
 	{
-		ASSERT(FALSE, "!pUser in CNotificationUsers::OnNotifWhisper");
+		CC_ASSERT(FALSE, "!pUser in CNotificationUsers::OnNotifWhisper");
 		return;
 	}
 
-	ASSERT(pUser->GetFlags() & g_wConnected, "!(pUser->GetFlags() & g_wConnected) in CNotificationUsers::OnNotifWhisper");
+	CC_ASSERT(pUser->GetFlags() & g_wConnected, "!(pUser->GetFlags() & g_wConnected) in CNotificationUsers::OnNotifWhisper");
 	
 	CUserInfo* pui = new CUserInfo(pUser->m_strNickname, pUser->m_strIdentity);
 	if (pui)
@@ -1307,11 +1307,11 @@ void CNotificationUsers::OnNotifJoin()
 
 	if (!pUser)
 	{
-		ASSERT(FALSE, "!pUser in CNotificationUsers::OnNotifJoin");
+		CC_ASSERT(FALSE, "!pUser in CNotificationUsers::OnNotifJoin");
 		return;
 	}
 
-	ASSERT(pUser->GetFlags() & g_wConnected, "!(pUser->GetFlags() & g_wConnected) in CNotificationUsers::OnNotifJoin");
+	CC_ASSERT(pUser->GetFlags() & g_wConnected, "!(pUser->GetFlags() & g_wConnected) in CNotificationUsers::OnNotifJoin");
 
 	g_bEnterOnCreate = FALSE;
 	bSwitchToRoom(pUser->m_strRoom);
@@ -1380,4 +1380,3 @@ LRESULT* pResult)
 	if (iIndex == -1)
 		m_lstUsers.SetItemState(0, LVIS_FOCUSED, LVIS_FOCUSED);
 }
-

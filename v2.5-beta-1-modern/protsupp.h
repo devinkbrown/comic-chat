@@ -85,7 +85,7 @@ void ListMembers(const char *szRoom, const char *szPrettyRoom);
 void GetAddressees(CUserInfo *pui, const char *szSeparator, CString &str, BOOL bUseNick);
 void GetWhisperedAddressees(const char *szSeparator, CString &str);
 void ProcessNonComicsMsg(CString &str, USHORT &uModes);
-BOOL bChatSendText(CString& str, USHORT uModes, BOOL bEcho = TRUE, CDWordArray* prgdwFormatting = NULL, LPCTSTR szEncodedChannelName = NULL, BOOL bWhispereesFilled = FALSE, BOOL bInvokedByWhisperBox = FALSE);
+BOOL bChatSendText(CString str, USHORT uModes, BOOL bEcho = TRUE, CDWordArray* prgdwFormatting = NULL, LPCTSTR szEncodedChannelName = NULL, BOOL bWhispereesFilled = FALSE, BOOL bInvokedByWhisperBox = FALSE);
 BOOL bChatSendSound(const char *szSnd, const char *szMesg, CDWordArray *prgdwFormatting, BOOL bEcho, USHORT uModes, LPCTSTR szEncodedChannelName = NULL);
 BOOL bCanViewUnrated(BOOL bPromptOverride = FALSE);
 BOOL bRatingsEnabled();

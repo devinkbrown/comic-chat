@@ -710,7 +710,7 @@ public:
 	void				SetEvent(CCEvent* pEvent)	{ m_pEvent = pEvent; }
 	void				SetAction(CCAction* pAction){ m_pAction = pAction; }
 
-	void				SetEventParam(UINT uIndex, CString& strParam);
+	void				SetEventParam(UINT uIndex, const CString& strParam);
 	void				SetActionParam(UINT uIndex, CString& strParam) { m_rgstrActionParams[uIndex] = strParam; }
 
 	void				SetEventKeyParam(UINT uIndex, enumKeyEventParam kep)  { m_rgkep[uIndex] = kep; }
@@ -869,7 +869,7 @@ public:
 							  m_uFloodOccurrences = uFloodOccurrences;
 							}
 
-	void				SetCachVariables(enumEvents eID, CString& strIdentity, CString& strServer, CString& strChannel);
+	void				SetCachVariables(enumEvents eID, const CString& strIdentity, const CString& strServer, const CString& strChannel);
 	void				SetCachRecipients(CString strRecipients) 
 							{ m_strRecipientsCach = strRecipients; }
 
@@ -923,9 +923,9 @@ public:
 	BOOL				bReplaceMessage(CCRule*	pRule);
 	BOOL				bReplaceKeyActionParams(CCRule* pRule /*, CString& strEventServer, CString& strEventIdentity, CString& strEventChannel, CString& strEventMessage*/);
 	BOOL				bReplaceKeyEventParams(CString& strEventParam);
-	BOOL				bMatchAndApplyRules(enumEvents eID, enumActions* paApprovedIDs, enumActions* paRejectedIDs, CString& strServer, CString& strIdentity, CString& strChannel, CString& strMessage);
+	BOOL				bMatchAndApplyRules(enumEvents eID, enumActions* paApprovedIDs, enumActions* paRejectedIDs, const CString& strServer, const CString& strIdentity, const CString& strChannel, const CString& strMessage);
 	BOOL				bInActionIDs(enumActions* paActions, enumActions aID);
-	INT					iGetFirstMatchingRule(PINT piRuleSet, enumEvents eID, enumActions* paApprovedIDs, enumActions* paRejectedIDs, CString& strServer, CString& strIdentity, CString& strChannel, CString& strMessage, CCRule** ppRule = NULL);
+	INT					iGetFirstMatchingRule(PINT piRuleSet, enumEvents eID, enumActions* paApprovedIDs, enumActions* paRejectedIDs, const CString& strServer, const CString& strIdentity, const CString& strChannel, const CString& strMessage, CCRule** ppRule = NULL);
 	INT					iGetNextMatchingRule(PINT piPreviousRuleSet, INT iPreviousRule, CCRule** ppRule = NULL);
 
 	BOOL				bSaveRulesToReg(/*BOOL bToHKCU = TRUE*/);
@@ -1004,4 +1004,3 @@ extern SHORT g_nDaemonsRefCount;
 
 #define __RULES_H__
 #endif __RULES_H__
-

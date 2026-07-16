@@ -116,8 +116,8 @@ char *ToLower(const char *buff) {
 
 CEmotionOpts emo;
 
-void ChatPreSendText(CString &str, int avID) {
-	void GetEmotionsFromString(CString &str, CEmotionOpts &emOpts);
+void ChatPreSendText(const CString& str, int avID) {
+	void GetEmotionsFromString(const CString& str, CEmotionOpts& emOpts);
 
 	if (!GetChatDoc() || !GetChatDoc()->m_bComicView) return;
 
@@ -268,7 +268,7 @@ int StartCompare2(const char *sent, const char *substring, int len) {
 	return (strncmp(sent, substring, len) == 0 && !isalnum(sent[len]));
 }
 
-void GetEmotionsFromString(CString &str, CEmotionOpts &emOpts) {
+void GetEmotionsFromString(const CString& str, CEmotionOpts& emOpts) {
 	const char *buff = (LPCTSTR) str;
 	char *lower = ToLower(buff);
 	emOpts.m_nOpts = 0;
@@ -330,5 +330,4 @@ void DestroyEmotionRules() {
 	DestroyEmotionList(wordRules);
 	DestroyEmotionList(sentenceRules);
 }
-
 

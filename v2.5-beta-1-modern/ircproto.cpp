@@ -110,7 +110,7 @@ void ChatFillRoomList(CRoomList *prl)
 		LPTSTR szStart = (LPTSTR) szQuery, szCommand = GetToken(szStart, &szStart, g_szEmpty);
 		if (szCommand)
 		{
-			ASSERT(0 == stricmp(szCommand, "LIST") || 0 == stricmp(szCommand, "LISTX"));
+			CC_ASSERT(0 == stricmp(szCommand, "LIST") || 0 == stricmp(szCommand, "LISTX"));
 			ct = (4 == strlen(szCommand)) ? ctList : ctListX;
 			szParam = GetToken(szStart, &szStart, g_szEmpty);
 		}

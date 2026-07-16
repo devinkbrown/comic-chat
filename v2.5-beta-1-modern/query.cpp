@@ -48,21 +48,21 @@ CCQuery::CCQuery(enumQueryPurpose qp,
 
 	if (dtRule == dt)
 	{
-		ASSERT(pvData, "pvData is NULL in CCQuery::CCQuery");
+		CC_ASSERT(pvData, "pvData is NULL in CCQuery::CCQuery");
 		CCRule* pRule = (CCRule*) pvData;
 		pRule->AddRef();
 	}
 	else
 		if (dtNotif == dt)
 		{
-			ASSERT(m_pvData, "m_pvData is NULL in CCQuery::CCQuery");
+			CC_ASSERT(m_pvData, "m_pvData is NULL in CCQuery::CCQuery");
 			CCNotif* pNotif = (CCNotif*) m_pvData;
 			pNotif->AddRef();
 		}
 
 	if (bCreatePrUserMatch)
 	{
-		ASSERT(!m_strNicknameMask.IsEmpty(), "m_strNicknameMask is empty in CCQuery::CCQuery");
+		CC_ASSERT(!m_strNicknameMask.IsEmpty(), "m_strNicknameMask is empty in CCQuery::CCQuery");
 		m_pPrUserMatch = new PRUSERMATCH;
 		if (m_pPrUserMatch)
 			// since the strNicknameMask is not going to change we don't make a copy to store into pPrUserMatch, 
@@ -82,14 +82,14 @@ CCQuery::~CCQuery()
 
 	if (dtRule == m_dt)
 	{
-		ASSERT(m_pvData, "m_pvData is NULL in CCQuery::~CCQuery");
+		CC_ASSERT(m_pvData, "m_pvData is NULL in CCQuery::~CCQuery");
 		CCRule* pRule = (CCRule*) m_pvData;
 		pRule->Release();
 	}
 	else
 		if (dtNotif == m_dt)
 		{
-			ASSERT(m_pvData, "m_pvData is NULL in CCQuery::~CCQuery");
+			CC_ASSERT(m_pvData, "m_pvData is NULL in CCQuery::~CCQuery");
 			CCNotif* pNotif = (CCNotif*) m_pvData;
 			pNotif->Release();
 		}
@@ -104,7 +104,7 @@ CQueryPtrList::~CQueryPtrList()
 
 BOOL CQueryPtrList::bAddQuery(CCQuery* pQuery)
 {
-	ASSERT(pQuery, "pQuery is NULL in CQueryPtrList::bAddQuery");
+	CC_ASSERT(pQuery, "pQuery is NULL in CQueryPtrList::bAddQuery");
 
 	return AddTail((PVOID) pQuery) >= 0;
 }
@@ -127,11 +127,11 @@ void CQueryPtrList::FreeRemoveAll()
 
 void CQueryPtrList::FreeRemoveAt(POSITION pos)
 {
-	ASSERT(pos, "pos is NULL in CQueryPtrList::FreeRemoveAt");
+	CC_ASSERT(pos, "pos is NULL in CQueryPtrList::FreeRemoveAt");
 
 	CCQuery*	pQuery = (CCQuery*) GetAt(pos);
 
-	ASSERT(pQuery, "pQuery is NULL in CQueryPtrList::FreeRemoveAt");
+	CC_ASSERT(pQuery, "pQuery is NULL in CQueryPtrList::FreeRemoveAt");
 
 	delete pQuery;
 

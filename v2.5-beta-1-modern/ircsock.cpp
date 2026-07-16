@@ -2928,7 +2928,7 @@ void CIrcSocket::HandleResultCode(CString &strLine, char *szLine, PIRCPARSE pPar
 						case qpCreatePics:
 						{
 							pQuery->SetQueryPurpose(qpMax);
-							ASSERT(0 == lstrcmpi(pParse->args[3], "PICS"));
+							CC_ASSERT(0 == lstrcmpi(pParse->args[3], "PICS"));
 							if (bPassesRatings(pParse->lastString, TRUE))
 							{
 								CRoomInfo* pEnterInfo = theApp.GetRoomInfoFromName((LPCTSTR) pParse->args[2]);
@@ -2944,7 +2944,7 @@ void CIrcSocket::HandleResultCode(CString &strLine, char *szLine, PIRCPARSE pPar
 						}
 						case qpJoinBackUrl:
 						{
-							ASSERT(0 == lstrcmpi(pParse->args[3], "CLIENT"));
+							CC_ASSERT(0 == lstrcmpi(pParse->args[3], "CLIENT"));
 							GetIrcProto()->HandleClientDataChange (pParse->lastString);
 							break;
 						}
