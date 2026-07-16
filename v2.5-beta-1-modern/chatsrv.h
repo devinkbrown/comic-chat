@@ -26,7 +26,6 @@ public:
 	BOOL WriteToRegistry(HKEY hkeyReg);
 	void SetDefaultSettings();
 	void FreeSettings();
-	BOOL ResolveSocketAddress();
 
 	LPSTR m_pszName;
 	UINT  m_nPort;
@@ -35,7 +34,6 @@ public:
 	LPSTR m_pszPassword;
 	LPSTR m_pszSecurityPackages;
 	BOOL  m_bRememberPassword;
-	SOCKADDR_IN m_sockaddr;
 
 protected:
 	enum AuthType
@@ -217,7 +215,7 @@ protected:
 	{
 	public:
 		ObjArray();
-		UINT Add(CString &str);
+		UINT Add(const CString &str);
 		void Remove(UINT nID);
 		UINT Find(LPCSTR psz);
 	protected:
@@ -242,81 +240,6 @@ protected:
 
 // Chat Service Connector class. This is what connects to a service, managing
 // multiple server simultaneous connections, etc.
-
-class CChatServiceConnector
-{
-public:
-	CChatServiceConnector();
-	~CChatServiceConnector();
-	void SetServiceList(CChatServiceList* pSvcList)
-		{ m_pSvcList = pSvcList; }
-
-	BOOL IsConnecting()
-		{ return m_pConnections != NULL; }
-	int GetNumServers()
-		{ return m_nServers; }
-	BOOL BeginConnectToService(LPCSTR pszSvc);
-	int AssignSocket(int nSocket);
-	int GetNumSockets() 
-		{ return m_pSockets != NULL ? m_nSockets : 0; }
-	void Cleanup(BOOL bCleanupServerList = TRUE);
-	CChatServerGroup* GetConnectingServerGroup()
-		{ return m_pConnectingGroup; }
-	CChatServer* GetConnectingServer()
-		{ return m_pConnectingServer; }
-
-	CString 		m_strSvc;
-protected:
-	BOOL AssignSocketToNewServer(int nSocket);
-	static UINT ResolverThreadProc(PVOID pvParam);
-
-	enum SrvConnectionStatus
-	{
-		srvconnUnresolved = 0,
-		srvconnNotAttempted = 1,
-		srvconnAttempting = 2,
-		srvconnFailed = 3,
-		srvconnConnected = 4,
-	};
-	struct SrvConnection
-	{
-		CChatServer* pServer;
-		BYTE	     byStatus;
-	};
-	class Socket : public CAsyncSocket
-	{
-	public:
-		Socket(CChatServiceConnector* pParent, int nID);
-		BOOL Connect(int nServer);
-		virtual void OnConnect(int nErrorCode);
-		void ReattachTo(CAsyncSocket* pOtherSocket);
-		CChatServiceConnector*	m_pParent;
-		int						m_nID;
-		int						m_nServer;
-		BOOL					m_bConnecting;
-	};
-	struct ThreadData
-	{
-		CChatServiceConnector * pThis;
-		BOOL					bTerminate;
-	};
-
-	CChatServiceList* m_pSvcList;
-	SrvConnection*    m_pConnections;
-	Socket * * 		  m_pSockets;
-	int				  m_nServers;
-	int				  m_nSockets;
-	int				  m_nActiveSockets;
-	CChatServerGroup* m_pConnectingGroup;
-	CChatServer*	  m_pConnectingServer;
-	HANDLE			  m_hThread;
-	ThreadData*		  m_pCurThreadData;
-	CRITICAL_SECTION  m_critsec;
-	CMapPtrToWord	  m_mapDeleteableSockets;
-
-
-	friend class Socket;
-};
 
 // Combo box that holds list of available services
 

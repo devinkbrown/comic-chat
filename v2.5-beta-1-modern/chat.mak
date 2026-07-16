@@ -36,6 +36,7 @@ LINK32=link.exe
 
 ARTINC=..\artifacts\inc
 ARTLIB=..\artifacts\lib\i386
+PORTABLELIB=..\artifacts\lib
 
 # /Zi is kept in both configs so Release is still debuggable (it emits a PDB but
 # does not disable optimization). The MFC/CRT static libraries are selected
@@ -47,6 +48,8 @@ CPP26_FLAGS=/std:c++latest /permissive- /EHsc /Zc:__cplusplus /Zc:preprocessor \
 
 CPP_PROJ=/nologo $(CPP_CFG) /W4 /Zi $(CPP26_FLAGS) /FI"cpp26mode.h" \
  /D "WIN32" /D "_WINDOWS" /D "_MBCS" /I "." /I "$(ARTINC)" \
+ /I "..\portable\include" /I "..\third_party\libuv\include" \
+ /I "..\third_party\mbedtls\include" \
  /Fo"$(INTDIR)\\" /Fd"$(INTDIR)\\" /c
 
 # Keep the generated MIDL glue and legacy delay-loader in C mode. The product's
@@ -60,7 +63,9 @@ RSC_PROJ=/l 0x409 /fo"$(INTDIR)\chat.res" /i "." /i "$(ARTINC)" $(RSC_CFG)
 LINK32_FLAGS=/nologo /subsystem:windows /FORCE:MULTIPLE /incremental:no /debug \
  /machine:I386 /nodefaultlib:"libc" \
  /LIBPATH:"$(VCTOOLSINSTALLDIR)ATLMFC\lib\spectre\x86" /LIBPATH:"$(ARTLIB)" \
- uuid.lib secur32.lib comctl32.lib ole32.lib oleaut32.lib oldnames.lib wsock32.lib \
+ /LIBPATH:"$(PORTABLELIB)" \
+ uuid.lib comctl32.lib ole32.lib oleaut32.lib oldnames.lib ws2_32.lib \
+ uv_a.lib mbedtls.lib mbedx509.lib mbedcrypto.lib bcrypt.lib crypt32.lib userenv.lib iphlpapi.lib psapi.lib advapi32.lib \
  shell32.lib winmm.lib imm32.lib winspool.lib comdlg32.lib oledlg.lib wininet.lib zlib.lib \
  /out:"$(OUTDIR)\CChat.exe"
 
@@ -107,6 +112,8 @@ OBJS= \
 	"$(INTDIR)\IpFrame.obj" \
 	"$(INTDIR)\ircproto.obj" \
 	"$(INTDIR)\ircsock.obj" \
+	"$(INTDIR)\connection_engine.obj" \
+	"$(INTDIR)\ircv3.obj" \
 	"$(INTDIR)\MainFrm.obj" \
 	"$(INTDIR)\memblst.obj" \
 	"$(INTDIR)\mfcbind.obj" \
@@ -173,6 +180,12 @@ $(LINK32_FLAGS) $(OBJS)
 # ---- C++ sources (no PCH) ----
 {.}.cpp{$(INTDIR)}.obj:
 	$(CPP) $(CPP_PROJ) $<
+
+"$(INTDIR)\connection_engine.obj" : ..\portable\src\net\connection_engine.cpp
+	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\connection_engine.obj" ..\portable\src\net\connection_engine.cpp
+
+"$(INTDIR)\ircv3.obj" : ..\portable\src\net\ircv3.cpp
+	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\ircv3.obj" ..\portable\src\net\ircv3.cpp
 
 # ---- C sources ----
 {.}.c{$(INTDIR)}.obj:

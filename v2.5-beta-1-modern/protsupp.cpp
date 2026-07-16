@@ -36,10 +36,7 @@
 #include "ratings.h"
 #include <time.h>
 #include <winnls.h>
-#include <winsock.h>	// for inet_addr, etc... (NetMeeting reply)
-#include <msconf.h>		// for NetMeeting calls
 #include <sys/stat.h>	// for _stat
-#include <process.h>	// for _beginthread
 
 #include "sounddlg.h"
 
@@ -263,7 +260,7 @@ char *GetToken2(char *szStart, char **pszNextStart, const char *szSepsBegin, con
 
 	if (pszCurStart)
 		*pszCurStart = szStart;
-	
+
 	if (!*szStart)
 		return NULL;
 
@@ -303,7 +300,7 @@ char *GetToken1(char *szStart, char **pszNextStart, const char *szSeps, char **p
 
 	while (*szEndPtr && !strchr(szSeps, *szEndPtr))
 		szEndPtr++;
-	
+
 	int nChars = szEndPtr - szStart;
 
 	nChars = min(nChars, sizeof(sszBuff)-1); // don't overrun buff!
@@ -376,7 +373,7 @@ void DestroyUserInfos(CChatDoc *doc) {
 	doc->m_mapNickToPtr.RemoveAll();	// reclaim map storage
 
 	if (doc->m_puiSelf == g_puiSelf) g_puiSelf = NULL;	// set global to be null if necessary (window current)
-	doc->m_puiSelf = NULL;	
+	doc->m_puiSelf = NULL;
 }
 
 void DestroyExternalUserInfos() {
@@ -396,8 +393,8 @@ BOOL bForEachWord(char *szLine, BOOL (*pfn)(char *, void *, DWORD), void *pvClie
 
 	if (bDoubleQuotes)
 	{
-		strcpy(szSepTmp, szSep);
-		strcat(szSepTmp, "\"");
+		if (!TryFormatArray(szSepTmp, "%s\"", szSep))
+			return FALSE;
 	}
 
 	while (TRUE)
@@ -408,7 +405,7 @@ BOOL bForEachWord(char *szLine, BOOL (*pfn)(char *, void *, DWORD), void *pvClie
 			if (*szLine == '\"')	// skip the terminating double quote
 			{
 				szLine++;
-				strcat(szWord, "\"");
+				TryAppendBuffer(szWord, MAX_TOKEN, "\"");
 			}
 		}
 		else
@@ -511,7 +508,7 @@ CUserInfo *ExternalPui(const char *szNickname, const char *szFullName, BOOL bAdd
 		strFullName = pui->GetFullName();
 
 		// REGISB, 05/11/98:  added "|| strFullName.IsEmpty() || !*szFullName" because of bug #2540
-		if (stricmp(szNickname, pui->GetName()) == 0 && 
+		if (stricmp(szNickname, pui->GetName()) == 0 &&
 			(
 			 !szFullName ||
 			 !*szFullName ||
@@ -571,7 +568,7 @@ CUserInfo *CIUserJoin(CUserInfo *pui)
 	}
 	else
 	{
-		if (comicMode) 
+		if (comicMode)
 			AssignArbitraryAvatar(pui);
 	}
 	if ((doc->m_proto->m_dwModes & CM_MODERATED) && !pui->CheckFlag(UF_HASVOICE) && !pui->IsOperator())
@@ -632,7 +629,7 @@ int AddToImageList(CUserInfo* pui)
 		}
 		CBitmap temp;
 		CBitmap* pImageBmp = temp.FromHandle(hImage);
-									
+
 		// Replace the next two lines with code to get correct avatar head
 		origAv->m_iconIndex = theApp.m_ImageList.Add(pImageBmp,pImageBmp);
 		TRACE("Allocating an icon (%d) for %s.\n", origAv->m_iconIndex, origAv->m_name);
@@ -791,7 +788,7 @@ void AutoGreet(const char* szNick)
 
 		g_puiSelf->m_udi.m_talkTos.RemoveAll();
 		g_puiSelf->m_udi.m_talkTos.Add((DWORD) pui);
-		
+
 		if (!(szControlFull = strdup((LPCTSTR) strControlFull)))
 			return;
 		szControlLess = SzControlLess(szControlFull, &rgdwFormatting);
@@ -814,11 +811,11 @@ void AutoGreet(const char* szNick)
 }
 
 
-void 
+void
 CRoomInfo::ChatAnnounceNewAvatar(
-const char *szAvName, 
+const char *szAvName,
 const char *szURL,
-const char *szAddressee, 
+const char *szAddressee,
 BOOL bForce)
 {
 	if (GetConnectionStatus() != CX_INCHANNEL)
@@ -830,9 +827,9 @@ BOOL bForce)
 		if (!szAvName || !*szAvName)
 			szAvName = "NONE";		// make sure we send an Avatar Name
 		if (szURL && *szURL != '\0')
-			sprintf(GetOutBuff(), "#%s%s.%s", APPEARSPREFIX, szAvName, szURL);
+			TryFormatOutBuff( "#%s%s.%s", APPEARSPREFIX, szAvName, szURL);
 		else
-			sprintf(GetOutBuff(), "#%s%s", APPEARSPREFIX, szAvName);
+			TryFormatOutBuff( "#%s%s", APPEARSPREFIX, szAvName);
 
 		if (szAddressee) TRACE("Announcing self to %s\n", szAddressee);
 		if (!szAddressee)
@@ -871,18 +868,18 @@ BOOL ProcessComment(CChatDoc *doc, CUserInfo *pui, char *szMesg, BYTE msgType) {
 						// Don't send URL in this reply-type announcement; just
 						// send an extra '?' if we do have a URL - this way, the
 						// other client will request the URL when they try to download.
-						proto->ChatAnnounceNewAvatar(GetMyCharacter(), 
+						proto->ChatAnnounceNewAvatar(GetMyCharacter(),
 							MyAvatarURL () != NULL ? DEFERRED_URL_STRING : NULL,
 							pui->GetName(), TRUE /*bForce*/);  // Now send avatar info privately
 					}
 					pui->ComicUser(TRUE);
 				}
-				// If we were waiting to get the URL for download purposes, 
+				// If we were waiting to get the URL for download purposes,
 				// do that directly.
 				if (pui->NeedsDownload () && pui->GetAvatarRealName () &&
 						!lstrcmpi (szCharName, pui->GetAvatarRealName ())) {
 					// Avoid infinite looping.
-					if (szCharURL[0] != '\0' && 
+					if (szCharURL[0] != '\0' &&
 							(szCharURL[0] != DEFERRED_URL_CHAR || szCharURL[1] != '\0')) {
 						SetUserAvatarRealInfo (pui, szCharName, szCharURL, doc);
 					}
@@ -916,7 +913,7 @@ BOOL ProcessComment(CChatDoc *doc, CUserInfo *pui, char *szMesg, BYTE msgType) {
 				else
 					strProfile = theApp.m_myProfile;
 
-				sprintf(GetOutBuff(), "#%s%s", HERESINFOPREFIX, strProfile);
+				TryFormatOutBuff("#%s%s", HERESINFOPREFIX, static_cast<LPCTSTR>(strProfile));
 				VERIFY(proto->bChatSendPrivMesg(pui->GetName(), NULL /*szAnnotations*/, GetOutBuff() /*szMesg*/, NULL /*szNMText*/, FALSE /*bAsNotice*/, BM_HERESINFO /*uModes*/));
 			}
 		}
@@ -960,7 +957,7 @@ BOOL ProcessComment(CChatDoc *doc, CUserInfo *pui, char *szMesg, BYTE msgType) {
 		}
 		return TRUE;
 	}
-	
+
 	iMatch = !strncmp(szMesg, BACKGRNDPREFIX, strlen(BACKGRNDPREFIX));
 	if (iMatch)
 	{
@@ -982,7 +979,7 @@ BOOL ProcessComment(CChatDoc *doc, CUserInfo *pui, char *szMesg, BYTE msgType) {
 		return TRUE;
 	}
 
-	// Support for the new background prefix. This is needed because the 
+	// Support for the new background prefix. This is needed because the
 	// old background command is not very forward-compatible; it doesn't
 	// do proper delimiter handling.
 	iMatch = !strncmp(szMesg, NEWBACKGRNDPREFIX, strlen(NEWBACKGRNDPREFIX));
@@ -1134,31 +1131,32 @@ void CRoomInfo::ReplyVersion(CUserInfo *pui)
 	else
 		strMode.LoadString(IDS_TEXT_MODE);
 
-	sprintf(GetOutBuff(), "%c%.*s %s %s%c", 0x01, g_nVersionLen - 1,
-		    versionID+1, strVersion, strMode, 0x01);
+	TryFormatOutBuff("%c%.*s %s %s%c", 0x01, g_nVersionLen - 1,
+		versionID + 1, static_cast<LPCTSTR>(strVersion), static_cast<LPCTSTR>(strMode), 0x01);
 	VERIFY(bChatSendPrivMesg(pui->GetName(), NULL, GetOutBuff(), NULL, TRUE));
 }
 
 void CRoomInfo::ReplyPing(CUserInfo *pui, CString strMesg) {
-	sprintf(GetOutBuff(), "%c%.*s %s%c", 0x01, g_nPingLen - 1, pingID+1, strMesg, 0x1);
+	TryFormatOutBuff("%c%.*s %s%c", 0x01, g_nPingLen - 1, pingID + 1,
+		static_cast<LPCTSTR>(strMesg), 0x01);
 	VERIFY(bChatSendPrivMesg(pui->GetName(), NULL, GetOutBuff(), NULL, TRUE));
 }
 
 void CRoomInfo::ReplyTime(CUserInfo *pui) {
 	char buff1[50], buff2[50];
-	GetDateFormat(LOCALE_USER_DEFAULT, 0, NULL, NULL, buff1, sizeof(buff1)); 
+	GetDateFormat(LOCALE_USER_DEFAULT, 0, NULL, NULL, buff1, sizeof(buff1));
 	GetTimeFormat(LOCALE_USER_DEFAULT, 0, NULL, NULL, buff2, sizeof(buff2));
-	sprintf(GetOutBuff(), "%c%.*s %s, %s%c", 0x01, g_nTimeLen -1, timeID+1, buff1, buff2, 0x1);
+	TryFormatOutBuff( "%c%.*s %s, %s%c", 0x01, g_nTimeLen -1, timeID+1, buff1, buff2, 0x1);
 	VERIFY(bChatSendPrivMesg(pui->GetName(), NULL, GetOutBuff(), NULL, TRUE));
 }
 
 void CRoomInfo::ReplyEmail(CUserInfo *pui) {
-	sprintf(GetOutBuff(), "%c%.*s %s%c", 0x01, g_nEmailLen - 1, emailID+1, GetMyEmail(), 0x1);
+	TryFormatOutBuff( "%c%.*s %s%c", 0x01, g_nEmailLen - 1, emailID+1, GetMyEmail(), 0x1);
 	VERIFY(bChatSendPrivMesg(pui->GetName(), NULL, GetOutBuff(), NULL, TRUE));
 }
 
 void CRoomInfo::ReplyHomePage(CUserInfo *pui) {
-	sprintf(GetOutBuff(), "%c%.*s %s%c", 0x01, g_nUrlLen - 1, urlID+1, GetMyHomePage(), 0x1);
+	TryFormatOutBuff( "%c%.*s %s%c", 0x01, g_nUrlLen - 1, urlID+1, GetMyHomePage(), 0x1);
 	VERIFY(bChatSendPrivMesg(pui->GetName(), NULL, GetOutBuff(), NULL, TRUE));
 }
 
@@ -1266,40 +1264,7 @@ void ShowAway(CUserInfo *pui, CString strAwayMsg, CChatDoc *doc)
 }
 
 
-void _cdecl ConfConnect(void *arg)
-{
-	HCONF    hConf;
-	CONFINFO confInfo;
-	CONFADDR confAddr;
-
-	DWORD dwIp = (long) arg;
-	// Check if we're in an existing conference
-	ZeroMemory(&confInfo, sizeof(confInfo));
-	confInfo.dwSize = sizeof(confInfo);
-	if (CONFERR_SUCCESS == ConferenceGetInfo(NULL, CONF_ENUM_CONF, &confInfo))
-	{
-		// use existing conference
-		hConf = confInfo.hConf;
-	}
-	else
-	{
-		// startup a new one
-		hConf = NULL;
-	}
-
-	ZeroMemory(&confAddr, sizeof(confAddr));
-	confAddr.dwSize = sizeof(confAddr);
-	confAddr.dwAddrType = CONF_ADDR_IP;
-	confAddr.dwIp = dwIp;
-
-	confInfo.dwMediaType = CONF_MT_DATA | CONF_MT_AUDIO;
-
-	/*return */ ConferenceConnect(&hConf, &confAddr, &confInfo, NULL);
-}
-
 void CRoomInfo::DoNetMeetingCX(CUserInfo *pui, CString strAddr) {
-	static BOOL bNMRequestUp = FALSE;
-
 	if (isalpha(strAddr[0])) {	// first, check if we're actually receiving a response!!!
 		if (pui->IsRequestInfo(RF_NETMEETING)) {
 			CString strMesg;
@@ -1313,34 +1278,11 @@ void CRoomInfo::DoNetMeetingCX(CUserInfo *pui, CString strAddr) {
 		}
 	}
 
-	// initiate the NetMeeting Connection
-	const char *response = NULL;
-	if (!theApp.m_bAcceptNMCalls || !bCanViewUnrated()) response = "REFUSED";
-	else if (!bNMInstalled()) response = "NOHAVE";
-	if (response)
-	{
-		sprintf(GetOutBuff(), "%.*s %s%c", g_nNetMeetLen, netMeetingID, response, 0x01);
-		VERIFY(bChatSendPrivMesg(pui->GetName(), NULL, GetOutBuff(), NULL, TRUE));
-	}
-	else
-	{
-		if (bNMRequestUp) return;
-		bNMRequestUp = TRUE;
-
-		CString prompt;
-		prompt.LoadString(IDS_NMPROMPT);
-		VERIFY(ReplaceToken(prompt, CString("%1"), pui->GetScreenName()));
-		if (AfxMessageBox(prompt, MB_YESNO) == IDYES) {
-			int end = strAddr.Find((char)0x01);
-			if (end >= 0) strAddr = strAddr.Left(end);
-			TRACE("Doing a NetMeetingCX on %s\n", strAddr);
-			long hostAddr = atol(strAddr); // ConfConnect expects in host ordering, which is what was sent	
-			// ConfConnect can take a while (especially if NetMeeting setup required) so use separate thread.
-			void _cdecl ConfConnect (void *);
-			_beginthread(ConfConnect, 0, (void *) hostAddr);
-		}
-		bNMRequestUp = FALSE;
-	}
+	// NetMeeting was retired and its IPv4-only socket handoff cannot be
+	// represented by the shared TLS transport. Keep the compatibility reply
+	// so an old peer fails cleanly without starting a side-channel.
+	TryFormatOutBuff("%.*s NOHAVE%c", g_nNetMeetLen, netMeetingID, 0x01);
+	VERIFY(bChatSendPrivMesg(pui->GetName(), NULL, GetOutBuff(), NULL, TRUE));
 }
 
 
@@ -1353,29 +1295,14 @@ void LaunchMicrosoftURL(UINT resourceID) {
 }
 
 
-void _cdecl ConfListenThread(void *) {
-	ConferenceListen(0);
-}
-
 void CRoomInfo::ChatStartNetMeeting(CUserInfo *pui) {
-	if (!bCanViewUnrated())
-		AfxMessageBox(IDS_NM_BAD_RATINGS);
-	else if (!bNMInstalled()) {
-		if (AfxMessageBox(IDS_INSTALL_NETMEETING, MB_YESNO) == IDYES)
-			LaunchMicrosoftURL(IDS_NETMEETING_URL);
-	} else if (pui && !pui->IsDeparted()) {
-		char hostname[100];
-		if (gethostname(hostname, sizeof(hostname))) return;
-		struct hostent *h2 = gethostbyname(hostname);
-		if (!h2 || h2->h_length < 1 || !h2->h_addr_list[0]) return;
-		long hostID = *((long *) h2->h_addr_list[0]);
-		hostID = ntohl(hostID);
-		// use separate thread for netmeeting, since it can take a bit of time to start up (especially if needs setup)
-		_beginthread(ConfListenThread, 0, (void *) 0);
-		pui->IncrementRequestInfo(RF_NETMEETING);		// so we put up rejection dialogs (Note: may stay set if no reply)
-		sprintf(GetOutBuff(), "%c%.*s %lu%c", 0x01, g_nNetMeetLen - 1, netMeetingID+1, hostID, 0x1);
-		VERIFY(bChatSendPrivMesg(pui->GetName(), NULL, GetOutBuff(), NULL, TRUE));
-	}
+	if (!pui || pui->IsDeparted())
+		return;
+
+	CString message;
+	message.LoadString(IDS_NMCALL_NOHAVE);
+	VERIFY(ReplaceToken(message, CString("%1"), CString("This client")));
+	AfxMessageBox(message);
 }
 
 
@@ -1433,7 +1360,7 @@ char* PrepareSound(CUserInfo *pui, char *szMesg, CString &strNewMesg, USHORT &uM
 
 	if (bNeedFree)
 		free ((void *) szFile);
-	
+
 	uModes &= ~BM_SAY;
 	uModes |= BM_ACTION;
 
@@ -1483,7 +1410,7 @@ BOOL AcceptWhispers() {
 }
 
 
-void ProcessUDIData(CChatDoc *pDoc, CUserInfo *pui, char *szData) 
+void ProcessUDIData(CChatDoc *pDoc, CUserInfo *pui, char *szData)
 {
 	ASSERT(szData && *szData);
 	ASSERT(pui);
@@ -1508,7 +1435,7 @@ void ProcessUDIData(CChatDoc *pDoc, CUserInfo *pui, char *szData)
 		if (*szTmp) pui->m_udi.m_chGestE = ByteToIndex(*szTmp++);
 		if (*szTmp) pui->m_udi.m_chGestI = ByteToIndex(*szTmp++);
 	}
-	
+
 	if (*szTmp == CEXPRESSIONPREFIX)
 	{
 		szTmp++;
@@ -1516,20 +1443,20 @@ void ProcessUDIData(CChatDoc *pDoc, CUserInfo *pui, char *szData)
 		if (*szTmp) pui->m_udi.m_chExprE = ByteToIndex(*szTmp++);
 		if (*szTmp) pui->m_udi.m_chExprI = ByteToIndex(*szTmp++);
 	}
-	
+
 	if (*szTmp == CREQUESTEDPREFIX)
 	{
 		szTmp++;
 		pui->m_udi.m_bbReq = 1;
 	}
-	
+
 	if (*szTmp == CMODEPREFIX)
 	{
 		szTmp++;
 		if (*szTmp)
 			pui->m_udi.m_uModes = SM2BM(ByteToIndex(*szTmp++));
 	}
-	
+
 	if (*szTmp == CTALKTOPREFIX)
 	{
 		szTmp++;
@@ -1543,10 +1470,10 @@ void ProcessUDIData(CChatDoc *pDoc, CUserInfo *pui, char *szData)
 }
 
 
-void ProcessSay(CChatDoc *doc, CUserInfo *pui, char *szMesg, BYTE msgType, CDWordArray *talkTos) 
+void ProcessSay(CChatDoc *doc, CUserInfo *pui, char *szMesg, BYTE msgType, CDWordArray *talkTos)
 {
 	ASSERT(pui);
-	
+
 	CRoomInfo*	proto = doc ? doc->m_proto : currentRoom; // XXX fix for multiprotocol!
 	CString		strActionMesg;
 	BOOL		bFloodChecked = FALSE;
@@ -1674,7 +1601,7 @@ void ProcessSay(CChatDoc *doc, CUserInfo *pui, char *szMesg, BYTE msgType, CDWor
 				goto exitCheckFlood;
 		}
 		return;
-	} 
+	}
 	else if (strnicmp(szMesg, pingID, g_nPingLen) == 0)
 	{
 		char *szOffset = szMesg + g_nPingLen;
@@ -1720,7 +1647,7 @@ void ProcessSay(CChatDoc *doc, CUserInfo *pui, char *szMesg, BYTE msgType, CDWor
 	{
 		char *szOffset = szMesg + g_nFileDCCLen;
 		void ChatReceiveFile(CUserInfo *, char *);
-		
+
 		if (!pui->Ignored() && !pui->IsFlooding())
 			if (my_isspace(*szOffset))
 				ChatReceiveFile (pui, szOffset+1);
@@ -1801,7 +1728,8 @@ void ProcessSay(CChatDoc *doc, CUserInfo *pui, char *szMesg, BYTE msgType, CDWor
 			if (!pui->Ignored() && !pui->IsFlooding() && proto)
 			{
 				// REGISB: we only respond if in a room. Should change this limitation.
-				sprintf(GetOutBuff(), "%.*s %s%c", g_nClientInfoLen, clientInfoID, "ACTION AWAY CLIENTINFO DCC EMAIL NETMEET PING SOUND TIME USERINFO URL VERSION", 0x1);
+				TryFormatOutBuff("%.*s %s%c", g_nClientInfoLen, clientInfoID,
+					"ACTION AWAY CLIENTINFO DCC EMAIL PING SOUND TIME USERINFO URL VERSION", 0x1);
 				proto->bChatSendPrivMesg(pui->GetName(), NULL, GetOutBuff(), NULL, TRUE);
 			}
 		}
@@ -1816,7 +1744,7 @@ void ProcessSay(CChatDoc *doc, CUserInfo *pui, char *szMesg, BYTE msgType, CDWor
 	}
 	else if (*szMesg == 0x01 && szMesg[1] == '*')
 	{	// until NOTICE'ed
-		if (strnicmp(szMesg+2, versionID+1, g_nVersionLen - 1) == 0) { 
+		if (strnicmp(szMesg+2, versionID+1, g_nVersionLen - 1) == 0) {
 			const char *szOffset = szMesg + g_nVersionLen + 1;
 			if (my_isspace(*szOffset))
 				ShowVersion(pui, szOffset+1);
@@ -1864,7 +1792,7 @@ void ProcessSay(CChatDoc *doc, CUserInfo *pui, char *szMesg, BYTE msgType, CDWor
 				goto exitCheckFlood;
 			return;
 		}
-	} 
+	}
 	else
 		if (*szMesg == 0x01)
 			goto exitCheckFlood;  // don't display or respond to other CTCP messages
@@ -1872,10 +1800,10 @@ void ProcessSay(CChatDoc *doc, CUserInfo *pui, char *szMesg, BYTE msgType, CDWor
 	if (!bFloodChecked && (pui->Ignored() || pui->IsFlooding()))
 		return;
 
-	if (!pui->m_udi.m_bbCooked || pui->m_udi.m_talkTos.GetUpperBound() < 0) 
+	if (!pui->m_udi.m_bbCooked || pui->m_udi.m_talkTos.GetUpperBound() < 0)
 		IdentifyWhispers(doc, pui, msgType, pui->m_udi.m_uModes, talkTos);
 
-	if (proto && (proto->m_dwModes & CM_NOFORMAT)) 
+	if (proto && (proto->m_dwModes & CM_NOFORMAT))
 		pui->m_udi.m_uModes |= BM_NOFORMAT;
 
 	if (strlen(szMesg) > 0)
@@ -1890,7 +1818,7 @@ void ProcessSay(CChatDoc *doc, CUserInfo *pui, char *szMesg, BYTE msgType, CDWor
 
 			if (!pui->GetFullName().IsEmpty())
 				strSenderIdent += "!"+pui->GetFullName();
-			
+
 			ASSERT(doc);
 			ASSERT(doc->m_proto);
 
@@ -1968,11 +1896,11 @@ void OnKick(CChatDoc *pDoc, char *szKicker, char *szKickee, char *szMesg)
 	if (kickerPui)
 	{
 		// REGISB: 11/13/97 new m_udi in this function
-		kickerPui->m_udi.m_chGest = 
-		kickerPui->m_udi.m_chExpr = 
-		kickerPui->m_udi.m_chGestE = 
-		kickerPui->m_udi.m_chGestI = 
-		kickerPui->m_udi.m_chExprE = 
+		kickerPui->m_udi.m_chGest =
+		kickerPui->m_udi.m_chExpr =
+		kickerPui->m_udi.m_chGestE =
+		kickerPui->m_udi.m_chGestI =
+		kickerPui->m_udi.m_chExprE =
 		kickerPui->m_udi.m_chExprI = 0;
 		kickerPui->m_udi.m_bbCooked = 0;
 		kickerPui->m_udi.m_bbReq = 1;
@@ -2041,7 +1969,7 @@ void ReinstallPui(CUserInfo *pui, const char *newNick) {
 	if (pui == g_puiSelf) SetMyNameNick(newNick);
 	g_mapNickToPtr->SetAt(newNick, pui);
 }
-	
+
 void ProcessNick(CChatDoc *doc, const char *oldNick, const char *newNick, BOOL updateMemberList) {
 	CUserInfo *pui = LookupPui(oldNick, doc);
 	if (!pui) {
@@ -2271,7 +2199,7 @@ BOOL CIrcProto::SlashGeneric(enumCmdId cmdid, IRCPARSE *pParse, char *szMesg, CD
 						if (*szParam == '\"')	// skip the terminating double quote
 						{
 							szParam++;
-							strcat(szWord, "\"");
+							TryAppendBuffer(szWord, MAX_TOKEN, "\"");
 						}
 					}
 					else
@@ -2358,7 +2286,7 @@ BOOL CIrcProto::SlashMode(IRCPARSE *pParse)
 
 	for (INT iArg = 1; iArg < syntax.uArgNum && iArg < pParse->nArgs-1; iArg++)
 		strOutput += " " + StrEncodeCommandParam(syntax.dwArgType[iArg], &iEncoding, pParse->args[iArg+1]);
-	
+
 	// only register the user/channel mode settings, not the user/channel mode reading which results in a 221/324 reply.
 	if (pParse->nArgs > 2)
 		return bRegisterMode((LPTSTR) (LPCTSTR) strOutput.Mid(5));
@@ -2390,7 +2318,7 @@ BOOL CIrcProto::SlashProp(IRCPARSE *pParse, char *szMesg)
 	INT iArg;
 	for (iArg = 0; iArg < syntax.uArgNum && iArg < pParse->nArgs-1; iArg++)
 		strOutput += " " + StrEncodeCommandParam(syntax.dwArgType[iArg], &iEncoding, pParse->args[iArg+1]);
-	
+
 	if (pParse->lastString)
 	{
 		strOutput += " :";
@@ -2431,7 +2359,7 @@ BOOL CIrcProto::SlashCreate(IRCPARSE *pParse)
 	const char*	szModes = pParse->nArgs > 2 ? pParse->args[2] : NULL;
 	const char*	szPwd = NULL;
 	DWORD		dwMaxUsers = 0L;
-	
+
 	if (pParse->nArgs > 4)
 	{
 		szPwd = pParse->args[4];
@@ -2532,7 +2460,7 @@ BOOL CIrcProto::SlashSound(IRCPARSE *pParse, char *szMesg, CDWordArray* prgdwFor
 		sndPlaySound (NULL, SND_SYNC);
 		sndPlayMidiSound (NULL, SND_SYNC);
 		return TRUE;
-	} 
+	}
 	else if (pParse->nArgs < 3)
 	{
 		AfxMessageBox(StrSyntaxMessage(cmdidSound));
@@ -2547,17 +2475,18 @@ BOOL CIrcProto::SlashSound(IRCPARSE *pParse, char *szMesg, CDWordArray* prgdwFor
 	CDWordArray	*prgdwFormattingTmp = NULL;
 	BOOL		bRet;
 	CString		strFilename = pParse->args[2];
-	
+
 	TrimQuotes(strFilename);
-	strcpy(szFilename, (LPCTSTR) strFilename);
 
 	// Default extension is .WAV
-	LPCSTR pszDot = OurMbsChr (szFilename, '.');
+	LPCSTR pszDot = OurMbsChr (strFilename, '.');
 	if (pszDot == NULL)
 	{
-		strcat(szFilename, ".");
-		strcat(szFilename, GetSupportedSoundTypes()[0]);
+		strFilename += ".";
+		strFilename += GetSupportedSoundTypes()[0];
 	}
+	if (!TryCopyArray(szFilename, static_cast<LPCTSTR>(strFilename)))
+		return FALSE;
 
 	if (pParse->nArgs > 3)
 	{
@@ -2657,9 +2586,9 @@ BOOL CIrcProto::SlashList(IRCPARSE *pParse, const char *szMesg)
 		const char *szParams = szMesg+pParse->nOffsets[1];
 
 		if (OurMbsChr(pParse->args[1], ',') || !IsIRCX())
-			sprintf(GetOutBuff(), "LIST %s\r\n", szParams);
+			TryFormatOutBuff( "LIST %s\r\n", szParams);
 		else
-			sprintf(GetOutBuff(), "LISTX %s\r\n", szParams);
+			TryFormatOutBuff( "LISTX %s\r\n", szParams);
 		OnChatroomListAux(GetOutBuff());
 	}
 	else
@@ -2710,7 +2639,7 @@ BOOL CIrcProto::SlashAway(IRCPARSE *pParse, const char* szMesg, CDWordArray* prg
 
 		CDWordArray	*prgdwFormattingTmp = PullFormattingOffsets(prgdwFormatting, pParse->nOffsets[1]);
 		char		*szCtrlFull, *szStart;
-		
+
 		szCtrlFull = szStart = (char*) szMesg+pParse->nOffsets[1];
 
 		if (prgdwFormattingTmp)
@@ -2873,7 +2802,7 @@ BOOL CRoomInfo::SlashRaw(char *szMesg, IRCPARSE *pParse)
 			return bRegisterMode(szMesg+5);
 	}
 
-	sprintf(GetOutBuff(), "%s\r\n", szMesg);
+	TryFormatOutBuff( "%s\r\n", szMesg);
 	SendMessageText(GetOutBuff());
 	return TRUE;
 }
@@ -2884,7 +2813,7 @@ BOOL CRoomInfo::ProcessSlashCommand(char *szMesg, CDWordArray* prgdwFormatting, 
 	AfxMessageBox(IDS_NOSLASH_COMMANDS);	// REGISB not sure this can ever be called
 	return FALSE;
 }
-	
+
 
 BOOL CIrcProto::ProcessSlashCommand(char *szMesg, CDWordArray* prgdwFormatting, USHORT uModes, BOOL bInvokedByWhisperBox)
 {
@@ -3057,7 +2986,8 @@ CString StrGetSoundAction(CString strSoundFile, CString strTextMessage, CDWordAr
 }
 
 
-static BOOL bInsertAnnotations(CUserInfo *puiSelf, char *szBuff, USHORT uModes, BOOL bIncludeParenthesis)
+static BOOL bInsertAnnotations(CUserInfo *puiSelf, char *szBuff, std::size_t capacity,
+		USHORT uModes, BOOL bIncludeParenthesis)
 {
 	void		EmotionToBytes(CEmotion &em, BYTE &emotion, BYTE &intensity);
 
@@ -3077,12 +3007,13 @@ static BOOL bInsertAnnotations(CUserInfo *puiSelf, char *szBuff, USHORT uModes, 
 		EmotionToBytes(face, faceEmotion, faceIntensity);
 		EmotionToBytes(torso, torsoEmotion, torsoIntensity);
 
-		sprintf(szBuff, "%s#%c%c%c%c%c%c%c%c%s%c%c",
+		if (!TryFormatBuffer(szBuff, capacity, "%s#%c%c%c%c%c%c%c%c%s%c%c",
 				bIncludeParenthesis ? "(" : "",
 				CGESTUREPREFIX, torsoIndexByte, torsoEmotion, torsoIntensity,
 				CEXPRESSIONPREFIX, faceIndexByte, faceEmotion, faceIntensity,
 				bbRequested ? "R" : "",
-				CMODEPREFIX, modeByte);
+				CMODEPREFIX, modeByte))
+			return FALSE;
 		// REGISB: 11/13/97 new m_udi in this function
 		if ((uModes != BM_WHISPER && puiSelf->m_udi.m_talkTos.GetUpperBound() >= 0) ||
 			(uModes == BM_WHISPER && g_rgpuiWhisperees.GetUpperBound() >= 0))
@@ -3092,11 +3023,13 @@ static BOOL bInsertAnnotations(CUserInfo *puiSelf, char *szBuff, USHORT uModes, 
 				GetWhisperedAddressees(",", str);
 			else
 				GetAddressees(puiSelf, ",", str, TRUE);
-			strcat(szBuff, str);
+			if (!TryAppendBuffer(szBuff, capacity, str))
+				return FALSE;
 		}
 
 		if (bIncludeParenthesis)
-			strcat(szBuff, ") ");
+			if (!TryAppendBuffer(szBuff, capacity, ") "))
+				return FALSE;
 	}
 	return TRUE;
 }
@@ -3135,7 +3068,7 @@ BOOL bChatSendText(CString str, USHORT uModes, BOOL bEcho, CDWordArray* prgdwFor
 
 	// strip off \n?
 	str.TrimRight();
-	if (str.IsEmpty()) 
+	if (str.IsEmpty())
 		return TRUE;
 
 	INT			iStatus;
@@ -3145,7 +3078,7 @@ BOOL bChatSendText(CString str, USHORT uModes, BOOL bEcho, CDWordArray* prgdwFor
 	BOOL		bComicView = FALSE;
 	CUserInfo*	puiSelf = NULL;
 	CRoomInfo*	proto = NULL;
-	
+
 	if (szEncodedChannelName)
 	{
 		if (*szEncodedChannelName)
@@ -3161,7 +3094,7 @@ BOOL bChatSendText(CString str, USHORT uModes, BOOL bEcho, CDWordArray* prgdwFor
 		else
 			if (str[0] == '/')
 				proto = GetDefaultProto();
-	}	
+	}
 	else
 		proto = currentRoom ? currentRoom : GetDefaultProto();
 
@@ -3242,11 +3175,12 @@ BOOL bChatSendText(CString str, USHORT uModes, BOOL bEcho, CDWordArray* prgdwFor
 				bUseAnnotations = !pui->IsExternal();
 			}
 			if (bUseAnnotations)
-				bInsertAnnotations(puiSelf, szAnnotations, uModes, GetDefaultProto() && !GetDefaultProto()->IsIRCX() /*bIncludeParenthesis*/);
+				bInsertAnnotations(puiSelf, szAnnotations, sizeof(szAnnotations), uModes,
+					GetDefaultProto() && !GetDefaultProto()->IsIRCX() /*bIncludeParenthesis*/);
 		}
 		if ((!g_bSendComicsData || !bComicView) && ((uModes & BM_ACTION) || (uModes & BM_THINK)))
 			ProcessNonComicsMsg(strControlFull, uModes);
-		
+
 		// If rich formating was done (prgdwFormattingTmp!=NULL) then send along the original
 		// unformated string for NM in case we are talking to them too. IRC stuff will ignore
 		// this.
@@ -3283,7 +3217,7 @@ BOOL bChatSendText(CString str, USHORT uModes, BOOL bEcho, CDWordArray* prgdwFor
 
 	if (bSuccess && bEcho)
 		ShowSay((CChatDoc*) proto->m_doc, puiSelf, strTmp, prgdwFormattingTmp, bComicView, uMyModes);	// don't receive PRIVMSGs sent by self, so do explicit show
-	
+
 exit:
 	if (prgdwFormattingTmp && bFreeTmp)
 		FreeAndNullFormatting(&prgdwFormattingTmp);
@@ -3303,7 +3237,7 @@ BOOL bChatSendSound(const char *szSnd, const char *szMesg, CDWordArray *prgdwFor
 	INT			iStatus;
 	char*		szControlFull = NULL;
 	const char*	szQuotedSnd = szSnd;
-	
+
 	if (szEncodedChannelName)
 	{
 		ASSERT(*szEncodedChannelName);
@@ -3325,7 +3259,7 @@ BOOL bChatSendSound(const char *szSnd, const char *szMesg, CDWordArray *prgdwFor
 				bExternalChannel = TRUE;
 			}
 		}
-	}	
+	}
 	else
 	{
 		proto = currentRoom ? currentRoom : GetDefaultProto();
@@ -3340,7 +3274,7 @@ BOOL bChatSendSound(const char *szSnd, const char *szMesg, CDWordArray *prgdwFor
 
 	if (uModes != BM_WHISPER)
 		ConfirmAway();  // give 'em a choice to come back
-	
+
 	iStatus = proto->GetConnectionStatus();
 
 	if (iStatus == CX_INCHANNEL || iStatus == CX_NOCHANNEL)	// only do this if connected
@@ -3349,7 +3283,7 @@ BOOL bChatSendSound(const char *szSnd, const char *szMesg, CDWordArray *prgdwFor
 		if (prgdwFormatting)
 			szControlFull = SzControlFull(szMesg, prgdwFormatting);
 
-		sprintf(GetOutBuff(), "%.*s %s %s%c", g_nSoundLen, soundID, szQuotedSnd, szControlFull ? szControlFull : szMesg, 0x1);
+		TryFormatOutBuff( "%.*s %s %s%c", g_nSoundLen, soundID, szQuotedSnd, szControlFull ? szControlFull : szMesg, 0x1);
 
 		if (!(uModes & BM_WHISPER))
 		{
@@ -3365,9 +3299,9 @@ BOOL bChatSendSound(const char *szSnd, const char *szMesg, CDWordArray *prgdwFor
 				bSuccess = proto->bChatSendToChannel(NULL,					/*szAnnotations*/
 													 UnConst(GetOutBuff()),	/*szMesg*/
 													 NULL,					/*szNMText*/
-													 BM_SOUND);				/*uModes*/		
+													 BM_SOUND);				/*uModes*/
 		}
-		else 
+		else
 		{
 			BOOL bJustToMe;
 
@@ -3419,7 +3353,7 @@ void CRoomInfo::ChatGetInfo (CUserInfo *pui) {
 	// Set a bit indicating that we requested this info,
 	// ... so people can't nefariously send us info that we don't want to show.
 	pui->IncrementRequestInfo(RF_PROFILE);
-	sprintf(GetOutBuff(), "#%s", GETINFOPREFIX);
+	TryFormatOutBuff( "#%s", GETINFOPREFIX);
 	// Send message requesting info directly to target
 	bChatSendPrivMesg(pui->GetName(), GetOutBuff(), NULL);
 }
@@ -3427,7 +3361,7 @@ void CRoomInfo::ChatGetInfo (CUserInfo *pui) {
 void CRoomInfo::ChatGetAvatarInfo (CUserInfo *pui, BOOL bInteractive) {
 	// Force the avatar to download when this info arrives.
 	pui->SetFlag (bInteractive ? UF_INTERACTIVEDOWNLOAD : UF_AUTODOWNLOAD, TRUE);
-	sprintf(GetOutBuff(), "#%s", REQUESTCHARPREFIX);
+	TryFormatOutBuff( "#%s", REQUESTCHARPREFIX);
 	// Send message requesting info directly to target
 	bChatSendPrivMesg(pui->GetName(), GetOutBuff(), NULL);
 }
@@ -3437,11 +3371,11 @@ void CRoomInfo::ChatSyncBackDrop(CChatDoc* pDoc, const char *szBackdrop, const c
 	if (*szBackdrop && GetConnectionStatus() == CX_INCHANNEL)
 	{
 		CString strMesg;
-		
+
 		strMesg.Format("#%s%s,%s", NEWBACKGRNDPREFIX, szBackdrop, szURL ? szURL : "");
 		bChatSendToChannel(UnConst(strMesg), NULL, NULL);
 	    // Send the old one for backwards compatibility. Always send this message
-		// second - newer clients will recognize both messages, but see that the 
+		// second - newer clients will recognize both messages, but see that the
 		// background name is the same, and ignore this message. NOTE: The old message
 		// should not include the filetype of the backdrop in the backdrop name,
 		// only the name itself.
@@ -3653,13 +3587,13 @@ void ShowIdentity(const char *nick, const char *user, const char *host) {
 }
 
 
-void CRoomInfo::UpdateStatus() {	
+void CRoomInfo::UpdateStatus() {
 	CString leftMesg;
 	int iConn = GetConnectionStatus();
 	if (iConn == CX_DISCONNECTED)
 		leftMesg.LoadString(ID_DISCONNECTED);
 	else if (iConn == CX_CONNECTING)
-		leftMesg.LoadString(ID_CONNECTING); 
+		leftMesg.LoadString(ID_CONNECTING);
 	else if (iConn == CX_NOCHANNEL) {
 		if (currentRoom && currentRoom != this && this != GetDefaultProto()) return;  // only write new status if it's for current room!!!
 		leftMesg.LoadString(ID_NOCHANNEL);
@@ -3678,33 +3612,33 @@ void CRoomInfo::UpdateStatus() {
 
 void CRoomInfo::ChatSetOperator(CUserInfo *pui, int mode) {
 	if (mode == UM_HOST) {
-		sprintf(GetOutBuff(), "MODE %s +o %s\r\n", m_strChannel, pui->GetName());
+		TryFormatOutBuff("MODE %s +o %s\r\n", static_cast<LPCTSTR>(m_strChannel), pui->GetName());
 		SendMessageText(GetOutBuff());
 	} else {
 		if (pui->IsOperator()) {
-			sprintf(GetOutBuff(), "MODE %s -o %s\r\n", m_strChannel, pui->GetName());
+			TryFormatOutBuff("MODE %s -o %s\r\n", static_cast<LPCTSTR>(m_strChannel), pui->GetName());
 			SendMessageText(GetOutBuff());
 		}
 
 		if (mode == UM_SPEAKER) {
 			BOOL bIsModerated = currentRoom->m_dwModes & CM_MODERATED;
 			if (bIsModerated) {
-				sprintf(GetOutBuff(), "MODE %s +v %s\r\n", m_strChannel, pui->GetName());
+				TryFormatOutBuff("MODE %s +v %s\r\n", static_cast<LPCTSTR>(m_strChannel), pui->GetName());
 				SendMessageText(GetOutBuff());
 			}
 		}
 		if (mode == UM_SPECTATOR) {
-			sprintf(GetOutBuff(), "MODE %s -v %s\r\n", m_strChannel, pui->GetName());
+			TryFormatOutBuff("MODE %s -v %s\r\n", static_cast<LPCTSTR>(m_strChannel), pui->GetName());
 			SendMessageText(GetOutBuff());
 		}
 	}
-}		
+}
 
 
 void CRoomInfo::ChatGetVersion(CUserInfo *pui) {
 	if (pui && !pui->IsDeparted()) {
 		pui->IncrementRequestInfo(RF_VERSION);
-		sprintf(GetOutBuff(), "%.*s%c", g_nVersionLen, versionID, 0x01);
+		TryFormatOutBuff( "%.*s%c", g_nVersionLen, versionID, 0x01);
 		bChatSendPrivMesg(pui->GetName(), NULL, GetOutBuff());
 	}
 }
@@ -3714,7 +3648,7 @@ void CRoomInfo::ChatPingUser(CUserInfo *pui) {
 		pui->SetFlag(UF_REQUESTPING, TRUE);
 		time_t seconds;
 		time(&seconds);
-		sprintf(GetOutBuff(), "%.*s %ld%c", g_nPingLen, pingID, (long) seconds, 0x01);
+		TryFormatOutBuff( "%.*s %ld%c", g_nPingLen, pingID, (long) seconds, 0x01);
 		bChatSendPrivMesg(pui->GetName(), NULL, GetOutBuff());
 	}
 }
@@ -3722,7 +3656,7 @@ void CRoomInfo::ChatPingUser(CUserInfo *pui) {
 void CRoomInfo::ChatGetLocalTime(CUserInfo *pui) {
 	if (pui && !pui->IsDeparted()) {
 		pui->IncrementRequestInfo(RF_TIME);
-		sprintf(GetOutBuff(), "%.*s%c", g_nTimeLen, timeID, 0x01);
+		TryFormatOutBuff( "%.*s%c", g_nTimeLen, timeID, 0x01);
 		bChatSendPrivMesg(pui->GetName(), NULL, GetOutBuff());
 	}
 }
@@ -3730,7 +3664,7 @@ void CRoomInfo::ChatGetLocalTime(CUserInfo *pui) {
 void CRoomInfo::ChatGetEmail(CUserInfo *pui) {
 	if (pui && !pui->IsDeparted()) {
 		pui->IncrementRequestInfo(RF_EMAIL);
-		sprintf(GetOutBuff(), "%.*s%c", g_nEmailLen, emailID, 0x01);
+		TryFormatOutBuff( "%.*s%c", g_nEmailLen, emailID, 0x01);
 		bChatSendPrivMesg(pui->GetName(), NULL, GetOutBuff());
 	}
 }
@@ -3738,7 +3672,7 @@ void CRoomInfo::ChatGetEmail(CUserInfo *pui) {
 void CRoomInfo::ChatGetHomePage(CUserInfo *pui) {
 	if (pui && !pui->IsDeparted()) {
 		pui->IncrementRequestInfo(RF_HOMEPAGE);
-		sprintf(GetOutBuff(), "%.*s%c", g_nUrlLen, urlID, 0x01);
+		TryFormatOutBuff( "%.*s%c", g_nUrlLen, urlID, 0x01);
 		bChatSendPrivMesg(pui->GetName(), NULL, GetOutBuff());
 	}
 }
@@ -3751,9 +3685,9 @@ void CRoomInfo::ChatSetAway(BOOL bAway, const char *szMesg, CUserInfo *pui, BOOL
 	CChatDoc *doc = (CChatDoc *) m_doc;
 
 	if (bAway)
-		sprintf(GetOutBuff(), "%.*s %s%c", g_nAwayLen, awayID, szMesg, 0x01);
+		TryFormatOutBuff( "%.*s %s%c", g_nAwayLen, awayID, szMesg, 0x01);
 	else
-		sprintf(GetOutBuff(), "%.*s%c", g_nAwayLen, awayID, 0x01);
+		TryFormatOutBuff( "%.*s%c", g_nAwayLen, awayID, 0x01);
 
 	if (pui)
 		VERIFY(bChatSendPrivMesg(pui->GetName(),	/*szAddressee*/
@@ -3827,7 +3761,7 @@ BOOL bDoInvite(char *szInvitee, void *pvProto, DWORD dwData)
 		szEncodedNick = EncodeNick(szInvitee);
 	else
 		szEncodedNick = szInvitee;
-	
+
 	ASSERT(szEncodedNick);
 
 	return pProto->ChatSendInvitation(szEncodedNick);
@@ -3975,7 +3909,7 @@ void CIrcProto::ChatSetNick(const char *szNickname)
 		// we have to do this anyway if we're connecting and the names haven't changed,
 		// since if we have a bad nick, we'll need to get back a bad nick response.
 		// Otherwise, we know we don't have a bad nick, w/ other connect statuses.
-		// NOTE: not true any more, since CX_CONNECTING means not yet logged in... 
+		// NOTE: not true any more, since CX_CONNECTING means not yet logged in...
 		while (!ChatChangeNick(strNewNick))
 		{
 			TryNewNick(ID_ERR_BAD_NICK, strNewNick, FALSE, &strNewNick);
@@ -3983,7 +3917,7 @@ void CIrcProto::ChatSetNick(const char *szNickname)
 		}
 		// REGISB 02/02/98 this g_strRequestedNick variable is not being used - commented out code
 		// g_strRequestedNick = newNick;    // cache requested version in case we get a socket-based Nick Change Message
-	} 
+	}
 	else
 		if (iStatus == CX_DISCONNECTED && strcmp(szNickname, strOldNick))
 			AddAndExecute(new NickEntry(strOldNick, szNickname));  // do it right away (won't get a nick message back)
@@ -4018,7 +3952,7 @@ void AdjustFlags(DWORD oldMode, BOOL newVal, UINT field, DWORD *setMask, DWORD *
 {
 	if (ISTRUE(oldMode & field) != newVal)
 	{
-		if (newVal) 
+		if (newVal)
 			*setMask |= field;
 		else
 			*unsetMask |= field;
@@ -4054,7 +3988,7 @@ void CRoomInfo::DoChannelDialog()
 	cprops.m_bInviteOnly = ISTRUE(dwCurrentChannelMode & CM_INVITEONLY);
 	cprops.m_bModerated = ISTRUE(dwCurrentChannelMode & CM_MODERATED);
 	cprops.m_bTopicAnyone = !ISTRUE(dwCurrentChannelMode & CM_TOPICHOST);
-	
+
 	if (theApp.DoModalDlg(&cprops) == IDOK) {
 		if (strcmp((LPCTSTR) cprops.m_rtfTopic.m_strText, strCurrentChannelTopic) ||
 			!bFormattingsEqual(cprops.m_rtfTopic.m_prgdwFormatting, currentRoom->m_prgdwTopicFormatting))
@@ -4138,7 +4072,7 @@ BOOL bInitEnterInfo(CRoomInfo& enterInfo, const char *szChannelName, const char 
 		ShowBadChannelName((LPCTSTR) enterInfo.m_strChannel);
 		return FALSE;
 	}
-	else 
+	else
 		return TRUE;
 }
 
@@ -4247,7 +4181,7 @@ BOOL bProcessAddChannel(const char *szChanName, CRoomInfo *proto, SHORT *pnCXKee
 			// New Document creation failed (because of low HD space for example)
 			// -> need to leave the channel the user just joined
 			ASSERT(proto);
-			sprintf(GetOutBuff(), "PART %s\r\n", szChanName);  // exit gracefully
+			TryFormatOutBuff( "PART %s\r\n", szChanName);  // exit gracefully
 			proto->SendMessageText(GetOutBuff());
 			delete proto;
 			proto = NULL;
@@ -4322,7 +4256,7 @@ CUserInfo* PuiFromDocNickIdent(CChatDoc **ppDoc, char *szNickname, const char *s
 	{
 		pDocTmp = GetChatDoc();
 
-		if (pDocTmp && pDocTmp->GetConnectionStatus() == CX_INCHANNEL) 
+		if (pDocTmp && pDocTmp->GetConnectionStatus() == CX_INCHANNEL)
 		{
 			// try to interpret as utterance in current room
 			pui = LookupPui(szNickname, pDocTmp);
@@ -4441,7 +4375,7 @@ BOOL bPassesRatings(const char *szRating, BOOL bPromptOverride) {
 	else if (bPromptOverride && (S_OK == RatingAccessDeniedDialog(NULL, NULL, NULL, pRatingDetails)))
 		bAccess = TRUE;
 
-	if (pRatingDetails) 
+	if (pRatingDetails)
 		RatingFreeDetails(pRatingDetails);
 	return bAccess;
 }
@@ -4478,7 +4412,7 @@ BOOL bSwitchToRoom(const char *szNewRoom, const char *szPassword, const char *sz
 
 	if (theApp.m_bEmbedded && currentRoom && currentRoom->m_strChannel != "") {
 		// in case of embedded document, exit old room first
-		if (!currentRoom->m_doc->SaveModified()) 
+		if (!currentRoom->m_doc->SaveModified())
 			return TRUE;
 		currentRoom->m_doc->DeleteContents();
 		((CChatDoc*) currentRoom->m_doc)->InitMyDocument();
@@ -4505,7 +4439,7 @@ BOOL bSwitchToRoom(const char *szNewRoom, const char *szPassword, const char *sz
 	{	// must create new doc and join room
 		ASSERT(pEnterRoom);
 		g_bCXPrompt = FALSE;
-		if (szNewRoom) 
+		if (szNewRoom)
 			VERIFY(bInitEnterInfo(*pEnterRoom, szRoom, szPassword, szCreationModes, dwMaxUsers, FALSE));  // don't reset if they passed in a NULL szNewRoom!
 		InitializeChannelConnection(*pEnterRoom, &g_nCXKeepServer, &g_bCXPrompt, bCreateRoom);
 	}
@@ -4518,12 +4452,12 @@ void OnInvite(const char *szSender, const char *szFullName, const char *szRoom)
 {
 	static BOOL bInInvite = FALSE;
 
-	if (!theApp.m_bAllowInvites || !bCanViewUnrated()) 
+	if (!theApp.m_bAllowInvites || !bCanViewUnrated())
 		return;
 
 	if (IsIgnored(szFullName)) return;   // do not allow invites from ignored folks
 
-	if (bInInvite) 
+	if (bInInvite)
 		return;  // poor man's not-so-critical-section
 	bInInvite = TRUE;
 
@@ -4560,15 +4494,15 @@ void OnInvite(const char *szSender, const char *szFullName, const char *szRoom)
 BOOL ConvertEncodingIn(LPSTR *pszStr)
 {
 	extern int OurJIS_to_ShiftJIS (UCHAR *pJIS, int JIS_len, UCHAR **ppSJIS,  int ShiftJIS_len=0);
-	
-	if (theApp.m_charSet == ANSI_CHARSET) 
+
+	if (theApp.m_charSet == ANSI_CHARSET)
 		return FALSE;  // fast path for common case
 
 	switch (theApp.m_charSet)
 	{
 		case SHIFTJIS_CHARSET:
 		{
-			if (OurJIS_to_ShiftJIS ((UCHAR*) *pszStr,  -1, (UCHAR**) pszStr) > 0) 
+			if (OurJIS_to_ShiftJIS ((UCHAR*) *pszStr,  -1, (UCHAR**) pszStr) > 0)
 				return TRUE;
 			break;
 		}
@@ -4610,14 +4544,14 @@ BOOL ConvertEncodingIn(LPSTR *pszStr)
 }
 
 
-BOOL ConvertEncodingOut(LPSTR *pszStr) 
+BOOL ConvertEncodingOut(LPSTR *pszStr)
 {
 	extern int OurShiftJIS_to_JIS (UCHAR *pShiftJIS,  int ShiftJIS_len, UCHAR **ppJIS,  int JIS_len=0);
 
-	if (theApp.m_charSet == ANSI_CHARSET) 
+	if (theApp.m_charSet == ANSI_CHARSET)
 		return FALSE;  // fast path for common case
 
-	switch (theApp.m_charSet) 
+	switch (theApp.m_charSet)
 	{
 		case SHIFTJIS_CHARSET:
 		{
@@ -4631,7 +4565,7 @@ BOOL ConvertEncodingOut(LPSTR *pszStr)
 			if (bFree1 && bFree2)
 				delete [] szTmp;
 
-			if (bFree1 || bFree2) 
+			if (bFree1 || bFree2)
 				return TRUE;
 			break;
 		}
@@ -4745,17 +4679,10 @@ void OfflineEditInits()
 
 void ChatServerDisconnect(BOOL bCheckRules, BOOL bResumeConnection)
 {
-	if (serverConn.m_hSocket != INVALID_SOCKET) 	// close last connection if necessary
-		serverConn.Close();	
+	if (serverConn.IsOpen())
+		serverConn.Close();
 
-	if (!bResumeConnection)
-	{
-		if (::AfxGetMainWnd ())
-			::AfxGetMainWnd ()->KillTimer (ID_CONNECT_TRY);
-		theApp.m_SrvConnector.Cleanup ();
-	
-		StopIdentD();
-	}
+	(void)bResumeConnection;
 
 	CString strIdent;
 
@@ -4799,7 +4726,7 @@ void ChatServerDisconnect(BOOL bCheckRules, BOOL bResumeConnection)
 
 		theApp.m_dynaRules.bStopRulesDaemon();
 		theApp.m_dynaRules.bUpdateRuleSetsDaemonExt(TRUE);
-		
+
 		theApp.m_dynaRules.bMatchAndApplyRules(eOnDisconnect, NULL, NULL, CString(GetMyServer()), CString(GetMyNickName())+strIdent, CString(""), CString(""));
 	}
 }
@@ -4808,74 +4735,55 @@ void ChatServerDisconnect(BOOL bCheckRules, BOOL bResumeConnection)
 BOOL bChatServerConnect(const char *szServer)
 {
 	ASSERT(CX_DISCONNECTED == GetIrcProto()->GetConnectionStatus());
-
-	GetIrcProto()->SetConnectionStatus(CX_CONNECTING);
-	((CFrameWnd*)AfxGetMainWnd())->UpdateWindow();
-	void StartIdentD();
-	StartIdentD();
-	if (!theApp.m_SrvConnector.BeginConnectToService (szServer))
-	{
-		::AfxGetMainWnd ()->SendMessage (WM_COMMAND, ID_CONNECT_ERROR);
+	if (!szServer || !*szServer)
 		return FALSE;
-	}
-	::AfxGetMainWnd ()->SetTimer (ID_CONNECT_TRY, 50, NULL);
-	return TRUE;
 
-
-#if 0
 	GetIrcProto()->SetConnectionStatus(CX_CONNECTING);
 	((CFrameWnd*)AfxGetMainWnd())->UpdateWindow();
 
-	CString	strServer;
-	int		iPort;
-	char*	szColon = (char *) _mbschr((const UCHAR*) szServer, ':');
+	CChatService service(szServer);
+	LPCSTR groupName = service.GetGroup() ? service.GetGroup() : UNASSOCIATED_GROUP;
+	CChatServerGroup* group = theApp.m_listChatServices.FindGroup(groupName);
+	if (!group)
+		group = theApp.m_listChatServices.CreateGroup(groupName);
+	if (!group)
+		return FALSE;
 
-	if (szColon)
-	{
-		strServer = CString(szServer, szColon - szServer);
-		iPort = atoi(szColon+1);
-	}
-	else
-	{
-		strServer = szServer;
-		iPort = 6667;
-#if 0
-		// if port wasn't specified and user is with aol, trying to connect
-		// to our servers, use port 7000 instead to avoid AOL'd port blocker
-		if (strnicmp(szServer, "mschat", 6) == 0 || strnicmp(szServer, "comicsrv", 8) == 0) {
-			char name[200];
-			if (gethostname(name, sizeof(name)) == 0) { // ie, success
-				int len = strlen(name);
-				if (len > 7) {  // 7 == strlen("aol.com")
-					char *partialName = name + len - 7;
-					if (stricmp(partialName, "aol.com") == 0) port = 7000;
-				}
-			}
+	CChatServer* selected = NULL;
+	if (service.GetServer()) {
+		selected = group->FindServer(service.GetServer());
+		if (!selected) {
+			CString host;
+			int parsedPort = 6667;
+			TranslateServerNameToServerAndPort(service.GetServer(), &host, &parsedPort);
+			selected = group->CreateServer(service.GetServer(), parsedPort);
 		}
-#endif
+	} else if (group->m_pszLastServer) {
+		selected = group->FindServer(group->m_pszLastServer);
 	}
+	if (!selected)
+		group->EnumServers(selected);
+	if (!selected)
+		return FALSE;
 
-	VERIFY(serverConn.Create());
-	int iRetVal = serverConn.Connect(strServer, iPort);
-	if (iRetVal || GetLastError() == WSAEWOULDBLOCK)
-	{
-		StartIdentD();
-		return TRUE;
-	}
-	else
-	{
-		TRACE("iRetVal = %u, lasterr = %u\n", iRetVal, GetLastError());
+	CString host;
+	int ignoredPort = 0;
+	TranslateServerNameToServerAndPort(selected->m_pszName, &host, &ignoredPort);
+	const UINT port = selected->m_nPort;
+	const BOOL secure = port == 6697;
+	serverConn.SetAuthentication(selected->m_nAuthenticationType,
+		selected->m_pszUserName, selected->m_pszPassword, selected->m_pszSecurityPackages);
+	theApp.m_strConnectedService = szServer;
+	theApp.m_strConnectedServer = selected->m_pszName;
+	group->SetLastAccessedServer(selected);
+
+	if (!serverConn.Connect(host, port, secure)) {
 		GetIrcProto()->SetConnectionStatus(CX_DISCONNECTED);
-		CString strMesg;
-		strMesg.LoadString(ID_ERR_CONNECT);
-		VERIFY(ReplaceToken(strMesg, CString("%1"), strServer));
-		AfxMessageBox(strMesg);
+		::AfxGetMainWnd()->SendMessage(WM_COMMAND, ID_CONNECT_ERROR);
 		return FALSE;
 	}
-#endif
+	return TRUE;
 }
-
-
 void InitializeServerConnection(CRoomInfo* pEnterInfo, BOOL* pbCXPrompt)
 {
 	BOOL bGoodChannelName = TRUE;
@@ -4900,7 +4808,7 @@ void InitializeServerConnection(CRoomInfo* pEnterInfo, BOOL* pbCXPrompt)
 			ASSERT(pEnterInfo);
 			bGoodChannelName = bInitEnterInfo(*pEnterInfo, theApp.m_myChannel, NULL, NULL, 0L, TRUE);
 		}
-			
+
 		*pbCXPrompt = TRUE;	// only good for one non-prompt (could also be set to false in above DoModal)
 		if (bGoodChannelName)
 			if (bChatServerConnect(GetMyServer()))
@@ -4931,7 +4839,7 @@ void ReconnectToServer(const char *szDecodedNickname, const char *szServerName)
 //void ChatSetPath(const char *szPath) {	REGISB not used
 //	CChatDoc *doc = GetChatDoc();
 //	// note: doc is null if we're closing up IE3.0 w/ Connect dialog open
-//	if (doc) doc->SetPathName(szPath); 
+//	if (doc) doc->SetPathName(szPath);
 //}
 
 
@@ -4973,9 +4881,9 @@ void ShowSay(CChatDoc *pDoc, CUserInfo *pui, const char *szText, CDWordArray *pr
 
 	pui->m_udi.m_bbCooked = bbCooked;
 	pui->m_udi.m_uModes	= uModes;
-	pui->m_udi.m_chExprE = 
-	pui->m_udi.m_chGestE = 
-	pui->m_udi.m_chExprI = 
+	pui->m_udi.m_chExprE =
+	pui->m_udi.m_chGestE =
+	pui->m_udi.m_chExprI =
 	pui->m_udi.m_chGestI = 0;
 
 	if (pDocTmp->m_bComicView)
@@ -5072,12 +4980,12 @@ CUser* CreateUserFromWhoReply(IRCPARSE *pParse)
 
 // Find entries in a key string (see above for a description). If pszKey is NULL,
 // just returns the first key-value pair (like an enumeration).
-static BOOL 
+static BOOL
 FindInKeyString(
-LPCSTR pszKeyString, 
-LPCSTR pszKey, 
-int	*  pnKeyPos, 
-int *  pnValPos, 
+LPCSTR pszKeyString,
+LPCSTR pszKey,
+int	*  pnKeyPos,
+int *  pnValPos,
 int *  pnNextValPos)
 {
 	int nKeyLength = pszKey != NULL ? lstrlen (pszKey) : 0;
@@ -5110,14 +5018,14 @@ int *  pnNextValPos)
 				if (psz != NULL) {
 					psz++;
 				}
-			} 
+			}
 			if (psz != NULL && (psz = OurMbsChr (psz, ';')) != NULL) {
 				nPos += (int)((psz + 1) - pszKeyString);
 				pszKeyString = psz + 1;
 				continue;
 			}
 		}
-		
+
 		int nLen = lstrlen (pszKeyString);
 		nPos += nLen;
 		pszKeyString += nLen;
@@ -5135,8 +5043,8 @@ int *  pnNextValPos)
 
 BOOL
 ChangeKeyString(
-CString &strKeyString, 
-LPCSTR pszKey, 
+CString &strKeyString,
+LPCSTR pszKey,
 LPCSTR pszValue,
 int nMaxSize)
 {
@@ -5148,7 +5056,7 @@ int nMaxSize)
 	if (FindInKeyString (strNew, pszKey, &nKeyPos, &nValPos, &nNextValPos)) {
 		if (nNextValPos == -1) {
 			strNew = strNew.Left (nKeyPos - 1); // Take out trailing ; if there is one
-		} 
+		}
 		else {
 			strNew = strNew.Left (nKeyPos) + strNew.Mid (nNextValPos);
 		}
@@ -5165,8 +5073,8 @@ int nMaxSize)
 
 	int nOrigLength = strNew.GetLength ();
 	BOOL bNeedQuoting = OurMbsPbrk (pszValue, "=;\"") != NULL;
-	int nAddedLength = lstrlen (pszKey) + lstrlen (pszValue) + 
-							(bNeedQuoting ? 2 : 0) + 
+	int nAddedLength = lstrlen (pszKey) + lstrlen (pszValue) +
+							(bNeedQuoting ? 2 : 0) +
 							(nOrigLength > 0 ? 1 : 0); // 1 for the semicolon
 	if (nOrigLength + nAddedLength > nMaxSize) {
 		return FALSE;
@@ -5191,8 +5099,8 @@ int nMaxSize)
 
 BOOL
 GetValueFromKeyString(
-LPCSTR pszKeyString, 
-LPCSTR pszKey, 
+LPCSTR pszKeyString,
+LPCSTR pszKey,
 CString &strValueOut)
 {
 	if (pszKeyString == NULL) {
@@ -5209,12 +5117,12 @@ CString &strValueOut)
 
 	if (nNextValPos == -1) {
 		strValueOut = CString (pszKeyString + nValPos);
-	} 
+	}
 	else {
 		strValueOut = CString (pszKeyString + nValPos, nNextValPos - nValPos);
 	}
 
-	// Note: For multi-byte character support, we check the last character of a 
+	// Note: For multi-byte character support, we check the last character of a
 	// string by using _mbsrchr.
 
 	int nLeftTrim, nRightTrim;
@@ -5222,13 +5130,13 @@ CString &strValueOut)
 	nRightTrim = strValueOut.GetLength ();
 
 	// Trim trailing separators.
-	while (nRightTrim > 0 && (LPCSTR)_mbsrchr ((const UCHAR *)(LPCSTR)strValueOut, ';') == 
+	while (nRightTrim > 0 && (LPCSTR)_mbsrchr ((const UCHAR *)(LPCSTR)strValueOut, ';') ==
 		   ((LPCSTR)strValueOut) + nRightTrim - 1) {
 		nRightTrim--;
 	}
 
 	// Trim quotes if they exist.
-	if (nRightTrim >= 2 && strValueOut[0] == '\"' && 
+	if (nRightTrim >= 2 && strValueOut[0] == '\"' &&
 			OurMbsRChr (strValueOut, '\"') == ((LPCSTR)strValueOut) + nRightTrim - 1) {
 		nLeftTrim++;
 		nRightTrim--;
@@ -5240,10 +5148,10 @@ CString &strValueOut)
 
 // Enumerates entries in a key string.
 
-BOOL 
+BOOL
 EnumKeyString(
-LPCSTR &pszKeyString, 
-CString &strKey, 
+LPCSTR &pszKeyString,
+CString &strKey,
 CString &strValue)
 {
 	if (pszKeyString == NULL) {

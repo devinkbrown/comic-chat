@@ -269,8 +269,6 @@ CChatApp::CChatApp()
 	m_pWndHiddenInThread = NULL;
 	m_pbCoolBarState = NULL;
 
-	m_SrvConnector.SetServiceList (&m_listChatServices);
-
 	m_hNotificationThread = NULL;
 	m_hShutdownEvent = NULL;
 }
@@ -2537,7 +2535,6 @@ BOOL bIsPropSheet)
 void
 CChatApp::OnConnectError()
 {
-	::AfxGetMainWnd ()->KillTimer (ID_CONNECT_TRY);
 	GetIrcProto()->SetConnectionStatus(CX_DISCONNECTED);
 	CString strMesg;
 	strMesg.LoadString(ID_ERR_CONNECT);
@@ -2550,46 +2547,13 @@ CChatApp::OnConnectError()
 void 
 CChatApp::OnConnectConnected()
 {
-	::AfxGetMainWnd ()->KillTimer (ID_CONNECT_TRY);
 	::AfxGetMainWnd ()->KillTimer (ID_ISIRCXTIMEOUT);
 }
 
-void
-CChatApp::ContinueConnection()
+void CChatApp::CompleteConnection()
 {
-	int nNumSockets = m_SrvConnector.GetNumSockets ();
-	int nRet = 1;
-	for (int i = 0; nRet == 1 && i < nNumSockets; i++)
-	{
-		nRet = m_SrvConnector.AssignSocket (i);
-		// A return code of 0 means error, which breaks out of the loop
-		// and does the Connect Error stuff below. A code of 1 means
-		// success and continues the loop. A code of -1 means that 
-		// no servers are available (their addresses are still being
-		// resolved), which breaks out of the loop and returns quietly.
-	}
-	if (nRet == 0)
-	{
-		OnConnectError ();
-	}
-}
-
-void
-CChatApp::ResumeConnection()
-{
-	if (m_SrvConnector.BeginConnectToService (NULL))
-		::AfxGetMainWnd ()->SetTimer (ID_CONNECT_TRY, 50, NULL);
-	else
-		::AfxGetMainWnd ()->PostMessage (WM_COMMAND, ID_CONNECT_ERROR);
-}
-
-void
-CChatApp::CompleteConnection()
-{
-	m_SrvConnector.Cleanup ();
-	m_strConnectedService = m_SrvConnector.m_strSvc;
-	m_strConnectedServer = m_SrvConnector.GetConnectingServer ()->m_pszName;
-	m_SrvConnector.GetConnectingServerGroup ()->SetLastAccessedServer (m_SrvConnector.GetConnectingServer ());
+	// The shared transport selects and records the endpoint before it starts.
+	// No MFC socket handle or resolver state is transferred at login time.
 }
 
 void

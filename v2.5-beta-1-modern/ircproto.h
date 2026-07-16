@@ -62,7 +62,7 @@ public:
 	CString			StrEncodeCommandParam(DWORD dwAt, INT *piEncoding, CHAR *szParam);
 	BOOL			IsIRCX() { return m_pSock->m_bIrcXServer; }
 	BOOL			ChatSetMode(DWORD newMode, DWORD newMaxUsers, const char *szNewPasswd);
-	BOOL			bExecuteQuery(enumQueryPurpose qp, 
+	BOOL			bExecuteQuery(enumQueryPurpose qp,
 								  enumCommandType ct,
 								  enumDataType dt,
 								  PVOID pvData,
@@ -131,8 +131,6 @@ extern const char *DecodeChan(const char *szChannel, BOOL bForceDBCS = FALSE);
 extern const char *EncodeNick(const char *szNick, BOOL bEscapeWildcards = FALSE);
 extern const char *DecodeNick(const char *szNick);
 extern const char *DecodeNickForScreen(const char *szNick);
-extern void StartIdentD();
-extern void StopIdentD();
 extern void SetVisibility(BOOL bVisible);
 extern long GetMyIP();
 extern void ChatFillUserList(CUserList *pul);
@@ -146,4 +144,3 @@ extern CRoomInfo *NewDefaultProto(CChatDoc *doc);
 #include "protsupp.h"
 
 #endif // __IRCPROTO_H__
-

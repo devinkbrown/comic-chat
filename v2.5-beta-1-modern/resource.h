@@ -479,7 +479,6 @@
 #define IDD_SERVERSPAGE                 1552
 #define ID_CONNECT_ERROR                32485
 #define ID_CONNECT_CONNECTED            32486
-#define ID_CONNECT_TRY                  32487
 #define ID_ISIRCXTIMEOUT                32488
 #define ID_CANCEL_EDIT_SRVR             32769
 #define BIND_IDP_FAILED_TO_AUTO_REGISTER 32774

@@ -1,6 +1,11 @@
 #ifndef __UI_H__
 #define __UI_H__
 
+#include <cstdarg>
+#include <cstddef>
+#include <cstdio>
+#include <cstring>
+
 #define GetCharSelBodyCam()	((CBodyCam *)cui.GetCharSelBodyCamPv())
 #define GetStatusBar()	((CStatusBar *)cui.GetStatusBarPv())
 #define GetToolBar()	((CChatToolBar *)cui.GetToolBarPv())
@@ -50,7 +55,7 @@ public:
 ////////////////////////////////////////////////////////////////
 //
 
-	CUI() 
+	CUI()
 	{
 		m_pvWhisperBox		= NULL;
 		m_pvNotifBox		= NULL;
@@ -180,5 +185,105 @@ public:
 
 extern CUI cui;
 
-#endif // __UI_H__
+// The original client shared a pair of fixed output buffers and wrote into them
+// with unbounded CRT calls.  Measure the complete result before writing so an
+// oversized user-controlled command is rejected instead of being truncated into
+// a different, still-valid IRC command.
+#if defined(__clang__) || defined(__GNUC__)
+#define COMICCHAT_PRINTF_LIKE(formatIndex, argumentsIndex) \
+	__attribute__((format(printf, formatIndex, argumentsIndex)))
+#else
+#define COMICCHAT_PRINTF_LIKE(formatIndex, argumentsIndex)
+#endif
 
+inline BOOL TryFormatBufferV(char *buffer, std::size_t capacity,
+	const char *format, va_list arguments) COMICCHAT_PRINTF_LIKE(3, 0);
+inline BOOL TryFormatBuffer(char *buffer, std::size_t capacity,
+	const char *format, ...) COMICCHAT_PRINTF_LIKE(3, 4);
+
+inline BOOL TryFormatBufferV(char *buffer, std::size_t capacity,
+							 const char *format, va_list arguments)
+{
+	if (!buffer || !capacity || !format)
+		return FALSE;
+
+	buffer[0] = '\0';
+	va_list measureArguments;
+	va_copy(measureArguments, arguments);
+	const int required = std::vsnprintf(NULL, 0, format, measureArguments);
+	va_end(measureArguments);
+	if (required < 0 || static_cast<std::size_t>(required) >= capacity)
+		return FALSE;
+
+	const int written = std::vsnprintf(buffer, capacity, format, arguments);
+	if (written != required)
+	{
+		buffer[0] = '\0';
+		return FALSE;
+	}
+
+	return TRUE;
+}
+
+inline BOOL TryFormatBuffer(char *buffer, std::size_t capacity,
+						 const char *format, ...)
+{
+	va_list arguments;
+	va_start(arguments, format);
+	const BOOL result = TryFormatBufferV(buffer, capacity, format, arguments);
+	va_end(arguments);
+	return result;
+}
+
+inline BOOL TryCopyBuffer(char *buffer, std::size_t capacity, const char *source)
+{
+	if (!buffer || !capacity || !source)
+		return FALSE;
+
+	const std::size_t length = std::strlen(source);
+	if (length >= capacity)
+	{
+		buffer[0] = '\0';
+		return FALSE;
+	}
+
+	std::memcpy(buffer, source, length + 1);
+	return TRUE;
+}
+
+inline BOOL TryAppendBuffer(char *buffer, std::size_t capacity, const char *source)
+{
+	if (!buffer || !capacity || !source)
+		return FALSE;
+
+	const char *terminator = static_cast<const char *>(std::memchr(buffer, '\0', capacity));
+	if (!terminator)
+	{
+		buffer[0] = '\0';
+		return FALSE;
+	}
+
+	const std::size_t used = static_cast<std::size_t>(terminator - buffer);
+	const std::size_t sourceLength = std::strlen(source);
+	if (sourceLength >= capacity - used)
+	{
+		buffer[0] = '\0';
+		return FALSE;
+	}
+
+	std::memcpy(buffer + used, source, sourceLength + 1);
+	return TRUE;
+}
+
+#define TryFormatOutBuff(...) \
+	TryFormatBuffer(GetOutBuff(), static_cast<std::size_t>(GetOutBuffLen()), __VA_ARGS__)
+#define TryFormatArray(buffer, ...) \
+	TryFormatBuffer((buffer), sizeof(buffer), __VA_ARGS__)
+#define TryCopyArray(buffer, source) \
+	TryCopyBuffer((buffer), sizeof(buffer), (source))
+#define TryCopyOutBuff(source) \
+	TryCopyBuffer(GetOutBuff(), static_cast<std::size_t>(GetOutBuffLen()), (source))
+
+#undef COMICCHAT_PRINTF_LIKE
+
+#endif // __UI_H__

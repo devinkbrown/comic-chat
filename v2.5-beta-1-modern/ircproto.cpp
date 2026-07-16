@@ -110,7 +110,8 @@ void ChatFillRoomList(CRoomList *prl)
 		LPTSTR szStart = (LPTSTR) szQuery, szCommand = GetToken(szStart, &szStart, g_szEmpty);
 		if (szCommand)
 		{
-			CC_ASSERT(0 == stricmp(szCommand, "LIST") || 0 == stricmp(szCommand, "LISTX"));
+			CC_ASSERT(0 == stricmp(szCommand, "LIST") || 0 == stricmp(szCommand, "LISTX"),
+				"room-list query must start with LIST or LISTX");
 			ct = (4 == strlen(szCommand)) ? ctList : ctListX;
 			szParam = GetToken(szStart, &szStart, g_szEmpty);
 		}
@@ -213,13 +214,13 @@ const char *EncodeNick(const char *szNick, BOOL bEscapeWildcards)
 		goto error;
 	if (!szUtf8)
 		goto error;
-	strcpy(szEncoded, szUtf8);
+	TryCopyArray(szEncoded, szUtf8);
 	delete [] szUtf8;
 	return szEncoded;
 
 error:
 	ASSERT(0);
-	strcpy(szEncoded, szNick);
+	TryCopyArray(szEncoded, szNick);
 	return szEncoded;
 }
 
@@ -243,7 +244,7 @@ const char *DecodeNick(const char *szNick)
 
 error:
 	ASSERT(0);
-	strcpy(szEncoded, szNick);
+	TryCopyArray(szEncoded, szNick);
 	return szEncoded;
 }
 
@@ -280,8 +281,8 @@ const char *DecodeNickForScreen(const char *szNick)
    #else
    	LPCSTR pszSrc;
 	LPWORD pwTypeInfo;
-	for (pszSrc = pszDecodedNick, pwTypeInfo = wTypeInfo; 
-		 *pszSrc; 
+	for (pszSrc = pszDecodedNick, pwTypeInfo = wTypeInfo;
+		 *pszSrc;
 		 pszSrc = CharNext (pszSrc), pwTypeInfo++)
 	{
 		if (*pwTypeInfo & (C1_CNTRL | C1_BLANK))
@@ -321,7 +322,7 @@ const char *DecodeChan(const char *szChannel, BOOL bForceDBCS) {
 		char *szInterChan = szDup;
 		BOOL ConvertEncodingIn(LPSTR *);
 		BOOL bNeedFree = ConvertEncodingIn(&szInterChan);
-		strcpy(theApp.m_szBuffer, szInterChan);
+		TryCopyBuffer(theApp.m_szBuffer, static_cast<std::size_t>(theApp.m_nBufferSize), szInterChan);
 		if (bNeedFree) delete [] szInterChan;
 		free(szDup);
 	}
@@ -329,7 +330,7 @@ const char *DecodeChan(const char *szChannel, BOOL bForceDBCS) {
 
 error:
 //	ASSERT(0);
-	strcpy(theApp.m_szBuffer, szChannel);
+	TryCopyBuffer(theApp.m_szBuffer, static_cast<std::size_t>(theApp.m_nBufferSize), szChannel);
 	return theApp.m_szBuffer;
 }
 
@@ -341,7 +342,7 @@ const char *EncodeChan(const char *szChannel) {
 		char *szInterChan = szDup;
 		BOOL ConvertEncodingOut(LPSTR *);
 		BOOL bNeedFree = ConvertEncodingOut(&szInterChan);
-		strcpy(theApp.m_szBuffer, szInterChan);
+		TryCopyBuffer(theApp.m_szBuffer, static_cast<std::size_t>(theApp.m_nBufferSize), szInterChan);
 		if (bNeedFree) delete [] szInterChan;
 		free(szDup);
 		return theApp.m_szBuffer;
@@ -353,14 +354,14 @@ const char *EncodeChan(const char *szChannel) {
 
 		if (!bConvertWideStringToUTF8(theApp.m_wszBuffer, 0, &szUtf8, &pCChOut, FALSE, TRUE, TRUE, FALSE)) goto error;
 		if (!szUtf8) goto error;
-		strcpy(theApp.m_szBuffer, szUtf8);
+		TryCopyBuffer(theApp.m_szBuffer, static_cast<std::size_t>(theApp.m_nBufferSize), szUtf8);
 		delete [] szUtf8;
 		return theApp.m_szBuffer;
 	}
 
 error:
 	// ASSERT(0);
-	strcpy(theApp.m_szBuffer, szChannel);
+	TryCopyBuffer(theApp.m_szBuffer, static_cast<std::size_t>(theApp.m_nBufferSize), szChannel);
 	return theApp.m_szBuffer;
 }
 
@@ -372,7 +373,7 @@ const char *DecodeString(const char *szString, int iEncoding) {
 		char *szInterString = szDup;
 		BOOL ConvertEncodingIn(LPSTR *);
 		BOOL bNeedFree = ConvertEncodingIn(&szInterString);
-		strcpy(theApp.m_szBuffer, szInterString);
+		TryCopyBuffer(theApp.m_szBuffer, static_cast<std::size_t>(theApp.m_nBufferSize), szInterString);
 		if (bNeedFree) delete [] szInterString;
 		free(szDup);
 		return theApp.m_szBuffer;
@@ -390,7 +391,7 @@ const char *DecodeString(const char *szString, int iEncoding) {
 
 error:
 	ASSERT(0);
-	strcpy(theApp.m_szBuffer, szString);
+	TryCopyBuffer(theApp.m_szBuffer, static_cast<std::size_t>(theApp.m_nBufferSize), szString);
 	return theApp.m_szBuffer;
 }
 
@@ -418,7 +419,7 @@ short nGetBreakingPoint(int iEncodingType, const char *szBody, short nBodyLen, s
 		BOOL		bInSpaces = FALSE;
 		WORD		wLastFullFormat;
 
-		// szTmp can point to a regular character or the starting point of a formatting sequence 
+		// szTmp can point to a regular character or the starting point of a formatting sequence
 
 		do
 		{
@@ -473,8 +474,12 @@ short nGetBreakingPoint(int iEncodingType, const char *szBody, short nBodyLen, s
 
 
 void CIrcProto::SendMessageText(char *szMesg) {
-	TRACE("Sending message: %s\n", szMesg);
-	m_pSock->Send(szMesg, strlen(szMesg));
+	if (!szMesg || !*szMesg)
+		return;
+	// Never emit wire text here: PASS, SASL, OPER, and proxy credentials all
+	// share this path. The transport records only redacted command metadata.
+	TRACE0("Queueing IRC protocol message.\n");
+	(void)m_pSock->Send(szMesg, static_cast<int>(strlen(szMesg)));
 }
 
 
@@ -525,7 +530,7 @@ BOOL CIrcProto::bChatSendToTarget(const char *szAddressee, const char *szAnnotat
 
 	// 2 is for starting : and trailing space
 	nReceivingPrefixLen = 2 + strlen(GetMyNickName());
-	
+
 	// for private messages: when hostname length is still unknown we use 32 by default
 	if (theApp.m_nMyIdentLength)
 		nReceivingPrefixLen += theApp.m_nMyIdentLength;
@@ -539,21 +544,21 @@ BOOL CIrcProto::bChatSendToTarget(const char *szAddressee, const char *szAnnotat
 		// message is short enough to be sent in one shot
 		if (*szAnnotations && IsIRCX())
 		{
-			sprintf(serverConn.m_szOutput2, "DATA %s %s :%s\r\n", szTarget, CCUDI1, szAnnotations);
-			SendMessageText(serverConn.m_szOutput2);
+			serverConn.FormatOutput( "DATA %s %s :%s\r\n", szTarget, CCUDI1, szAnnotations);
+			SendMessageText(serverConn.GetOutput());
 
 			if (*szMesg)
 			{
-				sprintf(serverConn.m_szOutput2, "%s %s :%s\r\n", (bAsNotice ? "NOTICE" : "PRIVMSG"),
+				serverConn.FormatOutput( "%s %s :%s\r\n", (bAsNotice ? "NOTICE" : "PRIVMSG"),
 																 szTarget, szMesg);
-				SendMessageText(serverConn.m_szOutput2);
+				SendMessageText(serverConn.GetOutput());
 			}
 		}
 		else
 		{
-			sprintf(serverConn.m_szOutput2, "%s %s :%s%s\r\n", (bAsNotice ? "NOTICE" : "PRIVMSG"),
+			serverConn.FormatOutput( "%s %s :%s%s\r\n", (bAsNotice ? "NOTICE" : "PRIVMSG"),
 																szTarget, szAnnotations, szMesg);
-			SendMessageText(serverConn.m_szOutput2);
+			SendMessageText(serverConn.GetOutput());
 		}
 	}
 	else
@@ -618,7 +623,7 @@ BOOL CIrcProto::bChatSendToTarget(const char *szAddressee, const char *szAnnotat
 		do
 		{
 			// send another chunk and update szBody
-			
+
 			// bytes allowed in szBody term = serverConn.m_nMaxMsgLength - 12 - nChannelLen - nAnnotationsLen - nPrefixLen - nSuffixLen
 			// 12 = "PRIVMSG  :\r\n"
 			nBreakingPoint = nGetBreakingPoint(iEncodingType, szBody, nBodyLen, serverConn.m_nMaxMsgLength - nReceivingPrefixLen - 12 - nTargetLen - nAnnotationsLen - nPrefixLen - nSuffixLen, wFormatBegin, szFormatBegin, &wFormatEnd);
@@ -634,31 +639,31 @@ BOOL CIrcProto::bChatSendToTarget(const char *szAddressee, const char *szAnnotat
 
 			if (*szAnnotations && IsIRCX())
 			{
-				sprintf(serverConn.m_szOutput2, "DATA %s %s :%s\r\n", szTarget, CCUDI1, szAnnotations);
-				SendMessageText(serverConn.m_szOutput2);
+				serverConn.FormatOutput( "DATA %s %s :%s\r\n", szTarget, CCUDI1, szAnnotations);
+				SendMessageText(serverConn.GetOutput());
 
-				sprintf(serverConn.m_szOutput2, "%s %s :%s%s%s\r\n", 
+				serverConn.FormatOutput( "%s %s :%s%s%s\r\n",
 						bAsNotice ? "NOTICE" : "PRIVMSG",
-						szTarget, 
-						szPrefix, 
-						szFormatBegin, 
+						szTarget,
+						szPrefix,
+						szFormatBegin,
 						szBody);
 			}
 			else
-				sprintf(serverConn.m_szOutput2, "%s %s :%s%s%s%s\r\n", 
+				serverConn.FormatOutput( "%s %s :%s%s%s%s\r\n",
 						bAsNotice ? "NOTICE" : "PRIVMSG",
-						szTarget, 
-						szAnnotations, 
-						szPrefix, 
-						szFormatBegin, 
+						szTarget,
+						szAnnotations,
+						szPrefix,
+						szFormatBegin,
 						szBody);
 
 			#ifdef DEBUG
-				short nOutputLen = strlen(serverConn.m_szOutput2);
+				short nOutputLen = strlen(serverConn.GetOutput());
 				ASSERT(nOutputLen <= serverConn.m_nMaxMsgLength);
 			#endif // DEBUG
 
-			SendMessageText(serverConn.m_szOutput2);
+			SendMessageText(serverConn.GetOutput());
 
 			((char*)szBody)[nBreakingPoint+nSuffixLen] = chBreakingChar;
 
@@ -722,7 +727,7 @@ BOOL CIrcProto::ChatSetClientData(const char *szClientData) {
 	if (IsIRCX ()) {
 		ASSERT(szClientData);
 		if (*szClientData) szClientData = EncodeString(szClientData);	// REGIS: why converting string??
-		// sprintf(GetOutBuff(), "PROP %s CLIENT :%s\r\n", m_strChannel, szClientData);
+		// TryFormatOutBuff( "PROP %s CLIENT :%s\r\n", m_strChannel, szClientData);
 		// SendMessageText(GetOutBuff());
 		// return TRUE;
 
@@ -734,13 +739,13 @@ BOOL CIrcProto::ChatSetClientData(const char *szClientData) {
 	}
 }
 
-void			
+void
 CIrcProto::HandleClientDataChange(
 LPCSTR pszNewClientData)
 {
 	// We need to find out all properties that have been added, modified, or
 	// removed. The best way to do this is to enumerate both the old and new
-	// clientdata strings. For properties that are in the new string, and were 
+	// clientdata strings. For properties that are in the new string, and were
 	// different or didn't exist in the old one, we need to call OnPropertyChange.
 	// For properties that were in the old string, and are not in the new one,
 	// we need to call OnPropertyChange as well.
@@ -769,7 +774,7 @@ LPCSTR pszNewClientData)
 void CIrcProto::ChatPartChannel(CDocument *doc1, BOOL) {
 	CChatDoc *doc = (CChatDoc*) doc1;
 	if (m_bInRoom) {
-		sprintf(GetOutBuff(), "PART %s\r\n", m_strChannel);  // exit gracefully
+		TryFormatOutBuff("PART %s\r\n", static_cast<LPCTSTR>(m_strChannel));  // exit gracefully
 		SendMessageText(GetOutBuff());
 	}
 
@@ -807,12 +812,13 @@ void CIrcProto::ChatJoinAux(CRoomInfo &enterInfo)
 {
 	ASSERT(!enterInfo.m_strChannel.IsEmpty());
 	if (enterInfo.m_strPassword.IsEmpty())
-		sprintf(GetOutBuff(), "JOIN %s\r\n", enterInfo.m_strChannel);
+		TryFormatOutBuff("JOIN %s\r\n", static_cast<LPCTSTR>(enterInfo.m_strChannel));
 	else
 	{
 		int iEncoding = (enterInfo.m_strChannel[0] == '#' || enterInfo.m_strChannel[0] == '&') ? ENC_DBCS : ENC_UTF8;
 		CString strPwd = EncodeString(enterInfo.m_strPassword, iEncoding);
-		sprintf(GetOutBuff(), "JOIN %s %s\r\n", enterInfo.m_strChannel, strPwd);
+		TryFormatOutBuff("JOIN %s %s\r\n", static_cast<LPCTSTR>(enterInfo.m_strChannel),
+			static_cast<LPCTSTR>(strPwd));
 	}
 
 	SendMessageText(GetOutBuff());
@@ -831,7 +837,7 @@ void CIrcProto::ChatCreateAux(CRoomInfo &enterInfo)
 	if (enterInfo.m_dwMaxUsers)
 	{
 		char szMaxUsers[16];
-		sprintf(szMaxUsers, "%d", enterInfo.m_dwMaxUsers);
+		TryFormatArray(szMaxUsers, "%lu", static_cast<unsigned long>(enterInfo.m_dwMaxUsers));
 		strParams += " " + CString(szMaxUsers);
 	}
 
@@ -842,7 +848,8 @@ void CIrcProto::ChatCreateAux(CRoomInfo &enterInfo)
 		strParams += " " + strPwd;
 	}
 
-	sprintf(GetOutBuff(), "CREATE %s%s\r\n", enterInfo.m_strChannel, strParams);
+	TryFormatOutBuff("CREATE %s%s\r\n", static_cast<LPCTSTR>(enterInfo.m_strChannel),
+		static_cast<LPCTSTR>(strParams));
 	SendMessageText(GetOutBuff());
 }
 
@@ -851,7 +858,8 @@ BOOL CIrcProto::ChatKickUser(const char *szNickname, const char *szReason)
 {
 	if (szReason && *szReason)
 		szReason = EncodeString(szReason);
-	sprintf (GetOutBuff(), "KICK %s %s :%s\r\n", m_strChannel, szNickname, szReason ? szReason : "");
+	TryFormatOutBuff("KICK %s %s :%s\r\n", static_cast<LPCTSTR>(m_strChannel),
+		szNickname, szReason ? szReason : "");
 	SendMessageText(GetOutBuff());
 	return TRUE;
 }
@@ -880,7 +888,8 @@ BOOL CIrcProto::ChatBanUser(const char *szBanPattern, BOOL bBan, const char *szE
 
 	if (IsIRCX() && bExtendedNickname(szNickname))
 		szBanPattern = EncodeNick(szBanPattern);
-	sprintf(GetOutBuff(), "MODE %s %s %s\r\n", szEncodedChannel ? szEncodedChannel : m_strChannel, szFlag, szBanPattern);
+	TryFormatOutBuff( "MODE %s %s %s\r\n",
+		szEncodedChannel ? szEncodedChannel : static_cast<LPCSTR>(m_strChannel), szFlag, szBanPattern);
 	SendMessageText(GetOutBuff());
 
 	if (szNickname != szBanPattern)
@@ -892,7 +901,7 @@ BOOL CIrcProto::ChatBanUser(const char *szBanPattern, BOOL bBan, const char *szE
 
 BOOL CIrcProto::ChatSendInvitation(const char *szNickname)
 {
-	sprintf(GetOutBuff(), "INVITE %s %s\r\n", szNickname, (LPCTSTR) m_strChannel);
+	TryFormatOutBuff( "INVITE %s %s\r\n", szNickname, (LPCTSTR) m_strChannel);
 	SendMessageText(GetOutBuff());
 	return TRUE;
 }
@@ -903,7 +912,7 @@ BOOL CIrcProto::ChatChangeNick(const char *szNewNick)
 	if (IsIRCX() && bExtendedNickname(szNewNick))
 		szNewNick = EncodeNick(szNewNick);
 
-	sprintf(GetOutBuff(), "NICK %s\r\n", szNewNick);
+	TryFormatOutBuff( "NICK %s\r\n", szNewNick);
 	SendMessageText(GetOutBuff());
 	return TRUE;
 }
@@ -921,9 +930,9 @@ void CIrcProto::ChatSetAway(BOOL bAway, const char *szMesg, CUserInfo *pui, BOOL
 
 	// otherwise, need to do whole thing
 	if (bAway)
-		sprintf(GetOutBuff(), "AWAY :%s\r\n", szMesg);		// !REGISB! 10/14/97 don't we need to encode the szMesg??
+		TryFormatOutBuff( "AWAY :%s\r\n", szMesg);		// !REGISB! 10/14/97 don't we need to encode the szMesg??
 	else
-		sprintf(GetOutBuff(), "AWAY\r\n");
+		TryFormatOutBuff( "AWAY\r\n");
 
 	SendMessageText(GetOutBuff());
 
@@ -934,7 +943,7 @@ void CIrcProto::ChatSetAway(BOOL bAway, const char *szMesg, CUserInfo *pui, BOOL
 		CChatDoc *doc = (CChatDoc*) g_docs.GetNext(pos);
 		if (doc->m_proto->GetConnectionStatus() == CX_INCHANNEL)
 			doc->m_proto->CRoomInfo::ChatSetAway(bAway, szMesg, NULL, FALSE);
-	} 
+	}
 }
 
 
@@ -946,7 +955,7 @@ BOOL CIrcProto::ChatSetMode(DWORD newMode, DWORD newMaxUsers, const char *szNewP
 
 	if ((newMode & CM_USERLIMIT) && newMaxUsers != dwCurrentUserLimit) {
 		newSets |= CM_USERLIMIT;
-		sprintf(szMaxUsers, "%d", newMaxUsers);
+		TryFormatArray(szMaxUsers, "%lu", static_cast<unsigned long>(newMaxUsers));
 	} else newSets &= ~CM_USERLIMIT;
 
 	if (szNewPasswd && *szNewPasswd)
@@ -963,16 +972,17 @@ BOOL CIrcProto::ChatSetMode(DWORD newMode, DWORD newMaxUsers, const char *szNewP
 	if (*modeBuff) {
 		if (newUnSets & CM_CHANNELKEY) szKey = strCurrentChannelKey;
 		else szKey = "";
-		sprintf(GetOutBuff(), "MODE %s -%s %s\r\n", m_strChannel, modeBuff, szKey);
+		TryFormatOutBuff("MODE %s -%s %s\r\n", static_cast<LPCTSTR>(m_strChannel), modeBuff, szKey);
 		SendMessageText(GetOutBuff());
 	}
 	GetModeChars(newSets, modeBuff);
 	if (*modeBuff) {
 		if (!(newSets & CM_CHANNELKEY)) szKey = "";
 		else szKey = szNewPasswd;
-		sprintf(GetOutBuff(), "MODE %s +%s %s %s\r\n", m_strChannel, modeBuff, szMaxUsers, szKey);
+		TryFormatOutBuff("MODE %s +%s %s %s\r\n", static_cast<LPCTSTR>(m_strChannel),
+			modeBuff, szMaxUsers, szKey);
 		SendMessageText(GetOutBuff());
-	} 
+	}
 	return TRUE;
 }
 
@@ -1013,7 +1023,7 @@ void CIrcProto::ChatBanUser(CUserInfo *pui)
 		VERIFY(bExecuteQuery(qpBanDlg, ctWhoIs, dtMax, NULL, m_strChannel, pui->GetName()));
 	else
 	{
-		sprintf(GetOutBuff(), "MODE %s +b\r\n", m_strChannel);
+		TryFormatOutBuff("MODE %s +b\r\n", static_cast<LPCTSTR>(m_strChannel));
 		SendMessageText(GetOutBuff());
 	}
 }
@@ -1031,7 +1041,7 @@ BOOL CIrcProto::bRegisterMode(char* szMesg)
 }
 
 
-BOOL CIrcProto::bExecuteQuery(enumQueryPurpose qp, 
+BOOL CIrcProto::bExecuteQuery(enumQueryPurpose qp,
 							  enumCommandType ct,
 							  enumDataType dt,
 							  PVOID pvData,
@@ -1085,29 +1095,29 @@ BOOL CIrcProto::bExecuteQuery(enumQueryPurpose qp,
 		{
 			LPTSTR szFilterTmp = strdup(szFilter);
 			szFilterTmp[cbFilter] = g_chEOS;
-			sprintf(GetOutBuff(), "WHO %s\r\n", szFilterTmp);
+			TryFormatOutBuff( "WHO %s\r\n", szFilterTmp);
 			free(szFilterTmp);
 		}
 		else
 			if (strChannelName.IsEmpty())
-				strcpy(GetOutBuff(), "WHO\r\n");
+				TryCopyOutBuff( "WHO\r\n");
 			else
-				sprintf(GetOutBuff(), "WHO %s\r\n", strChannelName);
+				TryFormatOutBuff("WHO %s\r\n", static_cast<LPCTSTR>(strChannelName));
 		break;
 
 	case ctWhoIs:
 		ASSERT(!strNicknameMask.IsEmpty());
-		sprintf(GetOutBuff(), "WHOIS %s\r\n", (LPCTSTR) strNicknameMask);
+		TryFormatOutBuff( "WHOIS %s\r\n", (LPCTSTR) strNicknameMask);
 		break;
 
 	case ctTopic:
 		switch (qp)
 		{
 		case qpSetTopic:
-			sprintf(GetOutBuff(), "TOPIC %s :%s\r\n", strChannelName, (char*) pvData);
+			TryFormatOutBuff("TOPIC %s :%s\r\n", static_cast<LPCTSTR>(strChannelName), (char*) pvData);
 			break;
 		case qpListMembers:
-			sprintf(GetOutBuff(), "TOPIC %s\r\n", strChannelName);
+			TryFormatOutBuff("TOPIC %s\r\n", static_cast<LPCTSTR>(strChannelName));
 			break;
 		default:
 			ASSERT(FALSE);
@@ -1116,36 +1126,36 @@ BOOL CIrcProto::bExecuteQuery(enumQueryPurpose qp,
 
 	case ctList:
 		if (strChannelName.IsEmpty())
-			strcpy(GetOutBuff(), "LIST\r\n");
+			TryCopyOutBuff( "LIST\r\n");
 		else
-			sprintf(GetOutBuff(), "LIST %s\r\n", (LPCTSTR) strChannelName);
+			TryFormatOutBuff( "LIST %s\r\n", (LPCTSTR) strChannelName);
 		break;
 
 	case ctListX:
 		if (strChannelName.IsEmpty())
-			strcpy(GetOutBuff(), "LISTX\r\n");
+			TryCopyOutBuff( "LISTX\r\n");
 		else
-			sprintf(GetOutBuff(), "LISTX N=%s\r\n", (LPCTSTR) strChannelName);
+			TryFormatOutBuff( "LISTX N=%s\r\n", (LPCTSTR) strChannelName);
 		break;
 
 	case ctLUsersMOTD:
-		strcpy(GetOutBuff(), "LUSERS\r\nMOTD\r\n");
+		TryCopyOutBuff( "LUSERS\r\nMOTD\r\n");
 		break;
 
 	case ctIrcX:
-		strcpy(GetOutBuff(), "IRCX\r\n");
+		TryCopyOutBuff( "IRCX\r\n");
 		break;
 
 	case ctModeIsIrcX:
-		strcpy(GetOutBuff(), "MODE ISIRCX\r\n");
+		TryCopyOutBuff( "MODE ISIRCX\r\n");
 		break;
 
 	case ctGetChannelMode:
-		sprintf(GetOutBuff(), "MODE %s\r\n", (LPCTSTR) strChannelName);
+		TryFormatOutBuff( "MODE %s\r\n", (LPCTSTR) strChannelName);
 		break;
 
 	case ctSetChannelMode:
-		sprintf(GetOutBuff(), "MODE %s%s\r\n", (LPCTSTR) strChannelName, (char*) pvData);
+		TryFormatOutBuff( "MODE %s%s\r\n", (LPCTSTR) strChannelName, (char*) pvData);
 		break;
 
 	case ctSetUserMode:
@@ -1169,7 +1179,7 @@ BOOL CIrcProto::bExecuteQuery(enumQueryPurpose qp,
 			ASSERT(FALSE);
 		}
 
-		sprintf(GetOutBuff(), "MODE %s %s\r\n", strNicknameMask, szModes);
+		TryFormatOutBuff("MODE %s %s\r\n", static_cast<LPCTSTR>(strNicknameMask), szModes);
 		break;
 	}
 
@@ -1189,7 +1199,7 @@ BOOL CIrcProto::bExecuteQuery(enumQueryPurpose qp,
 			ASSERT(FALSE);
 		}
 		ASSERT(!strChannelName.IsEmpty());
-		sprintf(GetOutBuff(), "PROP %s %s\r\n", (LPCTSTR) strChannelName, szPropName);
+		TryFormatOutBuff( "PROP %s %s\r\n", (LPCTSTR) strChannelName, szPropName);
 		break;
 	}
 
@@ -1205,7 +1215,7 @@ BOOL CIrcProto::bExecuteQuery(enumQueryPurpose qp,
 			ASSERT(FALSE);
 		}
 		ASSERT(!strChannelName.IsEmpty());
-		sprintf(GetOutBuff(), "PROP %s %s :%s\r\n", (LPCTSTR) strChannelName, szPropName, (char*) pvData);
+		TryFormatOutBuff( "PROP %s %s :%s\r\n", (LPCTSTR) strChannelName, szPropName, (char*) pvData);
 		break;
 	}
 
@@ -1252,7 +1262,7 @@ void CIrcProto::DoIgnoreUser(CUserInfo *pui, BOOL bIgnore, BOOL bAutoIgnore, LPC
 }
 
 
-void CIrcProto::SetVisibility(BOOL bVisible) 
+void CIrcProto::SetVisibility(BOOL bVisible)
 {
 	VERIFY(bExecuteQuery(bVisible ? qpSetVisible : qpSetInvisible, ctSetUserMode, dtMax, NULL, "", GetMyNickName()));
 }
@@ -1275,7 +1285,7 @@ const char *CIrcProto::EncodeString(const char *szString, int iEncoding) {
 		char *szInterString = szDup;
 		BOOL ConvertEncodingOut(LPSTR *);
 		BOOL bNeedFree = ConvertEncodingOut(&szInterString);
-		strcpy(theApp.m_szBuffer, szInterString);
+		TryCopyBuffer(theApp.m_szBuffer, static_cast<std::size_t>(theApp.m_nBufferSize), szInterString);
 		if (bNeedFree) delete [] szInterString;
 		free(szDup);
 		return theApp.m_szBuffer;
@@ -1287,14 +1297,14 @@ const char *CIrcProto::EncodeString(const char *szString, int iEncoding) {
 		if (!bConvertWideStringToUTF8(theApp.m_wszBuffer, 0, &szUtf8, &pCChOut, FALSE, FALSE, FALSE, FALSE)) goto error;
 		if (!szUtf8) goto error;
 		ASSERT(strlen(szUtf8) < theApp.m_nBufferSize);
-		strcpy(theApp.m_szBuffer, szUtf8);
+		TryCopyBuffer(theApp.m_szBuffer, static_cast<std::size_t>(theApp.m_nBufferSize), szUtf8);
 		delete [] szUtf8;
 		return theApp.m_szBuffer;
 	}
 
 error:
 	ASSERT(0);
-	strcpy(theApp.m_szBuffer, szString);
+	TryCopyBuffer(theApp.m_szBuffer, static_cast<std::size_t>(theApp.m_nBufferSize), szString);
 	return theApp.m_szBuffer;
 }
 
@@ -1387,8 +1397,8 @@ CString CIrcProto::StrEncodeCommandParam(DWORD dwAt, INT *piEncoding, CHAR *szPa
 
 
 BOOL CIrcProto::ChangeProperty(
-CUserInfo *puiSelf, 
-LPCSTR pszProperty, 
+CUserInfo *puiSelf,
+LPCSTR pszProperty,
 LPCSTR pszValue)
 {
 	// IRC implementation is limited to owners of IRCX rooms.
@@ -1401,57 +1411,4 @@ LPCSTR pszValue)
 	}
 
 	return ChatSetClientData (m_strClientData);
-}
-
-class CIdentdSocket : public CAsyncSocket {
-public:
-	virtual void OnAccept(int nErrorCode);
-//	virtual void OnConnect(int nErrorCode) { ASSERT(0);TRACE("GOT HERE!!!!\n"); }
-//	virtual void OnClose(int nErrorCode);
-	virtual void OnReceive(int nErrorCode);
-	virtual void OnOutOfBandData(int nErrorCode) { TRACE("IDENTD Out of Band socket on error %d.\n", nErrorCode); }
-};
-
-static CIdentdSocket g_identd, g_ident0;
-
-void StartIdentD() {
-	#if 0
-	VERIFY(g_identd.Create(113));
-	int rval = g_identd.Listen(1);
-	ASSERT(rval || GetLastError() == WSAEWOULDBLOCK);
-	#endif
-	// More timid version, does not assert in debug builds, and is better
-	// at error checking.
-	if (g_identd.Create (113))
-	{
-		int rval = g_identd.Listen (1);
-		if (rval == 0 && GetLastError () != WSAEWOULDBLOCK)
-		{
-			g_identd.Close ();
-		}
-	}
-}
-
-void StopIdentD() {
-	if (g_identd.m_hSocket != INVALID_SOCKET) 	// close last connection if necessary
-		g_identd.Close();
-	if (g_ident0.m_hSocket != INVALID_SOCKET) 	// close last connection if necessary
-		g_ident0.Close();
-}
-
-void CIdentdSocket::OnAccept(int nErrorCode) {
-	int rval = Accept(g_ident0);
-	ASSERT(rval || GetLastError() == WSAEWOULDBLOCK);
-}
-
-void CIdentdSocket::OnReceive(int nErrorCode) {
-	char buff[200];
-	if (!nErrorCode) {
-		int nRead = Receive(buff, sizeof(buff)-1);
-		buff[nRead] = '\0';
-		char *eoc = strchr(buff, '\r');
-		if (eoc) *eoc = '\0';
-		sprintf(GetOutBuff(), "%s : USERID : UNIX : %s\r\n", buff, GetMyUserName());
-		Send(GetOutBuff(), strlen(GetOutBuff()));
-	}
 }

@@ -6,6 +6,7 @@
 
 #include "userinfo.h"	// required by chatprot.h
 #include "chatprot.h"	// for tabbar (required by chatdoc)
+#include "ircproto.h"
 #include "binddoc.h"	// for tabbar
 #include "chatdoc.h"	// for tabbar
 #include "tabbar.h"
@@ -52,8 +53,17 @@ BEGIN_MESSAGE_MAP(CMainFrame, CMDIFrameWnd)
 	ON_WM_MENUSELECT()
 	//}}AFX_MSG_MAP
 	ON_WM_CLOSE()
+	ON_MESSAGE(WM_COMICCHAT_NETWORK_EVENT, OnComicChatNetworkEvent)
 //	ON_MESSAGE(WM_SETMESSAGESTRING, OnSetMessageString)
 END_MESSAGE_MAP()
+
+LRESULT CMainFrame::OnComicChatNetworkEvent(WPARAM, LPARAM)
+{
+	// The transport thread posts only a wakeup. Immutable, generation-tagged
+	// events are drained and converted into MFC state here on the UI thread.
+	serverConn.PollNetworkEvents();
+	return 0;
+}
 
 static UINT indicators[] =
 {
@@ -323,9 +333,6 @@ void CMainFrame::OnTimer(UINT nIDEvent)
 	case g_uDelayedRulesTimer:
 		theApp.m_delayedRules.bExecuteActions();
 		break;
-	case ID_CONNECT_TRY:
-		theApp.ContinueConnection ();
-		break;
 	case ID_ISIRCXTIMEOUT:
 		theApp.IsIrcXTimeout();
 		break;
@@ -461,4 +468,3 @@ CMainFrame::OnSysColorChange()
 	SendMessageToAllChildWindows (WM_SYSCOLORCHANGE);
 	CMDIFrameWnd::OnSysColorChange();
 }
-

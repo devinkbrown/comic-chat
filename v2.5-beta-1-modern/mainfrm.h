@@ -68,6 +68,7 @@ protected:
 	afx_msg void OnMenuSelect(UINT nItemID, UINT nFlags, HMENU hSysMenu);
 	//}}AFX_MSG
 	afx_msg void OnClose();
+	afx_msg LRESULT OnComicChatNetworkEvent(WPARAM wParam, LPARAM lParam);
 //	afx_msg LRESULT OnSetMessageString(WPARAM wParam, LPARAM lParam);
 	DECLARE_MESSAGE_MAP()
 
@@ -76,4 +77,3 @@ private:
 	BOOL m_bOleShuttingDown;
 
 };
-

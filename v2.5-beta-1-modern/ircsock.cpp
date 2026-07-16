@@ -21,12 +21,35 @@
 #include "motd.h"
 #include "avatar.h"
 
+#include <algorithm>
+#include <cstring>
+#include <type_traits>
+
 extern CChatApp theApp;
 extern CPtrList g_docs;
 extern BOOL		g_bCanViewUnrated;			// cached during room list
 
 static CString		g_strBan;
 static CStringArray g_arrayBans;
+
+namespace {
+
+constexpr std::size_t kMaximumIrcWireBytes = 8191 + 512;
+constexpr std::size_t kMaximumEventBatch = 128;
+constexpr std::size_t kMaximumEventBatchesPerWake = 8;
+
+void SecureClear(std::string* value)
+{
+	if (!value)
+		return;
+	volatile char* bytes = value->empty() ? nullptr : value->data();
+	for (std::size_t index = 0; index < value->size(); ++index)
+		bytes[index] = '\0';
+	value->clear();
+	value->shrink_to_fit();
+}
+
+} // namespace
 
 #define SET_CMD(sz)		sz, (sizeof(sz) - 1)
 //
@@ -89,7 +112,7 @@ extern void IgnoreUser(const char *, const char *, BOOL, BOOL);
 extern void ShowIdentity(const char *nick, const char *user, const char *host);
 
 
-SHORT NGetCmd(CHAR* szCmd)
+SHORT NGetCmd(LPCSTR szCmd)
 {
 	ASSERT(szCmd);
 	//
@@ -98,7 +121,7 @@ SHORT NGetCmd(CHAR* szCmd)
 	SHORT	nMiddle;
 	SHORT	nStart, nEnd;	// search range
 	SHORT	nRet;
-	
+
 	nStart	= 0;
 	nEnd	= cmdidMax - 1;
 
@@ -109,7 +132,7 @@ SHORT NGetCmd(CHAR* szCmd)
 		nRet = ::lstrcmpi(szCmd, g_rgIrcCmd[nMiddle].szCmd);
 		if (0 == nRet) // a match
 			return nMiddle;
-		
+
 		if (nStart == nEnd)
 			break;
 
@@ -129,7 +152,7 @@ SHORT NGetCmd(CHAR* szCmd)
 		}
 	}
 	while (TRUE);
-		
+
 	return -1;	// not found
 }
 
@@ -187,7 +210,7 @@ void ParseIt(const char *szMessage, PIRCPARSE pParse, BOOL bDoubleQuotes /*=FALS
 		}
 		else
 			if (strlen(szPrefixBuff) < sizeof(pParse->nick))
-				strcpy(pParse->nick, szPrefixBuff);
+				TryCopyArray(pParse->nick, szPrefixBuff);
 	}
 	else
 	{
@@ -220,7 +243,7 @@ end:		char *szEnd = strpbrk(szBody, "\r\n");
 			if (*szBody == '\"')	// skip the terminating double quote
 			{
 				szBody++;
-				strcat(szToken, "\"");
+				TryAppendBuffer(szToken, MAX_TOKEN, "\"");
 			}
 		}
 		else
@@ -287,11 +310,11 @@ void CSInString(char **pszString, const char *szChannelName = NULL, CChatDoc *do
 }
 
 
-void CSInPlace(char *szNick) {
+void CSInPlace(char *szNick, std::size_t capacity) {
 	if (theApp.m_charSet == ANSI_CHARSET || *szNick == '\0') return;;
 	char *szOldNick = strdup(szNick);
 	CSInString(&szOldNick);
-	strcpy(szNick, szOldNick);
+	TryCopyBuffer(szNick, capacity, szOldNick);
 	free(szOldNick);
 }
 
@@ -392,7 +415,7 @@ void ParseChannelMode(CChatDoc *doc, const char *szFlags, const char *szArg2, co
 	if ((addFlags | subFlags) & CM_MODERATED)
 	{
 		UpdateSpectators(doc, doc->m_proto->m_dwModes & CM_MODERATED);
-		// REGISB 05/04/98 - Bug 2459 - code ready to be checked in if we decide to 
+		// REGISB 05/04/98 - Bug 2459 - code ready to be checked in if we decide to
 		// send a # Appears as when channel becomes non-moderated.
 		// if (subFlags & CM_MODERATED)
 		// 	doc->m_proto->ChatAnnounceNewAvatar(GetMyCharacter(), MyAvatarURL());  // announce avatar to room when the moderated flag goes away
@@ -410,108 +433,52 @@ void GetBanString(const char *szUserName, const char *szHostName, CString& strBa
 }
 
 
-CIrcSocket::CIrcSocket(void)
+CIrcSocket::CIrcSocket()
 {
-    // Initialize SSPI related attributes
-	m_pFuncTbl		= NULL;
-	m_hSecLib		= NULL;
-	m_bCredential	= FALSE;
-	m_bContext		= FALSE;
-
-	m_pszUserName 	= NULL;
-	m_pszPassword 	= NULL;
-
-	m_szInput		= NULL;
-	m_szOutput2		= NULL;
-	m_szMessage		= NULL;
+	m_nMaxMsgLength = 0;
+	m_iConnected = CX_DISCONNECTED;
 	m_nAuthenticationType = authtypeNone;	// No authentication by default
 	Reset();
 }
 
 
-CIrcSocket::~CIrcSocket(void)
+CIrcSocket::~CIrcSocket()
 {
-	if (m_szInput)
-		delete [] m_szInput;
+	Close();
 
-	if (m_szOutput2)
-		delete [] m_szOutput2;
-
-	if (m_szMessage)
-		delete [] m_szMessage;
-
-	// Release security packages in arrays
-	m_rgszSvrSecuPack.RemoveAll();
-	m_rgszUsrSecuPack.RemoveAll();
-
-    // Release the SSPI resources if allocated.
-	CloseSSPI();
-
-	if (m_hSecLib)
-		FreeLibrary(m_hSecLib);	// REGISB: UmeshM puts in Chatsock that this call produces a GPF on Win95
-
-	free (m_pszUserName);
-	free (m_pszPassword);
-}
-
-
-void CIrcSocket::CloseSSPI(void)
-{
-    // Release the SSPI resources if allocated.
-    if (m_pFuncTbl)
-	{
-		if (m_bContext)
-			(*(m_pFuncTbl->DeleteSecurityContext))(&m_hContext);
-        if (m_bCredential)
-		    (*(m_pFuncTbl->FreeCredentialHandle))(&m_hCredential);
-	}
-	m_bContext = FALSE;
-	m_bCredential = FALSE;
+	SecureClear(&m_userName);
+	SecureClear(&m_password);
 }
 
 
 void CIrcSocket::Reset(void)
 {
-	m_nSecuPackIndex= -1;
 	m_bIrcXServer	= FALSE;
 	m_bRegistered	= FALSE;
 	m_bAnonAllowed	= FALSE;
-	m_bAuthFailed	= FALSE;
 	m_bJustSentModeIsIrcX = FALSE;
-	m_rgszSvrSecuPack.RemoveAll();
-	if (m_szInput)
-		*m_szInput = '\0';
+	m_bLoginPending = FALSE;
+	m_lineFramer.Reset();
 }
 
 
 HRESULT CIrcSocket::HrInitAlloc(SHORT nMaxIOBuff)
 {
-	if (m_szInput)
+	if (nMaxIOBuff <= 0)
+		return E_INVALIDARG;
+
+	try
 	{
-		delete [] m_szInput;
-		m_szInput = NULL;
+		m_outputBuffer.assign(static_cast<std::size_t>(nMaxIOBuff) + 1, '\0');
+	}
+	catch (const std::bad_alloc&)
+	{
+		m_nMaxMsgLength = 0;
+		return E_OUTOFMEMORY;
 	}
 
-	if (m_szOutput2)
+	if (cui.bAllocOutBuff((MAX_FORMATTINGPERBYTE+1)*MAX_INPUTLEN+MAX_COMMAND))
 	{
-		delete [] m_szOutput2;
-		m_szOutput2 = NULL;
-	}
-
-	if (m_szMessage)
-	{
-		delete [] m_szMessage;
-		m_szMessage = NULL;
-	}
-
-	m_szInput   = new CHAR[nMaxIOBuff+1];
-	m_szOutput2 = new CHAR[nMaxIOBuff+1];
-	m_szMessage = new CHAR[nMaxIOBuff+1];
-
-	if (m_szInput && m_szOutput2 && m_szMessage && cui.bAllocOutBuff((MAX_FORMATTINGPERBYTE+1)*MAX_INPUTLEN+MAX_COMMAND))
-	{
-		*m_szInput = *m_szOutput2 = *m_szMessage = g_chEOS;
-
 		m_nMaxMsgLength	= nMaxIOBuff;
 		return NOERROR;
 	}
@@ -522,32 +489,234 @@ HRESULT CIrcSocket::HrInitAlloc(SHORT nMaxIOBuff)
 	}
 }
 
-BOOL 
+BOOL CIrcSocket::FormatOutput(LPCSTR pszFormat, ...)
+{
+	if (m_outputBuffer.empty())
+		return FALSE;
+
+	va_list arguments;
+	va_start(arguments, pszFormat);
+	const BOOL result = TryFormatBufferV(
+		m_outputBuffer.data(), m_outputBuffer.size(), pszFormat, arguments);
+	va_end(arguments);
+	return result;
+}
+
+CHAR* CIrcSocket::GetOutput()
+{
+	return m_outputBuffer.empty() ? NULL : m_outputBuffer.data();
+}
+
+BOOL CIrcSocket::Connect(LPCSTR pszServer, UINT nPort, BOOL bSecure)
+{
+	return StartConnection(pszServer, nPort, bSecure).has_value();
+}
+
+std::expected<comic_chat::net::GenerationId, CIrcSocket::AdapterError>
+CIrcSocket::StartConnection(LPCSTR pszServer, UINT nPort, BOOL bSecure)
+{
+	if (!pszServer || !*pszServer || nPort == 0 || nPort > 65535)
+		return std::unexpected(AdapterError::transport_error);
+
+	// Copy before Close(): an STS upgrade passes m_serverHost.c_str() back into
+	// this method and the member must remain valid throughout the restart.
+	std::string serverHost = pszServer;
+	Close();
+	comic_chat::net::ConnectionOptions options;
+	options.endpoint.host = serverHost;
+	options.endpoint.port = static_cast<std::uint16_t>(nPort);
+	options.security = bSecure ? comic_chat::net::Security::tls : comic_chat::net::Security::plaintext;
+	options.server_name = serverHost;
+	options.limits.receive_bytes = 256U * 1024U;
+	options.limits.transmit_bytes = 256U * 1024U;
+	options.limits.queued_commands = 1024;
+	HWND hwnd = AfxGetMainWnd() ? AfxGetMainWnd()->GetSafeHwnd() : NULL;
+	m_connection.set_wakeup([hwnd]() {
+		if (hwnd)
+			::PostMessage(hwnd, WM_COMICCHAT_NETWORK_EVENT, 0, 0);
+	});
+	auto generation = m_connection.start(std::move(options));
+	if (!generation)
+		return std::unexpected(AdapterError::transport_error);
+	m_serverHost = std::move(serverHost);
+	m_generation = *generation;
+	m_bSecureTransport = bSecure;
+	m_bTransportOpen = TRUE;
+	return m_generation;
+}
+
+void CIrcSocket::Close()
+{
+	m_connection.set_wakeup({});
+	m_connection.stop();
+	m_bTransportOpen = FALSE;
+	m_generation = 0;
+	m_lineFramer.Reset();
+}
+
+BOOL CIrcSocket::IsOpen() const
+{
+	return m_bTransportOpen;
+}
+
+comic_chat::net::Priority CIrcSocket::PriorityFor(std::string_view wire) const
+{
+	auto parsed = comic_chat::ircv3::Message::Parse(wire);
+	if (!parsed)
+		return comic_chat::net::Priority::bulk;
+	if (parsed->command == "AUTHENTICATE" || parsed->command == "PASS")
+		return comic_chat::net::Priority::authentication;
+	if (parsed->command == "PONG")
+		return comic_chat::net::Priority::pong;
+	if (parsed->command == "CAP" || parsed->command == "NICK" || parsed->command == "USER" ||
+		parsed->command == "QUIT" || parsed->command == "MODE")
+		return comic_chat::net::Priority::control;
+	if (parsed->command == "PRIVMSG" || parsed->command == "NOTICE")
+		return comic_chat::net::Priority::chat;
+	return comic_chat::net::Priority::bulk;
+}
+
+BOOL CIrcSocket::IsSensitive(std::string_view wire) const
+{
+	auto parsed = comic_chat::ircv3::Message::Parse(wire);
+	if (!parsed)
+		return TRUE;
+	return parsed->command == "AUTHENTICATE" || parsed->command == "PASS" ||
+		parsed->command == "AUTH" || parsed->command == "OPER";
+}
+
+int CIrcSocket::Send(void* pData, int nBytes)
+{
+	if (!pData || nBytes <= 0)
+		return SOCKET_ERROR;
+	const auto result = QueueProtocolLine(
+		std::string_view(static_cast<const char*>(pData), static_cast<std::size_t>(nBytes)));
+	if (IsSensitive(std::string_view(static_cast<const char*>(pData), static_cast<std::size_t>(nBytes)))) {
+		volatile char* bytes = static_cast<char*>(pData);
+		for (int index = 0; index < nBytes; ++index) bytes[index] = '\0';
+	}
+	return result ? nBytes : SOCKET_ERROR;
+}
+
+std::expected<comic_chat::net::SendId, CIrcSocket::AdapterError>
+CIrcSocket::QueueProtocolLine(std::string_view wire)
+{
+	if (!m_bTransportOpen)
+		return std::unexpected(AdapterError::not_open);
+	if (wire.size() > kMaximumIrcWireBytes)
+		return std::unexpected(AdapterError::line_too_long);
+	auto prepared = m_ircEngine.PrepareOutgoingChecked(wire);
+	if (!prepared)
+		return std::unexpected(AdapterError::invalid_line);
+
+	comic_chat::net::Send command;
+	command.generation = m_generation;
+	const auto sendId = m_nextSendId++;
+	command.id = sendId;
+	command.priority = PriorityFor(*prepared);
+	command.sensitive = IsSensitive(*prepared);
+	command.bytes.reserve(prepared->size());
+	for (const unsigned char byte : *prepared)
+		command.bytes.push_back(static_cast<std::byte>(byte));
+	if (command.sensitive) SecureClear(&*prepared);
+	if (!m_connection.post(std::move(command)))
+		return std::unexpected(AdapterError::transport_error);
+	return sendId;
+}
+
+void CIrcSocket::DispatchProtocolMessage(const comic_chat::ircv3::Message& message)
+{
+	std::string wire = message.Serialize(false);
+	std::vector<char> dispatchBuffer(wire.begin(), wire.end());
+	dispatchBuffer.push_back('\0');
+	ProcessMessage(dispatchBuffer.data());
+}
+
+void CIrcSocket::PollNetworkEvents()
+{
+	for (std::size_t batch = 0; batch < kMaximumEventBatchesPerWake; ++batch) {
+		auto events = m_connection.poll_events(kMaximumEventBatch);
+		if (events.empty())
+			break;
+		for (auto& event : events) {
+			if (event.generation != m_generation)
+				continue;
+			std::visit([this](auto&& body) {
+			using Body = std::remove_cvref_t<decltype(body)>;
+			if constexpr (std::is_same_v<Body, comic_chat::net::Connected>) {
+				m_bSecureTransport = body.tls;
+				m_bTransportOpen = TRUE;
+				if (AfxGetMainWnd())
+					AfxGetMainWnd()->SendMessage(WM_COMMAND, ID_CONNECT_CONNECTED, 0);
+				OnConnect(0);
+			} else if constexpr (std::is_same_v<Body, comic_chat::net::BytesReceived>) {
+				if (!body.bytes)
+					return;
+				auto lines = m_lineFramer.Push(std::span<const std::byte>(*body.bytes));
+				if (!lines) {
+					TRACE0("IRC transport rejected an invalid or oversized frame.\n");
+					OnClose(WSAEMSGSIZE);
+					return;
+				}
+				for (const auto& line : *lines) {
+					auto result = m_ircEngine.Process(line);
+					// STS discovered on plaintext must be applied before any CAP or
+					// SASL response produced by this line is allowed onto the wire.
+					// The secure connection reruns capability negotiation from zero.
+					if (!m_bSecureTransport) {
+						const auto stsEvent = std::find_if(result.events.begin(), result.events.end(),
+							[](const comic_chat::ircv3::Event& event) {
+								return event.type == comic_chat::ircv3::EventType::StsPolicy &&
+									event.key == "upgrade";
+							});
+						const auto& policy = m_ircEngine.CurrentStsPolicy();
+						if (stsEvent != result.events.end() && policy && policy->port && !m_serverHost.empty()) {
+							const std::string host = m_serverHost;
+							if (!StartConnection(host.c_str(), *policy->port, TRUE))
+								OnClose(WSAECONNABORTED);
+							return;
+						}
+					}
+					for (const auto& outbound : result.outbound) {
+						if (!QueueProtocolLine(outbound)) {
+							TRACE0("IRC protocol control message could not be queued; closing connection.\n");
+							OnClose(WSAENOBUFS);
+							return;
+						}
+					}
+					for (const auto& message : result.messages)
+						DispatchProtocolMessage(message);
+					if (m_bLoginPending && m_ircEngine.RegistrationFinished()) {
+						m_bLoginPending = FALSE;
+						(void)HrIrcXLogin(FALSE);
+					}
+				}
+			} else if constexpr (std::is_same_v<Body, comic_chat::net::Closed>) {
+				if (m_bTransportOpen) {
+					m_bTransportOpen = FALSE;
+					OnClose(WSAECONNRESET);
+				}
+			} else if constexpr (std::is_same_v<Body, comic_chat::net::Diagnostic>) {
+				TRACE("IRC transport diagnostic [%s].\n", body.code.c_str());
+			}
+			}, event.body);
+		}
+		if (events.size() < kMaximumEventBatch)
+			break;
+	}
+}
+
+BOOL
 CIrcSocket::PromptForPassword(
 LPCSTR pszUserName,
 BOOL bSaveInSettings)
 {
-	CChatServerGroup* pGroup = theApp.m_SrvConnector.GetConnectingServerGroup ();
-	CChatServer* pServer = theApp.m_SrvConnector.GetConnectingServer ();
-	BOOL bRememberPassword = pServer != NULL ? pServer->m_bRememberPassword : FALSE;
-	CChatPasswordDialog dlg (GetMyPhysicalServer (), pszUserName, bRememberPassword);
+	(void)bSaveInSettings;
+	CChatPasswordDialog dlg (GetMyPhysicalServer (), pszUserName, FALSE);
 	if (theApp.DoModalDlg (&dlg) == IDOK)
 	{
-		free (m_pszPassword);
-		m_pszPassword = strdup (dlg.m_strPassword);
-		if (bSaveInSettings && pServer != NULL && pGroup != NULL)
-		{
-			free (pServer->m_pszPassword);
-			pServer->m_pszPassword = strdup (m_pszPassword);
-			pServer->m_bRememberPassword = dlg.m_bRememberPassword;
-			pServer->m_nAuthenticationType = authtypePlainText;
-			HKEY hkeyGroup = CChatServiceList::GetRegistryKey (CHATSVC_HKEY_SRVGROUP, pGroup->m_pszName);
-			if (hkeyGroup)
-			{
-				pServer->WriteToRegistry (hkeyGroup);
-				CChatServiceList::ReleaseRegistryKey (hkeyGroup);
-			}
-		}
+		SecureClear(&m_password);
+		m_password = static_cast<LPCSTR>(dlg.m_strPassword);
 		return TRUE;
 	}
 	else
@@ -575,7 +744,8 @@ HRESULT CIrcSocket::HrModeIsIrcXFailure()
 		// Don't want to expose this error to the user, it comes from the MODE ISIRCX\r\n command on an IRC server
 		ASSERT(m_bIrcXServer == FALSE);
 		// Login Time, on IRC Server, anonymously
-		hr = HrIrcLogin(FALSE, (CHAR*) GetMyName(), m_pszUserName, (CHAR*) GetMyRealName(), m_pszPassword);
+		hr = HrIrcLogin(FALSE, GetMyName(), m_userName.empty() ? NULL : m_userName.c_str(),
+			GetMyRealName(), m_password.empty() ? NULL : m_password.c_str());
 		ASSERT(NOERROR == hr);
 		m_bJustSentModeIsIrcX = FALSE;
 		::AfxGetMainWnd()->KillTimer(ID_ISIRCXTIMEOUT);
@@ -585,455 +755,111 @@ HRESULT CIrcSocket::HrModeIsIrcXFailure()
 
 
 //
-//	CHAR	*szNickname			IN *your nickname. Required.
-//	CHAR	*szUserName			IN *user name to use. Required.
-//	CHAR	*szRealName			IN *real name to use (description). Not Required.
-//	CHAR	*szPassword			IN *password. Not Required.
-//								On authenticated login, you will be prompted by the security
-//								dll if szUserName or szPassword are NULL
+// The account password is used only by SASL. This method emits the ordinary
+// nickname and USER registration messages after capability negotiation.
 //
-HRESULT 
+HRESULT
 CIrcSocket::HrIrcLogin(
-BOOL bIRCX, 
-CHAR *szNickname, 
-CHAR *szUserName, 
-CHAR *szRealName, 
-CHAR *szPassword, 
+BOOL bIRCX,
+LPCSTR szNickname,
+LPCSTR szUserName,
+LPCSTR szRealName,
+LPCSTR szPassword,
 BOOL bPromptForPassword)
 {
 	ASSERT(szNickname);
 
 	if (szUserName == NULL)
 	{
-		szUserName = (CHAR *)GetMyUserName ();
+		szUserName = GetMyUserName ();
 	}
 
-	// Remove spaces.
-	char szUser[64];
-	LPSTR pszDest, pszSrc;
-	for (pszDest = szUser, pszSrc = (szUserName && *szUserName) ? szUserName : szNickname; *pszSrc; pszSrc++)
-	{
-		if (IsDBCSLeadByte (*pszSrc))
-		{
-			*(pszDest++) = *(pszSrc++);
-			*(pszDest++) = *pszSrc;
-		}
-		else if (*pszSrc != ' ')
-		{
-			*(pszDest++) = *pszSrc;
+	std::string user;
+	user.reserve(63);
+	for (LPCSTR source = (szUserName && *szUserName) ? szUserName : szNickname;
+		*source && user.size() < 63; ++source) {
+		if (IsDBCSLeadByte(*source) && source[1] && user.size() + 2 <= 63) {
+			user.push_back(*source++);
+			user.push_back(*source);
+		} else if (*source != ' ') {
+			user.push_back(*source);
 		}
 	}
-	*pszDest = '\0';
 
-	if ((szPassword == NULL || *szPassword == '\0') && bPromptForPassword && 
+	if ((szPassword == NULL || *szPassword == '\0') && bPromptForPassword &&
 			m_nAuthenticationType != authtypeNone)
 	{
-		PromptForPassword (szUser, TRUE);
-		szPassword = m_pszPassword;
+		PromptForPassword (user.c_str(), TRUE);
+		szPassword = m_password.empty() ? NULL : m_password.c_str();
 	}
 
 	// need to add EncodeString calls...
 
-	// Send the PASS and NICK command, then construct the USER command
-	if (szPassword && *szPassword)
-	{
-		sprintf(GetOutBuff(), "PASS %s\r\n", szPassword);
-		GetIrcProto()->SendMessageText(GetOutBuff());
-	}
-
+	// Account credentials are handled only by the shared SASL engine. They
+	// must never be reused as a clear-text IRC PASS value.
 	GetIrcProto()->ChatChangeNick(szNickname);
 
 	if (!m_bRegistered)
 	{
-		CHAR szMachineName[127];
-		if (SOCKET_ERROR == gethostname(szMachineName, sizeof(szMachineName)))
-			strcpy(szMachineName, g_szNoMachine);
-
-		// Send the USER command
-		sprintf(GetOutBuff(), "USER %s %s . :%s\r\n", szUser, szMachineName, szRealName);
+		// RFC 2812 registration does not need to expose the local host name.
+		const std::size_t capacity = std::min(
+			static_cast<std::size_t>(GetOutBuffLen()),
+			static_cast<std::size_t>(m_nMaxMsgLength) + 1);
+		if (!TryFormatBuffer(GetOutBuff(), capacity, "USER %s 0 * :%s\r\n",
+				user.c_str(), szRealName ? szRealName : user.c_str()))
+			return HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER);
 		GetIrcProto()->SendMessageText(GetOutBuff());
 
 		// From now on we are registered until we disconnect
 		m_bRegistered = TRUE;
 	}
 
-	// If a username and password is specified, try to use it to gain operator privileges.
-	if (!bIRCX && m_nAuthenticationType == authtypePlainText && 
-		m_pszUserName && *m_pszUserName && m_pszPassword && *m_pszPassword)
-	{
-		HrIrcSetOper (m_pszUserName, m_pszPassword);
-	}
+	(void)bIRCX;
 
 	return NOERROR;
 }
 
 
-HRESULT CIrcSocket::HrIrcXLogin(BOOL bForceNextPackage)
+HRESULT CIrcSocket::HrIrcXLogin(BOOL)
 {
-	// Trying an authentication on an IRCX server
-	const char *szPackAvail;
-	static BOOL	bLoopPwd = FALSE;
-
-	// If the user does not force an authentication and the server allows anynomous
-	// logins, then we just do a regular IRC login
-	if (m_bAnonAllowed && (m_nAuthenticationType == authtypeNone || m_nAuthenticationType == authtypePlainText))
-		return HrIrcLogin(TRUE, (CHAR*) GetMyName(), m_pszUserName, (CHAR*) GetMyRealName(), m_pszPassword);
-
-	if (bForceNextPackage || !bLoopPwd)
-		// Go to the next security package
-		m_nSecuPackIndex++;
-
-	// The user wants to force an authentication
-	if (m_nAuthenticationType == authtypeCustomPackages)
-	{
-		// We try the user specified packages in sequence
-		if (m_nSecuPackIndex <= m_rgszUsrSecuPack.GetUpperBound())
-		{
-			LPCTSTR szPackToTry = (LPCTSTR) m_rgszUsrSecuPack.GetAt(m_nSecuPackIndex);
-			if (stricmp(g_szAnon, szPackToTry))
-			{
-				// User wants to try a specific package
-				// Is this package provided by the server?
-				BOOL bAvailable = FALSE;
-				for (SHORT nSecuPackIndex = 0; nSecuPackIndex <= m_rgszSvrSecuPack.GetUpperBound(); nSecuPackIndex++)
-					if (!_tcsicmp(szPackToTry, (LPCTSTR) m_rgszSvrSecuPack.GetAt(nSecuPackIndex)))
-					{
-						bAvailable = TRUE;
-						szPackAvail = (LPCTSTR) m_rgszSvrSecuPack.GetAt(nSecuPackIndex);
-						break;
-					}
-				if (bAvailable)
-				{
-					bLoopPwd = !_tcsicmp(szPackAvail, g_szMSN) || !_tcsicmp(szPackAvail, g_szDPA);
-					if (FAILED(HrAuthenticate((CHAR*) GetMyUserName(), NULL /* szPassword */, (CHAR*) szPackAvail)))
-						// Try next package
-						return HrIrcXLogin(TRUE /*bForceNextPackage*/);
-					else
-						return NOERROR;
-				}
-				else
-					// Try next package
-					return HrIrcXLogin(TRUE /*bForceNextPackage*/);
-			}
-			else
-			{
-				// User wants to try anonymous
-				if (m_bAnonAllowed)
-					return HrIrcLogin(TRUE, (CHAR*) GetMyName(), m_pszUserName, (CHAR*) GetMyRealName(), m_pszPassword);
-				else
-					// Try the next package
-					return HrIrcXLogin(TRUE /*bForceNextPackage*/);
-			}
-		}
-		else
-		{
-			// No more packages available
-			goto failure;
-		}
-	}
-	else
-	{
-		// We try all the server packages in sequence, and then anonymous if allowed
-		if (m_nSecuPackIndex <= m_rgszSvrSecuPack.GetUpperBound())
-		{
-			szPackAvail = (LPCTSTR) m_rgszSvrSecuPack.GetAt(m_nSecuPackIndex);
-			bLoopPwd = !_tcsicmp(szPackAvail, g_szMSN) || !_tcsicmp(szPackAvail, g_szDPA);
-			if (FAILED(HrAuthenticate((CHAR*) GetMyUserName(), NULL /* szPassword */, (CHAR*) szPackAvail)))
-				// Try the next package
-				return HrIrcXLogin(TRUE /*bForceNextPackage*/);
-			else
-				return NOERROR;
-		}
-		else
-		{
-			// No more packages available
-			// Try anonymous if allowed
-			if (m_bAnonAllowed)
-				return HrIrcLogin(TRUE, (CHAR*) GetMyName(), m_pszUserName, (CHAR*) GetMyRealName(), m_pszPassword);
-			else
-				goto failure;
-		}
+	if (!m_ircEngine.RegistrationFinished()) {
+		m_bLoginPending = TRUE;
+		return S_FALSE;
 	}
 
-failure:
-	// Authentication failed, report error
+	if (m_ircEngine.SaslSucceeded() || m_bAnonAllowed ||
+		m_nAuthenticationType == authtypeNone || m_nAuthenticationType == authtypePlainText) {
+		return HrIrcLogin(TRUE, GetMyName(), m_userName.empty() ? NULL : m_userName.c_str(),
+			GetMyRealName(), NULL, FALSE);
+	}
 
-	// Close the connection
-	OnClose(0);
-
-	// Display appropriate error message
-	CString strMesg;
-	strMesg.LoadString(ID_ERR_NOAUTH);
-	AfxMessageBox(strMesg);
-
-	// New connection dialog
-	AfxGetMainWnd()->PostMessage(WM_COMMAND, ID_FILE_NEW, 0);
-	return NOERROR;
+	AfxMessageBox(ID_ERR_NOAUTH);
+	return E_ACCESSDENIED;
 }
-
-
-HRESULT CIrcSocket::HrIrcSetOper(CHAR *szUserName, CHAR *szPassword)
+HRESULT CIrcSocket::HrIrcSetOper(LPCSTR szUserName, LPCSTR szPassword)
 {
 	if (szPassword == NULL || *szPassword == '\0')
 	{
 		if (!PromptForPassword (szUserName, FALSE))
 			return S_FALSE;
-		szPassword = m_pszPassword;
+		szPassword = m_password.empty() ? NULL : m_password.c_str();
 	}
-	
-	sprintf (GetOutBuff (), "OPER %s %s\r\n", szUserName, szPassword);
+	if (!szPassword || !*szPassword)
+		return E_INVALIDARG;
+
+	const std::size_t capacity = std::min(
+		static_cast<std::size_t>(GetOutBuffLen()),
+		static_cast<std::size_t>(m_nMaxMsgLength) + 1);
+	if (!TryFormatBuffer(GetOutBuff(), capacity, "OPER %s %s\r\n", szUserName, szPassword))
+		return HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER);
 	GetIrcProto()->SendMessageText(GetOutBuff ());
 
 	return NOERROR;
 }
 
 
-HRESULT CIrcSocket::HrAuthenticate(CHAR *szUserName, CHAR *szPassword, CHAR *szSecurityPackage)
-{
-    SEC_WINNT_AUTH_IDENTITY AuthData, *pAuthData;
-    INIT_SECURITY_INTERFACE	addrProcISI;
-    DWORD					dwSecStatus;
-    DWORD					dwLifeTime;
-
-    //  If this is the first authentication attempt then load the SECURITY.DLL and obtain
-    //  the security entry point.
-	if (!m_pFuncTbl)
-	{
-        OSVERSIONINFO VerInfo;
-
-        //  Find out which security DLL to use, depending on whether we are on NT or Win95
-        VerInfo.dwOSVersionInfoSize = sizeof(OSVERSIONINFO);
-
-		if (!GetVersionEx(&VerInfo))
-			return GetLastError();	// REGISB: Might want to have a custom error code
-
-		//  Load the platform specific version of the security dll.
-        if (VerInfo.dwPlatformId == VER_PLATFORM_WIN32_WINDOWS)
-			m_hSecLib = ::LoadLibrary(_T("SECUR32.DLL"));
-        else
-			m_hSecLib = ::LoadLibrary(_T("SECURITY.DLL"));
-
-		//  If the security component is not found then fail (this should never happen).
-		if (!m_hSecLib)
-			return GetLastError();	// REGISB: put correct error code here
-
-		//  Retrieve the security entrypoint.
-		addrProcISI = (INIT_SECURITY_INTERFACE) GetProcAddress(m_hSecLib, SECURITY_ENTRYPOINT);       
-		if (!addrProcISI)
-		{
-			FreeLibrary(m_hSecLib);	// REGISB:  UmeshM puts in Chatsock that this call produces a GPF on Win95
-			m_hSecLib = NULL;
-			return E_FAIL;	// REGISB: put correct error code here
-		}
-
-		// Get the SSPI function table
-		m_pFuncTbl = (*addrProcISI)();
-		if (!m_pFuncTbl)
-		{
-			FreeLibrary(m_hSecLib); // REGISB:  UmeshM puts in Chatsock that this call produces a GPF on Win95
-			m_hSecLib = NULL;
-			return E_FAIL;	// REGISB: put correct error code here
-		}
-	}
-
-    //  If credentials from a previous authentication is still allocated, release.
-	CloseSSPI();
-
-    //  If the caller provided a username and password, use them over the default.
-    if (szUserName && szPassword)
-    {
-        AuthData.User = (PBYTE) szUserName;
-        AuthData.UserLength = lstrlen(szUserName);
-        AuthData.Password = (PBYTE) szPassword;
-        AuthData.PasswordLength = lstrlen(szPassword);
-        AuthData.Domain = NULL;
-        AuthData.DomainLength = 0;
-        AuthData.Flags = SEC_WINNT_AUTH_IDENTITY_ANSI;
-        pAuthData = &AuthData;
-    }
-    else
-        pAuthData = NULL;
-
-    //  Get a credential handle for this client to use in future SSPI calls.
-    //      SEC_E_SECPKG_NOT_FOUND  080090305  - SSPI package not installed.
-    dwSecStatus = (*(m_pFuncTbl->AcquireCredentialsHandle)) (NULL, szSecurityPackage, 
-                      SECPKG_CRED_OUTBOUND,  NULL, pAuthData, NULL, NULL, 
-                      &m_hCredential, &dwLifeTime);
-    if (dwSecStatus != NO_ERROR)
-        return E_FAIL;	// REGISB: put correct error code here
-
-    //  Remember that a valid credential is available.
-	m_bCredential = TRUE;
-
-    //  Send the initial authentication message.
-	return HrGenerateAndSendAuthMsg(NULL, szSecurityPackage);
-}
-
-
-//+-------------------------------------------------------------------------------------------
-//
-//  Method:     HrGenerateAndSendAuthMsg(szBlob, szSecurityPackage)
-//
-//  Synopsis:   This function calls InitializeSecurityContext to generate 
-//              an authentication message and sends it to the ICP server.  
-//              It generates different authentication messages depending on 
-//              whether there's security token from the server to be used 
-//              as input message or not (i.e. whether szBlob is NULL).
-//
-//  Args:       [szBlob] -- Pointer to blob from the server.
-//
-//--------------------------------------------------------------------------------------------
-HRESULT CIrcSocket::HrGenerateAndSendAuthMsg(CHAR *szBlob, CHAR *szSecurityPackage)
-{
-    PCtxtHandle		phCurrContext;
-    SecBufferDesc	inSecDesc, outSecDesc;
-    SecBuffer		inSecBuffer, outSecBuffer;
-    PSecBufferDesc	pInSecDesc;
-    ULONG			ulContextReq;
-    ULONG			ulContextAttrib;
-    DWORD			dwExpireTime;
-    DWORD			dwStatus;
-    BYTE			pbBuffer[4096];
-	CHAR			*szStr;
-	UINT			cbBlob;
-	BYTE			*pb = NULL;
-	INT				cb = 0;
-	BOOL			bLoop = FALSE;
-
-    if (szBlob == NULL)
-    {
-        // This is the first time this HrGenerateAndSendAuthMsg() is called, so the
-        // message generated will be a NEGOTIATE_MSG.
-		ASSERT(!m_bContext);
-        phCurrContext = NULL;
-        pInSecDesc = NULL;
-    }
-    else
-    {
-		if (!bStringToData(szBlob, (PBYTE) szBlob, &cbBlob))
-			return E_FAIL;
-
-        // Since we have received a CHALLENGE_MSG from the server, we should
-        // generate a AUTHENTICATE_MSG to send to server.
-        phCurrContext = &m_hContext;
-
-        // Setup API's input security buffer to pass the client's negotiate
-        // message to the SSPI.
-        inSecDesc.ulVersion = 0;
-        inSecDesc.cBuffers = 1;
-        inSecDesc.pBuffers = &inSecBuffer;
-
-        inSecBuffer.cbBuffer = cbBlob;
-        inSecBuffer.BufferType = SECBUFFER_TOKEN;
-        inSecBuffer.pvBuffer = (PVOID) szBlob;
-
-        pInSecDesc = &inSecDesc;
-    }
-
-    // Setup API's output security buffer for receiving challenge message
-    // from the SSPI.
-    // Pass the client message buffer to SSPI via pvBuffer.
-
-    outSecDesc.ulVersion = 0;
-    outSecDesc.cBuffers = 1;
-    outSecDesc.pBuffers = &outSecBuffer;
-
-    outSecBuffer.cbBuffer = sizeof(pbBuffer);
-    outSecBuffer.BufferType = SECBUFFER_TOKEN;
-    outSecBuffer.pvBuffer = pbBuffer;
-
-    ulContextReq = ISC_REQ_CONFIDENTIALITY | ISC_REG_USE_SESSION_KEY;
-
-	// First try using an exisiting session key
-	if (m_bAuthFailed)
-	{
-		ulContextReq |= ISC_REQ_PROMPT_FOR_CREDS;
-		if (szBlob)
-			m_bAuthFailed = FALSE;
-		bLoop = TRUE;
-	}
-
-tryAgain:
-    // Generate a negotiate/authenticate message to be sent to the server.
-    dwStatus = (*(m_pFuncTbl->InitializeSecurityContext)) (
-                                &m_hCredential,							// phCredential
-                                phCurrContext,							// phContext
-                                (CHAR*)GetMyPhysicalServer (),       	// pszTargetName
-                                ulContextReq,							// fContextReq
-                                0L,										// reserved1
-                                SECURITY_NATIVE_DREP,					// TargetDataRep
-                                pInSecDesc,								// pInput
-                                0L,										// reserved2
-                                &m_hContext,							// phNewContext
-                                &outSecDesc,							// pOutput negotiate msg
-                                &ulContextAttrib,						// pfContextAttribute
-                                &dwExpireTime);							// ptsLifeTime
-
-	if (dwStatus == SEC_E_NO_CREDENTIALS && !bLoop)
-	{
-		// No existing credentials. Prompt for credentials
-		bLoop = TRUE;
-		ulContextReq |= ISC_REQ_PROMPT_FOR_CREDS;
-		goto tryAgain;
-	}
-
-	if (FAILED(dwStatus))
-	{
-		m_bAuthFailed = FALSE;
-		return E_FAIL;
-	}
-
-	m_bContext = TRUE;
-
-	if (!bDataToString((PBYTE)(outSecBuffer.pvBuffer), (UINT) outSecBuffer.cbBuffer, &szStr, TRUE))
-		return E_OUTOFMEMORY;
-
-	sprintf(GetOutBuff(), "AUTH %s %s :%s\r\n", szSecurityPackage, szBlob ? "S" : "I", szStr);
-	GetIrcProto()->SendMessageText(GetOutBuff());
-
-	delete [] szStr;
-
-    return NOERROR;
-}
-
-
-void CIrcSocket::OnReceive(int nErrorCode) {
-	// TRACE("Entering OnReceive (code = %d).\n", nErrorCode);
-
-	if (!nErrorCode) {
-		char *startPtr = (char *)strchr(m_szInput, '\0');
-		int space = m_szInput + m_nMaxMsgLength - startPtr;
-		int nRead = Receive(startPtr, space);
-		if (SOCKET_ERROR == nRead)
-		{
-			TRACE("Receive failed with error: %d\n", GetLastError());
-			return;
-		}
-		startPtr[nRead] = '\0';
-		char *eoc = (char *)strchr(m_szInput, '\n');
-		while (eoc) {
-			eoc++;
-			int comLen = eoc - m_szInput;
-			strncpy(m_szMessage, m_szInput, comLen);
-			m_szMessage[comLen] = '\0';
-
-			// now move rest of message forward
-			char *eob = (char *)strchr(m_szInput, '\0');
-			int nRest = eob - eoc;
-			strncpy(m_szInput, eoc, nRest);
-			m_szInput[nRest] = '\0';
-
-			TRACE("Got message: %.100s\n", m_szMessage);
-			ProcessMessage(m_szMessage);   // handle the message (*After clearing it from the buffer!!!)
-			eoc = (char *)strchr(m_szInput, '\n'); // must do this after process message, since code is reentrant (but single threaded)
-		}
-	}
-	// TRACE("Leaving OnReceive.\n");
-}
-
-
 void CIrcSocket::OnConnect(int nErrorCode) {
-	TRACE("Connecting (code = %d)...\n", nErrorCode);
+	TRACE("IRC transport connection result: %d.\n", nErrorCode);
 	if (nErrorCode) {  // couldn't connect
 		GetIrcProto()->SetConnectionStatus(CX_DISCONNECTED);
 		CString strMesg;
@@ -1045,6 +871,27 @@ void CIrcSocket::OnConnect(int nErrorCode) {
 		return;
 	}
 	// got a connection!
+	comic_chat::ircv3::SaslConfig sasl;
+	if (!m_userName.empty())
+		sasl.authentication_id = m_userName;
+	else if (!m_password.empty())
+		sasl.authentication_id = GetMyUserName();
+	sasl.password = m_password;
+	// EXTERNAL is only valid when a client certificate is configured. The
+	// legacy settings do not expose one, so never claim it implicitly.
+	sasl.allow_external = false;
+	auto commands = m_ircEngine.BeginRegistration(sasl, GetMyName(), m_bSecureTransport != FALSE);
+	SecureClear(&sasl.authentication_id);
+	SecureClear(&sasl.password);
+	SecureClear(&sasl.authorization_id);
+	for (const auto& command : commands) {
+		if (!QueueProtocolLine(command)) {
+			TRACE0("IRC capability negotiation message could not be queued; closing connection.\n");
+			OnClose(WSAENOBUFS);
+			return;
+		}
+	}
+
 	// Is this an IRCX server?
 	ASSERT(GetIrcProto());
 	VERIFY(GetIrcProto()->bExecuteQuery(qpIsIrcX, ctModeIsIrcX, dtMax, NULL, "", ""));
@@ -1055,32 +902,15 @@ void CIrcSocket::OnConnect(int nErrorCode) {
 
 void CIrcSocket::OnClose(int nErrorCode)
 {
-	TRACE("Closing socket on error %d.\n", nErrorCode);
-	
-	// Closing during connection? Then resume trying to connect to other servers.
-	if (theApp.m_SrvConnector.IsConnecting () && theApp.m_SrvConnector.GetNumServers () > 1)
-	{
-		ChatServerDisconnect (FALSE, TRUE);
-		theApp.ResumeConnection ();
-	}
-	else
-	{
-		// REGISB: added 11/13/97 because user would be disconnected for flooding without any notification
-		// 0???				The function executed successfully.
-		// WSAENETDOWN		The Windows Sockets implementation detected that the network subsystem failed.
-		// WSAECONNRESET	The connection was reset by the remote side.
-		// WSAECONNABORTED	The connection was aborted due to timeout or other failure.
-		ChatServerDisconnect(TRUE /*bCheckRules*/);
-		AfxMessageBox(IDS_CONNECTION_DROPPED);
-	}
+	TRACE("IRC transport closed with status %d.\n", nErrorCode);
+	ChatServerDisconnect(TRUE /*bCheckRules*/);
+	AfxMessageBox(IDS_CONNECTION_DROPPED);
 }
 
 
 void CIrcProto::OnLogin()
 {
 	CChatService* AddToServerList(const char *);
-
-	StopIdentD();
 
 	if (theApp.m_dynaRules.bDaemonNeeded())
 		VERIFY(theApp.m_dynaRules.bStartRulesDaemon(g_uRulesDaemonShortElapse, TRUE /*bForceReset*/));
@@ -1179,10 +1009,10 @@ void CIrcSocket::HandleCommand(CString& strLine, char *szLine, PIRCPARSE pParse,
 		default:
 		{
 			#ifdef DEBUG
-				TRACE("Unexpected command: sender nick = %s, mach = %s, user = %s, command = %s, last string = %s\n", 
-				pParse->nick ? pParse->nick : "", 
-				pParse->machine ? pParse->machine : "", 
-				pParse->user ? pParse->user : "", 
+				TRACE("Unexpected command: sender nick = %s, mach = %s, user = %s, command = %s, last string = %s\n",
+				pParse->nick ? pParse->nick : "",
+				pParse->machine ? pParse->machine : "",
+				pParse->user ? pParse->user : "",
 				pParse->args[0] ? pParse->args[0] : "",
 				pParse->lastString ? pParse->lastString : "");
 				ASSERT(FALSE);
@@ -1194,10 +1024,10 @@ void CIrcSocket::HandleCommand(CString& strLine, char *szLine, PIRCPARSE pParse,
 		case cmdidRequest:
 		{
 			#ifdef DEBUG
-				TRACE("Untreated command: sender nick = %s, mach = %s, user = %s, command = %s, last string = %s\n", 
-				pParse->nick ? pParse->nick : "", 
-				pParse->machine ? pParse->machine : "", 
-				pParse->user ? pParse->user : "", 
+				TRACE("Untreated command: sender nick = %s, mach = %s, user = %s, command = %s, last string = %s\n",
+				pParse->nick ? pParse->nick : "",
+				pParse->machine ? pParse->machine : "",
+				pParse->user ? pParse->user : "",
 				pParse->args[0] ? pParse->args[0] : "",
 				pParse->lastString ? pParse->lastString : "");
 			#endif // DEBUG
@@ -1206,33 +1036,11 @@ void CIrcSocket::HandleCommand(CString& strLine, char *szLine, PIRCPARSE pParse,
 
 		case cmdidAuth:
 		{
-			// We are in the middle of an authentication
-			TRACE("Got an AUTH!\n");
-			if (pParse->nArgs >= 3)
-			{
-				pIrcPrint->SetFormat(PT_NONE);	// don't want to display these in the Status Window
-				if ('S' == pParse->args[2][0])
-				{
-					// AUTH NTLM S :blob...
-					if (E_ABORT == HrGenerateAndSendAuthMsg(pParse->lastString, pParse->args[1]))
-						// User cancelled the authentication with the current package.
-						// Let's try the next one...
-						HrIrcXLogin(TRUE /*bForceNextPackage*/);
-				}
-				else
-				{
-					// AUTH NTLM * REGISB@REDMOND 0
-					ASSERT(!stricmp("*", pParse->args[2]));
-					// We're finally authenticated
-					m_bRegistered = TRUE;
-					// This finalizes the login
-					HRESULT hr = HrIrcLogin(TRUE, (CHAR*) GetMyName(), NULL /*szUserName*/, NULL /*szRealName*/, NULL /*szPassword*/, FALSE);
-					ASSERT(NOERROR == hr);
-				}
-			}
+			// Legacy IRCX SSPI challenges are intentionally unsupported. Modern
+			// authentication is handled by SASL before this parser sees a line.
+			pIrcPrint->SetFormat(PT_NONE);
 			break;
 		}
-
 		case cmdidClone:
 		{
 			pIrcPrint->SetFormat(PT_OFFSET, szLine, RGB(0,0,0), 1, TRUE);
@@ -1278,11 +1086,11 @@ void CIrcSocket::HandleCommand(CString& strLine, char *szLine, PIRCPARSE pParse,
 
 			pIrcPrint->SetFormat(PT_NONE);
 			// CCUDI1 = Comic Chat User Display Info version 1
-			if (pParse->lastString && 
-				pParse->lastString[0] == '#' && 
-				pParse->nArgs >= 3 && 
-				!strcmp(pParse->args[2], CCUDI1) && 
-				*pParse->nick && 
+			if (pParse->lastString &&
+				pParse->lastString[0] == '#' &&
+				pParse->nArgs >= 3 &&
+				!strcmp(pParse->args[2], CCUDI1) &&
+				*pParse->nick &&
 				*pParse->user)
 			{
 				CChatDoc*	doc = NULL;
@@ -1326,21 +1134,16 @@ void CIrcSocket::HandleCommand(CString& strLine, char *szLine, PIRCPARSE pParse,
 		{
 			if (pParse->lastString) {
 				CSInString(&pParse->lastString);
-				// Only show this if we are not in a multi-server connect.
-				if (!theApp.m_SrvConnector.IsConnecting () || !theApp.m_SrvConnector.GetNumServers () == 1)
-				{
+				if (m_bJustSentModeIsIrcX) {
+					pIrcPrint->SetFormat(PT_NONE);
+					HrModeIsIrcXFailure();
+				} else {
 					if (strstr(pParse->lastString, "No IRC clients"))
 						AfxMessageBox(IDS_MICONLY);
 					else
 						AfxMessageBox(pParse->lastString);	// print the message verbatim (localization problem!!!)
 					AfxGetMainWnd()->PostMessage(WM_COMMAND, ID_FILE_NEW, 0);
 				}
-				else
-					if (m_bJustSentModeIsIrcX)
-					{
-						pIrcPrint->SetFormat(PT_NONE);
-						HrModeIsIrcXFailure();
-					}
 			}
 			break;
 		}
@@ -1348,7 +1151,7 @@ void CIrcSocket::HandleCommand(CString& strLine, char *szLine, PIRCPARSE pParse,
 		case cmdidInvite:
 		{
 			if (pParse->lastString) {
-				CSInPlace(pParse->user);  // necessary ?
+				CSInPlace(pParse->user, sizeof(pParse->user));  // necessary ?
 				CString ident(pParse->user);
 				ident += "@";
 				ident += pParse->machine;
@@ -1369,7 +1172,7 @@ void CIrcSocket::HandleCommand(CString& strLine, char *szLine, PIRCPARSE pParse,
 				pParse->lastString = strdup(pParse->args[1]);
 			ASSERT(pParse->lastString);
 
-			CSInPlace(pParse->user);
+			CSInPlace(pParse->user, sizeof(pParse->user));
 			CString strIdent(pParse->user);
 			strIdent += "@";
 			strIdent += pParse->machine;
@@ -1401,7 +1204,7 @@ void CIrcSocket::HandleCommand(CString& strLine, char *szLine, PIRCPARSE pParse,
 					// REGISB added 11/07/97
 					if (!theApp.m_nMyIdentLength)
 					{
-						theApp.m_nMyIdentLength = strIdent.GetLength() + 2; // + 2 for the ! and ~ signs 
+						theApp.m_nMyIdentLength = strIdent.GetLength() + 2; // + 2 for the ! and ~ signs
 						SetMyIdent(strIdent);
 					}
 
@@ -1438,7 +1241,7 @@ void CIrcSocket::HandleCommand(CString& strLine, char *szLine, PIRCPARSE pParse,
 			pIrcPrint->SetFormat(PT_NONE);		   // kicks only appear in channel window
 			break;
 		}
-		
+
 		case cmdidKnock:
 		{
 			pIrcPrint->SetFormat(PT_WHOLESTRING, szLine, RGB(0,0,0), 0, TRUE);
@@ -1450,7 +1253,7 @@ void CIrcSocket::HandleCommand(CString& strLine, char *szLine, PIRCPARSE pParse,
 			if (pParse->nArgs >= 3)	// Channel mode change
 			{
 				const char *szFlags, *szArg2 = "", *szArg3 = "";
-				
+
 				szFlags = pParse->args[2];
 				if (pParse->nArgs >= 4)
 					szArg2 = pParse->args[3];
@@ -1492,8 +1295,8 @@ void CIrcSocket::HandleCommand(CString& strLine, char *szLine, PIRCPARSE pParse,
 				}
 				else
 				{
-					if (MC_NONE != mcLost.byteStatus && 
-						!strcmp(mcLost.szChannelName, pParse->args[1]) && 
+					if (MC_NONE != mcLost.byteStatus &&
+						!strcmp(mcLost.szChannelName, pParse->args[1]) &&
 						!strcmp(mcLost.szNickname, szArg2))
 					{
 						if ((MC_HOSTLOST == mcLost.byteStatus && strstr(szFlags, "+q")) ||
@@ -1516,7 +1319,7 @@ void CIrcSocket::HandleCommand(CString& strLine, char *szLine, PIRCPARSE pParse,
 					if (0 == stricmp(pParse->args[1], GetMyNickName()))
 					{
 						// User mode change is for us
-		
+
 						// Get oldest queued ctSetUserMode query object
 						POSITION	pos;
 						CCQuery*	pQuery = m_queries.FindQuery(ctSetUserMode, &pos);
@@ -1535,7 +1338,7 @@ void CIrcSocket::HandleCommand(CString& strLine, char *szLine, PIRCPARSE pParse,
 									// of MsChatPr if we decide to treat all user modes: a i s w o
 									ASSERT(0 == pQuery->GetNicknameMask().CompareNoCase(GetMyNickName()));
 									BOOL	bSet, bInvisibility = FALSE, bRemoveCell = (qpComSetUserMode == pQuery->GetQueryPurpose());
-									LPTSTR	szModes = pParse->lastString; 
+									LPTSTR	szModes = pParse->lastString;
 									ASSERT(szModes);
 									while (*szModes)
 									{
@@ -1674,7 +1477,7 @@ void CIrcSocket::HandleCommand(CString& strLine, char *szLine, PIRCPARSE pParse,
 				GotPartChannel(pDoc);
 				theApp.m_pExitingDoc = NULL;
 			}
-			else 
+			else
 				if (pDoc)
 				{
 					enumActions	rgaIDs[2] = { (enumActions) 1, aHighlightMessage };
@@ -1693,7 +1496,7 @@ void CIrcSocket::HandleCommand(CString& strLine, char *szLine, PIRCPARSE pParse,
 
 		case cmdidPing:
 		{
-			sprintf(GetOutBuff(), "PONG :%s\r\n", pParse->lastString ? pParse->lastString : "");
+			TryFormatOutBuff( "PONG :%s\r\n", pParse->lastString ? pParse->lastString : "");
 			TRACE("%s", GetOutBuff());
 			Send(GetOutBuff(), strlen(GetOutBuff()));
 			pIrcPrint->SetFormat(PT_NONE);
@@ -1723,7 +1526,7 @@ void CIrcSocket::HandleCommand(CString& strLine, char *szLine, PIRCPARSE pParse,
 							// Get oldest queued ctPropSet query object
 							POSITION	pos;
 							CCQuery*	pQuery = m_queries.FindQuery(ctPropSet, &pos);
-							
+
 							if (pQuery && pQuery->GetQueryPurpose() == qpSetClient)
 							{
 								ASSERT(pos);
@@ -1758,7 +1561,7 @@ void CIrcSocket::HandleCommand(CString& strLine, char *szLine, PIRCPARSE pParse,
 		}
 
 		case cmdidKill:
-		case cmdidQuit:		// collapse w/ PART? 
+		case cmdidQuit:		// collapse w/ PART?
 		{
 			LPCTSTR		szQuittingNick = (nCmd == cmdidQuit) ? pParse->nick : pParse->args[1];
 			POSITION	pos = g_docs.GetHeadPosition();
@@ -1860,10 +1663,10 @@ void CIrcSocket::HandleResultCode(CString &strLine, char *szLine, PIRCPARSE pPar
 		default:
 		{
 			#ifdef DEBUG
-				TRACE("Untreated reply: sender nick = %s, mach = %s, user = %s, reply = %s, last string = %s\n", 
-				pParse->nick ? pParse->nick : "", 
-				pParse->machine ? pParse->machine : "", 
-				pParse->user ? pParse->user : "", 
+				TRACE("Untreated reply: sender nick = %s, mach = %s, user = %s, reply = %s, last string = %s\n",
+				pParse->nick ? pParse->nick : "",
+				pParse->machine ? pParse->machine : "",
+				pParse->user ? pParse->user : "",
 				pParse->args[0] ? pParse->args[0] : "",
 				pParse->lastString ? pParse->lastString : "");
 			#endif // DEBUG
@@ -2038,14 +1841,14 @@ void CIrcSocket::HandleResultCode(CString &strLine, char *szLine, PIRCPARSE pPar
 						{
 							CString strBan;
 							GetBanString(pParse->args[3], pParse->args[4], strBan);
-							
+
 							ASSERT(currentRoom);
 							if (qpKickDlg == pQuery->GetQueryPurpose())
 								currentRoom->DoKickDlg(pParse->args[2], strBan);
 							else
 							{
 								g_strBan = strBan;
-								sprintf(GetOutBuff(), "MODE %s +b\r\n", pQuery->GetChannelName());
+								TryFormatOutBuff( "MODE %s +b\r\n", pQuery->GetChannelName());
 								currentRoom->SendMessageText(GetOutBuff());
 							}
 							break;
@@ -2095,7 +1898,7 @@ void CIrcSocket::HandleResultCode(CString &strLine, char *szLine, PIRCPARSE pPar
 				// Get oldest queued ctWhoIs query object
 				POSITION	pos;
 				CCQuery*	pQuery = m_queries.FindQuery(ctWhoIs, &pos);
-				
+
 				// REGISB: pQuery can be NULL in user sends /RAW WHOIS KingArthur
 				if (pQuery)
 				{
@@ -2129,7 +1932,7 @@ void CIrcSocket::HandleResultCode(CString &strLine, char *szLine, PIRCPARSE pPar
 			if (pParse->nArgs >= 4)
 			{
 				pIrcPrint->SetFormat(PT_OFFSET, szLine, RGB(0,0,0), 3);		// may be overridden
-	
+
 				CChatDoc *doc = LookupDoc(pParse->args[2]);
 				if (doc)
 				{
@@ -2145,7 +1948,7 @@ void CIrcSocket::HandleResultCode(CString &strLine, char *szLine, PIRCPARSE pPar
 					doc->m_proto->m_dwModes = 0;		// next ParseChannelMode is absolute, not relative
 					pEnterInfo = theApp.GetRoomInfoFromName((LPCTSTR) pParse->args[2], &iRoomInfo, NULL != (char *)strchr(pParse->args[3], 'e') /*bCloneOK*/);
 					ParseChannelMode(doc, pParse->args[3], szArg2, szArg3, pEnterInfo);
-								
+
 					if (currentRoom && pEnterInfo->m_bSetMode && !stricmp(pParse->args[2], currentRoom->m_strChannel))
 					{	// set modes if requested on channel creation
 						ASSERT(pEnterInfo == &g_enterInfo);
@@ -2277,7 +2080,7 @@ void CIrcSocket::HandleResultCode(CString &strLine, char *szLine, PIRCPARSE pPar
 						AddToStatus(*pIrcPrint, strLine, &rgdwFormattingTmp);
 						// Don't display this a second time
 					}
-					pIrcPrint->SetFormat(PT_NONE);	
+					pIrcPrint->SetFormat(PT_NONE);
 				}
 
 				rgdwFormattingTmp.RemoveAll();
@@ -2356,7 +2159,8 @@ void CIrcSocket::HandleResultCode(CString &strLine, char *szLine, PIRCPARSE pPar
 							{
 								CCDaemonExt* pDaemonExt = pRule->GetDaemonExt();
 								ASSERT(pDaemonExt);
-								pDaemonExt->bAddChannelToCurrentList(CString(pParse->args[2]));
+								CString channelName(pParse->args[2]);
+								pDaemonExt->bAddChannelToCurrentList(channelName);
 							}
 							break;
 						}
@@ -2368,7 +2172,7 @@ void CIrcSocket::HandleResultCode(CString &strLine, char *szLine, PIRCPARSE pPar
 								CSInString(&pParse->lastString);
 								// Some IRC servers return * as the room name when the
 								// room is private.
-								if (!pParse->args[2] || pParse->args[2][0] != '*' || 
+								if (!pParse->args[2] || pParse->args[2][0] != '*' ||
 										pParse->args[2][1] != '\0')
 								{
 									pRoom->m_name = pParse->args[2];
@@ -2409,7 +2213,8 @@ void CIrcSocket::HandleResultCode(CString &strLine, char *szLine, PIRCPARSE pPar
 						{
 							CCDaemonExt* pDaemonExt = pRule->GetDaemonExt();
 							ASSERT(pDaemonExt);
-							pDaemonExt->bAddChannelToCurrentList(CString(pParse->args[2]));
+							CString channelName(pParse->args[2]);
+							pDaemonExt->bAddChannelToCurrentList(channelName);
 						}
 						break;
 					}
@@ -2717,7 +2522,7 @@ void CIrcSocket::HandleResultCode(CString &strLine, char *szLine, PIRCPARSE pPar
 			pIrcPrint->SetFormat(PT_OFFSET, szLine, RGB(128,0,0), 3, pParse->uCode != RPL_INFO);
 			break;
 		}
-		
+
 		case RPL_BANLIST:		// 367
 		{
 			// <channel> <banid>
@@ -2732,7 +2537,7 @@ void CIrcSocket::HandleResultCode(CString &strLine, char *szLine, PIRCPARSE pPar
 		case RPL_ENDOFBANLIST:	// 368
 		{
 			// <channel> :End of channel ban list
-			
+
 			// Get oldest queued ctSetChannelMode query object
 			POSITION	pos;
 			CCQuery*	pQuery = m_queries.FindQuery(ctSetChannelMode, &pos);
@@ -2845,30 +2650,23 @@ void CIrcSocket::HandleResultCode(CString &strLine, char *szLine, PIRCPARSE pPar
 
 					m_bJustSentModeIsIrcX = FALSE;
 
-					// Create the SvrSecuPack string array
-					// Are there any secu packages?
+					// Retain only the legacy anonymous-login signal. Package-based
+					// SSPI authentication was replaced by SASL in the portable core.
 					if (pParse->nArgs >= 7)
 					{
-						BOOL bEnd;
-						CHAR *szHeadTmp, *szTmp;
-						szHeadTmp = szTmp = pParse->args[4];
-						ASSERT('\0' != *szHeadTmp);
-						do
+						const char *package = pParse->args[4];
+						while (*package)
 						{
-							if ((',' == *szTmp) || (bEnd = ('\0' == *szTmp)))
-							{
-								*szTmp = '\0';
-								if (stricmp(g_szAnon, szHeadTmp))
-									m_rgszSvrSecuPack.Add(szHeadTmp);
-								else
-									m_bAnonAllowed = TRUE;
-								if (!bEnd) 
-									szHeadTmp = ++szTmp;
-							}
-							else
-								szTmp++;
+							const char *end = strchr(package, ',');
+							const std::size_t length = end
+								? static_cast<std::size_t>(end - package)
+								: strlen(package);
+							if (length == strlen(g_szAnon) && !strnicmp(package, g_szAnon, length))
+								m_bAnonAllowed = TRUE;
+							if (!end)
+								break;
+							package = end + 1;
 						}
-						while (!bEnd);
 					}
 
 					// Read the max message length
@@ -2928,7 +2726,8 @@ void CIrcSocket::HandleResultCode(CString &strLine, char *szLine, PIRCPARSE pPar
 						case qpCreatePics:
 						{
 							pQuery->SetQueryPurpose(qpMax);
-							CC_ASSERT(0 == lstrcmpi(pParse->args[3], "PICS"));
+							CC_ASSERT(0 == lstrcmpi(pParse->args[3], "PICS"),
+								"PICS property response expected");
 							if (bPassesRatings(pParse->lastString, TRUE))
 							{
 								CRoomInfo* pEnterInfo = theApp.GetRoomInfoFromName((LPCTSTR) pParse->args[2]);
@@ -2944,7 +2743,8 @@ void CIrcSocket::HandleResultCode(CString &strLine, char *szLine, PIRCPARSE pPar
 						}
 						case qpJoinBackUrl:
 						{
-							CC_ASSERT(0 == lstrcmpi(pParse->args[3], "CLIENT"));
+							CC_ASSERT(0 == lstrcmpi(pParse->args[3], "CLIENT"),
+								"CLIENT property response expected");
 							GetIrcProto()->HandleClientDataChange (pParse->lastString);
 							break;
 						}
@@ -3007,7 +2807,7 @@ void CIrcSocket::HandleErrorCode(char *szLine, PIRCPARSE pParse, CIrcPrint *pIrc
 {
 	CString		strMesg;
 	BOOL		bDisplayErrorInStatusWindow = FALSE;
-	CHAR*		szChannelName = NULL;
+	LPCSTR		szChannelName = NULL;
 	INT			iRoomIndex = -1;
 	CRoomInfo*	pEnterInfo = NULL;
 
@@ -3020,10 +2820,10 @@ void CIrcSocket::HandleErrorCode(char *szLine, PIRCPARSE pParse, CIrcPrint *pIrc
 		default:
 		{
 			#ifdef DEBUG
-				TRACE("Untreated error: sender nick = %s, mach = %s, user = %s, error = %s, last string = %s\n", 
-				pParse->nick ? pParse->nick : "", 
-				pParse->machine ? pParse->machine : "", 
-				pParse->user ? pParse->user : "", 
+				TRACE("Untreated error: sender nick = %s, mach = %s, user = %s, error = %s, last string = %s\n",
+				pParse->nick ? pParse->nick : "",
+				pParse->machine ? pParse->machine : "",
+				pParse->user ? pParse->user : "",
 				pParse->args[0] ? pParse->args[0] : "",
 				pParse->lastString ? pParse->lastString : "");
 			#endif // DEBUG
@@ -3074,7 +2874,7 @@ void CIrcSocket::HandleErrorCode(char *szLine, PIRCPARSE pParse, CIrcPrint *pIrc
 						CRoomList*	pRoomList = (CRoomList*) cui.m_pvRoomList;
 						CWnd*		pBtn1 = pRoomList->GetDlgItem(IDC_RESET_LIST);
 						CWnd*		pBtn2 = pRoomList->GetDlgItem(IDC_LISTMEMBERS);
-						
+
 						if (pBtn1 && pBtn2)
 						{
 							pBtn2->EnableWindow(TRUE);
@@ -3102,7 +2902,7 @@ void CIrcSocket::HandleErrorCode(char *szLine, PIRCPARSE pParse, CIrcPrint *pIrc
 		case ERR_NOMOTD:			// 422
 		{
 			ASSERT(m_strMOTD.IsEmpty());
-			
+
 			strMesg.LoadString(IDS_ERR_NOMOTD);
 			pIrcPrint->SetFormat(PT_WHOLESTRING, strMesg, RGB(0,0,255), 0, TRUE);
 			AddToStatus(*pIrcPrint, strMesg, NULL);
@@ -3130,7 +2930,7 @@ void CIrcSocket::HandleErrorCode(char *szLine, PIRCPARSE pParse, CIrcPrint *pIrc
 		case ERR_NICKNAMEINUSE:		// 433
 		{
 			int		iIndex = (ERR_NICKNAMEINUSE == pParse->uCode) ? 2 : 1;
-			char*	szBadNick = pParse->nArgs >= (iIndex+1) ? pParse->args[iIndex] : "";
+			const char*	szBadNick = pParse->nArgs >= (iIndex+1) ? pParse->args[iIndex] : "";
 			GetIrcProto()->TryNewNick((ERR_NICKNAMEINUSE == pParse->uCode) ? ID_ERR_DUPED_NICK : ID_ERR_BAD_NICK, m_bIrcXServer ? DecodeNick(szBadNick) : szBadNick);
 			break;
 		}
@@ -3197,7 +2997,7 @@ void CIrcSocket::HandleErrorCode(char *szLine, PIRCPARSE pParse, CIrcPrint *pIrc
 		case ERR_PASSWDMISMATCH: 	// 464
 		{
 			// Wrong password for plaintext, for oper keyword.
-			HRESULT hr = HrIrcSetOper (m_pszUserName, NULL);
+			(void)HrIrcSetOper(m_userName.empty() ? GetMyUserName() : m_userName.c_str(), NULL);
 			break;
 		}
 
@@ -3295,7 +3095,7 @@ void CIrcSocket::HandleErrorCode(char *szLine, PIRCPARSE pParse, CIrcPrint *pIrc
 			bDisplayErrorInStatusWindow = TRUE;
 			break;
 		}
-		
+
 		case ERR_NOJOINDYNAMIC:		// 552
 		{
 			AfxMessageBox(IDS_ERR_NOJOINDYNAMIC);
@@ -3360,21 +3160,16 @@ void CIrcSocket::HandleErrorCode(char *szLine, PIRCPARSE pParse, CIrcPrint *pIrc
 
 		case ERR_AUTHENTICATIONFAILED:	// 910
 		{
-			// ":<servername> 910 * <secupackage> : Authentication failed
-			// User account information provided was wrong, let's try again...
-			// Display appropriate error message
+			// Legacy IRCX SSPI authentication is no longer retried. SASL failures
+			// use their standard 904-908 numerics in the shared protocol engine.
 			AfxMessageBox(ID_ERR_BADUSERINFO);
-			m_bAuthFailed = TRUE;
-			HrIrcXLogin(FALSE /*bForceNextPackage*/);
 			break;
 		}
 
 		case ERR_UNKNOWNPACKAGE:	// 912
 		{
 			// ":<servername> 912 * <secupackage> : Unsupported authentication package
-			// This error should theoretically never occur, just here to be on the safe side
-			// Try next security package, or fail
-			HrIrcXLogin(TRUE /*bForceNextPackage*/);
+			AfxMessageBox(ID_ERR_BADUSERINFO);
 			break;
 		}
 
@@ -3420,7 +3215,7 @@ void CIrcSocket::HandleErrorCode(char *szLine, PIRCPARSE pParse, CIrcPrint *pIrc
 			// <nick> <channel> :is already on channel
 			szChannelName = pParse->args[3];
 			break;
-				
+
 		case ERR_NOSUCHNICK:
 			// <nick/channel> :No such nick/channel
 			szChannelName = pParse->args[2];
@@ -3490,7 +3285,7 @@ void CIrcSocket::HandleErrorCode(char *szLine, PIRCPARSE pParse, CIrcPrint *pIrc
 	}
 
 	if (bDisplayErrorInStatusWindow)
-		pIrcPrint->SetFormat(PT_OFFSET, szLine, RGB(255,0,0), 3, TRUE);	
+		pIrcPrint->SetFormat(PT_OFFSET, szLine, RGB(255,0,0), 3, TRUE);
 	else
 		pIrcPrint->SetFormat(PT_NONE);
 }
@@ -3511,13 +3306,13 @@ BOOL CIrcSocket::bFreeModeCell(LPCTSTR szChannel, LPCTSTR szNickname)
 
 	if (szChannel || (!szNickname && !szChannel))
 		pQuery2 = m_queries.FindQuery(ctSetChannelMode, &pos2, &lRank2);
-		
+
 	if (!pQuery1 || qpComSetUserMode != pQuery1->GetQueryPurpose())
 		lRank1 = 0L;
 
 	if (!pQuery2 || qpComSetChannelMode != pQuery2->GetQueryPurpose())
 		lRank2 = 0L;
-			
+
 	if (lRank1 && (!lRank2 || lRank1 < lRank2))
 	{
 		ASSERT(pos1);
@@ -3534,41 +3329,20 @@ BOOL CIrcSocket::bFreeModeCell(LPCTSTR szChannel, LPCTSTR szNickname)
 }
 
 
-void 			
+void
 CIrcSocket::SetAuthentication(
-UINT   nType, 
+UINT   nType,
 LPCSTR pszUserName,
-LPCSTR pszPassword, 
+LPCSTR pszPassword,
 LPCSTR pszCustomPkg)
 {
-	m_rgszUsrSecuPack.RemoveAll ();
+	(void)pszCustomPkg;
 	m_nAuthenticationType = nType;
 	m_bAnonAllowed = FALSE;
-	free (m_pszUserName);
-	free (m_pszPassword);
-	m_pszUserName = pszUserName != NULL ? strdup (pszUserName) : NULL;
-	m_pszPassword = pszPassword != NULL ? strdup (pszPassword) : NULL;
-	if (pszCustomPkg != NULL && m_nAuthenticationType == authtypeCustomPackages)
-	{
-		BOOL bEnd;
-		CString str (pszCustomPkg);
-		LPSTR szHeadTmp = str.GetBuffer (str.GetLength ());
-		LPSTR szTmp = szHeadTmp;
-		ASSERT('\0' != *szHeadTmp);
-		do
-		{
-			if ((',' == *szTmp) || (bEnd = ('\0' == *szTmp)))
-			{
-				*szTmp = '\0';
-				m_rgszUsrSecuPack.Add(szHeadTmp);
-				if (!bEnd) 
-					szHeadTmp = ++szTmp;
-			}
-			else
-			{
-				szTmp++;
-			}
-		} while (!bEnd);
-		str.ReleaseBuffer ();
-	}
+	SecureClear(&m_userName);
+	SecureClear(&m_password);
+	if (pszUserName)
+		m_userName = pszUserName;
+	if (pszPassword)
+		m_password = pszPassword;
 }

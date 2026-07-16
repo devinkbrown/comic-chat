@@ -93,7 +93,6 @@ public:
 	RECT			m_rectWhisper;
 	RECT			m_rectNotifs;
 	CChatServiceList m_listChatServices;
-	CChatServiceConnector m_SrvConnector;
 	CString			m_strConnectedService;
 	CString			m_strConnectedServer;
 	BOOL			m_bSaveViewMode;
@@ -279,8 +278,6 @@ public:
 	INT			AddRoomInfo(CRoomInfo* pEnterInfo);
 	void		RemoveRoomInfo(INT iIndex);
 	void		CleanRoomInfos();
-	void		ContinueConnection();
-	void		ResumeConnection();
 	void		CompleteConnection();
 	void		IsIrcXTimeout();
 	void		DoOptionsDialog(BOOL bComicsView, UINT nInitialPageID = 0);
