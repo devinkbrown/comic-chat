@@ -81,7 +81,7 @@ public:
 // Implementation
 public:
 	virtual ~CUserListCtrl();
-	CUser *CUserListCtrl::GetSelectedUser();
+	CUser *GetSelectedUser();
 	const char *GetSelectedNickname();
 
 	// Generated message map functions

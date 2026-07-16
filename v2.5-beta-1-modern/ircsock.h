@@ -437,8 +437,8 @@ public:
 
 class CIrcSocket : public CAsyncSocket {
 public:
-	CIrcSocket::CIrcSocket(void);
-	CIrcSocket::~CIrcSocket(void);
+	CIrcSocket(void);
+	virtual ~CIrcSocket(void);
 
 	HRESULT			HrInitAlloc(SHORT nMaxIOBuff);
 	HRESULT			HrModeIsIrcXFailure();

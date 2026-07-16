@@ -32,10 +32,10 @@ extern char*		GetNextStart(char *szString);
 
 BOOL bGetNextRange(LPTSTR *pszStr, UINT *puMin, UINT *puMax)
 {
-	ASSERT(pszStr, "pszStr is NULL in bGetNextRange");
-	ASSERT(*pszStr, "*pszStr is NULL in bGetNextRange");
-	ASSERT(puMin, "puMin is NULL in bGetNextRange");
-	ASSERT(puMax, "puMax is NULL in bGetNextRange");
+	ASSERT(pszStr != nullptr);
+	ASSERT(*pszStr != nullptr);
+	ASSERT(puMin != nullptr);
+	ASSERT(puMax != nullptr);
 
 	LPTSTR	szTmp = *pszStr, szStart;
 	TCHAR	chTmp;
@@ -417,7 +417,7 @@ CString	StrGetKeyActionParam(enumKeyActionParam kap,
 }
 
 
-BOOL bBeep(CString& strBeepCount)
+BOOL bBeep(const CString& strBeepCount)
 {
 	INT		iBeepCount = atoi(strBeepCount);
 	BOOL	bRet = TRUE;
@@ -433,7 +433,7 @@ BOOL bBeep(CString& strBeepCount)
 }
 
 
-BOOL bInvite(CString& strNickname, CString& strChannel)
+BOOL bInvite(const CString& strNickname, const CString& strChannel)
 {
 	if (0 == strNickname.CompareNoCase(GetMyNickName()))	// We don't want to invite ourselves
 		return TRUE;
@@ -450,7 +450,7 @@ BOOL bInvite(CString& strNickname, CString& strChannel)
 }
 
 
-BOOL bExecuteMacro(CString& strMacroName, CString& strEncodedChannelName, CUserInfo* pUI)
+BOOL bExecuteMacro(const CString& strMacroName, const CString& strEncodedChannelName, CUserInfo* pUI)
 {
 	for (INT iMacroNum = 0; iMacroNum < NMACROS; iMacroNum++)
 		if (theApp.m_macros[iMacroNum].m_bDefined && 0 == strMacroName.Compare(theApp.m_macros[iMacroNum].m_strName))
@@ -1179,5 +1179,4 @@ BOOL bReportRuleFailure(CCRuleSet* pRuleSet, CCRule* pRule, UINT uErrorCode)
 	
 	return TRUE;
 }
-
 
