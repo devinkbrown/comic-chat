@@ -1,8 +1,9 @@
 # chat.mak - modern nmake makefile for Microsoft Chat (v2.5-beta-1-modern)
-# Builds CChat.exe with a current Visual Studio C++/MFC (static) toolchain,
+# Builds CChat.exe with Visual Studio 2026 C++/MFC (static), with every C++
+# translation unit in MSVC's post-C++23 working-draft mode (/std:c++latest),
 # replacing the original NT DDK BUILD.EXE (sources/dirs) system.
 #
-#   call "<VS>\VC\Auxiliary\Build\vcvars32.bat"
+#   call "<VS2026>\VC\Auxiliary\Build\vcvars32.bat"
 #   nmake /f chat.mak CFG="chat - Win32 Debug"      (asserts + TRACE for DebugView)
 #   nmake /f chat.mak CFG="chat - Win32 Release"    (optimized, no debug asserts)
 #
@@ -38,8 +39,20 @@ ARTLIB=..\artifacts\lib\i386
 
 # /Zi is kept in both configs so Release is still debuggable (it emits a PDB but
 # does not disable optimization). The MFC/CRT static libraries are selected
-# automatically by the _DEBUG/NDEBUG define + /MT[d].
-CPP_PROJ=/nologo $(CPP_CFG) /W3 /GX /Zi /Zc:forScope- /Zc:strictStrings- /D "WIN32" /D "_WINDOWS" /D "_MBCS" \
+# automatically by the _DEBUG/NDEBUG define + /MT[d]. cpp26mode.h is force-
+# included so every C++ source proves that these language settings are active.
+CPP26_FLAGS=/std:c++latest /permissive- /EHsc /Zc:__cplusplus /Zc:preprocessor \
+ /Zc:forScope /Zc:strictStrings /Zc:wchar_t /Zc:inline /Zc:externConstexpr \
+ /Zc:lambda /Zc:twoPhase /Zc:throwingNew /Zc:ternary /volatile:iso
+
+CPP_PROJ=/nologo $(CPP_CFG) /W4 /Zi $(CPP26_FLAGS) /FI"cpp26mode.h" \
+ /D "WIN32" /D "_WINDOWS" /D "_MBCS" /I "." /I "$(ARTINC)" \
+ /Fo"$(INTDIR)\\" /Fd"$(INTDIR)\\" /c
+
+# Keep the generated MIDL glue and legacy delay-loader in C mode. The product's
+# hand-written C++ surface is C++26-mode-only; generated/third-party C is not
+# misrepresented as C++ by forcing /TP.
+C_PROJ=/nologo $(CPP_CFG) /W3 /Zi /D "WIN32" /D "_WINDOWS" /D "_MBCS" \
  /I "." /I "$(ARTINC)" /Fo"$(INTDIR)\\" /Fd"$(INTDIR)\\" /c
 
 RSC_PROJ=/l 0x409 /fo"$(INTDIR)\chat.res" /i "." /i "$(ARTINC)" $(RSC_CFG)
@@ -163,4 +176,4 @@ $(LINK32_FLAGS) $(OBJS)
 
 # ---- C sources ----
 {.}.c{$(INTDIR)}.obj:
-	$(CPP) $(CPP_PROJ) $<
+	$(CPP) $(C_PROJ) $<

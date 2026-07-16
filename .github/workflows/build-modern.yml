@@ -17,12 +17,16 @@ permissions:
 jobs:
   build:
     name: Build, package, and smoke test
-    runs-on: windows-2022
+    # This GA image supplies Visual Studio 2026, MSVC 14.51, and the x86
+    # Spectre-mitigated MFC libraries required by the C++26-mode legacy port.
+    runs-on: windows-2025-vs2026
     timeout-minutes: 30
 
     steps:
       - name: Check out source
         uses: actions/checkout@v5
+        with:
+          submodules: recursive
 
       - name: Build both modernized clients
         shell: cmd
@@ -34,6 +38,14 @@ jobs:
           )
           call "%VSINSTALL%\VC\Auxiliary\Build\vcvars32.bat"
           if errorlevel 1 exit /b 1
+          echo MSVC toolchain selected:
+          cl 2^>^&1 | findstr /c:"Compiler Version"
+          if errorlevel 1 exit /b 1
+          for /f "tokens=1" %%V in ('cl 2^>^&1 ^| findstr /r /c:"Version 19\.5[1-9]"') do set "CPP26_TOOLSET=%%V"
+          if not defined CPP26_TOOLSET (
+            echo MSVC 14.51 / compiler 19.51 or newer is required.
+            exit /b 1
+          )
           if not exist "%VCToolsInstallDir%ATLMFC\lib\spectre\x86" (
             echo The x86 Spectre-mitigated MFC libraries are missing.
             exit /b 1
