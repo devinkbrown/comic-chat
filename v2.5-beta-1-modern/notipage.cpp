@@ -336,12 +336,12 @@ CNotificationsPage::~CNotificationsPage()
 void CNotificationsPage::DoDataExchange(CDataExchange* pDX)
 {
 	CCSPropertyPage::DoDataExchange(pDX);
+	UINT uIndex;
 	//{{AFX_DATA_MAP(CNotificationsPage)
 	if (pDX->m_bSaveAndValidate)
 	{
 		// Just do validation.
 		CString str;
-		UINT uIndex;
 		for (uIndex = 0; uIndex < g_uNotifParamNum-1; uIndex++)
 		{
 			DDX_Text(pDX, IDC_NICKARG+uIndex, str);
@@ -354,7 +354,7 @@ void CNotificationsPage::DoDataExchange(CDataExchange* pDX)
 	{
 		DDX_Control(pDX, IDC_LSTNOTIFS, m_lstNotifs);
 	
-		for (UINT uIndex = 0; uIndex < g_uNotifParamNum-1; uIndex++)
+		for (uIndex = 0; uIndex < g_uNotifParamNum-1; uIndex++)
 			DDX_Control(pDX, IDC_CMBNICKOP+uIndex, m_cmbOperators[uIndex]);
 	
 		for (uIndex = 0; uIndex < g_uNotifParamNum-1; uIndex++)

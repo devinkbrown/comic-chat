@@ -1622,7 +1622,8 @@ char* CBWoodringNormal::SplitHeight(int iHeight, CDWordArray **pprgdwRestFormatt
 					return NULL;
 				ZeroMemory(szURL, serverConn.m_nMaxMsgLength);
 
-				for (int iFormatIndex = 0; iFormatIndex <= m_prgdwFormatting->GetUpperBound(); iFormatIndex++)
+					int iFormatIndex;
+					for (iFormatIndex = 0; iFormatIndex <= m_prgdwFormatting->GetUpperBound(); iFormatIndex++)
 				{
 					dwElement = m_prgdwFormatting->GetAt(iFormatIndex);
 					if (!bInURL && (LOWORD(dwElement) & wLink))
@@ -1654,7 +1655,8 @@ char* CBWoodringNormal::SplitHeight(int iHeight, CDWordArray **pprgdwRestFormatt
 					{
 						strncat(szURL, szRest + strlen(szContinuationStr2), HIWORD(dwFirstURLEnd));
 
-						for (int i = 0; i < MAX_URL_INTEXT; i++)
+							int i;
+							for (i = 0; i < MAX_URL_INTEXT; i++)
 							if (m_prgszURLs[i])
 							{
 								if (szTmp = strdup(m_prgszURLs[i]))
@@ -1707,7 +1709,8 @@ CSpline* CBWoodringNormal::CreateBalloonSpline(CFormatInfo& fInfo)
 	GetFilters(fInfo, lFilters, rFilters, nLFilters, nRFilters);
 	lastY = finalY = PermuteFilters(*m_fontI, lFilters, rFilters, nLFilters, nRFilters);
 	// fill pts vector w/ corners of tightly-binding text box
-	for (int i = 0; i < nLFilters; i++) {
+	int i;
+	for (i = 0; i < nLFilters; i++) {
 		thisPoint.x = nextPoint.x = lFilters[i].x;
 		thisPoint.y = lFilters[i].y;
 		if (i > 0) AddWavies(pts[nPts-1], thisPoint, pts, nPts, HWAVEHEIGHT, HWAVEINTERVAL);

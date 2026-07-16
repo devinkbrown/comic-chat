@@ -282,13 +282,13 @@ CString CCRulesData::StrFindAndReplaceKeyParams(CString strIn, BOOL bIncoming)
 		strTo.Empty();
 		strUpperParam = strFrom;
 		strUpperParam.MakeUpper();
-		strUpperKeyParam = bIncoming ? g_rgKepSubs[uIndexKey].szSubs : GetKeyEventParam(g_rgKepSubs[uIndexKey].kep);
+		strUpperKeyParam = bIncoming ? CString(g_rgKepSubs[uIndexKey].szSubs) : GetKeyEventParam(g_rgKepSubs[uIndexKey].kep);
 		strUpperKeyParam.MakeUpper();
 		while ((iBegin = strUpperParam.Find(strUpperKeyParam)) != -1)
 		{
 			strTo += strFrom.Mid(iBeginOri, iBegin);
 			iBeginOri += iBegin + strUpperKeyParam.GetLength();
-			strTo += bIncoming ? GetKeyEventParam(g_rgKepSubs[uIndexKey].kep) : g_rgKepSubs[uIndexKey].szSubs;
+			strTo += bIncoming ? GetKeyEventParam(g_rgKepSubs[uIndexKey].kep) : CString(g_rgKepSubs[uIndexKey].szSubs);
 			strUpperParam = strUpperParam.Mid(iBeginOri);
 		}
 		strTo += strFrom.Mid(iBeginOri);
@@ -302,13 +302,13 @@ CString CCRulesData::StrFindAndReplaceKeyParams(CString strIn, BOOL bIncoming)
 		strTo.Empty();
 		strUpperParam = strFrom;
 		strUpperParam.MakeUpper();
-		strUpperKeyParam = bIncoming ? g_rgKapSubs[uIndexKey].szSubs : GetKeyActionParam(g_rgKapSubs[uIndexKey].kap);
+		strUpperKeyParam = bIncoming ? CString(g_rgKapSubs[uIndexKey].szSubs) : GetKeyActionParam(g_rgKapSubs[uIndexKey].kap);
 		strUpperKeyParam.MakeUpper();
 		while ((iBegin = strUpperParam.Find(strUpperKeyParam)) != -1)
 		{
 			strTo += strFrom.Mid(iBeginOri, iBegin);
 			iBeginOri += iBegin + strUpperKeyParam.GetLength();
-			strTo += bIncoming ? GetKeyActionParam(g_rgKapSubs[uIndexKey].kap) : g_rgKapSubs[uIndexKey].szSubs;
+			strTo += bIncoming ? GetKeyActionParam(g_rgKapSubs[uIndexKey].kap) : CString(g_rgKapSubs[uIndexKey].szSubs);
 			strUpperParam = strUpperParam.Mid(iBeginOri);
 		}
 		strTo += strFrom.Mid(iBeginOri);

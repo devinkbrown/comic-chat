@@ -470,7 +470,8 @@ void CAvatarComplex::SetNeutral() {
 }
 
 void CAvatarSimple::SetNeutral() {
-	CBody *body = GetBodyFromEmotion(CEmotion(0.0, 0.0)); // creates the only body that's known...
+	CEmotion neutral(0.0, 0.0);
+	CBody *body = GetBodyFromEmotion(neutral); // creates the only body that's known...
 //	body->m_requested = FALSE;
 	UpdateBody(body);
 }

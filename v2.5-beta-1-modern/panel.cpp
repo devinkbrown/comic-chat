@@ -365,7 +365,8 @@ int EvalPlacement(CPtrArray &bdyArray, int nPlaced, CBodyRecord &bdy, int index,
 
 	bdy.m_body->m_flip = FALSE;
 
-	for (int i = 0; i <= nPlaced; i++) {
+	int i;
+	for (i = 0; i <= nPlaced; i++) {
 		CBodyRecord *rec1 = (CBodyRecord *) (bdyArray[i]);
 		for (int j = i+1; j <= nPlaced; j++) {
 			CBodyRecord *rec2 = (CBodyRecord *) bdyArray[j];
@@ -754,7 +755,8 @@ void CUnitPanel::LayoutAvatars() {
 	OrderAvatars(bRecs, bdyCount, placed);
 	ASSERT(bdyCount > 0);
 
-	for (int i = 0; i < bdyCount; i++) {
+	int i;
+	for (i = 0; i < bdyCount; i++) {
 		CBody *b = ((CBodyRecord *)(placed[i]))->m_body;
 		b->GetDimInfo(width[i], height[i], normHeight[i], headHeight[i], bitArrowX);
 		arrowX[i] = ((double) bitArrowX) / width[i];					// initially store arrows as percentage of width from left

@@ -2691,8 +2691,9 @@ void CEditRule::SaveRuleParams()
 	CC_ASSERT(m_pRule->GetEvent(), "m_pRule->GetEvent() is NULL in CEditRule::SaveRuleParams");
 	CC_ASSERT(m_pRule->GetAction(), "m_pRule->GetAction() is NULL in CEditRule::SaveRuleParams");
 
+	UINT iParam;
 	CCEvent* pEvent = (CCEvent*) m_pRule->GetEvent();
-	for (UINT iParam = 0; iParam < pEvent->GetParamNum(); iParam++)
+	for (iParam = 0; iParam < pEvent->GetParamNum(); iParam++)
 		m_rgstrEventParams[pEvent->GetParamType(iParam)] = m_pRule->GetEventParam(iParam);
 
 	CCAction* pAction = (CCAction*) m_pRule->GetAction();
