@@ -887,15 +887,121 @@ struct Rect final {
         lerp_channel(a, b, c, d, 0, tx, ty));
 }
 
+[[nodiscard]] auto pixel_at(const AvatarBitmap& source, const std::int32_t x, const std::int32_t y) noexcept
+    -> std::uint32_t {
+    const auto clamped_x = std::clamp(x, 0, source.width - 1);
+    const auto clamped_y = std::clamp(y, 0, source.height - 1);
+    return source.pixels[static_cast<std::size_t>(clamped_y) * static_cast<std::size_t>(source.width) +
+        static_cast<std::size_t>(clamped_x)];
+}
+
+[[nodiscard]] auto pixel_luma(const std::uint32_t pixel) noexcept -> double {
+    return (static_cast<double>(channel(pixel, 16)) * 0.2126 +
+        static_cast<double>(channel(pixel, 8)) * 0.7152 +
+        static_cast<double>(channel(pixel, 0)) * 0.0722) / 255.0;
+}
+
+struct EdgeDirection final {
+    float normal_x{1.0F};
+    float normal_y{};
+    float strength{};
+};
+
+[[nodiscard]] auto make_edge_field(const AvatarBitmap& source) -> std::vector<EdgeDirection> {
+    std::vector<EdgeDirection> result(static_cast<std::size_t>(source.width) *
+        static_cast<std::size_t>(source.height));
+    const auto luma = [&source](const std::int32_t px, const std::int32_t py) {
+        return pixel_luma(pixel_at(source, px, py));
+    };
+    for (std::int32_t y = 0; y < source.height; ++y) {
+        for (std::int32_t x = 0; x < source.width; ++x) {
+            const auto gradient_x =
+                -luma(x - 1, y - 1) + luma(x + 1, y - 1) - 2.0 * luma(x - 1, y) +
+                2.0 * luma(x + 1, y) - luma(x - 1, y + 1) + luma(x + 1, y + 1);
+            const auto gradient_y =
+                -luma(x - 1, y - 1) - 2.0 * luma(x, y - 1) - luma(x + 1, y - 1) +
+                luma(x - 1, y + 1) + 2.0 * luma(x, y + 1) + luma(x + 1, y + 1);
+            const auto gradient = std::hypot(gradient_x, gradient_y);
+            auto& direction = result[static_cast<std::size_t>(y) * static_cast<std::size_t>(source.width) +
+                static_cast<std::size_t>(x)];
+            direction.strength = static_cast<float>(std::clamp(gradient / 2.0, 0.0, 1.0));
+            if (gradient > 1.0e-8) {
+                direction.normal_x = static_cast<float>(gradient_x / gradient);
+                direction.normal_y = static_cast<float>(gradient_y / gradient);
+            }
+        }
+    }
+    return result;
+}
+
+// Reconstruct the source as a continuous, coverage-correct image. A local Sobel
+// gradient turns the Gaussian footprint so it is narrow across an ink edge and
+// wider along it. That smooths staircase contours without the colour wash and
+// landmark drift of a conventional isotropic bilinear upscale.
+[[nodiscard]] auto sample_edge_directed(const AvatarBitmap& source, const std::span<const EdgeDirection> edges,
+    const double x, const double y, const double footprint_x, const double footprint_y) noexcept -> std::uint32_t {
+    const auto anchor_x = static_cast<std::int32_t>(std::floor(x + 0.5));
+    const auto anchor_y = static_cast<std::int32_t>(std::floor(y + 0.5));
+    const auto direction_x = std::clamp(anchor_x, 0, source.width - 1);
+    const auto direction_y = std::clamp(anchor_y, 0, source.height - 1);
+    const auto& direction = edges[static_cast<std::size_t>(direction_y) * static_cast<std::size_t>(source.width) +
+        static_cast<std::size_t>(direction_x)];
+    const auto edge_strength = static_cast<double>(direction.strength);
+    const auto normal_x = static_cast<double>(direction.normal_x);
+    const auto normal_y = static_cast<double>(direction.normal_y);
+    const auto tangent_x = -normal_y;
+    const auto tangent_y = normal_x;
+
+    // The footprint expands for a downscale, but never becomes a boxy nearest
+    // neighbour footprint during the intended 2x/4x remaster path.
+    const auto input_footprint = std::max(footprint_x, footprint_y);
+    const auto flat_sigma = std::max(0.52, input_footprint * 0.52);
+    const auto normal_sigma = std::max(0.38, input_footprint * 0.45);
+    const auto tangent_sigma = std::max(0.76, input_footprint * 0.55);
+    const auto sigma_normal = flat_sigma * (1.0 - edge_strength) + normal_sigma * edge_strength;
+    const auto sigma_tangent = flat_sigma * (1.0 - edge_strength) + tangent_sigma * edge_strength;
+
+    double weights{};
+    std::array<double, 3> accumulated{};
+    const auto radius = input_footprint > 1.0 ? 3 : 2;
+    for (std::int32_t py = anchor_y - radius; py <= anchor_y + radius; ++py) {
+        for (std::int32_t px = anchor_x - radius; px <= anchor_x + radius; ++px) {
+            const auto delta_x = static_cast<double>(px) - x;
+            const auto delta_y = static_cast<double>(py) - y;
+            const auto across = delta_x * normal_x + delta_y * normal_y;
+            const auto along = delta_x * tangent_x + delta_y * tangent_y;
+            const auto exponent = -0.5 * (across * across / (sigma_normal * sigma_normal) +
+                along * along / (sigma_tangent * sigma_tangent));
+            if (exponent < -12.0) continue;
+            const auto weight = std::exp(exponent);
+            const auto pixel = pixel_at(source, px, py);
+            // AVB colour channels are paint coverage, not emitted-light
+            // samples. Interpolating their encoded values preserves the dark
+            // ink weight; linear-light interpolation visibly washes it out.
+            accumulated[0] += static_cast<double>(channel(pixel, 16)) * weight;
+            accumulated[1] += static_cast<double>(channel(pixel, 8)) * weight;
+            accumulated[2] += static_cast<double>(channel(pixel, 0)) * weight;
+            weights += weight;
+        }
+    }
+    if (weights <= 0.0) return pixel_at(source, anchor_x, anchor_y);
+    const auto encode = [weights](const double value) {
+        return static_cast<std::uint8_t>(std::clamp(std::lround(value / weights), 0L, 255L));
+    };
+    return color(encode(accumulated[0]), encode(accumulated[1]), encode(accumulated[2]));
+}
+
 enum class RasterOperation { merge_paint, source_and };
 
 void paint_scaled(AvatarBitmap& destination, const AvatarBitmap& source, const Rect rect,
-    const bool flip, const RasterOperation operation) {
+    const bool flip, const RasterOperation operation, const AvatarRenderMode mode) {
     const auto rectangle_width = std::abs(rect.right - rect.left);
     const auto rectangle_height = std::abs(rect.bottom - rect.top);
     if (rectangle_width == 0 || rectangle_height == 0 || source.width <= 0 || source.height <= 0) return;
     const auto start_x = std::min(rect.left, rect.right);
     const auto start_y = std::min(rect.top, rect.bottom);
+    const auto edge_field = mode == AvatarRenderMode::modern_remaster
+        ? make_edge_field(source) : std::vector<EdgeDirection>{};
     for (std::int32_t output_y = 0; output_y < rectangle_height; ++output_y) {
         const auto destination_y = start_y + output_y;
         if (destination_y < 0 || destination_y >= destination.height) continue;
@@ -904,8 +1010,15 @@ void paint_scaled(AvatarBitmap& destination, const AvatarBitmap& source, const R
             const auto destination_x = start_x + output_x;
             if (destination_x < 0 || destination_x >= destination.width) continue;
             const auto logical_x = flip ? rectangle_width - output_x - 1 : output_x;
-            const auto source_x = static_cast<double>(logical_x) * source.width / rectangle_width;
-            const auto source_pixel = sample_bilinear(source, source_x, source_y);
+            const auto source_x = mode == AvatarRenderMode::legacy_exact
+                ? static_cast<double>(logical_x) * source.width / rectangle_width
+                : (static_cast<double>(logical_x) + 0.5) * source.width / rectangle_width - 0.5;
+            const auto source_pixel = mode == AvatarRenderMode::legacy_exact
+                ? sample_bilinear(source, source_x, source_y)
+                : sample_edge_directed(source, edge_field, source_x,
+                    (static_cast<double>(output_y) + 0.5) * source.height / rectangle_height - 0.5,
+                    static_cast<double>(source.width) / rectangle_width,
+                    static_cast<double>(source.height) / rectangle_height);
             auto& destination_pixel = destination.pixels[
                 static_cast<std::size_t>(destination_y) * static_cast<std::size_t>(destination.width) +
                 static_cast<std::size_t>(destination_x)];
@@ -982,8 +1095,8 @@ auto render_avatar(const AvatarAsset& asset, const AvatarRenderRequest& request)
             const Rect full{(request.width - full_width) / 2, request.height - full_height,
                 (request.width - full_width) / 2 + full_width, request.height};
             if (request.draw_nimbus && pose.aura)
-                paint_scaled(output, *pose.aura, full, request.flip, RasterOperation::merge_paint);
-            paint_scaled(output, drawing, full, request.flip, RasterOperation::source_and);
+                paint_scaled(output, *pose.aura, full, request.flip, RasterOperation::merge_paint, request.mode);
+            paint_scaled(output, drawing, full, request.flip, RasterOperation::source_and, request.mode);
             return output;
         }
 
@@ -1038,13 +1151,15 @@ auto render_avatar(const AvatarAsset& asset, const AvatarRenderRequest& request)
             flip_rect(torso_rect);
         }
         if (request.draw_nimbus) {
-            if (torso.aura) paint_scaled(output, *torso.aura, torso_rect, request.flip, RasterOperation::merge_paint);
-            if (head.aura) paint_scaled(output, *head.aura, head_rect, request.flip, RasterOperation::merge_paint);
+            if (torso.aura)
+                paint_scaled(output, *torso.aura, torso_rect, request.flip, RasterOperation::merge_paint, request.mode);
+            if (head.aura)
+                paint_scaled(output, *head.aura, head_rect, request.flip, RasterOperation::merge_paint, request.mode);
         }
         const auto paint_part = [&](const AvatarPose& pose, const Rect rect, const bool use_mask) {
             if (use_mask && pose.mask)
-                paint_scaled(output, *pose.mask, rect, request.flip, RasterOperation::merge_paint);
-            paint_scaled(output, *pose.drawing, rect, request.flip, RasterOperation::source_and);
+                paint_scaled(output, *pose.mask, rect, request.flip, RasterOperation::merge_paint, request.mode);
+            paint_scaled(output, *pose.drawing, rect, request.flip, RasterOperation::source_and, request.mode);
         };
         constexpr auto head_mask = std::uint8_t{1};
         constexpr auto torso_mask = std::uint8_t{2};

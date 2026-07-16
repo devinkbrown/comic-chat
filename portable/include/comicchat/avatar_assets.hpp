@@ -79,12 +79,19 @@ struct AvatarSelection final {
     std::size_t torso{};
 };
 
+// legacy_exact is the source-compatibility oracle: it deliberately follows
+// the Win32 StretchBlt sampling phase and raster operations. modern_remaster
+// keeps the same poses and component geometry, but reconstructs high-DPI
+// contours with an edge-directed filter.
+enum class AvatarRenderMode : std::uint8_t { legacy_exact, modern_remaster };
+
 struct AvatarRenderRequest final {
     AvatarSelection selection;
     std::int32_t width{};
     std::int32_t height{};
     bool flip{};
     bool draw_nimbus{};
+    AvatarRenderMode mode{AvatarRenderMode::legacy_exact};
 };
 
 [[nodiscard]] auto load_avatar_asset(const std::filesystem::path& path)

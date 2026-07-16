@@ -47,6 +47,41 @@ auto silhouette_signature(const comicchat::AvatarBitmap& bitmap) -> std::array<s
     return rows;
 }
 
+struct OccupancyMoments final {
+    std::int32_t left{};
+    std::int32_t top{};
+    std::int32_t right{};
+    std::int32_t bottom{};
+    double centroid_x{};
+    double centroid_y{};
+    std::size_t pixels{};
+};
+
+auto occupancy_moments(const comicchat::AvatarBitmap& bitmap) -> OccupancyMoments {
+    auto result = OccupancyMoments{bitmap.width, bitmap.height, -1, -1, 0.0, 0.0, 0};
+    for (std::int32_t y = 0; y < bitmap.height; ++y) {
+        for (std::int32_t x = 0; x < bitmap.width; ++x) {
+            const auto pixel = bitmap.pixels[static_cast<std::size_t>(y) * bitmap.width + x];
+            const auto red = (pixel >> 16U) & 0xffU;
+            const auto green = (pixel >> 8U) & 0xffU;
+            const auto blue = pixel & 0xffU;
+            if (red * 2126U + green * 7152U + blue * 722U >= 128U * 10'000U) continue;
+            result.left = std::min(result.left, x);
+            result.top = std::min(result.top, y);
+            result.right = std::max(result.right, x);
+            result.bottom = std::max(result.bottom, y);
+            result.centroid_x += x;
+            result.centroid_y += y;
+            ++result.pixels;
+        }
+    }
+    if (result.pixels != 0) {
+        result.centroid_x /= static_cast<double>(result.pixels);
+        result.centroid_y /= static_cast<double>(result.pixels);
+    }
+    return result;
+}
+
 } // namespace
 
 TEST_CASE("Microsoft's complete active AVB corpus decodes with its original pose metadata") {
@@ -158,6 +193,50 @@ TEST_CASE("Tiki preserves the full Microsoft-rendered anatomy silhouette") {
     for (std::size_t row = 0; row < actual.size(); ++row)
         hamming += static_cast<std::size_t>(std::popcount<std::uint16_t>(actual[row] ^ microsoft_tiki[row]));
     CHECK(hamming <= 1);
+}
+
+TEST_CASE("modern remaster smooths high-DPI ink without moving the source anatomy") {
+    const auto asset = comicchat::load_avatar_asset(
+        std::filesystem::path{COMICCHAT_TEST_COMICART_DIR} / "tiki.avb");
+    REQUIRE(asset.has_value());
+    const auto neutral = comicchat::select_avatar_expression(*asset, {0.0, 0.0});
+    REQUIRE(neutral.has_value());
+
+    constexpr auto scale = 4;
+    const auto default_legacy = comicchat::render_avatar(*asset,
+        {*neutral, 150 * scale, 133 * scale, false, false});
+    const auto legacy = comicchat::render_avatar(*asset,
+        {*neutral, 150 * scale, 133 * scale, false, false, comicchat::AvatarRenderMode::legacy_exact});
+    const auto modern = comicchat::render_avatar(*asset,
+        {*neutral, 150 * scale, 133 * scale, false, false, comicchat::AvatarRenderMode::modern_remaster});
+    REQUIRE(default_legacy.has_value());
+    REQUIRE(legacy.has_value());
+    REQUIRE(modern.has_value());
+    CHECK(default_legacy->pixels == legacy->pixels);
+    CHECK(modern->pixels != legacy->pixels);
+
+    // The remaster must reconstruct sub-pixel contour coverage rather than
+    // copying enlarged source blocks. Tiki's source art has hard black ink,
+    // so partially covered, near-neutral edge samples are a stable signal.
+    const auto soft_ink = std::count_if(modern->pixels.begin(), modern->pixels.end(), [](const auto pixel) {
+        const auto red = (pixel >> 16U) & 0xffU;
+        const auto green = (pixel >> 8U) & 0xffU;
+        const auto blue = pixel & 0xffU;
+        const auto spread = std::max({red, green, blue}) - std::min({red, green, blue});
+        return spread <= 8U && red > 8U && red < 247U;
+    });
+    CHECK(soft_ink > 250);
+
+    const auto legacy_landmarks = occupancy_moments(*legacy);
+    const auto modern_landmarks = occupancy_moments(*modern);
+    REQUIRE(legacy_landmarks.pixels > 0);
+    REQUIRE(modern_landmarks.pixels > 0);
+    CHECK(std::abs(modern_landmarks.left - legacy_landmarks.left) <= 2);
+    CHECK(std::abs(modern_landmarks.top - legacy_landmarks.top) <= 2);
+    CHECK(std::abs(modern_landmarks.right - legacy_landmarks.right) <= 2);
+    CHECK(std::abs(modern_landmarks.bottom - legacy_landmarks.bottom) <= 2);
+    CHECK(std::abs(modern_landmarks.centroid_x - legacy_landmarks.centroid_x) <= 1.5);
+    CHECK(std::abs(modern_landmarks.centroid_y - legacy_landmarks.centroid_y) <= 1.5);
 }
 
 TEST_CASE("AVB reader rejects truncated and non-AVB input") {
