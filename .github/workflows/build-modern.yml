@@ -18,6 +18,151 @@ permissions:
   contents: read
 
 jobs:
+  portable-clang:
+    name: Portable strict C++26 (Clang 22.1.8)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        # actions/checkout v6.0.3, pinned to an immutable commit.
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install exact upstream Clang and native build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg ninja-build pkg-config python3-pip \
+            libcairo2-dev libdbus-1-dev libdecor-0-dev libegl1-mesa-dev libfontconfig1-dev libfreetype-dev \
+            libgl-dev libharfbuzz-dev libicu-dev libuv1-dev libwayland-dev libxkbcommon-dev wayland-protocols \
+            weston zlib1g-dev
+          curl --fail --location --silent --show-error \
+            https://apt.llvm.org/llvm-snapshot.gpg.key -o llvm-snapshot.gpg.key
+          echo "8b2a587ffd672c4687e7581dad4b2f6c1bb2ad6b480cd9771ba2ff48e0b8c75d  llvm-snapshot.gpg.key" | sha256sum --check
+          gpg --batch --dearmor --output llvm-snapshot.gpg llvm-snapshot.gpg.key
+          sudo install -m 0644 llvm-snapshot.gpg /usr/share/keyrings/llvm-snapshot.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm-snapshot.gpg] https://apt.llvm.org/noble/ llvm-toolchain-noble-22 main" | \
+            sudo tee /etc/apt/sources.list.d/llvm-22.list >/dev/null
+          sudo apt-get update
+          clang_package='1:22.1.8~++20260613092238+e80beda6e255-1~exp1~20260613092253.78'
+          sudo apt-get install -y --no-install-recommends "clang-22=${clang_package}"
+          python3 -m pip install --break-system-packages 'meson==1.11.1'
+          clang-22 --version | tee clang-version.txt
+          grep -F 'clang version 22.1.8' clang-version.txt
+
+      - name: Build hash-pinned fallbacks and run strict tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          CC=clang-22 CXX=clang++-22 meson setup portable/build-ci \
+            --buildtype=release \
+            --force-fallback-for=sdl3,harfbuzz,icu,catch2
+          meson compile -C portable/build-ci
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
+            meson test -C portable/build-ci --print-errorlogs
+
+      - name: Launch the native frontend under a real Wayland compositor
+        shell: bash
+        run: |
+          set -euo pipefail
+          export XDG_RUNTIME_DIR="$(mktemp -d)"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          weston --backend=headless-backend.so --renderer=pixman \
+            --socket=wayland-comicchat --idle-time=0 >weston.log 2>&1 &
+          weston_pid=$!
+          cleanup() {
+            kill "$weston_pid" 2>/dev/null || true
+            wait "$weston_pid" 2>/dev/null || true
+            rm -rf "$XDG_RUNTIME_DIR"
+          }
+          trap cleanup EXIT
+          for attempt in $(seq 1 100); do
+            test -S "$XDG_RUNTIME_DIR/wayland-comicchat" && break
+            sleep 0.05
+          done
+          test -S "$XDG_RUNTIME_DIR/wayland-comicchat" || {
+            cat weston.log
+            exit 1
+          }
+          WAYLAND_DISPLAY=wayland-comicchat SDL_VIDEODRIVER=wayland SDL_AUDIODRIVER=dummy \
+            ./portable/build-ci/comic-chat --frames 1 --png wayland-smoke.png
+          test -s wayland-smoke.png
+
+  freebsd-clang:
+    name: FreeBSD 15 native (Clang 22 / C++26)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Build and test inside FreeBSD
+        # vmactions/freebsd-vm v1.5.0, pinned to an immutable commit.
+        uses: vmactions/freebsd-vm@5a72679103d223925653750faa878a143340fbd0
+        with:
+          release: "15.0"
+          usesh: true
+          copyback: false
+          prepare: |
+            pkg install -y llvm22 meson ninja pkgconf cairo catch2 fontconfig freetype2 harfbuzz icu libuv sdl3
+          run: |
+            set -eu
+            export CC=/usr/local/llvm22/bin/clang
+            export CXX=/usr/local/llvm22/bin/clang++
+            "$CXX" --version
+            "$CXX" --version | grep -F 'clang version 22.'
+            meson setup portable/build-freebsd --buildtype=release
+            meson compile -C portable/build-freebsd
+            SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
+              meson test -C portable/build-freebsd --print-errorlogs
+            SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
+              ./portable/build-freebsd/comic-chat --frames 1 --png /var/tmp/comic-chat-freebsd.png
+            test -s /var/tmp/comic-chat-freebsd.png
+
+  openbsd-clang:
+    name: OpenBSD 7.9 native (Clang 21 / C++26)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Build and test inside OpenBSD
+        # vmactions/openbsd-vm v1.4.5, pinned to an immutable commit.
+        uses: vmactions/openbsd-vm@c941015845c0f0c429676840963dc63b226d4f69
+        with:
+          release: "7.9"
+          usesh: true
+          copyback: false
+          prepare: |
+            pkg_add llvm%21 meson ninja cairo harfbuzz icu4c libuv sdl3
+          run: |
+            set -eu
+            export CC=/usr/local/llvm21/bin/clang
+            export CXX=/usr/local/llvm21/bin/clang++
+            export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/X11R6/lib/pkgconfig
+            "$CXX" --version
+            "$CXX" --version | grep -F 'clang version 21.'
+            meson setup portable/build-openbsd --buildtype=release --force-fallback-for=catch2
+            meson compile -C portable/build-openbsd
+            SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
+              meson test -C portable/build-openbsd --print-errorlogs
+            SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
+              ./portable/build-openbsd/comic-chat --frames 1 --png /tmp/comic-chat-openbsd.png
+            test -s /tmp/comic-chat-openbsd.png
+
   build:
     name: Build, package, and smoke test
     # This GA image supplies Visual Studio 2026, MSVC 14.51, and the x86
