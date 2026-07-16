@@ -55,7 +55,7 @@ CCNotif::CCNotif(CCNotif* pNotif)
 }
 
 
-BOOL CCNotif::operator==(const CCNotif& notif)
+BOOL CCNotif::operator==(const CCNotif& notif) const
 {
 	UCHAR uParam;
 
@@ -507,7 +507,7 @@ BOOL CCDynaNotifs::bNotifExists(CCNotif* pNotif)
 	{
 		pNotifTmp = (CCNotif*) m_rgpNotifs.GetAt(iIndex);
 		CC_ASSERT(pNotifTmp, "pNotifTmp is NULL in CCDynaNotifs::bNotifExists");
-		if (*pNotifTmp == *pNotif)
+		if (pNotifTmp->operator==(*pNotif))
 			return TRUE;
 	}
 	return FALSE;
@@ -897,4 +897,3 @@ BOOL CCDynaNotifs::bModifyNotificationUser(CUser* pUser, WORD wAddFlags, WORD wR
 		return FALSE;
 	}
 }
-

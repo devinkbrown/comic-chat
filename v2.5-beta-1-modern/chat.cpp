@@ -964,7 +964,7 @@ void CDUpOne(const char *fullpath) {
 void CChatApp::SetBaseDir(const char *fullpath) {
 	CString path(fullpath);
 	int slash = path.ReverseFind('\\');
-	m_strBaseDir = slash >= 0 ? path.Left(slash) : ".";
+	m_strBaseDir = slash >= 0 ? path.Left(slash) : CString(".");
 }
 
 

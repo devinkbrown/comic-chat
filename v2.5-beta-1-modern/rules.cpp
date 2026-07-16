@@ -318,7 +318,7 @@ CString CCRulesData::StrFindAndReplaceKeyParams(CString strIn, BOOL bIncoming)
 }
 
 
-BOOL CCChannel::operator==(const CCChannel& channel)
+BOOL CCChannel::operator==(const CCChannel& channel) const
 {
 	return m_strChannelName == channel.m_strChannelName;
 }
@@ -415,7 +415,7 @@ BOOL CCDaemonExt::bAllocNewItemList(UINT uListCount = 1)
 		pNewItemList->SetSize(0 /*nNewSize*/, 10 /*nGrowBy*/);
 		pNewItemList->m_nCredits = 2 / uListCount + uCnt;
 
-		bRet &= m_itemLists.AddTail((void*) pNewItemList) > 0;
+		bRet &= m_itemLists.AddTail((void*) pNewItemList) != nullptr;
 	}
 
 	return bRet;
@@ -598,7 +598,7 @@ BOOL CCDaemonExt::bTreatNewItems(CCDynaRules* pDynaRules, CCRule* pRule, CCItemP
 			else
 			{
 				pPreviousChannel = (CCChannel*) pvPreviousItem;
-				if (*pCurrentChannel == *pPreviousChannel)
+				if (pCurrentChannel->operator==(*pPreviousChannel))
 				{
 					bFoundPrevious = TRUE;
 					break;
@@ -900,7 +900,8 @@ CCRule::CCRule(CCDynaRules* pDynaRules)
 	m_uOccurrences				= 0;
 	m_uDelay					= 0;
 
-	for (UINT uCnt = 0; uCnt < g_uMaxEventParams; uCnt++)
+	UINT uCnt;
+	for (uCnt = 0; uCnt < g_uMaxEventParams; uCnt++)
 		m_rgkep[uCnt] = kepMax;
 
 	for (uCnt = 0; uCnt < g_uMaxActionParams; uCnt++)
@@ -942,7 +943,8 @@ void CCRule::CopyRule(CCRule* pRule)
 	m_wFlags	= pRule->m_wFlags;
 	m_uDelay	= pRule->m_uDelay;
 
-	for (UINT uCnt = 0; uCnt < g_uMaxEventParams; uCnt++)
+	UINT uCnt;
+	for (uCnt = 0; uCnt < g_uMaxEventParams; uCnt++)
 	{
 		m_rgkep[uCnt] = pRule->m_rgkep[uCnt];
 		SetEventParam(uCnt, pRule->m_rgstrEventParams[uCnt]);
@@ -1571,7 +1573,8 @@ INT CCRule::iGetHighlightTypeIndex(CString strParam)
 {
 	CString strType;
 
-	for (INT iHighlights = 0; iHighlights < (NHIGHLIGHTEDFONTS/2); iHighlights++)
+	INT iHighlights;
+	for (iHighlights = 0; iHighlights < (NHIGHLIGHTEDFONTS/2); iHighlights++)
 	{
 		strType.Format(IDS_HIGHLIGHT_TYPE, iHighlights+1);
 		if (0 == strType.CompareNoCase(strParam))
@@ -3188,7 +3191,8 @@ BOOL CCDynaRules::bReplaceMessage(CCRule* pRule)
 	CC_ASSERT(pRule->m_pEvent, "pRule->m_pEvent is NULL in CCDynaRules::bReplaceMessage");
 	CC_ASSERT(pRule->m_pAction, "pRule->m_pAction is NULL in CCDynaRules::bReplaceMessage");
 
-	for (UINT uIndex = 0; uIndex < pRule->m_pEvent->m_uParamNum; uIndex++)
+	UINT uIndex;
+	for (uIndex = 0; uIndex < pRule->m_pEvent->m_uParamNum; uIndex++)
 		if (pRule->m_pEvent->m_rgpt[uIndex] == ptMessage)
 			break;
 	CC_ASSERT(uIndex < pRule->m_pEvent->m_uParamNum, "uIndex >= pRule->m_pEvent->m_uParamNum in CCDynaRules::bReplaceMessage");

@@ -157,7 +157,7 @@ typedef enum
 typedef struct tagKEPSUBS
 {
 	enumKeyEventParam	kep;
-	LPTSTR				szSubs;	// the substitute
+	LPCTSTR				szSubs;	// the substitute
 } KEPSUBS, *PKEPSUBS;
 
 
@@ -181,7 +181,7 @@ typedef enum
 typedef struct tagKAPSUBS
 {
 	enumKeyActionParam	kap;
-	LPTSTR				szSubs;	// the substitute
+	LPCTSTR				szSubs;	// the substitute
 } KAPSUBS, *PKAPSUBS;
 
 
@@ -579,7 +579,7 @@ public:
 	CCChannel() {};
 	virtual ~CCChannel() {};
 
-	BOOL	operator==(const CCChannel& channel);
+	BOOL	operator==(const CCChannel& channel) const;
 
 protected:
 	CString m_strChannelName;

@@ -577,7 +577,8 @@ RECT CBodyDouble::DrawBody(CDC *dc, RECT &clientRect, BOOL drawNimbus) {
 
 void CBodyDouble::Draw(CDC *dc, POINT *ul, RECT *dmgRect) {
 	// for now, ignore ul and dmgRect
-	DrawBody(dc, SRECTToRECT(m_bbox), TRUE);
+	RECT bodyRect = SRECTToRECT(m_bbox);
+	DrawBody(dc, bodyRect, TRUE);
 }
 
 void CBodySingle::FlipBodyBox(RECT &fullBox) {
@@ -612,7 +613,8 @@ RECT CBodySingle::DrawBody(CDC *dc, RECT &clientRect, BOOL drawNimbus) {
 }
 
 void CBodySingle::Draw(CDC *dc, POINT *ul, RECT *dmgRect) {
-	DrawBody(dc, SRECTToRECT(m_bbox), TRUE);
+	RECT bodyRect = SRECTToRECT(m_bbox);
+	DrawBody(dc, bodyRect, TRUE);
 }
 
 
@@ -851,7 +853,8 @@ void CBodyCam::OnKeyDown(UINT nChar, UINT nRepCnt, UINT nFlags)
 		}
 		if (ptOld.x != ptCur.x || ptOld.y != ptCur.y)
 		{
-			UpdateEmotion (GetEmotionFromPoint (ptCur));
+			CEmotion emotion = GetEmotionFromPoint (ptCur);
+			UpdateEmotion (emotion);
 		}
 	}
 }

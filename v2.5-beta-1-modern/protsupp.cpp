@@ -388,7 +388,7 @@ void DestroyExternalUserInfos() {
 }
 
 
-BOOL bForEachWord(char *szLine, BOOL (*pfn)(char *, void *, DWORD), void *pvClientData, DWORD dwClientData, char *szSep, BOOL bDoubleQuotes /*=FALSE*/)
+BOOL bForEachWord(char *szLine, BOOL (*pfn)(char *, void *, DWORD), void *pvClientData, DWORD dwClientData, const char *szSep, BOOL bDoubleQuotes /*=FALSE*/)
 {
 	BOOL	bRet = FALSE;
 	char	*szWord;
@@ -1381,19 +1381,20 @@ void CRoomInfo::ChatStartNetMeeting(CUserInfo *pui) {
 
 char* PrepareSound(CUserInfo *pui, char *szMesg, CString &strNewMesg, USHORT &uModes)
 {
+	static char szEmpty[] = "";
 	char *szSound = szMesg + g_nSoundLen, *szEnd;
 
 	while (my_isspace(*szSound))
 		szSound++;
 
 	if (!*szSound)
-		return "";				// returning empty string cancels display
+		return szEmpty;				// returning empty string cancels display
 
 	if (*szSound == '"')
 	{
 		szEnd = strchr(++szSound, '"');
 		if (!szEnd)
-			return "";  // no matching quote
+			return szEmpty;  // no matching quote
 	}
 	else
 	{
@@ -1957,7 +1958,7 @@ void OnKick(CChatDoc *pDoc, char *szKicker, char *szKickee, char *szMesg)
 		return;
 	szControlLess = SzControlLess(szControlFull, &rgdwFormatting);
 	if (rgdwFormatting.GetSize())
-		rgdwFormatting.Add(MAKELONG(0 /*wFormat*/, lstrlen(szControlLess)-2, /*wOffset*/));	// -2 for trailing ".
+		rgdwFormatting.Add(MAKELONG(0 /*wFormat*/, lstrlen(szControlLess)-2 /*wOffset*/));	// -2 for trailing ".
 
 	if (!kickeePui->GetFullName().IsEmpty())
 		strKickeeIdent += "!"+kickeePui->GetFullName();
@@ -2386,7 +2387,8 @@ BOOL CIrcProto::SlashProp(IRCPARSE *pParse, char *szMesg)
 	if (pParse->lastString)
 		syntax = g_rgSyntax[uIndex+1];
 
-	for (INT iArg = 0; iArg < syntax.uArgNum && iArg < pParse->nArgs-1; iArg++)
+	INT iArg;
+	for (iArg = 0; iArg < syntax.uArgNum && iArg < pParse->nArgs-1; iArg++)
 		strOutput += " " + StrEncodeCommandParam(syntax.dwArgType[iArg], &iEncoding, pParse->args[iArg+1]);
 	
 	if (pParse->lastString)
@@ -2540,7 +2542,8 @@ BOOL CIrcProto::SlashSound(IRCPARSE *pParse, char *szMesg, CDWordArray* prgdwFor
 	int			iEncoding = ENC_DBCS;
 	CString		strReceiver = StrEncodeCommandParam(AT_CHANNEL|AT_NICKNAME, &iEncoding, pParse->args[1]);
 	char		szFilename[MAX_TOKEN+4];	// +4 for .wav
-	char		*szText = "";
+	char		szEmpty[] = "";
+	char		*szText = szEmpty;
 	CDWordArray	*prgdwFormattingTmp = NULL;
 	BOOL		bRet;
 	CString		strFilename = pParse->args[2];
@@ -4461,7 +4464,7 @@ BOOL bSwitchToRoom(const char *szNewRoom, const char *szPassword, const char *sz
 	else
 		pEnterRoom = &g_enterInfo;
 
-	const char *szRoom = szNewRoom ? szNewRoom : g_enterInfo.m_strChannel;
+	const char *szRoom = szNewRoom ? szNewRoom : static_cast<LPCSTR>(g_enterInfo.m_strChannel);
 	if (bEncodeChan)
 		szRoom = EncodeChan(szRoom);
 

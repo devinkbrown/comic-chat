@@ -30,7 +30,7 @@ void SetArtDir(const char *artDir);
 void ChatEmptyMemberList(CChatDoc *doc = NULL);
 void DestroyUserInfos(CChatDoc *doc);
 void DestroyExternalUserInfos();
-BOOL bForEachWord(char *szLine, BOOL (*pfn)(char *, void *, DWORD), void *pvClientData, DWORD dwClientData, char *szSep, BOOL bDoubleQuotes = FALSE);
+BOOL bForEachWord(char *szLine, BOOL (*pfn)(char *, void *, DWORD), void *pvClientData, DWORD dwClientData, const char *szSep, BOOL bDoubleQuotes = FALSE);
 void AddToMembersList(CUserInfo *pui, CChatDoc *doc = NULL);
 void AssignArbitraryAvatar(CUserInfo *pui);
 CUserInfo *LookupPui(const char *szNickname, CChatDoc *doc = NULL);

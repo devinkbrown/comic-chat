@@ -231,7 +231,8 @@ void CChatDoc::InitMyDocument() {
 
 char *CChatDoc::GetComicsTitle() {
 	char *GetRandomTitle();
-	char *title = m_bComicView ? m_comicsTitle : "";
+	static char emptyTitle[] = "";
+	char *title = m_bComicView ? m_comicsTitle : emptyTitle;
 	if (!title) title = m_comicsTitle = GetRandomTitle();
 	return title;
 }
@@ -1494,7 +1495,8 @@ CMenu* pMenu)
 
 	// The item always comes after the Get Profile and Get Identity menu items. Try
 	// to find those, and get the next item.
-	for (int nPos = pMenu->GetMenuItemCount () - 1; nPos >= 0; nPos--) {
+	int nPos;
+	for (nPos = pMenu->GetMenuItemCount () - 1; nPos >= 0; nPos--) {
 		int nID = pMenu->GetMenuItemID (nPos);
 		if (nID == ID_GETIDENTITY || nID == ID_MEMBER_GETINFO) {
 			nPos = (nPos == pMenu->GetMenuItemCount () - 1) ? -1 : nPos + 1;

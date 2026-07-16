@@ -248,7 +248,7 @@ void SaveMacros() {
 
 	strMacroKey += "\\Macros";
 	if (RegCreateKeyEx (HKEY_CURRENT_USER, strMacroKey, 
-						0, "Macro Data", REG_OPTION_NON_VOLATILE,
+							0, nullptr, REG_OPTION_NON_VOLATILE,
 						KEY_ALL_ACCESS,	NULL, &hKey, NULL) == ERROR_SUCCESS) {
 		for (int i = 0; i < NMACROS; i++) {
 			strRegName.Format("%d", i);
@@ -630,7 +630,7 @@ BOOL CChatApp::SaveToReg(BOOL bShort)
 
 	// open the application's key
 	if (RegCreateKeyEx (HKEY_CURRENT_USER, szRootRegKeyName, 
-						0, "Application Global Data", REG_OPTION_NON_VOLATILE,
+							0, nullptr, REG_OPTION_NON_VOLATILE,
 						KEY_ALL_ACCESS,	NULL, &hKey, NULL) == ERROR_SUCCESS)
 	{
 		if (bShort)
@@ -1816,5 +1816,4 @@ void CChatFileDialog::OnTypeChange()
 
 	SetControlText(edt1, (LPCTSTR) strNewText);
 }
-
 

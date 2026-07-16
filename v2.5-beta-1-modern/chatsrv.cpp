@@ -933,8 +933,8 @@ CChatServiceList::GetGroupForOldServer(
 LPCSTR 	 pszServer, 
 CString& strGroupOut)
 {
-	static LPSTR pszPrefixes[] = { NULL, "chat", NULL };
-	static LPSTR pszSuffixes[] = { "microsoft.com", "msn.com", "msn.com" };
+	static LPCSTR pszPrefixes[] = { NULL, "chat", NULL };
+	static LPCSTR pszSuffixes[] = { "microsoft.com", "msn.com", "msn.com" };
 	static UINT nGroups[] = { IDS_PREDEFGROUP_MS, IDS_PREDEFGROUP_MSN, IDS_PREDEFGROUP_MS };
 
 	LPCSTR pszColon = OurMbsChr (pszServer, ':');
@@ -962,7 +962,8 @@ CString& strGroupOut)
 
 	int nLen = strServer.GetLength ();
 	int nOffset;
-	for (int i = 0; i < _countof(pszPrefixes); i++)
+	int i;
+	for (i = 0; i < _countof(pszPrefixes); i++)
 	{
 		// This is really one big if statement, broken up for clarity.
 		// The loop breaks out if the server name starts with the prefix and ends

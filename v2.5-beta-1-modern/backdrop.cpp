@@ -17,7 +17,7 @@
 
 // List of backdrop filetypes. To get the search mask use the BACKDROPTYPE_SEARCHMASK macro.
 // To get the actual file extension (with the .) use the BACKDROPTYPE_FILEEXT macro.
-char * pszBackdropTypes[] = { 
+const char * pszBackdropTypes[] = {
 	"\\*.bmp",
 	"\\*.bgb",
 };

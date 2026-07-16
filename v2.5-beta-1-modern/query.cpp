@@ -106,7 +106,7 @@ BOOL CQueryPtrList::bAddQuery(CCQuery* pQuery)
 {
 	CC_ASSERT(pQuery, "pQuery is NULL in CQueryPtrList::bAddQuery");
 
-	return AddTail((PVOID) pQuery) >= 0;
+	return AddTail((PVOID) pQuery) != nullptr;
 }
 
 
@@ -168,5 +168,4 @@ CCQuery* CQueryPtrList::FindQuery(enumCommandType ct, POSITION *pPos, LONG *plRa
 	}
 	return NULL;
 }
-
 
