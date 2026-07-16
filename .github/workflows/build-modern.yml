@@ -39,11 +39,10 @@ jobs:
           call "%VSINSTALL%\VC\Auxiliary\Build\vcvars32.bat"
           if errorlevel 1 exit /b 1
           echo MSVC toolchain selected:
-          cl 2^>^&1 | findstr /c:"Compiler Version"
-          if errorlevel 1 exit /b 1
-          for /f "tokens=1" %%V in ('cl 2^>^&1 ^| findstr /r /c:"Version 19\.5[1-9]"') do set "CPP26_TOOLSET=%%V"
-          if not defined CPP26_TOOLSET (
-            echo MSVC 14.51 / compiler 19.51 or newer is required.
+          cl
+          echo %VCToolsVersion% | findstr /b /r /c:"14\.5[1-9]\."
+          if errorlevel 1 (
+            echo MSVC 14.51 or newer is required; found %VCToolsVersion%.
             exit /b 1
           )
           if not exist "%VCToolsInstallDir%ATLMFC\lib\spectre\x86" (
