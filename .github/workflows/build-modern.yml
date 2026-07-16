@@ -5,7 +5,10 @@ on:
   pull_request:
     paths:
       - ".github/workflows/build-modern.yml"
+      - ".gitmodules"
       - "scripts/**"
+      - "portable/**"
+      - "third_party/mbedtls"
       - "v1.0-pre-modern/**"
       - "v2.5-beta-1-modern/**"
       - "artifacts/inc/**"
@@ -24,9 +27,20 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v5
+        # actions/checkout v6.0.3, pinned to an immutable commit.
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           submodules: recursive
+          persist-credentials: false
+
+      - name: Verify pinned cryptographic source
+        shell: pwsh
+        run: |
+          $expected = "0bebf8b8c7f07abe3571ded48a11aa907a1ffb20"
+          $actual = (git -C third_party/mbedtls rev-parse HEAD).Trim()
+          if ($actual -ne $expected) {
+            throw "mbedTLS submodule drift: expected $expected, got $actual"
+          }
 
       - name: Build both modernized clients
         shell: cmd
@@ -72,7 +86,8 @@ jobs:
         run: ./scripts/smoke-test-modern-builds.ps1
 
       - name: Upload release-ready packages
-        uses: actions/upload-artifact@v4
+        # actions/upload-artifact v4.6.2, pinned to an immutable commit.
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: comic-chat-unofficial-modern-builds-${{ github.sha }}
           path: |
