@@ -443,10 +443,10 @@ void CMemberList::OnChar(UINT nChar, UINT nRepCnt, UINT nFlags)
 void UpdateSpectators(CChatDoc *doc, BOOL moderated) {
 	CMemberListCtrl *members = &((CMemberList *)doc->m_memberList)->m_MemberListBox;
 	int count = members->GetItemCount();
-	for (int i = 0; i < count; i++) {
+	int i;
+	for (i = 0; i < count; i++) {
 		CUserInfo *pui = (CUserInfo *) members->GetItemData(i);
 		pui->SetFlag(UF_SPECTATOR, !pui->IsOperator() && moderated && !pui->CheckFlag(UF_HASVOICE));
 	}
 	if (count > 0) members->RedrawItems(0, i-1);
 }
-

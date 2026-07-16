@@ -349,7 +349,8 @@ UINT * pOutBufferSize)
 		}
 		
 		// Get all toolbars that are added.
-		for (int i = 0; i < nActualCount; i++)
+		int i;
+		for (i = 0; i < nActualCount; i++)
 		{
 			CRebarBandInfo rbbi;
 			rbbi.fMask = RBBIM_ID | RBBIM_SIZE | RBBIM_STYLE;

@@ -2015,7 +2015,8 @@ void CEditRule::DoDataExchange(CDataExchange* pDX)
 	DDX_Control(pDX, IDC_CMBACTIONS, m_cmbActions);
 	DDX_Control(pDX, IDC_LBLPARAMDESC, m_lblParamDesc);
 
-	for (UINT uIndex = 0; uIndex < g_uMaxEventParams; uIndex++)
+	UINT uIndex;
+	for (uIndex = 0; uIndex < g_uMaxEventParams; uIndex++)
 	{
 		DDX_Control(pDX, IDC_LBLEP0+2*uIndex, m_lblEventParams[uIndex]);
 		DDX_Control(pDX, IDC_CMBEP0+2*uIndex, m_cmbEventParams[uIndex]);

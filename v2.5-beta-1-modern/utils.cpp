@@ -338,7 +338,8 @@ UINT nDecryptedSize)
 		
 	// Calculate seed time again.
     DWORD dwTime;
-    for (dwTime = *(PDWORD)pbDataIn ^ dwChecksum, i = 0;
+	UINT i;
+	for (dwTime = *(PDWORD)pbDataIn ^ dwChecksum, i = 0;
          i < nDecryptedSize;
          dwTime = dwTime - 3495364871, i++);
 

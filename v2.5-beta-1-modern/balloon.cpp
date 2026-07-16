@@ -516,7 +516,8 @@ int PermuteFilters(CFontInfo& fontI, RANGE lFilters[], RANGE rFilters[], int nLF
 {
 	int baseY = 0;
 	int lastX = LARGEINTEGER;
-	for (int i = 0; i < nLFilters; i++) {
+	int i;
+	for (i = 0; i < nLFilters; i++) {
 		lFilters[i].x -= XBORDER;
 		if (i == 0)
 			lFilters[i].y = baseY + TOPBORDER + YBORDER + fontI.m_topOffset;

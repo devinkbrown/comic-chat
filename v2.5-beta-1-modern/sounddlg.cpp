@@ -344,7 +344,8 @@ BOOL bFindAndPlaySound(const char *szSound, BOOL bStopSound, BOOL bSemiSync)  {
 	_splitpath(szSound, NULL, NULL, NULL, szExt);
 	pszExt = *szExt ? szExt + 1 : szExt;
 	LPCSTR* pSupportedSoundTypes = GetSupportedSoundTypes ();
-	for (int i = 0; pSupportedSoundTypes[i] != NULL; i++)
+	int i;
+	for (i = 0; pSupportedSoundTypes[i] != NULL; i++)
 	{
 		if (!lstrcmpi (pszExt, pSupportedSoundTypes[i]))
 			break;

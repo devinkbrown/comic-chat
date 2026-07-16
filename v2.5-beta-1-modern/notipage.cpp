@@ -147,7 +147,8 @@ INT CNotifsListCtrl::iGetSortPosition(CCNotif* pNotif)
 	INT			iOrder, iNotifs = GetItemCount();
 	CCNotif*	pNotif2;
 
-	for (INT iItem = 0; iItem < iNotifs; iItem++)
+	INT iItem;
+	for (iItem = 0; iItem < iNotifs; iItem++)
 	{
 		pNotif2 = (CCNotif*) GetItemData(iItem);
 		CC_ASSERT(pNotif2, "pNotif2 is NULL in CNotifsListCtrl::iGetSortPosition");
@@ -340,7 +341,8 @@ void CNotificationsPage::DoDataExchange(CDataExchange* pDX)
 	{
 		// Just do validation.
 		CString str;
-		for (UINT uIndex = 0; uIndex < g_uNotifParamNum-1; uIndex++)
+		UINT uIndex;
+		for (uIndex = 0; uIndex < g_uNotifParamNum-1; uIndex++)
 		{
 			DDX_Text(pDX, IDC_NICKARG+uIndex, str);
 			DDV_MaxChars (pDX, str, g_uMaxNotifParamLength);

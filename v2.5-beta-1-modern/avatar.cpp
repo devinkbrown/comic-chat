@@ -257,7 +257,8 @@ CBody *CAvatarComplex::GetBodyFromEmotion(CEmotion &emotion) {
 	double intensityOfNearest = 2.0;
 	int nearestI;
 
-	for (int i = 0; i < nFaces; i++) {
+	int i;
+	for (i = 0; i < nFaces; i++) {
 		double thisAngle = fabs(subtract_angles(fRec[i].emotion, emotion.m_emotion));
 		if (thisAngle <= nearestAngle) {
 			double delta_i = fabs(emotion.m_intensity - fRec[i].intensity);

@@ -173,7 +173,8 @@ BOOL GetInterveningBBox(CBalloon *balloons[], int index, RECT &freeRect, RECT &i
 	// find region between all routeRgns, above toPtX
 	mostLeft = freeRect.left;
 	mostRight = freeRect.right;
-	for (int i = 0; i < index; i++) {
+	int i;
+	for (i = 0; i < index; i++) {
 		balloons[i]->QueryRouteRgn(toPtX, leftAllowance, rightAllowance);
 		mostLeft = max(leftAllowance, mostLeft);
 		mostRight = min(rightAllowance, mostRight);
@@ -1580,4 +1581,3 @@ void DrawLines(CDC *dc) {
 //{
 //*pszRest = pLabel->SplitHeight(rcFreeRect.top - rcFreeRect.bottom, pprgdwRestFormatting);
 //}
-
