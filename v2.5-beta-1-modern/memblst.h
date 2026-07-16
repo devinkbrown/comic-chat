@@ -58,6 +58,7 @@ public:
 //	void CleanupImageList();
 	void Sort();
 	void MakeVisible(CUserInfo *);
+	void RefreshSystemAppearance();
 
 // Overrides
 	// ClassWizard generated virtual function overrides
@@ -76,6 +77,8 @@ protected:
 	//{{AFX_MSG(CMemberList)
 	afx_msg void OnContextMenu(CWnd* pWnd, CPoint point);
 	afx_msg void OnChar(UINT nChar, UINT nRepCnt, UINT nFlags);
+	afx_msg void OnSysColorChange();
+	afx_msg void OnSettingChange(UINT uFlags, LPCTSTR lpszSection);
 	//}}AFX_MSG
 	afx_msg void OnLVKillFocus( NMHDR * pNotifyStruct, LRESULT * result );
 	afx_msg void OnDblClick(NMHDR* pNotifyStruct, LRESULT* result);
@@ -88,4 +91,3 @@ protected:
 };
 
 extern CMemberList *GetMembers();
-

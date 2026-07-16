@@ -50,8 +50,9 @@ END_MESSAGE_MAP()
 // CMemberListCtrl message handlers
 void CMemberListCtrl::OnSize(UINT nType, int cx, int cy) 
 {
-	SetColumnWidth(0, cx);
 	CListCtrl::OnSize(nType, cx, cy);
+	if (GetSafeHwnd() && GetHeaderCtrl() && GetHeaderCtrl()->GetItemCount() > 0)
+		SetColumnWidth(0, max(0, cx));
 }
 
 
@@ -64,10 +65,21 @@ void CMemberListCtrl::OnChar(UINT nChar, UINT nRepCnt, UINT nFlags)
 
 void ForwardToSayWnd(UINT nChar)
 {
-	GetChatDoc()->SetFocusToSayWnd();
+	CChatDoc *doc = GetChatDoc();
+	if (!doc || !doc->m_sayWnd)
+		return;
 
-	BYTE vKey = VkKeyScan(nChar) & 0xff;
-	keybd_event(vKey, 0, 0, 0);
+	// The old code converted the character back to a virtual key and injected it
+	// globally with keybd_event().  Besides losing keyboard-layout/dead-key data,
+	// that could deliver input to another process if focus changed.  Deliver the
+	// already-decoded WM_CHAR directly to this room's composer instead.
+	CSayWnd *say = static_cast<CSayWnd *>(doc->m_sayWnd);
+	HWND sayEdit = say->GetSayEdit();
+	if (!::IsWindow(sayEdit))
+		return;
+
+	::SetFocus(sayEdit);
+	::PostMessage(sayEdit, WM_CHAR, static_cast<WPARAM>(nChar), 1);
 }
 
 
@@ -90,6 +102,8 @@ BEGIN_MESSAGE_MAP(CMemberList, CFrameWnd)
 	//{{AFX_MSG_MAP(CMemberList)
 	ON_WM_CONTEXTMENU()
 	ON_WM_CHAR()
+	ON_WM_SYSCOLORCHANGE()
+	ON_WM_SETTINGCHANGE()
 	//}}AFX_MSG_MAP
 	ON_WM_SIZE()
 	ON_NOTIFY(NM_KILLFOCUS,1,OnLVKillFocus)
@@ -103,21 +117,51 @@ END_MESSAGE_MAP()
 
 BOOL CMemberList::OnCreateClient(LPCREATESTRUCT lpcs, CCreateContext* pContext) 
 {
-	// TODO: Add your specialized code here and/or call the base class
-	DWORD dwStyle = WS_CHILD | WS_VISIBLE | LVS_ICON | LVS_NOCOLUMNHEADER |
+	DWORD dwStyle = WS_CHILD | WS_VISIBLE | WS_TABSTOP | LVS_ICON | LVS_NOCOLUMNHEADER |
 					   LVS_AUTOARRANGE | /*LVS_SORTASCENDING | */ LVS_SHOWSELALWAYS | LVS_SHAREIMAGELISTS;
-	m_MemberListBox.Create(dwStyle, CRect(0, 0, 100, 100), this, 1);
+	if (!m_MemberListBox.Create(dwStyle, CRect(0, 0, 100, 100), this, 1))
+		return FALSE;
+
 	m_MemberListBox.SetFont(&theApp.m_fontGui);
-	m_MemberListBox.SetBkColor(COLORREF(RGB(255,255,255)));
-	m_MemberListBox.SetTextBkColor(COLORREF(RGB(255,255,255)));
+	m_MemberListBox.SetExtendedStyle(m_MemberListBox.GetExtendedStyle() |
+		LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP);
+	RefreshSystemAppearance();
 	m_MemberListBox.SetImageList(&theApp.m_ImageList,LVSIL_NORMAL);
 	m_MemberListBox.SetImageList(&theApp.m_StatusIcons, LVSIL_SMALL);
 //	m_MemberListBox.SetImageList(&theApp.m_StatusIcons, LVSIL_STATE); // set in OnViewIcon
-	m_MemberListBox.InsertColumn(0, "FOO", LVCFMT_LEFT, 100);
-	UINT mask = m_MemberListBox.GetCallbackMask();;
+	CString membersLabel;
+	if (!membersLabel.LoadString(ID_RL_NUSERS_LABEL))
+		membersLabel = "Members";
+	m_MemberListBox.SetWindowText(membersLabel);
+	m_MemberListBox.InsertColumn(0, membersLabel, LVCFMT_LEFT, 100);
+	UINT mask = m_MemberListBox.GetCallbackMask();
 	m_MemberListBox.SetCallbackMask(mask /*| LVIS_OVERLAYMASK*/ | LVIS_STATEIMAGEMASK);
 
 	return CFrameWnd::OnCreateClient(lpcs, pContext);
+}
+
+void CMemberList::RefreshSystemAppearance()
+{
+	if (!m_MemberListBox.GetSafeHwnd())
+		return;
+
+	const COLORREF background = ::GetSysColor(COLOR_WINDOW);
+	m_MemberListBox.SetBkColor(background);
+	m_MemberListBox.SetTextBkColor(background);
+	m_MemberListBox.SetTextColor(::GetSysColor(COLOR_WINDOWTEXT));
+	m_MemberListBox.Invalidate(FALSE);
+}
+
+void CMemberList::OnSysColorChange()
+{
+	CFrameWnd::OnSysColorChange();
+	RefreshSystemAppearance();
+}
+
+void CMemberList::OnSettingChange(UINT uFlags, LPCTSTR lpszSection)
+{
+	CFrameWnd::OnSettingChange(uFlags, lpszSection);
+	RefreshSystemAppearance();
 }
 
 void CMemberList::RecalcLayout(BOOL bNotify) 
