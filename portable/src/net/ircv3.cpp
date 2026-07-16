@@ -1,4 +1,5 @@
 #include <comicchat/net/ircv3.hpp>
+#include <comicchat/crypto_runtime.hpp>
 
 #include <algorithm>
 #include <array>
@@ -6,7 +7,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
-#include <random>
 #include <sstream>
 #include <utility>
 
@@ -178,6 +178,7 @@ bool Base64Decode(std::string_view encoded, std::string* decoded)
 
 bool Sha256(std::string_view input, std::array<unsigned char, 32>* output)
 {
+	if (!comicchat::crypto::initialize_runtime()) return false;
 	const auto* info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
 	return info && mbedtls_md(info,
 		reinterpret_cast<const unsigned char*>(input.data()), input.size(), output->data()) == 0;
@@ -189,6 +190,7 @@ bool HmacSha256(
 	std::string_view input,
 	std::array<unsigned char, 32>* output)
 {
+	if (!comicchat::crypto::initialize_runtime()) return false;
 	const auto* info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
 	return info && mbedtls_md_hmac(info, key, key_size,
 		reinterpret_cast<const unsigned char*>(input.data()), input.size(), output->data()) == 0;
@@ -216,13 +218,9 @@ std::string ScramName(std::string_view name)
 
 std::string RandomNonce()
 {
-	std::random_device random;
-	std::array<unsigned char, 24> bytes{};
-	for (auto& byte : bytes) byte = static_cast<unsigned char>(random());
-	std::array<unsigned char, 32> digest{};
-	const auto* info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
-	if (!info || mbedtls_md(info, bytes.data(), bytes.size(), digest.data()) != 0) return "comic-chat-nonce";
-	return Base64Encode(digest.data(), 24);
+	std::array<std::byte, 24> bytes{};
+	if (!comicchat::crypto::random_bytes(bytes)) return {};
+	return Base64Encode(reinterpret_cast<const unsigned char*>(bytes.data()), bytes.size());
 }
 
 std::vector<std::string> SaslWireChunks(std::string_view encoded)
@@ -636,7 +634,10 @@ private:
 	bool server_verified_ = false;
 };
 
-Engine::Engine() = default;
+Engine::Engine()
+{
+	(void)comicchat::crypto::initialize_runtime();
+}
 
 Engine::~Engine()
 {

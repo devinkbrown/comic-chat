@@ -1,0 +1,4 @@
+option('tests', type: 'boolean', value: true, description: 'Build headless Catch2 tests')
+option('frontend', type: 'boolean', value: true, description: 'Build the SDL3 desktop frontend')
+option('deterministic', type: 'boolean', value: false, description: 'Default schedulers to one deterministic inline worker')
+option('benchmarks', type: 'boolean', value: true, description: 'Build repeatable portable-core microbenchmarks')

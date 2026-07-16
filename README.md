@@ -61,6 +61,7 @@ This repository contains source snapshots spanning the full development history 
 | [`artifacts/`](artifacts/) | January 1998 | SDK, companion tools, JChat, documentation |
 | [`v1.0-pre-modern/`](v1.0-pre-modern/) | 2026 | Modernized v1.0-pre: builds with current Visual Studio, DPI-aware UI scaling, native TLS |
 | [`v2.5-beta-1-modern/`](v2.5-beta-1-modern/) | 2026 | Modernized v2.5-beta-1: builds with current Visual Studio (nmake replaces the NT DDK build), uniform display scaling, runs live on modern IRC |
+| [`portable/`](portable/) | 2026 | Native C++26 SDL3/Cairo port for Linux, FreeBSD, OpenBSD, Wayland, and X11 — [README](portable/README.md) |
 | [`docs/`](docs/) | — | Modernization write-ups and documentation |
 
 See [`file dates.txt`](file%20dates.txt) for the original file modification timestamps from each archive.

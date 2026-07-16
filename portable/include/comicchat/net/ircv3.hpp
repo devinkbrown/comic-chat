@@ -78,8 +78,8 @@ struct SaslConfig {
 	std::string password;
 	std::string authorization_id;
 	bool allow_external = true;
-	// Tests may pin a nonce. Production leaves this empty and uses the OS-backed
-	// C++ random source before hashing the result into an IRC-safe token.
+	// Tests may pin a nonce. Production leaves this empty and uses the shared
+	// OS-seeded PSA CSPRNG to produce an IRC-safe token.
 	std::string nonce;
 };
 

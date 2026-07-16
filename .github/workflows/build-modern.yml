@@ -33,14 +33,48 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
-      - name: Verify pinned cryptographic source
+      - name: Verify pinned native dependencies
         shell: pwsh
         run: |
-          $expected = "0bebf8b8c7f07abe3571ded48a11aa907a1ffb20"
-          $actual = (git -C third_party/mbedtls rev-parse HEAD).Trim()
-          if ($actual -ne $expected) {
-            throw "mbedTLS submodule drift: expected $expected, got $actual"
+          $pins = @{
+            "third_party/mbedtls" = "068ff080b369adfac81509f9b57b2afabaf82dc5"
+            "third_party/libuv" = "1cfa32ff59c076ffb6ed735bbc8c18361558661f"
           }
+          foreach ($entry in $pins.GetEnumerator()) {
+            $actual = (git -C $entry.Key rev-parse HEAD).Trim()
+            if ($actual -ne $entry.Value) {
+              throw "$($entry.Key) submodule drift: expected $($entry.Value), got $actual"
+            }
+          }
+
+      - name: Build pinned x86 native dependencies
+        shell: pwsh
+        run: |
+          $prefix = Join-Path $env:GITHUB_WORKSPACE "artifacts"
+          $portableInclude = (Join-Path $env:GITHUB_WORKSPACE "portable/include").Replace('\', '/')
+          $mbedtlsUserConfig = (Join-Path $portableInclude "comicchat/mbedtls_user_config.h").Replace('\', '/')
+
+          cmake -S third_party/libuv -B out/libuv -A Win32 `
+            -DBUILD_TESTING=OFF `
+            -DLIBUV_BUILD_SHARED=OFF `
+            -DLIBUV_BUILD_TESTS=OFF `
+            -DCMAKE_INSTALL_PREFIX="$prefix"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build out/libuv --config Release --target install --parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          cmake -S third_party/mbedtls -B out/mbedtls -A Win32 `
+            -DMBEDTLS_USER_CONFIG_FILE="$mbedtlsUserConfig" `
+            -DCMAKE_C_FLAGS="/I$portableInclude" `
+            -DENABLE_PROGRAMS=OFF `
+            -DENABLE_TESTING=OFF `
+            -DUNSAFE_BUILD=OFF `
+            -DUSE_STATIC_MBEDTLS_LIBRARY=ON `
+            -DUSE_SHARED_MBEDTLS_LIBRARY=OFF `
+            -DCMAKE_INSTALL_PREFIX="$prefix"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build out/mbedtls --config Release --target install --parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build both modernized clients
         shell: cmd

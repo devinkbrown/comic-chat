@@ -441,3 +441,17 @@ FodyWeavers.xsd
 *.msm
 *.msp
 .gstack/
+
+# Native Meson port outputs and downloaded WrapDB source trees
+/portable/build*/
+/portable/.tmp/
+/portable/subprojects/.wraplock
+/portable/subprojects/packagecache/
+/portable/subprojects/Catch2-*/
+/portable/subprojects/libuv-v*/
+/portable/subprojects/SDL3-*/
+/portable/subprojects/cairo-*/
+/portable/subprojects/freetype-*/
+/portable/subprojects/harfbuzz-*/
+/portable/subprojects/icu/
+/portable/subprojects/zlib-*/
