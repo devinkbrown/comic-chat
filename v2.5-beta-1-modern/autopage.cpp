@@ -3008,14 +3008,16 @@ void CEditRule::OnEventParamSetFocus(UINT uID)
 void CEditRule::OnEventNetParamSetFocus()
 {
 	CCEvent* pEvent = m_pRule->GetEvent();
+	INT iIndex = 0;
 
 	CC_ASSERT(pEvent, "pEvent is NULL in CEditRule::OnEventNetParamSetFocus");
 
-	for (INT iIndex = 0; iIndex < pEvent->GetParamNum(); iIndex++)
+	for (; iIndex < pEvent->GetParamNum(); iIndex++)
 		if (ptServerName == pEvent->GetParamType(iIndex))
 			break;
 
-	m_lblParamDesc.SetWindowText(pEvent->GetParamDesc(iIndex));
+	if (iIndex < pEvent->GetParamNum())
+		m_lblParamDesc.SetWindowText(pEvent->GetParamDesc(iIndex));
 }
 
 
@@ -3051,28 +3053,32 @@ void CEditRule::OnActionParamSetFocus(UINT uID)
 void CEditRule::OnActionNetParamSetFocus()
 {
 	CCAction* pAction = m_pRule->GetAction();
+	INT iIndex = 0;
 
 	CC_ASSERT(pAction, "pAction is NULL in CEditRule::OnActionNetParamSetFocus");
 
-	for (INT iIndex = 0; iIndex < pAction->GetParamNum(); iIndex++)
+	for (; iIndex < pAction->GetParamNum(); iIndex++)
 		if (ptServerName == pAction->GetParamType(iIndex))
 			break;
 
-	m_lblParamDesc.SetWindowText(pAction->GetParamDesc(iIndex));
+	if (iIndex < pAction->GetParamNum())
+		m_lblParamDesc.SetWindowText(pAction->GetParamDesc(iIndex));
 }
 
 
 void CEditRule::OnActionSndParamSetFocus()
 {
 	CCAction* pAction = m_pRule->GetAction();
+	INT iIndex = 0;
 
 	CC_ASSERT(pAction, "pAction is NULL in CEditRule::OnActionSndParamSetFocus");
 
-	for (INT iIndex = 0; iIndex < pAction->GetParamNum(); iIndex++)
+	for (; iIndex < pAction->GetParamNum(); iIndex++)
 		if (ptSoundFileName == pAction->GetParamType(iIndex))
 			break;
 
-	m_lblParamDesc.SetWindowText(pAction->GetParamDesc(iIndex));
+	if (iIndex < pAction->GetParamNum())
+		m_lblParamDesc.SetWindowText(pAction->GetParamDesc(iIndex));
 }
 
 

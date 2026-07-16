@@ -1395,8 +1395,6 @@ void CUnitPanelPage::AddStars(CUnitPanel *panel, int topY) {
 	CPtrArray stars;
 	CPtrArray sLabels;
 	if (MyAvatarID() == 0) return;	// not registered yet
-	CAvatarX *myAv = MyAvatar();
-	int GetAvatarUpperBound();
 	CString avatarCredit;
 
 //	avatarCredit.LoadString(ID_AVATAR_CREDIT);
@@ -1434,13 +1432,12 @@ void CUnitPanelPage::AddStars(CUnitPanel *panel, int topY) {
 	int iconVdisp = (rowHeight - ICONSIZE)/2;			// center text or icon vertically in row
 	int textVdisp = (rowHeight - lineHeight)/2;
 
-	for (i = 0; i < nStars; i++)
+	for (int i = 0; i < nStars; i++)
 	{
 		((CStarLabel*) sLabels[i])->m_format |= FT_LEFT_JUSTIFY;
 		CBodyUnary *b = new CBodyUnary(((CAvatarX*) stars[i])->m_avatarID);
 		b->m_bodyID = ((CAvatarX*) stars[i])->m_icon;
-		int vertOffset = 
-			b->SetBBox(iconOffset, topY+iconVdisp, iconOffset+ICONSIZE, topY+ICONSIZE+iconVdisp);
+		b->SetBBox(iconOffset, topY+iconVdisp, iconOffset+ICONSIZE, topY+ICONSIZE+iconVdisp);
 		panel->m_elements.AddTail(b);
 		((CStarLabel*) sLabels[i])->SetBBox(textOffset, topY+textVdisp, m_unitWidth, topY+lineHeight+textVdisp);
 		panel->m_elements.AddTail((CStarLabel*) sLabels[i]);

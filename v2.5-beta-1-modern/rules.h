@@ -711,7 +711,7 @@ public:
 	void				SetAction(CCAction* pAction){ m_pAction = pAction; }
 
 	void				SetEventParam(UINT uIndex, const CString& strParam);
-	void				SetActionParam(UINT uIndex, CString& strParam) { m_rgstrActionParams[uIndex] = strParam; }
+	void				SetActionParam(UINT uIndex, const CString& strParam) { m_rgstrActionParams[uIndex] = strParam; }
 
 	void				SetEventKeyParam(UINT uIndex, enumKeyEventParam kep)  { m_rgkep[uIndex] = kep; }
 	enumKeyEventParam	GetEventKeyParam(UINT uIndex)	{ return m_rgkep[uIndex]; }

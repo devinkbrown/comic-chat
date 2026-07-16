@@ -435,7 +435,7 @@ struct RESIZEABLEDLGCTL
 	UINT nFlags;
 };
 
-BOOL AdjustResizeableDlgCtls(CWnd* pWnd, RESIZEABLEDLGCTL* pCtls, UINT nNumCtls, CSize& sizeOld, CSize& sizeNew);
+BOOL AdjustResizeableDlgCtls(CWnd* pWnd, RESIZEABLEDLGCTL* pCtls, UINT nNumCtls, const CSize& sizeOld, const CSize& sizeNew);
 
 // Multiple monitor support.
 

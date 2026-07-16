@@ -219,7 +219,7 @@ void CAvatarX::GetScreenName(const char **screenName) {
 	*screenName = (LPCTSTR) pui->GetScreenName();
 }
 
-CBody *CAvatarSimple::GetBodyFromEmotion(CEmotion &emotion) {
+CBody *CAvatarSimple::GetBodyFromEmotion(const CEmotion &emotion) {
 	CBodySingle *body = new CBodySingle(m_avatarID);
 
 	// Distance metric needs rethinking!
@@ -249,7 +249,7 @@ CBody *CAvatarSimple::GetBodyFromEmotion(CEmotion &emotion) {
 }
 
 
-CBody *CAvatarComplex::GetBodyFromEmotion(CEmotion &emotion) {
+CBody *CAvatarComplex::GetBodyFromEmotion(const CEmotion &emotion) {
 	CBodyDouble *body = new CBodyDouble(m_avatarID);
 
 	// Distance metric needs rethinking!

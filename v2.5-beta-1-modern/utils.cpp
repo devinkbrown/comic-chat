@@ -1699,8 +1699,8 @@ AdjustResizeableDlgCtls(
 CWnd* pWnd,
 RESIZEABLEDLGCTL* pCtls, 
 UINT nNumCtls, 
-CSize& sizeOld, 
-CSize& sizeNew)
+const CSize& sizeOld,
+const CSize& sizeNew)
 {
 	ASSERT_VALID(pWnd);
 	ASSERT(pCtls != NULL && nNumCtls > 0);
