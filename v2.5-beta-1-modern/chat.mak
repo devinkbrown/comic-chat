@@ -47,7 +47,9 @@ CPP26_FLAGS=/std:c++latest /permissive- /EHsc /Zc:__cplusplus /Zc:preprocessor \
  /Zc:lambda /Zc:twoPhase /Zc:throwingNew /Zc:ternary /volatile:iso
 
 CPP_PROJ=/nologo $(CPP_CFG) /W4 /Zi $(CPP26_FLAGS) /FI"cpp26mode.h" \
- /D "WIN32" /D "_WINDOWS" /D "_MBCS" /I "." /I "$(ARTINC)" \
+ /D "WIN32" /D "_WINDOWS" /D "_MBCS" \
+ /D "MBEDTLS_USER_CONFIG_FILE=\"comicchat/mbedtls_user_config.h\"" \
+ /I "." /I "$(ARTINC)" \
  /I "..\portable\include" /I "..\third_party\libuv\include" \
  /I "..\third_party\mbedtls\include" \
  /Fo"$(INTDIR)\\" /Fd"$(INTDIR)\\" /c
@@ -56,7 +58,10 @@ CPP_PROJ=/nologo $(CPP_CFG) /W4 /Zi $(CPP26_FLAGS) /FI"cpp26mode.h" \
 # hand-written C++ surface is C++26-mode-only; generated/third-party C is not
 # misrepresented as C++ by forcing /TP.
 C_PROJ=/nologo $(CPP_CFG) /W3 /Zi /D "WIN32" /D "_WINDOWS" /D "_MBCS" \
- /I "." /I "$(ARTINC)" /Fo"$(INTDIR)\\" /Fd"$(INTDIR)\\" /c
+ /D "MBEDTLS_USER_CONFIG_FILE=\"comicchat/mbedtls_user_config.h\"" \
+ /I "." /I "$(ARTINC)" /I "..\portable\include" \
+ /I "..\third_party\mbedtls\include" \
+ /Fo"$(INTDIR)\\" /Fd"$(INTDIR)\\" /c
 
 RSC_PROJ=/l 0x409 /fo"$(INTDIR)\chat.res" /i "." /i "$(ARTINC)" $(RSC_CFG)
 
@@ -112,8 +117,11 @@ OBJS= \
 	"$(INTDIR)\IpFrame.obj" \
 	"$(INTDIR)\ircproto.obj" \
 	"$(INTDIR)\ircsock.obj" \
+	"$(INTDIR)\crypto_runtime.obj" \
 	"$(INTDIR)\connection_engine.obj" \
+	"$(INTDIR)\dcc_transfer_engine.obj" \
 	"$(INTDIR)\ircv3.obj" \
+	"$(INTDIR)\modernui.obj" \
 	"$(INTDIR)\MainFrm.obj" \
 	"$(INTDIR)\memblst.obj" \
 	"$(INTDIR)\mfcbind.obj" \
@@ -181,8 +189,14 @@ $(LINK32_FLAGS) $(OBJS)
 {.}.cpp{$(INTDIR)}.obj:
 	$(CPP) $(CPP_PROJ) $<
 
+"$(INTDIR)\crypto_runtime.obj" : ..\portable\src\crypto_runtime.cpp
+	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\crypto_runtime.obj" ..\portable\src\crypto_runtime.cpp
+
 "$(INTDIR)\connection_engine.obj" : ..\portable\src\net\connection_engine.cpp
 	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\connection_engine.obj" ..\portable\src\net\connection_engine.cpp
+
+"$(INTDIR)\dcc_transfer_engine.obj" : ..\portable\src\net\dcc_transfer_engine.cpp
+	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\dcc_transfer_engine.obj" ..\portable\src\net\dcc_transfer_engine.cpp
 
 "$(INTDIR)\ircv3.obj" : ..\portable\src\net\ircv3.cpp
 	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\ircv3.obj" ..\portable\src\net\ircv3.cpp

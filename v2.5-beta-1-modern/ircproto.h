@@ -132,7 +132,6 @@ extern const char *EncodeNick(const char *szNick, BOOL bEscapeWildcards = FALSE)
 extern const char *DecodeNick(const char *szNick);
 extern const char *DecodeNickForScreen(const char *szNick);
 extern void SetVisibility(BOOL bVisible);
-extern long GetMyIP();
 extern void ChatFillUserList(CUserList *pul);
 extern void ChatFillRoomList(CRoomList *prl);
 extern void GetModeChars(DWORD dwFlags, char *szBuff);

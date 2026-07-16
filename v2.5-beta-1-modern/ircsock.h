@@ -9,6 +9,7 @@
 #include "comicchat/net/ircv3.hpp"
 
 #include <new>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -459,6 +460,11 @@ public:
 	BOOL			Connect(LPCSTR pszServer, UINT nPort, BOOL bSecure);
 	void			Close();
 	BOOL			IsOpen() const;
+	const std::string& GetLocalAddress() const { return m_localAddress; }
+	BOOL			IsSecureTransport() const { return m_bSecureTransport; }
+	BOOL			SaslSucceeded() const { return m_ircEngine.SaslSucceeded(); }
+	BOOL			RegistrationFinished() const { return m_ircEngine.RegistrationFinished(); }
+	comic_chat::net::State GetTransportState() const { return m_transportState; }
 	int			Send(void* pData, int nBytes);
 	void			PollNetworkEvents();
 	BOOL			FormatOutput(LPCSTR pszFormat, ...);
@@ -508,8 +514,10 @@ private:
 	comic_chat::net::SendId m_nextSendId = 1;
 	std::vector<char> m_outputBuffer;
 	std::string m_serverHost;
+	std::string m_localAddress;
 	std::string m_userName;
 	std::string m_password;
+	comic_chat::net::State m_transportState = comic_chat::net::State::stopped;
 	BOOL m_bTransportOpen = FALSE;
 	BOOL m_bSecureTransport = FALSE;
 	BOOL m_bLoginPending = FALSE;

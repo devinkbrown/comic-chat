@@ -185,17 +185,6 @@ void ChatFillUserList(CUserList *pul)
 }
 
 
-long GetMyIP() {
-	SOCKADDR addr;
-	SOCKADDR_IN *pAddr;
-	int len = sizeof(SOCKADDR);
-	if (!serverConn.GetSockName(&addr, &len)) return 0;
-	pAddr = (SOCKADDR_IN *)(&addr);
-	long l = ntohl(pAddr->sin_addr.S_un.S_addr);
-	return (l);
-}
-
-
 // so we don't need to expose irc proto in protsupp.cpp
 void SetVisibility(BOOL bVisible) {
 	GetIrcProto()->SetVisibility(bVisible);

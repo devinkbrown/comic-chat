@@ -542,6 +542,7 @@ CIrcSocket::StartConnection(LPCSTR pszServer, UINT nPort, BOOL bSecure)
 	m_generation = *generation;
 	m_bSecureTransport = bSecure;
 	m_bTransportOpen = TRUE;
+	m_transportState = comic_chat::net::State::resolving;
 	return m_generation;
 }
 
@@ -551,6 +552,8 @@ void CIrcSocket::Close()
 	m_connection.stop();
 	m_bTransportOpen = FALSE;
 	m_generation = 0;
+	m_localAddress.clear();
+	m_transportState = comic_chat::net::State::stopped;
 	m_lineFramer.Reset();
 }
 
@@ -643,7 +646,11 @@ void CIrcSocket::PollNetworkEvents()
 				continue;
 			std::visit([this](auto&& body) {
 			using Body = std::remove_cvref_t<decltype(body)>;
-			if constexpr (std::is_same_v<Body, comic_chat::net::Connected>) {
+			if constexpr (std::is_same_v<Body, comic_chat::net::StateChanged>) {
+				m_transportState = body.state;
+			} else if constexpr (std::is_same_v<Body, comic_chat::net::Connected>) {
+				m_localAddress = body.local_address;
+				m_transportState = comic_chat::net::State::connected;
 				m_bSecureTransport = body.tls;
 				m_bTransportOpen = TRUE;
 				if (AfxGetMainWnd())
@@ -692,8 +699,12 @@ void CIrcSocket::PollNetworkEvents()
 					}
 				}
 			} else if constexpr (std::is_same_v<Body, comic_chat::net::Closed>) {
+				m_transportState = body.retry_after.count() > 0
+					? comic_chat::net::State::reconnect_wait
+					: comic_chat::net::State::stopped;
 				if (m_bTransportOpen) {
 					m_bTransportOpen = FALSE;
+					m_localAddress.clear();
 					OnClose(WSAECONNRESET);
 				}
 			} else if constexpr (std::is_same_v<Body, comic_chat::net::Diagnostic>) {
