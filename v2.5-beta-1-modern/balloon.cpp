@@ -859,9 +859,9 @@ char* CLabel::SplitHeight(int iHeight, CDWordArray **pprgdwRestFormatting, char 
 	size_t copyLength = static_cast<size_t>(szEnd - m_str);
 	const size_t continuation1Length = strlen(szContinuationStr1);
 	const size_t continuation2Length = strlen(szContinuationStr2);
-	if (copyLength > static_cast<size_t>(std::numeric_limits<int>::max()) ||
-		continuation2Length > static_cast<size_t>(std::numeric_limits<int>::max()) ||
-		copyLength > std::numeric_limits<size_t>::max() - continuation1Length - 1)
+	if (copyLength > static_cast<size_t>((std::numeric_limits<int>::max)()) ||
+		continuation2Length > static_cast<size_t>((std::numeric_limits<int>::max)()) ||
+		copyLength > (std::numeric_limits<size_t>::max)() - continuation1Length - 1)
 	{
 		pdc->SelectObject(pOldFont);
 		return NULL;
@@ -878,7 +878,7 @@ char* CLabel::SplitHeight(int iHeight, CDWordArray **pprgdwRestFormatting, char 
 
 	char *szRestStart = m_str + copyLength;
 	const size_t restLength = strlen(szRestStart);
-	if (restLength > std::numeric_limits<size_t>::max() - continuation2Length - 1)
+	if (restLength > (std::numeric_limits<size_t>::max)() - continuation2Length - 1)
 	{
 		pdc->SelectObject(pOldFont);
 		return NULL;
@@ -1674,9 +1674,9 @@ char* CBWoodringNormal::SplitHeight(int iHeight, CDWordArray **pprgdwRestFormatt
 		copyLength = continuation1Length + 1;
 	}
 	if (copyLength > sourceLength ||
-		copyLength > static_cast<size_t>(std::numeric_limits<int>::max() - 1) ||
-		continuation2Length > static_cast<size_t>(std::numeric_limits<int>::max()) ||
-		copyLength > std::numeric_limits<size_t>::max() - continuation1Length - 1)
+		copyLength > static_cast<size_t>((std::numeric_limits<int>::max)() - 1) ||
+		continuation2Length > static_cast<size_t>((std::numeric_limits<int>::max)()) ||
+		copyLength > (std::numeric_limits<size_t>::max)() - continuation1Length - 1)
 	{
 		m_fInfo->m_nLines = originalLineCount;
 		pdc->SelectObject(pOldFont);
@@ -1692,7 +1692,7 @@ char* CBWoodringNormal::SplitHeight(int iHeight, CDWordArray **pprgdwRestFormatt
 	}
 
 	const size_t restLength = strlen(szRestStart);
-	if (restLength > std::numeric_limits<size_t>::max() - continuation2Length - 1)
+	if (restLength > (std::numeric_limits<size_t>::max)() - continuation2Length - 1)
 	{
 		m_fInfo->m_nLines = originalLineCount;
 		pdc->SelectObject(pOldFont);
