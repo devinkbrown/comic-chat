@@ -62,9 +62,9 @@ public:
    #endif
     virtual int GetWidth() {return this != NULL ? DibWidth() : 0;}   // Image width
     virtual int GetHeight() {return this != NULL ? DibHeight() : 0;} // Image height
-	virtual void Convert8ToNonRLE();
-	virtual void Convert4ToNonRLE();
-	virtual void ConvertToNonRLE();
+	virtual BOOL Convert8ToNonRLE();
+	virtual BOOL Convert4ToNonRLE();
+	virtual BOOL ConvertToNonRLE();
     int DibWidth()
         {return m_pBMI->bmiHeader.biWidth;}
     int DibHeight() 

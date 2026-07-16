@@ -8,6 +8,7 @@
 #include "avatar.h"
 #include "avatario.h"
 #include "backdrop.h"
+#include <limits>
 
 // NOTE: Everything from here down should match with avbfile.cpp in the avtools
 // directory. The only thing different between the two files are the includes.
@@ -15,8 +16,57 @@
 static const COLORREF MonochromePalette[] = { RGB(255,255,255), RGB(0,0,0) };
 static const COLORREF MaskedMonoPalette[] = { RGB(255,255,255), RGB(0,0,0), RGB(128,0,0), RGB(0,0,128) };
 
-// Macro that adjusts a DWORD offset by a long adjustment, but only if non 0.
-#define ADJUST_OFFSET(dwOffset, lBy) if (dwOffset) dwOffset = (DWORD)(((long)(dwOffset)) + (lBy))
+// Avatar offsets and accumulated adjustments are attacker-controlled file data.
+// Keep the legacy zero sentinel, but reject arithmetic that leaves the stream's
+// representable range instead of wrapping into an unrelated record.
+static BOOL AdjustAvatarOffset(DWORD& dwOffset, long lBy)
+{
+	if (dwOffset == 0)
+		return TRUE;
+	const long long adjusted = static_cast<long long>(dwOffset) + static_cast<long long>(lBy);
+	if (adjusted <= 0 || adjusted > static_cast<long long>((std::numeric_limits<DWORD>::max)()))
+		return FALSE;
+	dwOffset = static_cast<DWORD>(adjusted);
+	return TRUE;
+}
+
+static BOOL AddResourceAdjustment(long& current, int delta)
+{
+	const long long adjusted = static_cast<long long>(current) + static_cast<long long>(delta);
+	if (adjusted < static_cast<long long>((std::numeric_limits<long>::min)()) ||
+		adjusted > static_cast<long long>((std::numeric_limits<long>::max)()))
+		return FALSE;
+	current = static_cast<long>(adjusted);
+	return TRUE;
+}
+
+static BOOL IsValidAvatarBitmap(const BITMAPINFOHEADER& header)
+{
+	if (header.biPlanes != 1 || header.biWidth <= 0 || header.biHeight == 0 ||
+		header.biWidth > MAX_AVATAR_IMAGE_DIMENSION ||
+		header.biHeight == (std::numeric_limits<LONG>::min)())
+		return FALSE;
+	const long height = header.biHeight < 0 ? -header.biHeight : header.biHeight;
+	if (height > MAX_AVATAR_IMAGE_DIMENSION)
+		return FALSE;
+	switch (header.biBitCount)
+	{
+		case 1:
+		case 4:
+		case 8:
+		case 16:
+		case 24:
+		case 32:
+			break;
+		default:
+			return FALSE;
+	}
+	if (header.biCompression == BI_RLE4)
+		return header.biBitCount == 4 && header.biHeight > 0;
+	if (header.biCompression == BI_RLE8)
+		return header.biBitCount == 8 && header.biHeight > 0;
+	return header.biCompression == BI_RGB || header.biCompression == BI_BITFIELDS;
+}
 
 // ============================================================================
 // CAvatarStream implementation
@@ -28,21 +78,27 @@ CAvatarStream::ReadString(
 LPTSTR pszVal, 
 UINT cbBufMax)
 {
+	if (pszVal == NULL || cbBufMax < 2 * sizeof(TCHAR))
+		return FALSE;
 	cbBufMax -= cbBufMax % sizeof(TCHAR);
 
 	// Safe reader that doesn't overwrite any buffers.
 	ASSERT (pszVal != NULL);
 	ASSERT (cbBufMax > 0);
-	TCHAR tch;
-	do {
+	UINT cchRemaining = cbBufMax / sizeof(TCHAR);
+	while (cchRemaining > 1) {
+		TCHAR tch;
 		if (Read (&tch, sizeof(tch)) != sizeof(tch)) {
+			*pszVal = '\0';
 			return FALSE;
 		}
 		*(pszVal++) = tch;
-		cbBufMax -= sizeof(TCHAR);
-	} while (cbBufMax > sizeof(TCHAR) && tch != '\0'); // Still leave room for a 0 character.
+		--cchRemaining;
+		if (tch == '\0')
+			return TRUE;
+	}
 	*pszVal = '\0';
-	return TRUE;
+	return FALSE;
 }
 
 #if defined(AVATAR_READ)
@@ -56,6 +112,10 @@ void * * pvData,
 UINT * pcbData)
 {
 	ASSERT (pvData != NULL && pcbData != NULL);
+	if (pvData == NULL || pcbData == NULL)
+		return FALSE;
+	*pvData = NULL;
+	*pcbData = 0;
 	
 	struct
 	{
@@ -67,14 +127,14 @@ UINT * pcbData)
 	}
 
 	if (sizes.dwUncompressedSize == 0) {
-		*pvData = NULL;
-		*pcbData = 0;
-		return TRUE;
+		return sizes.dwCompressedSize == 0;
 	}
 	
 	// Sanity check for bad files.
-	if (sizes.dwUncompressedSize > MAX_COMPRESSBUFFERSIZE || sizes.dwCompressedSize > MAX_COMPRESSBUFFERSIZE) {
+	if (sizes.dwCompressedSize == 0 || sizes.dwUncompressedSize > MAX_COMPRESSBUFFERSIZE ||
+		sizes.dwCompressedSize > MAX_COMPRESSBUFFERSIZE) {
 		TRACE("Too big a buffer to read - returning failure");
+		return FALSE;
 	}
 
 	// Allocate both buffers.
@@ -83,6 +143,8 @@ UINT * pcbData)
 	pbAllocCompressed = (PBYTE)malloc (sizes.dwCompressedSize);
 	if (pbAllocUncompressed == NULL || pbAllocCompressed == NULL) {
 		TRACE("Failed to allocate memory.");
+		free (pbAllocUncompressed);
+		free (pbAllocCompressed);
 		return FALSE;
 	}
 
@@ -120,15 +182,17 @@ CAvatarFileStream::CAvatarFileStream(
 LPCTSTR pszFile, 
 BOOL bWrite)
 {
-	ASSERT(pszFile != NULL && lstrlen (pszFile) < _MAX_PATH);
+	m_nOpenCount = 0;
+	m_file = NULL;
    #if defined(AVATAR_WRITE)
     m_bWrite = bWrite;
    #else
     ASSERT (!bWrite);
    #endif // !AVATAR_WRITE
-    lstrcpy (m_szFileName, pszFile);
-	m_nOpenCount = 0;
-	m_file = NULL;
+	m_szFileName[0] = '\0';
+	if (pszFile == NULL || lstrlen(pszFile) >= _countof(m_szFileName))
+		return;
+	lstrcpyn(m_szFileName, pszFile, _countof(m_szFileName));
 }
    
 CAvatarFileStream::~CAvatarFileStream()
@@ -145,8 +209,12 @@ CAvatarFileStream::~CAvatarFileStream()
 BOOL
 CAvatarFileStream::Open()
 {
+	if (m_szFileName[0] == '\0')
+		return FALSE;
 	// If already open, just return success. The file is ref-counted.
 	if (m_nOpenCount > 0) {
+		if (m_nOpenCount == (std::numeric_limits<UINT>::max)())
+			return FALSE;
 		m_nOpenCount++;
 		return TRUE;
 	}
@@ -170,6 +238,8 @@ BOOL
 CAvatarFileStream::Close()
 {
 	ASSERT(m_nOpenCount > 0);
+	if (m_nOpenCount == 0 || m_file == NULL)
+		return FALSE;
 
 	// If the file is multiply opened, just decrease the ref. count.
 	if (m_nOpenCount > 1) {
@@ -250,6 +320,8 @@ CAvatarStream * pStream)
 		for (int i = 0; i < nEntries; i++) {
 			if (pStream->Read (m_pclrref + i, 3) != 3) {
 				TRACE("Error reading palette entries");
+				free(m_pclrref);
+				m_pclrref = NULL;
 				return FALSE;
 			}
 		}
@@ -270,6 +342,9 @@ int nCount)
 {
 	ASSERT(nCount == 0 || pclrrefSrc != NULL);
 	ASSERT(m_pclrref == NULL);
+	if (nCount < 0 || nCount > MAX_PALETTE_SIZE || (nCount > 0 && pclrrefSrc == NULL) ||
+		m_pclrref != NULL)
+		return FALSE;
 	m_nColorCount = nCount;
 	if (nCount > 0) {
 		m_pclrref = (COLORREF *)malloc (nCount * sizeof(COLORREF));
@@ -291,9 +366,13 @@ BOOL
 CAvatarDIB::Load(
 CAvatarStream * pStream)
 {
-    BOOL bIsPM = FALSE;
-    BITMAPINFO* pBmpInfo = NULL;
-    BYTE* pBits = NULL;
+	BOOL bIsPM = FALSE;
+	BITMAPINFO* pBmpInfo = NULL;
+	BYTE* pBits = NULL;
+	DWORD dwBitsSize;
+	unsigned long long bitsPosition;
+	unsigned long long decodedSize;
+	long bitmapHeight;
 
     // Get the current file position.
     DWORD dwFileStart = (DWORD)pStream->GetPosition ();
@@ -338,8 +417,10 @@ CAvatarStream * pStream)
 
         // Back up the file pointer and read the BITMAPCOREHEADER
         // and create the BITMAPINFOHEADER from it.
-        if (!pStream->SetPosition ((long)(dwFileStart + sizeof(BITMAPFILEHEADER)), 
-				SEEK_SET)) {
+		const unsigned long long coreHeaderPosition =
+			static_cast<unsigned long long>(dwFileStart) + sizeof(BITMAPFILEHEADER);
+        if (coreHeaderPosition > static_cast<unsigned long long>((std::numeric_limits<long>::max)()) ||
+			!pStream->SetPosition(static_cast<long>(coreHeaderPosition), SEEK_SET)) {
 			TRACE ("Failed to back up header");
 			goto $abort;
 		}
@@ -355,7 +436,7 @@ CAvatarStream * pStream)
         BmpInfoHdr.biHeight = (int) BmpCoreHdr.bcHeight;
         BmpInfoHdr.biPlanes = BmpCoreHdr.bcPlanes;
         BmpInfoHdr.biBitCount = BmpCoreHdr.bcBitCount;
-        BmpInfoHdr.biCompression = BI_RLE4;
+        BmpInfoHdr.biCompression = BI_RGB;
         BmpInfoHdr.biSizeImage = 0;
         BmpInfoHdr.biXPelsPerMeter = 0;
         BmpInfoHdr.biYPelsPerMeter = 0;
@@ -363,8 +444,9 @@ CAvatarStream * pStream)
         BmpInfoHdr.biClrImportant = 0;
     }
 
-	// Sanity checks for bad files
-	if (BmpInfoHdr.biBitCount == 0) {
+	// Sanity checks for hostile or corrupt bitmap geometry. These dimensions
+	// keep every subsequent legacy stride calculation in a bounded int range.
+	if (!IsValidAvatarBitmap(BmpInfoHdr)) {
 		TRACE ("Bitmap bad - returning failure");
 		goto $abort;
 	}
@@ -377,11 +459,33 @@ CAvatarStream * pStream)
     int iColors;
     int iColorTableSize;
     iColors = NumDIBColorEntries ((LPBITMAPINFO) &BmpInfoHdr);
+	if (iColors < 0 || iColors > MAX_PALETTE_SIZE) {
+		TRACE("Invalid bitmap palette size");
+		goto $abort;
+	}
     iColorTableSize = iColors * sizeof(RGBQUAD);
-    int iBitsSize;
+	UINT iBitsSize;
     int iBISize;
     iBISize = sizeof(BITMAPINFOHEADER) + iColorTableSize;
-    iBitsSize = BmpFileHdr.bfSize - BmpFileHdr.bfOffBits;
+	if (BmpFileHdr.bfSize < BmpFileHdr.bfOffBits) {
+		TRACE("Bitmap bit offset exceeds file size");
+		goto $abort;
+	}
+	dwBitsSize = BmpFileHdr.bfSize - BmpFileHdr.bfOffBits;
+	if (dwBitsSize == 0 || dwBitsSize > MAX_AVATAR_IMAGE_BYTES) {
+		TRACE("Bitmap data exceeds its security bound");
+		goto $abort;
+	}
+	iBitsSize = static_cast<UINT>(dwBitsSize);
+	bitmapHeight = BmpInfoHdr.biHeight < 0 ? -BmpInfoHdr.biHeight : BmpInfoHdr.biHeight;
+	decodedSize = static_cast<unsigned long long>(DIBStorageWidth(BmpInfoHdr.biWidth, BmpInfoHdr.biBitCount)) *
+		static_cast<unsigned long long>(bitmapHeight);
+	if (decodedSize == 0 || decodedSize > MAX_AVATAR_IMAGE_BYTES ||
+		((BmpInfoHdr.biCompression == BI_RGB || BmpInfoHdr.biCompression == BI_BITFIELDS) &&
+		 static_cast<unsigned long long>(iBitsSize) < decodedSize)) {
+		TRACE("Bitmap geometry exceeds the supplied bit data");
+		goto $abort;
+	}
 
     // Allocate the memory for the header.
     pBmpInfo = (LPBITMAPINFO)malloc (iBISize);
@@ -437,7 +541,9 @@ CAvatarStream * pStream)
    #endif
 
     // Seek to the bits in the file.
-    if (!pStream->SetPosition ((long)(dwFileStart + BmpFileHdr.bfOffBits), SEEK_SET)) {
+	bitsPosition = static_cast<unsigned long long>(dwFileStart) + BmpFileHdr.bfOffBits;
+	if (bitsPosition > static_cast<unsigned long long>((std::numeric_limits<long>::max)()) ||
+		!pStream->SetPosition(static_cast<long>(bitsPosition), SEEK_SET)) {
 		TRACE ("Failed to seek to bit data.");
 		goto $abort;
 	}
@@ -450,6 +556,9 @@ CAvatarStream * pStream)
     }
 
     // Everything went OK.
+	if (pBmpInfo->bmiHeader.biCompression == BI_RLE4 ||
+		pBmpInfo->bmiHeader.biCompression == BI_RLE8)
+		pBmpInfo->bmiHeader.biSizeImage = iBitsSize;
     if (m_pBMI != NULL) 
 		free (m_pBMI);
     m_pBMI = pBmpInfo; 
@@ -459,7 +568,8 @@ CAvatarStream * pStream)
     m_bMyBits = TRUE;
 	// djk -- this shouldn't be necessary, but there's a bug in windows that mandates drawing
 	//        be confined to non-rle bitmaps
-	ConvertToNonRLE ();
+	if (!ConvertToNonRLE())
+		return FALSE;
     return TRUE;
                 
 $abort: // Something went wrong.
@@ -480,18 +590,27 @@ BYTE* pBits)
 {
     ASSERT(pBMI);
     ASSERT(pBits);
+	if (pBMI == NULL || pBits == NULL || !IsValidAvatarBitmap(pBMI->bmiHeader) ||
+		pBMI->bmiHeader.biSize < sizeof(BITMAPINFOHEADER) ||
+		pBMI->bmiHeader.biSize > sizeof(BITMAPINFOHEADER) * 6)
+		return FALSE;
 
 	// Allocate enough room for the BITMAPINFO and copy it.
-    if (m_pBMI != NULL) free(m_pBMI);
-    int iColors = NumDIBColorEntries ((LPBITMAPINFO)pBMI);
-    int iColorTableSize = iColors * sizeof(RGBQUAD);
-    m_pBMI = (BITMAPINFO*)malloc (pBMI->bmiHeader.biSize + iColorTableSize);
-	if (!m_pBMI) {
+	int iColors = NumDIBColorEntries ((LPBITMAPINFO)pBMI);
+	if (iColors < 0 || iColors > MAX_PALETTE_SIZE) {
 		return FALSE;
 	}
-    memcpy (m_pBMI, pBMI, pBMI->bmiHeader.biSize + iColorTableSize);
+	const int iColorTableSize = iColors * sizeof(RGBQUAD);
+	BITMAPINFO* pNewBMI = static_cast<BITMAPINFO*>(malloc(pBMI->bmiHeader.biSize + iColorTableSize));
+	if (!pNewBMI) {
+		return FALSE;
+	}
+	memcpy(pNewBMI, pBMI, pBMI->bmiHeader.biSize + iColorTableSize);
 
 	// Use the bits passed in by the caller.
+	if (m_pBMI != NULL)
+		free(m_pBMI);
+	m_pBMI = pNewBMI;
     if (m_bMyBits && (m_pBits != NULL)) 
 		free(m_pBits);
     m_pBits = pBits;
@@ -512,7 +631,8 @@ CAvatarStream * pStream)
 {
 	ASSERT (m_pImage != NULL);
 	if (m_pImage->m_dwStreamOffset != (DWORD)-1L) {
-		if (!pStream->SetPosition ((long)m_pImage->m_dwStreamOffset, SEEK_SET)) {
+		if (m_pImage->m_dwStreamOffset > static_cast<DWORD>((std::numeric_limits<long>::max)()) ||
+			!pStream->SetPosition(static_cast<long>(m_pImage->m_dwStreamOffset), SEEK_SET)) {
 			TRACE("Seek failed");
 			return FALSE;
 		}
@@ -631,6 +751,11 @@ CAvatarFileZlibImage::Read(
 CAvatarStream * pStream)
 {
 	ASSERT(m_pImage->m_pDib == NULL);
+	LPBITMAPINFO lpbmi = NULL;
+	LPBYTE pbBitmapData = NULL;
+	UINT cbBitmapData = 0;
+	long imageHeight = 0;
+	unsigned long long expectedBitmapSize = 0;
 
 	// Set proper position in file.
 	if (!SetProperPosition (pStream)) {
@@ -660,16 +785,12 @@ CAvatarStream * pStream)
 	// Read the size of the infoheader, and do some sanity checking.
 	AVBINT32 dwHeaderSize;
 	if (!pStream->Read32 (&dwHeaderSize)) {
-		return FALSE;
+		goto $abort;
 	}
 	if (dwHeaderSize < sizeof(BITMAPINFOHEADER) || dwHeaderSize > sizeof(BITMAPINFOHEADER) * 6) {
 		TRACE("Apparent bad bitmap info header, returning failure.");
-		return FALSE;
+		goto $abort;
 	}
-
-	LPBITMAPINFO lpbmi = NULL;
-	LPBYTE pbBitmapData = NULL;
-	UINT cbBitmapData;
 
 	// Allocate room for a BITMAPINFO with enough color entries.
 	lpbmi = (LPBITMAPINFO)malloc (dwHeaderSize + pal.m_nColorCount * sizeof(RGBQUAD));
@@ -687,9 +808,9 @@ CAvatarStream * pStream)
 	}
 
 	// Do some sanity checking to make sure the bitmap hasn't been hacked.
-	if (lpbmi->bmiHeader.biBitCount == 0) {
+	if (!IsValidAvatarBitmap(lpbmi->bmiHeader)) {
 		TRACE("Invalid image, returning failure");
-		return FALSE;
+		goto $abort;
 	}
 
 	// Copy the palette's color table into the info structure.
@@ -709,7 +830,13 @@ CAvatarStream * pStream)
 
 	// Do things match?
 
-	if (cbBitmapData != (UINT)(DIBStorageWidth (lpbmi->bmiHeader.biWidth, lpbmi->bmiHeader.biBitCount) * lpbmi->bmiHeader.biHeight))
+	imageHeight = lpbmi->bmiHeader.biHeight < 0
+		? -lpbmi->bmiHeader.biHeight : lpbmi->bmiHeader.biHeight;
+	expectedBitmapSize =
+		static_cast<unsigned long long>(DIBStorageWidth(lpbmi->bmiHeader.biWidth, lpbmi->bmiHeader.biBitCount)) *
+		static_cast<unsigned long long>(imageHeight);
+	if (expectedBitmapSize == 0 || expectedBitmapSize > MAX_AVATAR_IMAGE_BYTES ||
+		expectedBitmapSize != cbBitmapData)
 	{
 		TRACE("Image size mismatch");
 		goto $abort;
@@ -725,6 +852,8 @@ CAvatarStream * pStream)
 	// Failure
 	free (pbBitmapData);
     free (lpbmi);
+	delete m_pImage->m_pDib;
+	m_pImage->m_pDib = NULL;
 	return FALSE;
 }
 
@@ -931,7 +1060,8 @@ long &			nResourcesAdjustment)
 			}
 
 			// Create the pose.
-			ADJUST_OFFSET(icondata.dwOffset, nResourcesAdjustment);
+			if (!AdjustAvatarOffset(icondata.dwOffset, nResourcesAdjustment))
+				return FALSE;
 			USHORT nPose = CreatePose (pStream, icondata.dwOffset, 
 								icondata.byFormat, icondata.byPalette);
 			m_icon = nPose;
@@ -953,7 +1083,8 @@ long &			nResourcesAdjustment)
 			int nValue;
 			bRet = pStream->Read32 ((AVBINT32 *)&nValue);
 			if (bRet) {
-				nResourcesAdjustment += nValue;
+				if (!AddResourceAdjustment(nResourcesAdjustment, nValue))
+					return FALSE;
 			}
 			break;
 		}
@@ -1068,6 +1199,11 @@ long &			nResourcesAdjustment)
 	if (!pStream->Read16 (&nCount)) {
 		return FALSE;
 	}
+	if (nCount == 0 || nCount > MAX_AVATAR_COMPONENTS ||
+		nCount > static_cast<AVBINT16>((std::numeric_limits<short>::max)())) {
+		TRACE("Invalid simple-avatar body count");
+		return FALSE;
+	}
 
 	bRec = (RBODYREC *)malloc (sizeof (RBODYREC) * nCount);
 	if (bRec == NULL) {
@@ -1091,9 +1227,12 @@ long &			nResourcesAdjustment)
 		}
 
 		if (bodydata.newdata.dwImageOffset != dwPrevImageOffset) {
-			ADJUST_OFFSET(bodydata.newdata.dwImageOffset, nResourcesAdjustment);
-			ADJUST_OFFSET(bodydata.newdata.dwMaskOffset, nResourcesAdjustment);
-			ADJUST_OFFSET(bodydata.newdata.dwAuraOffset, nResourcesAdjustment);
+			if (!AdjustAvatarOffset(bodydata.newdata.dwImageOffset, nResourcesAdjustment) ||
+				!AdjustAvatarOffset(bodydata.newdata.dwMaskOffset, nResourcesAdjustment) ||
+				!AdjustAvatarOffset(bodydata.newdata.dwAuraOffset, nResourcesAdjustment)) {
+				bRet = FALSE;
+				break;
+			}
 			bRec[i].poseID = CreatePoseWithMask (pStream, 
 									&bodydata.newdata.dwImageOffset, 
 									&bodydata.newdata.byImageFormat,
@@ -1172,6 +1311,11 @@ long &			nResourcesAdjustment)
 	if (!pStream->Read16 (&nCount)) {
 		return FALSE;
 	}
+	if (nCount == 0 || nCount > MAX_AVATAR_COMPONENTS ||
+		nCount > static_cast<AVBINT16>((std::numeric_limits<short>::max)())) {
+		TRACE("Invalid complex-avatar face count");
+		return FALSE;
+	}
 
 	fRec = (FACEREC *)malloc (sizeof (FACEREC) * nCount);
 	if (fRec == NULL) {
@@ -1195,9 +1339,12 @@ long &			nResourcesAdjustment)
 		}
 
 		if (facedata.newdata.dwImageOffset != dwPrevImageOffset) {
-			ADJUST_OFFSET(facedata.newdata.dwImageOffset, nResourcesAdjustment);
-			ADJUST_OFFSET(facedata.newdata.dwMaskOffset, nResourcesAdjustment);
-			ADJUST_OFFSET(facedata.newdata.dwAuraOffset, nResourcesAdjustment);
+			if (!AdjustAvatarOffset(facedata.newdata.dwImageOffset, nResourcesAdjustment) ||
+				!AdjustAvatarOffset(facedata.newdata.dwMaskOffset, nResourcesAdjustment) ||
+				!AdjustAvatarOffset(facedata.newdata.dwAuraOffset, nResourcesAdjustment)) {
+				bRet = FALSE;
+				break;
+			}
 			fRec[i].poseID = CreatePoseWithMask (pStream, 
 									&facedata.newdata.dwImageOffset, 
 									&facedata.newdata.byImageFormat,
@@ -1246,6 +1393,11 @@ long &			nResourcesAdjustment)
 	if (!pStream->Read16 (&nCount)) {
 		return FALSE;
 	}
+	if (nCount == 0 || nCount > MAX_AVATAR_COMPONENTS ||
+		nCount > static_cast<AVBINT16>((std::numeric_limits<short>::max)())) {
+		TRACE("Invalid complex-avatar torso count");
+		return FALSE;
+	}
 
 	bRec = (BODYREC *)malloc (sizeof (BODYREC) * nCount);
 	if (bRec == NULL) {
@@ -1269,9 +1421,12 @@ long &			nResourcesAdjustment)
 		}
 
 		if (torsodata.newdata.dwImageOffset != dwPrevImageOffset) {
-			ADJUST_OFFSET(torsodata.newdata.dwImageOffset, nResourcesAdjustment);
-			ADJUST_OFFSET(torsodata.newdata.dwMaskOffset, nResourcesAdjustment);
-			ADJUST_OFFSET(torsodata.newdata.dwAuraOffset, nResourcesAdjustment);
+			if (!AdjustAvatarOffset(torsodata.newdata.dwImageOffset, nResourcesAdjustment) ||
+				!AdjustAvatarOffset(torsodata.newdata.dwMaskOffset, nResourcesAdjustment) ||
+				!AdjustAvatarOffset(torsodata.newdata.dwAuraOffset, nResourcesAdjustment)) {
+				bRet = FALSE;
+				break;
+			}
 			bRec[i].poseID = CreatePoseWithMask (pStream, 
 									&torsodata.newdata.dwImageOffset, 
 									&torsodata.newdata.byImageFormat,
@@ -1863,7 +2018,8 @@ CAvatarStream* pStream)
 				if (!pStream->Read32 ((AVBINT32 *)&nValue)) {
 					return FALSE;
 				}
-				nResourcesAdjustment += nValue;
+				if (!AddResourceAdjustment(nResourcesAdjustment, nValue))
+					return FALSE;
 				break;
 			}
 		}
@@ -1883,7 +2039,8 @@ CAvatarStream* pStream)
 				return FALSE;
 			}
 
-			ADJUST_OFFSET(dwOffset[0], nResourcesAdjustment);
+			if (!AdjustAvatarOffset(dwOffset[0], nResourcesAdjustment))
+				return FALSE;
 			dwOffset[1] = dwOffset[2] = 0;
 			CPose rec (dwOffset, byFormat, byPaletteType);
 			if (!rec.Load (pStream, NULL)) {

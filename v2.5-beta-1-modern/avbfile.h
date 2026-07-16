@@ -67,6 +67,9 @@ typedef	ULONG	AVBINT32;
 #define AVSTREAM_ERROR		(-1L)
 #define MAX_COMPRESSBUFFERSIZE	(2048L * 1024L)		// 2Mb
 #define MAX_PALETTE_SIZE (2048)
+#define MAX_AVATAR_COMPONENTS (4096)
+#define MAX_AVATAR_IMAGE_BYTES (64UL * 1024UL * 1024UL)
+#define MAX_AVATAR_IMAGE_DIMENSION (32768L)
 
 
 // ============================================================================
