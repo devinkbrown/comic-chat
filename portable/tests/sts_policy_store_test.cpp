@@ -144,6 +144,86 @@ void TestSecureDurationZeroRemovalPersists() {
           "duration zero removal survives restart");
 }
 
+void TestInterleavedStoresMergeHostPersistence() {
+    TemporaryDirectory temporary;
+    const auto file = temporary.path / "sts-policies";
+    StsPolicyStore first{file};
+    StsPolicyStore second{file};
+    Check(first.load(At(10)).has_value() && second.load(At(10)).has_value(),
+          "interleaved persistence stores load the same empty snapshot");
+    Check(first.apply_verified_update("a.example", 7001, true, 1, Persist(1000), At(20)).has_value(),
+          "first store persists host A");
+    Check(second.apply_verified_update("b.example", 7002, true, 2, Persist(1000), At(21)).has_value(),
+          "stale second store merges host B");
+
+    const auto published_a = second.plan(PlaintextRequest("a.example"), At(22));
+    Check(published_a && published_a->enforced && published_a->options.endpoint.port == 7001,
+          "second store publishes the merged host A snapshot in memory");
+    StsPolicyStore restarted{file};
+    Check(restarted.load(At(22)).has_value(), "interleaved persistence result reloads");
+    const auto durable_a = restarted.plan(PlaintextRequest("a.example"), At(22));
+    const auto durable_b = restarted.plan(PlaintextRequest("b.example"), At(22));
+    Check(durable_a && durable_a->enforced && durable_a->options.endpoint.port == 7001,
+          "host A survives a stale store persisting host B");
+    Check(durable_b && durable_b->enforced && durable_b->options.endpoint.port == 7002,
+          "host B persistence remains durable after the merge");
+}
+
+void TestInterleavedStoresMergeHostRemoval() {
+    TemporaryDirectory temporary;
+    const auto file = temporary.path / "sts-policies";
+    StsPolicyStore second{file};
+    Check(second.load(At(10)).has_value(), "host B removal store loads");
+    Check(second.apply_verified_update("b.example", 7002, true, 2, Persist(1000), At(10)).has_value(),
+          "host B removal baseline persists");
+    StsPolicyStore first{file};
+    Check(first.load(At(20)).has_value(), "host A writer loads the host B snapshot");
+    Check(first.apply_verified_update("a.example", 7001, true, 1, Persist(1000), At(21)).has_value(),
+          "host A persists after the removal store becomes stale");
+    Check(second.apply_verified_update("b.example", 7002, true, 2, Remove(), At(22)).has_value(),
+          "stale second store removes only host B");
+
+    const auto published_a = second.plan(PlaintextRequest("a.example"), At(23));
+    Check(published_a && published_a->enforced && published_a->options.endpoint.port == 7001,
+          "removing host B publishes merged host A in memory");
+    StsPolicyStore restarted{file};
+    Check(restarted.load(At(23)).has_value(), "interleaved removal result reloads");
+    const auto durable_a = restarted.plan(PlaintextRequest("a.example"), At(23));
+    const auto removed_b = restarted.plan(PlaintextRequest("b.example"), At(23));
+    Check(durable_a && durable_a->enforced && durable_a->options.endpoint.port == 7001,
+          "host A survives a stale store removing host B");
+    Check(removed_b && !removed_b->enforced, "host B removal remains durable after the merge");
+}
+
+void TestInterleavedStoresMergeHostReschedule() {
+    TemporaryDirectory temporary;
+    const auto file = temporary.path / "sts-policies";
+    StsPolicyStore second{file};
+    Check(second.load(At(100)).has_value(), "host B reschedule store loads");
+    const auto receipt = second.apply_verified_update("b.example", 7002, true, 2, Persist(100), At(100));
+    Check(receipt && *receipt, "host B reschedule baseline returns a receipt");
+    if (!receipt || !*receipt) return;
+
+    StsPolicyStore first{file};
+    Check(first.load(At(101)).has_value(), "host A writer loads the host B snapshot");
+    Check(first.apply_verified_update("a.example", 7001, true, 1, Persist(1000), At(101)).has_value(),
+          "host A persists after the reschedule store becomes stale");
+    Check(second.reschedule_on_verified_disconnect("b.example", true, 2, *receipt, At(500)).has_value(),
+          "stale second store rebases only host B after its prior expiry");
+
+    const auto published_a = second.plan(PlaintextRequest("a.example"), At(550));
+    Check(published_a && published_a->enforced && published_a->options.endpoint.port == 7001,
+          "rescheduling host B publishes merged host A in memory");
+    StsPolicyStore restarted{file};
+    Check(restarted.load(At(550)).has_value(), "interleaved reschedule result reloads");
+    const auto durable_a = restarted.plan(PlaintextRequest("a.example"), At(550));
+    const auto rebased_b = restarted.plan(PlaintextRequest("b.example"), At(599));
+    Check(durable_a && durable_a->enforced && durable_a->options.endpoint.port == 7001,
+          "host A survives a stale store rescheduling host B");
+    Check(rebased_b && rebased_b->enforced && rebased_b->options.endpoint.port == 7002,
+          "host B remains active until its rebased expiry");
+}
+
 void TestOnlyVerifiedSecureUpdatesPersist() {
     TemporaryDirectory temporary;
     const auto file = temporary.path / "sts-policies";
@@ -191,6 +271,45 @@ void TestAtomicBoundedParsingPreservesPriorSnapshot() {
           "oversized policy file is rejected before parsing");
 }
 
+void TestMutationReloadAndLockFailuresFailClosed() {
+    TemporaryDirectory temporary;
+    const auto file = temporary.path / "sts-policies";
+    StsPolicyStore store{file};
+    Check(store.load(At(10)).has_value(), "mutation reload test store loads");
+    Check(store.apply_verified_update("a.example", 7001, true, 1, Persist(600), At(10)).has_value(),
+          "mutation reload baseline persists");
+    {
+        std::ofstream corrupt{file, std::ios::binary | std::ios::trunc};
+        corrupt << "comicchat-sts-v1\nnot-a-policy\n";
+    }
+    const auto rejected = store.apply_verified_update("b.example", 7002, true, 2, Persist(600), At(20));
+    Check(!rejected && rejected.error() == StsStoreError::malformed_file,
+          "mutation rejects a malformed durable snapshot instead of overwriting it");
+    const auto retained = store.plan(PlaintextRequest("a.example"), At(20));
+    Check(retained && retained->enforced && retained->options.endpoint.port == 7001,
+          "failed transaction reload preserves the prior in-memory snapshot");
+    StsPolicyStore malformed{file};
+    const auto still_malformed = malformed.load(At(20));
+    Check(!still_malformed && still_malformed.error() == StsStoreError::malformed_file,
+          "failed transaction reload leaves malformed durable bytes untouched");
+
+    const auto locked_file = temporary.path / "locked-policies";
+    StsPolicyStore blocked{locked_file};
+    Check(blocked.load(At(10)).has_value(), "lock failure test store loads");
+    auto lock_path = locked_file;
+    lock_path += ".lock";
+    std::error_code error;
+    Check(std::filesystem::create_directory(lock_path, error) && !error,
+          "invalid lock-path fixture is created");
+    const auto lock_failed = blocked.apply_verified_update(
+        "a.example", 7001, true, 1, Persist(600), At(10));
+    Check(!lock_failed && (lock_failed.error() == StsStoreError::io_error ||
+                           lock_failed.error() == StsStoreError::unsafe_file),
+          "lock acquisition failure rejects the mutation");
+    Check(blocked.size() == 0 && !std::filesystem::exists(locked_file),
+          "lock acquisition failure changes neither memory nor durable state");
+}
+
 void TestCrashResidueAndConcurrentTemporaryCollisions() {
     TemporaryDirectory temporary;
     const auto file = temporary.path / "sts-policies";
@@ -213,8 +332,9 @@ void TestCrashResidueAndConcurrentTemporaryCollisions() {
             const auto loaded = store.load(At(20));
             rendezvous.arrive_and_wait();
             if (!loaded) return;
+            const auto hostname = "writer" + std::to_string(index) + ".example";
             const auto updated = store.apply_verified_update(
-                "irc.example", static_cast<std::uint16_t>(7000 + index), true,
+                hostname, static_cast<std::uint16_t>(7000 + index), true,
                 static_cast<comicchat::net::GenerationId>(index + 1), Persist(1200), At(20));
             succeeded[index].store(updated.has_value(), std::memory_order_relaxed);
         });
@@ -223,14 +343,19 @@ void TestCrashResidueAndConcurrentTemporaryCollisions() {
     Check(std::ranges::all_of(succeeded, [](const std::atomic_bool& value) {
               return value.load(std::memory_order_relaxed);
           }),
-          "parallel writers use distinct exclusive same-directory temporary files");
+          "parallel writers complete locked merge transactions");
 
     StsPolicyStore restarted{file};
     Check(restarted.load(At(21)).has_value(), "concurrent atomic replacements leave one complete file");
-    const auto durable = restarted.plan(PlaintextRequest(), At(21));
-    Check(durable && durable->enforced && durable->options.endpoint.port >= 7000 &&
-              durable->options.endpoint.port < 7000 + writers,
-          "complete winning concurrent policy remains enforceable");
+    Check(restarted.size() == writers + 1U,
+          "parallel transactions preserve the baseline and every distinct hostname");
+    for (std::size_t index = 0; index < writers; ++index) {
+        const auto hostname = "writer" + std::to_string(index) + ".example";
+        const auto durable = restarted.plan(PlaintextRequest(hostname), At(21));
+        Check(durable && durable->enforced &&
+                  durable->options.endpoint.port == static_cast<std::uint16_t>(7000 + index),
+              "each parallel hostname remains enforceable after locked merging");
+    }
     const auto prefix = file.filename().string() + ".tmp.";
     bool leaked_temporary{};
     for (const auto& entry : std::filesystem::directory_iterator(temporary.path)) {
@@ -332,6 +457,23 @@ void TestBoundsAndUnsafeFilesFailClosed() {
         Check(!unsafe && unsafe.error() == StsStoreError::unsafe_file,
               "policy loading rejects symlink substitution");
     }
+
+    const auto locked_file = temporary.path / "lock-symlink-policies";
+    StsPolicyStore lock_store{locked_file};
+    Check(lock_store.load(At(10)).has_value(), "lock symlink test store loads");
+    auto lock_link = locked_file;
+    lock_link += ".lock";
+    error.clear();
+    std::filesystem::create_symlink(real_file, lock_link, error);
+    Check(!error, "lock-file symlink fixture created");
+    if (!error) {
+        const auto unsafe = lock_store.apply_verified_update(
+            "irc.example", 6697, true, 1, Persist(100), At(10));
+        Check(!unsafe && unsafe.error() == StsStoreError::unsafe_file,
+              "policy mutation rejects lock-file symlink substitution");
+        Check(!std::filesystem::exists(locked_file),
+              "rejected lock-file symlink leaves durable policy state untouched");
+    }
 #endif
 }
 
@@ -340,8 +482,12 @@ void TestBoundsAndUnsafeFilesFailClosed() {
 int main() {
     TestDurableHostnamePolicyAndNoDowngrade();
     TestSecureDurationZeroRemovalPersists();
+    TestInterleavedStoresMergeHostPersistence();
+    TestInterleavedStoresMergeHostRemoval();
+    TestInterleavedStoresMergeHostReschedule();
     TestOnlyVerifiedSecureUpdatesPersist();
     TestAtomicBoundedParsingPreservesPriorSnapshot();
+    TestMutationReloadAndLockFailuresFailClosed();
     TestCrashResidueAndConcurrentTemporaryCollisions();
     TestDisconnectReschedulesLastVerifiedDuration();
     TestDisconnectWithoutSameSessionAdvertisementDoesNotExtend();

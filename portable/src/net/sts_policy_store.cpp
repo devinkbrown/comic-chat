@@ -20,6 +20,7 @@
 #include <windows.h>
 #else
 #include <fcntl.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -134,7 +135,8 @@ auto SplitFields(const std::string_view line) -> std::optional<std::array<std::s
     return std::nullopt;
 }
 
-auto ParsePolicies(const std::string_view bytes, const StsTimePoint now)
+auto ParsePolicies(const std::string_view bytes, const StsTimePoint now,
+                   const std::string_view preserved_expired_hostname = {})
     -> std::expected<std::map<std::string, StsPolicyRecord, std::less<>>, StsStoreError> {
     using Policies = std::map<std::string, StsPolicyRecord, std::less<>>;
     if (!bytes.starts_with(file_header)) return std::unexpected(StsStoreError::malformed_file);
@@ -180,7 +182,9 @@ auto ParsePolicies(const std::string_view bytes, const StsTimePoint now)
 
     // Expired records loaded at process start cannot belong to a currently
     // connected session, so discarding them is safe and keeps memory bounded.
-    std::erase_if(policies, [now](const auto& item) { return item.second.expires_at <= now; });
+    std::erase_if(policies, [now, preserved_expired_hostname](const auto& item) {
+        return item.second.expires_at <= now && item.first != preserved_expired_hostname;
+    });
     return policies;
 }
 
@@ -244,6 +248,47 @@ public:
 private:
     HANDLE handle_;
 };
+
+class StoreLock final {
+public:
+    explicit StoreLock(WindowsHandle handle) : handle_(std::move(handle)) {}
+    ~StoreLock() {
+        if (!handle_.valid()) return;
+        OVERLAPPED range{};
+        (void)UnlockFileEx(handle_.get(), 0, 1, 0, &range);
+    }
+    StoreLock(const StoreLock&) = delete;
+    auto operator=(const StoreLock&) -> StoreLock& = delete;
+    StoreLock(StoreLock&&) noexcept = default;
+    auto operator=(StoreLock&&) noexcept -> StoreLock& = default;
+
+private:
+    // Closing this handle remains the fallback release if UnlockFileEx fails.
+    WindowsHandle handle_;
+};
+
+auto AcquireStoreLock(const std::filesystem::path& file) -> std::expected<StoreLock, StsStoreError> {
+    auto lock_file = file;
+    lock_file += L".lock";
+    WindowsHandle handle{CreateFileW(lock_file.c_str(), GENERIC_READ | GENERIC_WRITE,
+                                     FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
+                                     FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr)};
+    if (!handle.valid()) return std::unexpected(StsStoreError::io_error);
+
+    FILE_ATTRIBUTE_TAG_INFO attributes{};
+    if (!GetFileInformationByHandleEx(handle.get(), FileAttributeTagInfo, &attributes, sizeof(attributes))) {
+        return std::unexpected(StsStoreError::io_error);
+    }
+    if ((attributes.FileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0) {
+        return std::unexpected(StsStoreError::unsafe_file);
+    }
+
+    OVERLAPPED range{};
+    if (!LockFileEx(handle.get(), LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, &range)) {
+        return std::unexpected(StsStoreError::io_error);
+    }
+    return StoreLock{std::move(handle)};
+}
 
 auto ReadFileBounded(const std::filesystem::path& file) -> std::expected<ReadResult, StsStoreError> {
     WindowsHandle handle{CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
@@ -361,6 +406,63 @@ private:
     int fd_;
 };
 
+class StoreLock final {
+public:
+    explicit StoreLock(PosixFd handle) : handle_(std::move(handle)) {}
+    StoreLock(const StoreLock&) = delete;
+    auto operator=(const StoreLock&) -> StoreLock& = delete;
+    StoreLock(StoreLock&&) noexcept = default;
+    auto operator=(StoreLock&&) noexcept -> StoreLock& = default;
+
+private:
+    // flock ownership follows this open file description and is released when
+    // the descriptor closes, including after process termination.
+    PosixFd handle_;
+};
+
+constexpr auto LockFlags() -> int {
+    // O_NONBLOCK prevents a substituted FIFO/device from hanging before fstat
+    // can reject it. flock remains blocking unless LOCK_NB is requested.
+    int flags = O_RDWR | O_CREAT | O_NONBLOCK;
+#if defined(O_CLOEXEC)
+    flags |= O_CLOEXEC;
+#endif
+#if defined(O_NOFOLLOW)
+    flags |= O_NOFOLLOW;
+#endif
+    return flags;
+}
+
+auto AcquireStoreLock(const std::filesystem::path& file) -> std::expected<StoreLock, StsStoreError> {
+    const auto parent = file.has_parent_path() ? file.parent_path() : std::filesystem::path{"."};
+    struct stat parent_status{};
+    if (::stat(parent.c_str(), &parent_status) != 0 || !S_ISDIR(parent_status.st_mode) ||
+        parent_status.st_uid != ::geteuid() || (parent_status.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+        return std::unexpected(StsStoreError::unsafe_file);
+    }
+
+    auto lock_file = file;
+    lock_file += ".lock";
+    PosixFd handle{::open(lock_file.c_str(), LockFlags(), S_IRUSR | S_IWUSR)};
+    if (!handle.valid()) {
+#if defined(ELOOP)
+        if (errno == ELOOP) return std::unexpected(StsStoreError::unsafe_file);
+#endif
+        return std::unexpected(StsStoreError::io_error);
+    }
+    struct stat status{};
+    if (::fstat(handle.get(), &status) != 0) return std::unexpected(StsStoreError::io_error);
+    if (!S_ISREG(status.st_mode) || status.st_uid != ::geteuid() ||
+        (status.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+        return std::unexpected(StsStoreError::unsafe_file);
+    }
+
+    int locked;
+    do locked = ::flock(handle.get(), LOCK_EX); while (locked != 0 && errno == EINTR);
+    if (locked != 0) return std::unexpected(StsStoreError::io_error);
+    return StoreLock{std::move(handle)};
+}
+
 constexpr auto ReadFlags() -> int {
     // O_NONBLOCK prevents an attacker-controlled FIFO/device substitution from
     // hanging before fstat can reject every non-regular file.
@@ -470,6 +572,15 @@ auto AtomicWriteFile(const std::filesystem::path& file, const std::string_view b
 
 #endif
 
+auto ReadPoliciesSnapshot(const std::filesystem::path& file, const StsTimePoint now,
+                          const std::string_view preserved_expired_hostname = {})
+    -> std::expected<std::map<std::string, StsPolicyRecord, std::less<>>, StsStoreError> {
+    const auto read = ReadFileBounded(file);
+    if (!read) return std::unexpected(read.error());
+    if (read->missing) return std::map<std::string, StsPolicyRecord, std::less<>>{};
+    return ParsePolicies(read->bytes, now, preserved_expired_hostname);
+}
+
 auto ExpiryFrom(const StsTimePoint now, const std::uint64_t duration)
     -> std::expected<StsTimePoint, StsStoreError> {
     const auto now_seconds = now.time_since_epoch().count();
@@ -486,15 +597,9 @@ StsPolicyStore::StsPolicyStore(std::filesystem::path file) : file_(std::move(fil
 
 auto StsPolicyStore::load(const StsTimePoint now) -> std::expected<void, StsStoreError> {
     if (file_.empty()) return std::unexpected(StsStoreError::io_error);
-    const auto read = ReadFileBounded(file_);
-    if (!read) return std::unexpected(read.error());
-    Policies next;
-    if (!read->missing) {
-        auto parsed = ParsePolicies(read->bytes, now);
-        if (!parsed) return std::unexpected(parsed.error());
-        next = std::move(*parsed);
-    }
-    policies_.swap(next);
+    auto next = ReadPoliciesSnapshot(file_, now);
+    if (!next) return std::unexpected(next.error());
+    policies_.swap(*next);
     loaded_ = true;
     return {};
 }
@@ -548,23 +653,37 @@ auto StsPolicyStore::apply_verified_update(
     if (!hostname) return std::unexpected(hostname.error());
     if (connected_secure_port == 0) return std::unexpected(StsStoreError::invalid_port);
 
-    Policies next = policies_;
+    std::optional<StsPolicyRecord> replacement;
     if (update.action == comic_chat::ircv3::StsPolicyAction::Remove) {
         if (update.duration != 0 || update.port != 0 || update.preload) {
             return std::unexpected(StsStoreError::invalid_update);
         }
-        next.erase(*hostname);
     } else {
         if (update.action != comic_chat::ircv3::StsPolicyAction::Persist || update.duration == 0 ||
             update.port != 0) {
             return std::unexpected(StsStoreError::invalid_update);
         }
+        const auto expiry = ExpiryFrom(now, update.duration);
+        if (!expiry) return std::unexpected(expiry.error());
+        replacement.emplace(StsPolicyRecord{
+            *hostname, connected_secure_port, update.duration, *expiry, update.preload});
+    }
+
+    // The companion lock is stable across atomic replacements of the data
+    // file. Re-read while holding it so this object never writes a stale
+    // process-local snapshot over another process's hostname.
+    const auto transaction_lock = AcquireStoreLock(file_);
+    if (!transaction_lock) return std::unexpected(transaction_lock.error());
+    auto latest = ReadPoliciesSnapshot(file_, now);
+    if (!latest) return std::unexpected(latest.error());
+    Policies next = std::move(*latest);
+    if (replacement) {
         if (!next.contains(*hostname) && next.size() >= maximum_policies) {
             return std::unexpected(StsStoreError::too_many_policies);
         }
-        const auto expiry = ExpiryFrom(now, update.duration);
-        if (!expiry) return std::unexpected(expiry.error());
-        next[*hostname] = {*hostname, connected_secure_port, update.duration, *expiry, update.preload};
+        next[*hostname] = std::move(*replacement);
+    } else {
+        next.erase(*hostname);
     }
 
     const auto saved = persist(next);
@@ -593,14 +712,22 @@ auto StsPolicyStore::reschedule_on_verified_disconnect(
         last_persistence_from_this_connection->generation_ != closing_generation) {
         return std::unexpected(StsStoreError::invalid_update);
     }
-    const auto found = policies_.find(*hostname);
-    if (found == policies_.end() ||
+    const auto expiry = ExpiryFrom(now, last_persistence_from_this_connection->duration_seconds_);
+    if (!expiry) return std::unexpected(expiry.error());
+
+    const auto transaction_lock = AcquireStoreLock(file_);
+    if (!transaction_lock) return std::unexpected(transaction_lock.error());
+    // Preserve only the receipt-bound target past its old expiry. A live TLS
+    // session is allowed to rebase that policy at disconnect; unrelated stale
+    // entries remain pruned during the transaction reload.
+    auto latest = ReadPoliciesSnapshot(file_, now, *hostname);
+    if (!latest) return std::unexpected(latest.error());
+    const auto found = latest->find(*hostname);
+    if (found == latest->end() ||
         found->second.duration_seconds != last_persistence_from_this_connection->duration_seconds_) {
         return std::unexpected(StsStoreError::invalid_update);
     }
-    const auto expiry = ExpiryFrom(now, last_persistence_from_this_connection->duration_seconds_);
-    if (!expiry) return std::unexpected(expiry.error());
-    Policies next = policies_;
+    Policies next = std::move(*latest);
     next[*hostname].expires_at = *expiry;
     const auto saved = persist(next);
     if (!saved.error || saved.replaced) policies_.swap(next);

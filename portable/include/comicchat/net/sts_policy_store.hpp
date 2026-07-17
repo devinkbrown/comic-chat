@@ -61,8 +61,9 @@ private:
     GenerationId generation_{};
 };
 
-// Durable STS state has one external owner (normally the UI/session thread).
-// The caller supplies a file inside an already-created, per-user private
+// Each object still has one external owner (normally the UI/session thread),
+// while durable mutations are coordinated with other processes using the same
+// store. The caller supplies a file inside an already-created, per-user private
 // configuration directory. This class deliberately does not guess HOME,
 // LOCALAPPDATA, XDG paths, create parent directories, or retain secrets.
 class StsPolicyStore final {
