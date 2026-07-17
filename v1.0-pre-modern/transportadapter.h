@@ -27,6 +27,9 @@ namespace comic_chat::v1::transport {
 inline constexpr std::size_t maximum_irc_wire_bytes = 8191U + 512U;
 inline constexpr std::size_t maximum_legacy_wire_bytes = 512U;
 inline constexpr std::size_t maximum_legacy_prefix_component_bytes = 49U;
+inline constexpr std::size_t maximum_legacy_channel_bytes = 255U;
+inline constexpr std::size_t maximum_isupport_prefix_bytes = 66U;
+inline constexpr std::size_t maximum_isupport_prefix_statuses = 32U;
 inline constexpr std::size_t maximum_protocol_lines_per_ui_wake = 512U;
 
 enum class AdapterError : std::uint8_t {
@@ -186,28 +189,201 @@ namespace detail {
 	return prefix.size() - host_start <= maximum_legacy_prefix_component_bytes;
 }
 
-[[nodiscard]] inline std::expected<std::string, AdapterError> PrepareLegacyInbound(
-	const comic_chat::ircv3::Message& message)
+[[nodiscard]] inline bool ValidLegacyChannelName(std::string_view value) noexcept
 {
-	if (message.prefix && !LegacyPrefixFits(*message.prefix))
+	if (value.empty() || value.size() > maximum_legacy_channel_bytes ||
+		value.front() == ':') return false;
+	for (const unsigned char byte : value) {
+		if (byte <= 0x20U || byte == 0x7fU || byte == ',') return false;
+	}
+	return true;
+}
+
+// no-implicit-names suppresses only the server's automatic reply. Build the
+// one explicit query the Microsoft UI needs after its own JOIN, while keeping
+// the disabled path allocation-free and incapable of duplicating a request.
+[[nodiscard]] inline std::optional<std::string> PrepareExplicitNamesRequest(
+	const bool no_implicit_names_enabled,
+	std::string_view channel)
+{
+	if (!no_implicit_names_enabled || !ValidLegacyChannelName(channel))
+		return std::nullopt;
+	try {
+		comic_chat::ircv3::Message request;
+		request.command = "NAMES";
+		request.params.emplace_back(channel);
+		auto wire = request.SerializeChecked(false);
+		if (!wire || wire->size() > maximum_legacy_wire_bytes)
+			return std::nullopt;
+		return std::move(*wire);
+	} catch (...) {
+		return std::nullopt;
+	}
+}
+
+namespace detail {
+
+struct PrefixMapping final {
+	std::string_view modes;
+	std::string_view symbols;
+};
+
+[[nodiscard]] inline std::optional<PrefixMapping> ParsePrefixMapping(
+	std::string_view token) noexcept
+{
+	if (token.empty() || token.size() > maximum_isupport_prefix_bytes ||
+		token.front() != '(') return std::nullopt;
+	const auto close = token.find(')');
+	if (close == std::string_view::npos || close <= 1U || close + 1U >= token.size())
+		return std::nullopt;
+	const auto modes = token.substr(1U, close - 1U);
+	const auto symbols = token.substr(close + 1U);
+	if (modes.size() != symbols.size() ||
+		modes.size() > maximum_isupport_prefix_statuses) return std::nullopt;
+	for (std::size_t index = 0; index < modes.size(); ++index) {
+		const auto mode = static_cast<unsigned char>(modes[index]);
+		const auto symbol = static_cast<unsigned char>(symbols[index]);
+		if (mode <= 0x20U || mode == 0x7fU || symbol <= 0x20U || symbol == 0x7fU ||
+			modes.find(modes[index]) != index || symbols.find(symbols[index]) != index)
+			return std::nullopt;
+	}
+	return PrefixMapping{modes, symbols};
+}
+
+[[nodiscard]] inline bool ValidLegacyMiddleParameter(std::string_view value) noexcept
+{
+	if (value.empty() || value.size() > maximum_legacy_channel_bytes ||
+		value.front() == ':') return false;
+	for (const unsigned char byte : value) {
+		if (byte <= 0x20U || byte == 0x7fU) return false;
+	}
+	return true;
+}
+
+[[nodiscard]] inline bool ValidExtendedJoinShape(
+	const comic_chat::ircv3::Message& message) noexcept
+{
+	if (!message.prefix || message.command != "JOIN" ||
+		(message.params.size() != 1U && message.params.size() != 3U) ||
+		!ValidLegacyChannelName(message.params.front())) return false;
+	if (message.params.size() == 1U) return true;
+	if (!ValidLegacyMiddleParameter(message.params[1]) ||
+		message.params[2].size() > maximum_irc_wire_bytes) return false;
+	for (const char byte : message.params[2]) {
+		if (byte == '\0' || byte == '\r' || byte == '\n') return false;
+	}
+	return true;
+}
+
+[[nodiscard]] inline bool ValidLegacyNickname(std::string_view nickname) noexcept
+{
+	if (nickname.empty() ||
+		nickname.size() > maximum_legacy_prefix_component_bytes) return false;
+	for (const unsigned char byte : nickname) {
+		if (byte <= 0x20U || byte == 0x7fU || byte == ',') return false;
+	}
+	return true;
+}
+
+[[nodiscard]] inline std::expected<comic_chat::ircv3::Message, AdapterError>
+NormalizeLegacyNamesReply(
+	const comic_chat::ircv3::Message& message,
+	std::string_view prefix_token)
+{
+	if (!message.prefix || message.command != "353" || message.params.size() != 4U ||
+		!ValidLegacyChannelName(message.params[2]) || message.params[3].empty())
 		return std::unexpected(AdapterError::invalid_line);
-	auto wire = message.SerializeChecked(false);
-	if (!wire) return std::unexpected(AdapterError::invalid_line);
-	if (wire->size() > maximum_legacy_wire_bytes)
-		return std::unexpected(AdapterError::line_too_long);
-	const bool needs_legacy_trailing = !message.params.empty() &&
-		(message.command == "PRIVMSG" || message.command == "NICK" ||
-		 message.command == "319" || message.command == "322" ||
-		 message.command == "353" || message.command == "ERROR" ||
-		 (message.command == "KICK" && message.params.size() >= 3));
-	if (needs_legacy_trailing) {
-		const auto final_start = wire->size() - 2 - message.params.back().size();
-		if (final_start == 0 || (*wire)[final_start - 1] != ':')
-			wire->insert(final_start, 1, ':');
+	const auto mapping = ParsePrefixMapping(prefix_token);
+	if (!mapping) return std::unexpected(AdapterError::invalid_line);
+
+	std::string names;
+	const std::string_view source = message.params[3];
+	names.reserve(source.size());
+	for (std::size_t cursor = 0; cursor < source.size();) {
+		while (cursor < source.size() && source[cursor] == ' ') ++cursor;
+		if (cursor == source.size()) break;
+		const auto end = source.find(' ', cursor);
+		const auto token = source.substr(cursor,
+			end == std::string_view::npos ? source.size() - cursor : end - cursor);
+
+		std::size_t nickname_start{};
+		bool operator_role{};
+		while (nickname_start < token.size()) {
+			const auto status = mapping->symbols.find(token[nickname_start]);
+			if (status == std::string_view::npos) break;
+			const char mode = mapping->modes[status];
+			operator_role = operator_role || mode == 'q' || mode == 'a' ||
+				mode == 'o' || mode == 'h';
+			++nickname_start;
+		}
+		const auto hostmask = token.find('!', nickname_start);
+		const auto nickname_end = hostmask == std::string_view::npos
+			? token.size() : hostmask;
+		const auto nickname = token.substr(nickname_start, nickname_end - nickname_start);
+		if (!ValidLegacyNickname(nickname))
+			return std::unexpected(AdapterError::invalid_line);
+
+		if (!names.empty()) names.push_back(' ');
+		if (operator_role) names.push_back('@');
+		names.append(nickname);
+		if (end == std::string_view::npos) break;
+		cursor = end + 1U;
+	}
+	if (names.empty()) return std::unexpected(AdapterError::invalid_line);
+
+	auto normalized = message;
+	normalized.params.back() = std::move(names);
+	return normalized;
+}
+
+} // namespace detail
+
+[[nodiscard]] inline std::expected<std::string, AdapterError> PrepareLegacyInbound(
+	const comic_chat::ircv3::Message& message,
+	std::string_view prefix_token = "(ov)@+")
+{
+	try {
+		if (message.prefix && !LegacyPrefixFits(*message.prefix))
+			return std::unexpected(AdapterError::invalid_line);
+
+		const comic_chat::ircv3::Message* legacy_message = &message;
+		comic_chat::ircv3::Message normalized;
+		if (message.command == "JOIN") {
+			if (!detail::ValidExtendedJoinShape(message))
+				return std::unexpected(AdapterError::invalid_line);
+			if (message.params.size() == 3U) {
+				normalized = message;
+				normalized.params.resize(1U);
+				legacy_message = &normalized;
+			}
+		} else if (message.command == "353") {
+			auto names = detail::NormalizeLegacyNamesReply(message, prefix_token);
+			if (!names) return std::unexpected(names.error());
+			normalized = std::move(*names);
+			legacy_message = &normalized;
+		}
+
+		auto wire = legacy_message->SerializeChecked(false);
+		if (!wire) return std::unexpected(AdapterError::invalid_line);
 		if (wire->size() > maximum_legacy_wire_bytes)
 			return std::unexpected(AdapterError::line_too_long);
+		const bool needs_legacy_trailing = !legacy_message->params.empty() &&
+			(legacy_message->command == "PRIVMSG" || legacy_message->command == "NICK" ||
+			 legacy_message->command == "JOIN" || legacy_message->command == "319" ||
+			 legacy_message->command == "322" || legacy_message->command == "353" ||
+			 legacy_message->command == "ERROR" ||
+			 (legacy_message->command == "KICK" && legacy_message->params.size() >= 3U));
+		if (needs_legacy_trailing) {
+			const auto final_start = wire->size() - 2U - legacy_message->params.back().size();
+			if (final_start == 0U || (*wire)[final_start - 1U] != ':')
+				wire->insert(final_start, 1U, ':');
+			if (wire->size() > maximum_legacy_wire_bytes)
+				return std::unexpected(AdapterError::line_too_long);
+		}
+		return std::move(*wire);
+	} catch (...) {
+		return std::unexpected(AdapterError::allocation_failed);
 	}
-	return std::move(*wire);
 }
 
 enum class SessionPhase : std::uint8_t {

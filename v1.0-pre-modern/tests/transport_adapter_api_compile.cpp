@@ -127,7 +127,15 @@ static_assert(std::same_as<decltype(comic_chat::v1::transport::PrepareOutbound(
 static_assert(std::same_as<decltype(comic_chat::v1::transport::PrepareLegacyInbound(
 								   std::declval<const comic_chat::ircv3::Message &>())),
 				   std::expected<std::string,
-							 comic_chat::v1::transport::AdapterError>>);
+								 comic_chat::v1::transport::AdapterError>>);
+static_assert(std::same_as<decltype(comic_chat::v1::transport::PrepareLegacyInbound(
+								   std::declval<const comic_chat::ircv3::Message &>(),
+								   std::declval<std::string_view>())),
+				   std::expected<std::string,
+								 comic_chat::v1::transport::AdapterError>>);
+static_assert(std::same_as<decltype(
+	comic_chat::v1::transport::PrepareExplicitNamesRequest(
+		true, std::declval<std::string_view>())), std::optional<std::string>>);
 static_assert(std::same_as<decltype(comic_chat::v1::transport::BuildLegacyOutbound(
 								   std::declval<std::string_view>(),
 								   std::declval<std::span<const std::string_view>>(),

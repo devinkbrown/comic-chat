@@ -32,6 +32,7 @@ using comic_chat::v1::transport::SessionGate;
 using comic_chat::v1::transport::SessionPhase;
 using comic_chat::v1::transport::ProtocolLineBudget;
 using comic_chat::v1::transport::WakeupGate;
+using comic_chat::v1::transport::PrepareExplicitNamesRequest;
 
 comicchat::net::Event Connected(comicchat::net::GenerationId generation)
 {
@@ -576,6 +577,123 @@ void TestBoundedLegacyInboundFacade()
 	assert(oversized.error() == AdapterError::invalid_line);
 }
 
+void TestExtendedJoinNormalizesForMicrosoftParser()
+{
+	const auto parsed = comic_chat::ircv3::Message::Parse(
+		":Tiki!user@example.test JOIN #ink tiki-account :Tiki Example\r\n");
+	assert(parsed.has_value());
+	const auto prepared = comic_chat::v1::transport::PrepareLegacyInbound(*parsed);
+	assert(prepared ==
+		std::string{":Tiki!user@example.test JOIN :#ink\r\n"});
+
+	auto malformed = *parsed;
+	malformed.params.pop_back();
+	auto rejected = comic_chat::v1::transport::PrepareLegacyInbound(malformed);
+	assert(!rejected && rejected.error() == AdapterError::invalid_line);
+	malformed = *parsed;
+	malformed.params.emplace_back("extra");
+	rejected = comic_chat::v1::transport::PrepareLegacyInbound(malformed);
+	assert(!rejected && rejected.error() == AdapterError::invalid_line);
+	malformed = *parsed;
+	malformed.params.clear();
+	rejected = comic_chat::v1::transport::PrepareLegacyInbound(malformed);
+	assert(!rejected && rejected.error() == AdapterError::invalid_line);
+
+	auto base_join = *parsed;
+	base_join.params.resize(1);
+	assert(comic_chat::v1::transport::PrepareLegacyInbound(base_join) ==
+		std::string{":Tiki!user@example.test JOIN :#ink\r\n"});
+	base_join.params.front() = "#bad room";
+	assert(comic_chat::v1::transport::PrepareLegacyInbound(base_join).error() ==
+		AdapterError::invalid_line);
+	base_join = *parsed;
+	base_join.prefix.reset();
+	assert(comic_chat::v1::transport::PrepareLegacyInbound(base_join).error() ==
+		AdapterError::invalid_line);
+	base_join = *parsed;
+	base_join.params[1] = "bad account";
+	assert(comic_chat::v1::transport::PrepareLegacyInbound(base_join).error() ==
+		AdapterError::invalid_line);
+	base_join = *parsed;
+	base_join.params[2] = "bad\rrealname";
+	assert(comic_chat::v1::transport::PrepareLegacyInbound(base_join).error() ==
+		AdapterError::invalid_line);
+}
+
+void TestNamesExtensionsNormalizeForV1Membership()
+{
+	const auto parsed = comic_chat::ircv3::Message::Parse(
+		":server 353 me = #ink :~&@%+Owner!owner@example.test "
+		"@+Op!op@example.test %Half!half@example.test "
+		"+Voice!voice@example.test Plain!plain@example.test\r\n");
+	assert(parsed.has_value());
+
+	const auto prepared = comic_chat::v1::transport::PrepareLegacyInbound(
+		*parsed, "(qaohv)~&@%+");
+	assert(prepared == std::string{
+		":server 353 me = #ink :@Owner @Op @Half Voice Plain\r\n"});
+
+	auto names = *parsed;
+	names.params.back() = "@+Only!user@example.test";
+	assert(comic_chat::v1::transport::PrepareLegacyInbound(names) ==
+		std::string{":server 353 me = #ink :@Only\r\n"});
+	names.params.back() = "!Unsupported!user@example.test";
+	assert(comic_chat::v1::transport::PrepareLegacyInbound(names, "(z)!") ==
+		std::string{":server 353 me = #ink :Unsupported\r\n"});
+	names.params.back() = "@Unsupported!user@example.test";
+	assert(comic_chat::v1::transport::PrepareLegacyInbound(names, "(z)@") ==
+		std::string{":server 353 me = #ink :Unsupported\r\n"});
+
+	for (const std::string_view invalid_prefix : {
+		"", "ov)@+", "(ov@+", "(ov)@", "(oo)@+", "(ov)@@",
+		"(abcdefghijklmnopqrstuvwxyzabcdefg)ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFG"}) {
+		const auto rejected = comic_chat::v1::transport::PrepareLegacyInbound(
+			*parsed, invalid_prefix);
+		assert(!rejected && rejected.error() == AdapterError::invalid_line);
+	}
+
+	auto malformed = *parsed;
+	malformed.params.pop_back();
+	assert(comic_chat::v1::transport::PrepareLegacyInbound(malformed).error() ==
+		AdapterError::invalid_line);
+	malformed = *parsed;
+	malformed.params.emplace_back("extra");
+	assert(comic_chat::v1::transport::PrepareLegacyInbound(malformed).error() ==
+		AdapterError::invalid_line);
+	malformed = *parsed;
+	malformed.params.back().clear();
+	assert(comic_chat::v1::transport::PrepareLegacyInbound(malformed).error() ==
+		AdapterError::invalid_line);
+	malformed = *parsed;
+	malformed.params.back() = "@!user@example.test";
+	assert(comic_chat::v1::transport::PrepareLegacyInbound(malformed).error() ==
+		AdapterError::invalid_line);
+	malformed.params.back() = std::string(
+		comic_chat::v1::transport::maximum_legacy_prefix_component_bytes + 1U, 'n');
+	assert(comic_chat::v1::transport::PrepareLegacyInbound(malformed).error() ==
+		AdapterError::invalid_line);
+	malformed.params.back() = "bad,nick";
+	assert(comic_chat::v1::transport::PrepareLegacyInbound(malformed).error() ==
+		AdapterError::invalid_line);
+	malformed = *parsed;
+	malformed.prefix.reset();
+	assert(comic_chat::v1::transport::PrepareLegacyInbound(malformed).error() ==
+		AdapterError::invalid_line);
+}
+
+void TestNoImplicitNamesBuildsOneBoundedRequest()
+{
+	assert(!PrepareExplicitNamesRequest(false, "#ink"));
+	assert(PrepareExplicitNamesRequest(true, "#ink") ==
+		std::optional<std::string>{"NAMES #ink\r\n"});
+	for (const auto& invalid : {
+		std::string{}, std::string{"#bad room"}, std::string{"#bad,room"},
+		std::string{"#bad\0room", 9}, std::string(256, 'x'),
+		std::string{":#ink"}}) {
+		assert(!PrepareExplicitNamesRequest(true, invalid));
+	}
+}
+
 } // namespace
 
 int main()
@@ -588,5 +706,8 @@ int main()
 	TestCheckedLegacyOutboundBuilder();
 	TestLegacyOutboundMicrosoftWireGrammar();
 	TestBoundedLegacyInboundFacade();
+	TestExtendedJoinNormalizesForMicrosoftParser();
+	TestNamesExtensionsNormalizeForV1Membership();
+	TestNoImplicitNamesBuildsOneBoundedRequest();
 	return 0;
 }

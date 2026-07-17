@@ -929,6 +929,22 @@ void CIrcSocket::ProcessMessage(char *line) {
 			AddAndExecute(new JoinEntry(nick));				 // ignore joins of self
 			ChatAnnounceNewAvatar(GetMyCharacter(), nick);  // Now send avatar info privately
 		}
+		else {
+			const bool names_required = ircv3_.IsEnabled("no-implicit-names");
+			const char* joined_channel = GetMyChannel();
+			const auto names = comic_chat::v1::transport::PrepareExplicitNamesRequest(
+				names_required, joined_channel ? std::string_view{joined_channel} : std::string_view{});
+			if (names_required && !names) {
+				Close();
+				OnClose(ERROR_INVALID_DATA);
+				return;
+			}
+			if (names && !QueueProtocolLine(*names)) {
+				Close();
+				OnClose(ERROR_NOT_ENOUGH_MEMORY);
+				return;
+			}
+		}
 	}
 	else if (!strcmp(command, "PART")) {
 		TRACE("Got a PART!\n");
@@ -1255,7 +1271,11 @@ std::expected<comicchat::net::SendId,
 
 void CIrcSocket::DispatchProtocolMessage(const comic_chat::ircv3::Message& message)
 {
-	auto wire = comic_chat::v1::transport::PrepareLegacyInbound(message);
+	std::string_view prefix_token = "(ov)@+";
+	const auto& isupport = ircv3_.Isupport();
+	const auto prefix = isupport.find("PREFIX");
+	if (prefix != isupport.end()) prefix_token = prefix->second;
+	auto wire = comic_chat::v1::transport::PrepareLegacyInbound(message, prefix_token);
 	if (!wire) return;
 	try {
 		std::vector<char> legacy_line(wire->begin(), wire->end());
