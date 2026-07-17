@@ -45,6 +45,7 @@ SKILL_NAMES = {
     "comicchat-native-platforms",
     "comicchat-native-ui",
     "comicchat-icon-assets",
+    "comicchat-character-assets",
     "comicchat-performance",
     "comicchat-verification-release",
 }

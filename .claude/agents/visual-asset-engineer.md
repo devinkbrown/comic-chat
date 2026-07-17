@@ -3,7 +3,7 @@ name: visual-asset-engineer
 description: Remasters one bounded Comic Chat icon, character, or pose family from original source art in an isolated worktree.
 tools: [Read, Grep, Glob, Edit, Write, StructuredOutput]
 disallowedTools: [Bash]
-skills: [comicchat-render-fidelity, comicchat-icon-assets]
+skills: [comicchat-render-fidelity, comicchat-icon-assets, comicchat-character-assets]
 model: sonnet
 effort: high
 permissionMode: acceptEdits

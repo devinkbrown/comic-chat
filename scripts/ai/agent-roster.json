@@ -38,7 +38,7 @@
       "max_turns": 60,
       "tools": ["Read", "Grep", "Glob", "WebFetch", "WebSearch", "StructuredOutput"],
       "disallowed_tools": ["Bash", "Edit", "Write"],
-      "preload_skills": ["comicchat-render-fidelity", "comicchat-icon-assets"],
+      "preload_skills": ["comicchat-render-fidelity", "comicchat-icon-assets", "comicchat-character-assets"],
       "isolation": null,
       "writer": false
     },
@@ -74,7 +74,7 @@
       "max_turns": 72,
       "tools": ["Read", "Grep", "Glob", "Edit", "Write", "StructuredOutput"],
       "disallowed_tools": ["Bash"],
-      "preload_skills": ["comicchat-render-fidelity", "comicchat-icon-assets"],
+      "preload_skills": ["comicchat-render-fidelity", "comicchat-icon-assets", "comicchat-character-assets"],
       "isolation": "worktree",
       "writer": true
     },
@@ -283,7 +283,7 @@
     "implement-characters": {
       "agent": "visual-asset-engineer",
       "role": "implementation",
-      "skills": ["comicchat-render-fidelity", "comicchat-icon-assets"],
+      "skills": ["comicchat-render-fidelity", "comicchat-character-assets"],
       "contract": "Remaster one bounded complete character or pose family while preserving original anatomy, expression, silhouette, palette, and composition."
     },
     "optimize": {

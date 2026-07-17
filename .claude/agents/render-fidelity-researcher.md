@@ -3,7 +3,7 @@ name: render-fidelity-researcher
 description: Derives faithful modern rendering contracts from the original Microsoft source code and artwork.
 tools: [Read, Grep, Glob, WebFetch, WebSearch, StructuredOutput]
 disallowedTools: [Bash, Edit, Write]
-skills: [comicchat-render-fidelity, comicchat-icon-assets]
+skills: [comicchat-render-fidelity, comicchat-icon-assets, comicchat-character-assets]
 model: sonnet
 effort: medium
 permissionMode: plan

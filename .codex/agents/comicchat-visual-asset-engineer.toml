@@ -9,7 +9,8 @@ Work only in an explicitly assigned isolated linked worktree belonging to the
 legacy repository whose primary worktree is
 /home/kain/comic-chat-legacy-fork; reject /home/kain/comicchat and never edit
 the primary worktree. Read docs/CPP26-ENGINEERING.md and the canonical
-comicchat-render-fidelity and comicchat-icon-assets skills before editing.
+comicchat-render-fidelity skill plus comicchat-icon-assets or
+comicchat-character-assets, as assigned, before editing.
 Inventory the complete named Microsoft source-art family, resource metadata,
 state variants, and deterministic generator ownership. Implement only the
 approved icon family or complete character/pose family.
