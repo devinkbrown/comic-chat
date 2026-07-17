@@ -10,8 +10,9 @@ namespace comic_chat::modern_ui {
 // both handles for its complete lifetime without leaking or destroying them.
 bool ApplyDpiAwareWindowIcons(CWnd& window, UINT icon_resource);
 
-// Rebuild a DPI-sized image list exclusively from the original Microsoft
-// TOOLBAR/BITMAP resource. Command/index order and source pixels are unchanged.
+// Rebuild a DPI-sized image list from a mapped alpha PNG resource when one is
+// embedded. The original Microsoft TOOLBAR/BITMAP remains the temporary,
+// source-faithful fallback and command/index order never changes.
 bool BuildStripImageList(
 	CImageList& image_list,
 	UINT legacy_resource,

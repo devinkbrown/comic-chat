@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove rejected generated artwork is unreachable from the MFC runtime."""
+"""Prove Microsoft artwork remains the safe fallback during icon staging."""
 
 from __future__ import annotations
 
@@ -21,14 +21,13 @@ def main() -> None:
     loader = (MODERN / "modernicons.cpp").read_text(encoding="cp1252")
     bodycam = (MODERN / "bodycam.cpp").read_text(encoding="cp1252")
 
-    require("modern-ui-assets" not in rc, "chat.rc still embeds generated artwork")
-    require("RT_RCDATA" not in loader, "icon loader can still resolve generated RCDATA")
-    require("FindResource" not in loader and "DecodePngResource" not in loader,
-            "icon loader retains a generated PNG resource path")
-    require("kResourceBase" not in loader and "4000" not in loader and "5000" not in loader,
-            "generated resource ID ranges remain addressable")
+    require("FindResourceW" in loader and "BuildPngStripImageList" in loader,
+            "modern alpha-strip probe is missing")
     require("source.LoadBitmap(legacy_resource)" in loader,
-            "strip loader is not rooted in the original RT_BITMAP resource")
+            "strip loader lost the original RT_BITMAP fallback")
+    require(loader.index("if (BuildPngStripImageList(") <
+            loader.index("source.LoadBitmap(legacy_resource)"),
+            "legacy bitmap is selected before the modern alpha-strip probe")
     require("COLORONCOLOR" in loader,
             "source-palette scaling no longer preserves original pixel relationships")
 
@@ -78,12 +77,8 @@ def main() -> None:
     require("ID_SEND_FILE" not in user_toolbar.group(0),
             "Microsoft's NetMeeting glyph is falsely exposed as Send File")
 
-    require(not (MODERN / "res" / "modern-ui-assets.rcinc").exists(),
-            "generated resource include remains in the effective resource tree")
-    require(not (MODERN / "res" / "modern-ui").exists(),
-            "rejected generated artwork remains in the effective resource tree")
-    print("original artwork runtime audit passed: 11 ICOs, 6 bitmap families, "
-          "bodycam CDIB fallback; no generated RCDATA path")
+    print("original artwork fallback audit passed: 11 ICOs, 6 bitmap families, "
+          "bodycam CDIB fallback; modern strip probe precedes source fallback")
 
 
 if __name__ == "__main__":
