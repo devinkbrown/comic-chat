@@ -265,13 +265,29 @@ void TestCapabilityRegistryAndDependencies()
 
 	Engine independent;
 	independent.BeginRegistration(config, "Alice", true);
-	auto independent_ls = independent.Process(":server CAP * LS :account-tag extended-join "
-		"extended-monitor draft/account-registration draft/chathistory draft/oper-tag\r\n");
+	auto independent_ls = independent.Process(":server CAP * LS :account-tag extended-monitor "
+		"draft/account-registration draft/chathistory draft/oper-tag\r\n");
 	const auto independent_names = RequestedNames(independent_ls.outbound);
-	for (const auto* name : {"account-tag", "extended-join", "extended-monitor",
+	for (const auto* name : {"account-tag", "extended-monitor",
 		"draft/account-registration", "draft/chathistory", "draft/oper-tag"})
 		Check(std::find(independent_names.begin(), independent_names.end(), name) != independent_names.end(),
 			"independently negotiable capability is not overconstrained");
+
+	Engine legacy_wire;
+	legacy_wire.BeginRegistration(config, "Alice", true);
+	auto legacy_ls = legacy_wire.Process(":server CAP * LS :extended-join multi-prefix "
+		"userhost-in-names no-implicit-names\r\n");
+	Check(RequestedNames(legacy_ls.outbound).empty(),
+		"legacy wire-shape capabilities wait for their Windows adapters");
+	for (const auto* name : {"extended-join", "multi-prefix", "userhost-in-names", "no-implicit-names"})
+		Check(legacy_wire.IsOffered(name), "gated legacy capability remains discoverable");
+	auto legacy_new = legacy_wire.Process(":server CAP Alice NEW :extended-join=account-realname\r\n");
+	Check(legacy_new.outbound.empty() &&
+		legacy_wire.CapabilityValue("extended-join") == "account-realname",
+		"CAP NEW updates gated capability state without requesting it");
+	legacy_wire.Process(":server CAP Alice DEL :userhost-in-names\r\n");
+	Check(!legacy_wire.IsOffered("userhost-in-names"),
+		"CAP DEL removes a gated capability from discovery state");
 
 	Engine missing_dependencies;
 	missing_dependencies.BeginRegistration(config, "Alice", true);

@@ -465,6 +465,7 @@ std::vector<std::string> SaslWireChunks(std::string_view encoded)
 struct CapabilityDefinition {
 	const char* name;
 	std::vector<std::string> dependencies;
+	bool auto_request = true;
 };
 
 const std::vector<CapabilityDefinition>& CapabilityCatalog()
@@ -484,14 +485,22 @@ const std::vector<CapabilityDefinition>& CapabilityCatalog()
 		{"bot", {"message-tags"}},
 		{"chghost", {}},
 		{"echo-message", {}},
-		{"extended-join", {}},
+		// Enable after the Windows adapter normalizes extended JOIN and applies
+		// its account and realname fields before the legacy JOIN handler runs.
+		{"extended-join", {}, false},
 		{"invite-notify", {}},
 		{"labeled-response", {"batch"}},
-		{"multi-prefix", {}},
-		{"no-implicit-names", {}},
+		// Enable after NAMES adaptation decomposes every advertised prefix into
+		// legacy user flags instead of treating trailing prefixes as nickname text.
+		{"multi-prefix", {}, false},
+		// Enable after the JOIN path sends an explicit NAMES request for every
+		// joined channel instead of waiting for the server's implicit reply.
+		{"no-implicit-names", {}, false},
 		{"sasl", {}},
 		{"setname", {}},
-		{"userhost-in-names", {}},
+		// Enable after NAMES adaptation splits nick!user@host and supplies the
+		// hostmask separately to the legacy user model.
+		{"userhost-in-names", {}, false},
 		{"draft/channel-rename", {}},
 		{"draft/account-registration", {}},
 		// Chathistory has useful limited operation without batch/server-time/
@@ -1366,6 +1375,7 @@ std::vector<std::string> Engine::SelectCapabilities() const
 {
 	std::vector<std::string> selected;
 	for (const auto& definition : CapabilityCatalog()) {
+		if (!definition.auto_request) continue;
 		if (!DependenciesAvailable(definition.name)) continue;
 		if (std::string_view(definition.name) == "sasl" &&
 			(!secure_transport_ || ((!sasl_config_.allow_external) &&
