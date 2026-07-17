@@ -1,4 +1,5 @@
 #include "comicchat/render.hpp"
+#include "comicchat/source_raster.hpp"
 #include "comicchat/text.hpp"
 
 #include <algorithm>
@@ -27,6 +28,7 @@ struct Sdl final {
 struct WindowDeleter final { void operator()(SDL_Window* value) const noexcept { SDL_DestroyWindow(value); } };
 struct RendererDeleter final { void operator()(SDL_Renderer* value) const noexcept { SDL_DestroyRenderer(value); } };
 struct TextureDeleter final { void operator()(SDL_Texture* value) const noexcept { SDL_DestroyTexture(value); } };
+struct SurfaceDeleter final { void operator()(SDL_Surface* value) const noexcept { SDL_DestroySurface(value); } };
 
 struct Arguments final {
     std::optional<std::string> font;
@@ -69,6 +71,26 @@ auto model() -> comicchat::TitlePanel {
     };
 }
 
+void apply_source_window_icon(SDL_Window* window) {
+    const auto source_directory = comicchat::find_source_raster_directory();
+    if (!source_directory) {
+        std::cerr << "Comic Chat could not locate the released Microsoft icon resources\n";
+        return;
+    }
+    auto icon = comicchat::load_source_icon(
+        *source_directory, comicchat::SourceIcon::application, 32);
+    if (!icon) {
+        std::cerr << "Comic Chat could not decode the released Microsoft application icon\n";
+        return;
+    }
+    std::unique_ptr<SDL_Surface, SurfaceDeleter> surface{SDL_CreateSurfaceFrom(
+        static_cast<int>(icon->width), static_cast<int>(icon->height),
+        SDL_PIXELFORMAT_ARGB8888, icon->argb.data(), static_cast<int>(icon->width * 4U))};
+    if (!surface || !SDL_SetWindowIcon(window, surface.get())) {
+        std::cerr << "Comic Chat could not set the source application icon: " << SDL_GetError() << '\n';
+    }
+}
+
 } // namespace
 
 auto main(const int argc, char** argv) -> int {
@@ -101,6 +123,7 @@ auto main(const int argc, char** argv) -> int {
         }
         std::unique_ptr<SDL_Window, WindowDeleter> window{raw_window};
         std::unique_ptr<SDL_Renderer, RendererDeleter> renderer{raw_renderer};
+        apply_source_window_icon(window.get());
         std::unique_ptr<SDL_Texture, TextureDeleter> texture;
         std::unique_ptr<comicchat::Canvas> canvas;
 
