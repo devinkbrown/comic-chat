@@ -149,30 +149,29 @@ public:
     }
 
     auto start(ConnectionOptions options) -> std::expected<GenerationId, EngineError> {
-        const auto reject_running = [&options]() -> std::expected<GenerationId, EngineError> {
+        const auto reject = [&options](const EngineError error) -> std::expected<GenerationId, EngineError> {
             if (options.proxy.password) secure_clear(*options.proxy.password);
-            return std::unexpected{EngineError::already_running};
+            return std::unexpected{error};
         };
         // A notifier executes on the worker. It must never wait behind an
         // external lifecycle operation that may already be joining that worker.
-        if (called_from_worker()) return reject_running();
+        if (called_from_worker()) return reject(EngineError::already_running);
 
         std::scoped_lock lifecycle_lock{lifecycle_mutex_};
         {
             std::scoped_lock lock{mutex_};
-            if (!stopped_) return reject_running();
+            if (!stopped_) return reject(EngineError::already_running);
         }
-        if (!crypto_ready_) return std::unexpected{EngineError::crypto_unavailable};
+        if (!crypto_ready_) return reject(EngineError::crypto_unavailable);
         if (options.security == Security::tls && options.server_name.empty()) options.server_name = options.endpoint.host;
-        if (!valid_options(options)) return std::unexpected{EngineError::invalid_options};
+        if (!valid_options(options)) return reject(EngineError::invalid_options);
         std::optional<LockedSecret> proxy_password;
         if (options.proxy.password) {
             auto locked = LockedSecret::copy(*options.proxy.password);
             if (!locked) {
-                secure_clear(*options.proxy.password);
-                return std::unexpected{locked.error() == SecretError::lock_failed
+                return reject(locked.error() == SecretError::lock_failed
                     ? EngineError::credential_lock_failed
-                    : EngineError::invalid_options};
+                    : EngineError::invalid_options);
             }
             proxy_password.emplace(std::move(*locked));
             secure_clear(*options.proxy.password);
@@ -992,8 +991,11 @@ private:
             const auto address = http_authority(options_.endpoint);
             std::string request = "CONNECT " + address + " HTTP/1.1\r\nHost: " + address + "\r\n";
             if (options_.proxy.username && proxy_password_) {
-                std::string credentials = *options_.proxy.username + ':';
+                std::string credentials;
                 const auto password = proxy_password_->view();
+                credentials.reserve(options_.proxy.username->size() + 1 + password.size());
+                credentials.append(*options_.proxy.username);
+                credentials.push_back(':');
                 credentials.append(reinterpret_cast<const char*>(password.data()), password.size());
                 std::size_t encoded_size{};
                 (void)mbedtls_base64_encode(nullptr, 0, &encoded_size,
@@ -1003,7 +1005,9 @@ private:
                 if (mbedtls_base64_encode(reinterpret_cast<unsigned char*>(encoded.data()), encoded.size(), &written,
                     reinterpret_cast<const unsigned char*>(credentials.data()), credentials.size()) == 0) {
                     encoded.resize(written);
-                    request += "Proxy-Authorization: Basic " + encoded + "\r\n";
+                    request += "Proxy-Authorization: Basic ";
+                    request += encoded;
+                    request += "\r\n";
                 }
                 secure_clear(credentials);
                 secure_clear(encoded);
