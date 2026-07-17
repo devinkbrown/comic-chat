@@ -207,6 +207,97 @@ TEST_CASE("only verified TLS persistence receives a disconnect reschedule receip
     CHECK((*policy)->expires_at == at(210));
 }
 
+TEST_CASE("native STS persistence is scoped to the requested TLS hostname") {
+    TemporaryDirectory temporary;
+    const auto file = temporary.path / "sts-policies";
+    auto fake = std::make_unique<FakeTransport>();
+    auto* observed = fake.get();
+    NativeSession session{file, std::move(fake), [] { return at(100); }};
+    auto request = options();
+    request.connection.endpoint.host = "203.0.113.10";
+    request.connection.server_name = "irc.example";
+    REQUIRE(session.start(std::move(request)));
+    observed->push(Event{1, Connected{"203.0.113.10", "127.0.0.1", true, false}});
+    (void)session.poll();
+    observed->push(Event{1, BytesReceived{bytes(":server CAP Alice LS :sts=duration=3600\r\n")}});
+    (void)session.poll();
+
+    StsPolicyStore restarted{file};
+    REQUIRE(restarted.load(at(101)));
+    const auto requested_host = restarted.find("irc.example", at(101));
+    const auto endpoint_address = restarted.find("203.0.113.10", at(101));
+    REQUIRE(requested_host);
+    REQUIRE(requested_host->has_value());
+    REQUIRE(endpoint_address);
+    CHECK_FALSE(endpoint_address->has_value());
+}
+
+TEST_CASE("native STS write failure blocks same-line output and latches fail closed") {
+    TemporaryDirectory temporary;
+    const auto state_directory = temporary.path / "state";
+    REQUIRE(std::filesystem::create_directory(state_directory));
+    auto fake = std::make_unique<FakeTransport>();
+    auto* observed = fake.get();
+    NativeSession session{state_directory / "sts-policies", std::move(fake), [] { return at(100); }};
+    REQUIRE(session.start(options()));
+    observed->push(Event{1, Connected{"irc.example", "127.0.0.1", true, false}});
+    (void)session.poll();
+    observed->posts.clear();
+    std::error_code remove_error;
+    REQUIRE(std::filesystem::remove_all(state_directory, remove_error) > 0);
+    REQUIRE_FALSE(remove_error);
+
+    observed->push(Event{1, BytesReceived{bytes(":server CAP Alice LS :sts=duration=3600 standard-replies\r\n")}});
+    const auto failed = session.poll();
+
+    REQUIRE(failed.diagnostics.size() == 1);
+    CHECK(failed.diagnostics.front().code == "sts-store-failed");
+    CHECK(failed.protocol_events.empty());
+    CHECK(failed.messages.empty());
+    CHECK(observed->posts.empty());
+    CHECK_FALSE(observed->running);
+    CHECK_FALSE(session.running());
+    CHECK(session.generation() == 0);
+
+    REQUIRE(std::filesystem::create_directory(state_directory));
+    const auto retry = session.start(options(Security::plaintext));
+    REQUIRE_FALSE(retry);
+    CHECK(retry.error() == comicchat::net::NativeSessionError::sts_store);
+    CHECK(observed->starts.size() == 1);
+}
+
+TEST_CASE("native STS rebase failure cancels automatic retry and latches fail closed") {
+    TemporaryDirectory temporary;
+    const auto state_directory = temporary.path / "state";
+    REQUIRE(std::filesystem::create_directory(state_directory));
+    auto fake = std::make_unique<FakeTransport>();
+    auto* observed = fake.get();
+    NativeSession session{state_directory / "sts-policies", std::move(fake), [] { return at(100); }};
+    REQUIRE(session.start(options()));
+    observed->push(Event{1, Connected{"irc.example", "127.0.0.1", true, false}});
+    (void)session.poll();
+    observed->push(Event{1, BytesReceived{bytes(":server CAP Alice LS :sts=duration=10\r\n")}});
+    (void)session.poll();
+    std::error_code remove_error;
+    REQUIRE(std::filesystem::remove_all(state_directory, remove_error) > 0);
+    REQUIRE_FALSE(remove_error);
+
+    observed->push(Event{1, Closed{"transport failure", 500ms}});
+    const auto failed = session.poll();
+
+    REQUIRE(failed.diagnostics.size() == 1);
+    CHECK(failed.diagnostics.front().code == "sts-reschedule-failed");
+    CHECK_FALSE(observed->running);
+    CHECK_FALSE(session.running());
+    CHECK(session.generation() == 0);
+
+    REQUIRE(std::filesystem::create_directory(state_directory));
+    const auto retry = session.start(options(Security::plaintext));
+    REQUIRE_FALSE(retry);
+    CHECK(retry.error() == comicchat::net::NativeSessionError::sts_store);
+    CHECK(observed->starts.size() == 1);
+}
+
 TEST_CASE("plaintext duration advertisements cannot create durable policy") {
     TemporaryDirectory temporary;
     const auto file = temporary.path / "sts-policies";

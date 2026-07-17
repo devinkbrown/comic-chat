@@ -31,6 +31,7 @@ def main() -> None:
         encoding="utf-8"
     )
     meson = (REPOSITORY / "portable/meson.build").read_text(encoding="utf-8")
+    ircsock = (MODERN / "ircsock.cpp").read_text(encoding="cp1252")
 
     tests_target = (
         'TESTS : "$(OUTDIR)\\modernui_test.exe" '
@@ -120,6 +121,23 @@ def main() -> None:
     require("test('comicchat-transport-ui-bridge', transport_ui_bridge_tests" in
             meson[bridge_target:],
             "Meson does not register the portable transport UI bridge test")
+
+    ensure_start = ircsock.index("BOOL CIrcSocket::EnsureStsPolicyLoaded()")
+    ensure_end = ircsock.index("BOOL CIrcSocket::FinishStsTransport", ensure_start)
+    ensure_sts = ircsock[ensure_start:ensure_end]
+    existing_owner = ensure_sts.index("if (m_stsSession) {")
+    replacement = ensure_sts.index("m_stsSession.emplace(*path);")
+    require(existing_owner < replacement,
+            "STS setup does not inspect an existing coordinator before replacement")
+    require("return FALSE;" in ensure_sts[existing_owner:replacement],
+            "an unhealthy STS coordinator can be replaced and clear its fail-closed latch")
+
+    close_start = ircsock.index("void CIrcSocket::Close()")
+    close_end = ircsock.index("BOOL CIrcSocket::IsOpen()", close_start)
+    close_sts = ircsock[close_start:close_end]
+    require("const BOOL stsFinished = FinishStsTransport" in close_sts and
+            "if (!stsFinished)" in close_sts,
+            "Close ignores durable STS disconnect/rebase failure")
 
     print("Windows native standalone test gate audit passed")
 

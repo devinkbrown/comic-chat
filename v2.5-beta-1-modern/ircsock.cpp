@@ -624,8 +624,15 @@ BOOL CIrcSocket::Connect(LPCSTR pszServer, UINT nPort, BOOL bSecure)
 
 BOOL CIrcSocket::EnsureStsPolicyLoaded()
 {
-	if (m_stsSession && m_stsSession->ready())
-		return TRUE;
+	if (m_stsSession) {
+		if (m_stsSession->ready())
+			return TRUE;
+		// A coordinator which became unhealthy after a durable write/rebase
+		// failure is a process-lifetime fail-closed latch. Reconstructing it from
+		// an older on-disk snapshot could silently permit plaintext.
+		TRACE0("IRC STS policy owner is unhealthy; refusing to reset its security latch.\n");
+		return FALSE;
+	}
 	const auto path = comicchat::net::native_private_config_file("sts-policies-v1");
 	if (!path) {
 		TRACE0("IRC STS policy path is unavailable; refusing to start transport.\n");
@@ -724,7 +731,7 @@ CIrcSocket::StartConnection(LPCSTR pszServer, UINT nPort, BOOL bSecure)
 
 void CIrcSocket::Close()
 {
-	(void)FinishStsTransport(m_generation, FALSE);
+	const BOOL stsFinished = FinishStsTransport(m_generation, FALSE);
 	m_connection.set_wakeup({});
 	m_wakeupState->hwnd.store(NULL, std::memory_order_release);
 	m_wakeupState->cookie.store(0, std::memory_order_release);
@@ -736,6 +743,8 @@ void CIrcSocket::Close()
 	m_transportState = comicchat::net::State::stopped;
 	m_bSecureTransport = FALSE;
 	m_lineFramer.Reset();
+	if (!stsFinished)
+		TRACE0("IRC STS disconnect failed closed; this process will refuse another transport start.\n");
 }
 
 BOOL CIrcSocket::IsOpen() const

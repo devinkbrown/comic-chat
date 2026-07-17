@@ -274,6 +274,7 @@ class NativeSession::Impl final {
     auto start(NativeSessionOptions options) -> std::expected<GenerationId, NativeSessionError> {
         const SessionOptionsWipe wipe{&options};
         if (running_) return std::unexpected{NativeSessionError::already_running};
+        if (!healthy_) return std::unexpected{NativeSessionError::sts_store};
         if (!transport_ || !safe_atom(options.connection.endpoint.host, 253) || options.connection.endpoint.port == 0 ||
             !safe_atom(options.nickname, 64) || (!options.channel.empty() && !safe_atom(options.channel, 512))) {
             secure_clear(options.sasl.password);
@@ -314,6 +315,9 @@ class NativeSession::Impl final {
         if (!planned) return std::unexpected{NativeSessionError::sts_store};
 
         requested_connection_ = options.connection;
+        requested_hostname_ = options.connection.server_name.empty()
+                                  ? options.connection.endpoint.host
+                                  : options.connection.server_name;
         current_connection_ = planned->options;
         sasl_template_ = std::move(options.sasl);
         secure_clear(sasl_template_.password);
@@ -368,9 +372,11 @@ class NativeSession::Impl final {
         if (!transport_) return;
         if (running_ && connected_ && tls_verified_) {
             try {
-                (void)store_.reschedule_on_verified_disconnect(requested_connection_.endpoint.host, true, generation_,
-                                                               receipt_, now_());
+                const auto rescheduled = store_.reschedule_on_verified_disconnect(
+                    requested_hostname_, true, generation_, receipt_, now_());
+                if (!rescheduled) healthy_ = false;
             } catch (...) {
+                healthy_ = false;
             }
         }
         transport_->stop();
@@ -380,6 +386,7 @@ class NativeSession::Impl final {
         receipt_.reset();
         password_.reset();
         proxy_password_.reset();
+        protocol_.reset();
         generation_ = 0;
     }
 
@@ -461,6 +468,21 @@ class NativeSession::Impl final {
         (void)transport_->post(Disconnect{generation_, "protocol policy failure"});
     }
 
+    void fail_closed_sts() noexcept {
+        healthy_ = false;
+        if (transport_) transport_->stop();
+        running_ = false;
+        connected_ = false;
+        tls_verified_ = false;
+        receipt_.reset();
+        joined_ = false;
+        framer_.Reset();
+        protocol_.reset();
+        password_.reset();
+        proxy_password_.reset();
+        generation_ = 0;
+    }
+
     auto restart_secure(const std::uint16_t port) -> bool {
         ConnectionOptions secure = requested_connection_;
         secure.security = Security::tls;
@@ -516,11 +538,13 @@ class NativeSession::Impl final {
                                   "unverified STS persistence update was ignored");
             } else {
                 auto applied =
-                    store_.apply_verified_update(requested_connection_.endpoint.host, current_connection_.endpoint.port,
+                    store_.apply_verified_update(requested_hostname_, current_connection_.endpoint.port,
                                                  true, generation_, update, now_());
                 if (!applied) {
                     append_diagnostic(output, remaining, "sts-store-failed",
                                       "verified STS policy could not be committed");
+                    fail_closed_sts();
+                    return LineResult::failed;
                 } else {
                     receipt_ = std::move(*applied);
                 }
@@ -602,13 +626,19 @@ class NativeSession::Impl final {
     }
 
     void handle_body(Closed body, NativeSessionPoll& output, std::size_t& remaining) {
+        bool reschedule_failed{};
         if (connected_ && tls_verified_) {
-            const auto rescheduled = store_.reschedule_on_verified_disconnect(requested_connection_.endpoint.host, true,
-                                                                              generation_, receipt_, now_());
+            const auto rescheduled = store_.reschedule_on_verified_disconnect(
+                requested_hostname_, true, generation_, receipt_, now_());
             if (!rescheduled) {
                 append_diagnostic(output, remaining, "sts-reschedule-failed",
                                   "verified STS duration could not be rescheduled");
+                reschedule_failed = true;
             }
+        }
+        if (reschedule_failed) {
+            fail_closed_sts();
+            return;
         }
         connected_ = false;
         tls_verified_ = false;
@@ -629,6 +659,7 @@ class NativeSession::Impl final {
     comic_chat::ircv3::LineFramer framer_;
     ConnectionOptions requested_connection_;
     ConnectionOptions current_connection_;
+    std::string requested_hostname_;
     comic_chat::ircv3::SaslConfig sasl_template_;
     std::optional<LockedSecret> password_;
     std::optional<LockedSecret> proxy_password_;
@@ -641,6 +672,7 @@ class NativeSession::Impl final {
     bool connected_{};
     bool tls_verified_{};
     bool joined_{};
+    bool healthy_{true};
 };
 
 NativeSession::NativeSession(std::filesystem::path sts_policy_file, std::unique_ptr<SessionTransport> transport,
