@@ -1,0 +1,3 @@
+<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><title>Say solid speech balloon</title><defs><linearGradient id="p" x2="1" y2="1"><stop stop-color="#fffdf7"/><stop offset="1" stop-color="#ded7c9"/></linearGradient></defs>
+  <path d="M9 8h46c5 0 8 3 8 8v26c0 5-3 8-8 8H39L27 60l3-10H9c-5 0-8-3-8-8V16c0-5 3-8 8-8Z" fill="url(#p)" stroke="#20252c" stroke-width="4"/><path d="M11 15h42" stroke="#fff" stroke-width="4" opacity=".72"/><path d="M14 28h37M14 38h27" stroke="#7b828c" stroke-width="5" stroke-linecap="round"/>
+</svg>

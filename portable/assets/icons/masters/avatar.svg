@@ -19,11 +19,11 @@
       <stop offset="0.8" stop-color="#0e1217"/>
       <stop offset="1" stop-color="#333b45"/>
     </linearGradient>
-    <radialGradient id="lens" cx="0.3" cy="0.25" r="0.82">
-      <stop offset="0" stop-color="#f7f4ea"/>
-      <stop offset="0.3" stop-color="#a9bdd0"/>
-      <stop offset="0.76" stop-color="#3d78b8" stop-opacity="0.63"/>
-      <stop offset="1" stop-color="#20252c" stop-opacity="0.9"/>
+    <radialGradient id="lens" cx="0.3" cy="0.24" r="0.82">
+      <stop offset="0" stop-color="#c1c5cc"/>
+      <stop offset="0.2" stop-color="#59616b"/>
+      <stop offset="0.58" stop-color="#20252c"/>
+      <stop offset="1" stop-color="#0e1217"/>
     </radialGradient>
     <filter id="shadow" x="-30%" y="-30%" width="160%" height="170%">
       <feGaussianBlur in="SourceAlpha" stdDeviation="15" result="blur"/>
@@ -51,22 +51,23 @@
     <path d="M285 378C315 270 422 195 549 214" fill="none" stroke="#59616b" stroke-width="13" opacity="0.52"/>
     <path d="M286 256C262 234 236 239 222 262C249 255 270 267 285 286" fill="url(#ink)" stroke-width="21"/>
 
-    <path d="M433 367C462 338 505 337 535 359C555 375 567 397 572 423C590 437 608 453 627 472L671 515C681 525 676 540 663 544L609 559C620 578 622 593 615 608C607 626 586 634 565 636C574 657 571 679 555 697C541 714 522 725 501 726C490 742 475 753 456 759C421 743 397 720 384 690C369 657 367 616 371 569C375 508 392 418 433 367Z" fill="url(#paper)" stroke-width="27"/>
-    <path d="M636 505C646 513 656 522 665 531L609 545" fill="none" stroke="#c1c5cc" stroke-width="10" opacity="0.82"/>
+    <path d="M433 367C462 338 505 337 535 359C555 375 567 397 572 423L601 448L625 474L655 501L671 515C681 525 676 537 663 541L608 552C620 571 622 587 614 602C605 619 584 626 563 627C573 649 569 673 553 691C539 708 520 718 499 720C488 736 473 748 455 754C420 739 397 716 384 687C369 655 367 615 371 569C375 508 392 418 433 367Z" fill="url(#paper)" stroke-width="27"/>
+    <path d="M631 493 666 524 609 539" fill="none" stroke="#c1c5cc" stroke-width="9" opacity="0.8"/>
     <path d="M379 570C372 500 393 416 434 369" fill="none" stroke="#fff" stroke-width="9" opacity="0.62"/>
 
-    <path d="M474 412C497 395 530 397 551 419" fill="none" stroke-width="15"/>
-    <circle cx="506" cy="446" r="43" fill="url(#lens)" stroke-width="17"/>
-    <path d="M464 445H425" fill="none" stroke-width="15"/>
-    <path d="M549 443C572 443 591 455 606 470" fill="none" stroke-width="15"/>
-    <path d="M487 426C498 416 513 415 523 423" fill="none" stroke="#fff" stroke-width="8" opacity="0.74"/>
-    <ellipse cx="512" cy="447" rx="8" ry="13" fill="#20252c" stroke="none"/>
+    <path d="M479 419C494 397 520 396 539 414" fill="none" stroke-width="14"/>
+    <path d="M484 408 522 416" fill="none" stroke="#20252c" stroke-width="13"/>
+    <ellipse cx="514" cy="445" rx="30" ry="26" fill="url(#lens)" stroke-width="14"/>
+    <path d="M485 445H441" fill="none" stroke-width="13"/>
+    <path d="M543 442C566 442 585 453 602 468" fill="none" stroke-width="13"/>
+    <path d="M499 432 510 428" fill="none" stroke="#f7f4ea" stroke-width="6" opacity="0.72"/>
+    <path d="M522 441 530 447" fill="none" stroke="#3d78b8" stroke-width="5" opacity="0.5"/>
 
-    <path d="M524 563C546 570 568 571 593 564C585 580 572 592 556 599C540 594 530 583 524 563Z" fill="#20252c" stroke-width="12"/>
-    <path d="M535 568C551 572 567 572 581 569C573 578 564 583 554 587C546 583 540 577 535 568Z" fill="#f7f4ea" stroke="none"/>
-    <path d="M533 607C552 615 570 615 585 607" fill="none" stroke-width="12"/>
-    <path d="M506 725C523 730 539 723 550 707C554 729 551 752 542 775C533 760 523 749 509 746Z" fill="url(#ink)" stroke-width="16"/>
-    <path d="M544 762C554 781 554 802 545 822" fill="none" stroke-width="13"/>
+    <path d="M522 556 550 562 589 555 579 579 555 591 535 581Z" fill="#20252c" stroke-width="11"/>
+    <path d="m533 563 18 3 25-4-6 10-16 7-16-6Z" fill="#f7f4ea" stroke="none"/>
+    <path d="M552 565v12M532 603l22 5 27-6" fill="none" stroke-width="10"/>
+    <path d="M504 719C521 725 535 717 546 702C549 722 545 743 536 763C528 750 518 741 506 738Z" fill="url(#ink)" stroke-width="14"/>
+    <path d="M538 754C546 770 545 787 537 802" fill="none" stroke-width="11"/>
 
     <path d="M410 369C425 386 433 404 436 425L457 390L475 416L496 380L518 405L539 373L560 393" fill="url(#ink)" stroke-width="18"/>
     <path d="M275 526C299 509 327 509 348 522" fill="none" stroke="#59616b" stroke-width="9" opacity="0.54"/>

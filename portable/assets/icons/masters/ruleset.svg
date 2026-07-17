@@ -22,8 +22,8 @@
     <path d="M53 134c-13-23-3-47 19-60 16-10 36-11 50-3 6 4 8 9 7 15 11 3 21 9 26 18-10-4-19-3-26-1 8 4 13 9 17 16-10-4-18-5-25-3l5 9c-10-6-20-8-30-6-11 11-29 28-43 15Z" fill="url(#i)" stroke-width="7"/>
     <path d="M84 117c7-7 18-7 25-1 4 3 6 8 7 14l18 17c3 2 1 5-2 6l-14 3c4 5 3 9-2 12-3 2-6 2-9 2 2 5 0 10-4 13-3 3-7 4-10 4-2 4-6 6-10 7-13-7-17-20-15-39 1-17 6-32 16-38Z" fill="url(#p)" stroke-width="6.5"/>
     <path d="m78 119 5 8 5-7 5 7 5-8 5 7 5-7" fill="url(#i)" stroke-width="4"/>
-    <circle cx="99" cy="135" r="10.5" fill="#7fa9ce" stroke-width="4.5"/><circle cx="101" cy="135" r="2" fill="#20252c" stroke="none"/>
-    <path d="M107 157c7 3 13 2 18 0-2 6-6 9-10 10-4-2-6-5-8-10Zm-3 28c5 2 9 0 12-4 1 6 0 11-3 15-2-4-5-6-8-6Z" fill="#20252c" stroke-width="1"/>
+    <path d="m90 127 13 2" fill="none" stroke-width="4"/><ellipse cx="102" cy="135" rx="7" ry="6" fill="#20252c" stroke-width="3.5"/><path d="m100 133 3-1" stroke="#c1c5cc" stroke-width="1.5"/>
+    <path d="m106 155 8 2 11-2-3 7-7 3-6-3Z" fill="#20252c" stroke-width="1"/><path d="m110 157 4 1 7-1-2 3-4 1-4-1Z" fill="#f7f4ea" stroke="none"/><path d="M104 184c5 2 9 0 12-4 0 6-1 11-4 15-2-4-5-5-8-6Z" fill="#20252c" stroke-width="1"/>
   </g>
   <!-- foreground card edge occludes the portrait as in the original -->
   <path d="M123 119h94v100h-94" fill="none" stroke="#20252c" stroke-width="8" stroke-linejoin="round"/>

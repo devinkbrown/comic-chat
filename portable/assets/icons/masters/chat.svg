@@ -24,11 +24,11 @@
       <stop offset="0.5" stop-color="#c1c5cc"/>
       <stop offset="1" stop-color="#7b828c"/>
     </linearGradient>
-    <radialGradient id="lens" cx="0.34" cy="0.28" r="0.8">
-      <stop offset="0" stop-color="#f7f4ea"/>
-      <stop offset="0.27" stop-color="#a9bdd0"/>
-      <stop offset="0.72" stop-color="#3d78b8" stop-opacity="0.62"/>
-      <stop offset="1" stop-color="#20252c" stop-opacity="0.86"/>
+    <radialGradient id="lens" cx="0.3" cy="0.24" r="0.82">
+      <stop offset="0" stop-color="#c1c5cc"/>
+      <stop offset="0.2" stop-color="#59616b"/>
+      <stop offset="0.58" stop-color="#20252c"/>
+      <stop offset="1" stop-color="#0e1217"/>
     </radialGradient>
     <pattern id="dots" width="44" height="44" patternUnits="userSpaceOnUse" patternTransform="rotate(-5)">
       <circle cx="12" cy="12" r="6.5" fill="#b79927" opacity="0.68"/>
@@ -84,27 +84,28 @@
     <path d="M238 260C208 236 179 242 164 266C194 258 216 270 235 291" fill="url(#inkSheen)" stroke-width="22"/>
 
     <!-- long authored profile -->
-    <path d="M388 369C421 338 469 335 501 359C522 376 534 398 540 426C557 438 578 455 599 476L646 522C656 532 651 548 638 552L579 568C591 589 594 605 586 622C577 641 556 649 532 651C543 673 539 697 522 718C507 736 487 747 465 749C453 765 436 778 416 784C378 767 352 743 338 711C322 676 319 632 323 582C327 516 345 423 388 369Z"
+    <path d="M388 369C421 338 469 335 501 359C522 376 534 398 540 426L570 451L596 478L628 507L646 522C656 532 651 544 638 548L578 561C591 581 594 599 585 616C575 634 554 641 531 642C542 665 537 691 520 712C505 730 485 741 463 743C451 759 435 773 416 780C378 764 352 741 338 709C322 674 319 631 323 582C327 516 345 423 388 369Z"
       fill="url(#paper)" stroke-width="27"/>
-    <path d="M608 511C619 520 629 529 639 539L579 554" fill="none" stroke="#c1c5cc" stroke-width="10" opacity="0.8"/>
+    <path d="M603 499 641 531 580 547" fill="none" stroke="#c1c5cc" stroke-width="9" opacity="0.78"/>
     <path d="M334 585C325 505 346 423 389 372" fill="none" stroke="#fff" stroke-width="9" opacity="0.62"/>
 
     <!-- one visible lens, eye relationship and hooked nose bridge -->
-    <path d="M433 414C459 395 495 397 518 421" fill="none" stroke-width="15"/>
-    <circle cx="468" cy="449" r="45" fill="url(#lens)" stroke-width="17"/>
-    <path d="M424 448H383" fill="none" stroke-width="15"/>
-    <path d="M512 445C537 445 558 458 574 474" fill="none" stroke-width="15"/>
-    <path d="M447 428C459 417 475 416 486 425" fill="none" stroke="#fff" stroke-width="8" opacity="0.75"/>
-    <ellipse cx="475" cy="450" rx="8" ry="13" fill="#20252c" stroke="none"/>
+    <path d="M438 421C454 398 482 396 503 414" fill="none" stroke-width="14"/>
+    <path d="M444 409 485 417" fill="none" stroke="#20252c" stroke-width="13"/>
+    <ellipse cx="477" cy="448" rx="31" ry="27" fill="url(#lens)" stroke-width="14"/>
+    <path d="M447 448H397" fill="none" stroke-width="13"/>
+    <path d="M507 445C532 444 553 455 570 470" fill="none" stroke-width="13"/>
+    <path d="M461 435 473 430" fill="none" stroke="#f7f4ea" stroke-width="6" opacity="0.72"/>
+    <path d="M485 444 493 450" fill="none" stroke="#3d78b8" stroke-width="5" opacity="0.52"/>
 
     <!-- compact open smile and source-like tooth rhythm -->
-    <path d="M491 572C515 579 539 580 566 573C557 590 544 603 526 611C509 606 498 593 491 572Z" fill="#20252c" stroke-width="12"/>
-    <path d="M503 577C521 581 538 581 553 578C544 587 534 593 524 597C515 593 508 586 503 577Z" fill="#f7f4ea" stroke="none"/>
-    <path d="M500 619C521 627 540 627 557 619" fill="none" stroke-width="12"/>
+    <path d="M489 565 520 570 562 563 551 588 526 600 503 589Z" fill="#20252c" stroke-width="11"/>
+    <path d="m501 572 20 3 27-4-6 10-17 7-18-6Z" fill="#f7f4ea" stroke="none"/>
+    <path d="M522 575v12M500 612l24 5 29-6" fill="none" stroke-width="10"/>
 
     <!-- narrow chin and thin pointed goatee -->
-    <path d="M475 747C494 752 510 744 522 727C527 751 523 776 513 801C504 784 492 772 477 768Z" fill="url(#inkSheen)" stroke-width="16"/>
-    <path d="M515 786C526 807 526 831 516 853" fill="none" stroke-width="13"/>
+    <path d="M473 741C491 747 506 739 518 722C521 744 516 766 507 787C499 773 488 764 475 760Z" fill="url(#inkSheen)" stroke-width="14"/>
+    <path d="M509 777C517 794 516 812 507 828" fill="none" stroke-width="11"/>
 
     <!-- authored fringe separates cap from forehead -->
     <path d="M367 371C383 389 392 407 395 430L418 392L437 419L460 381L483 407L507 373L529 394" fill="url(#inkSheen)" stroke-width="18"/>
