@@ -1,6 +1,6 @@
 # IRC and IRCv3 coverage
 
-Audit snapshot: 2026-07-17, active integration branch.
+Audit snapshot: 2026-07-17, `main` at `1adea2d`.
 
 This is the compatibility ledger for the legacy Microsoft Comic Chat client in
 `v2.5-beta-1-modern/` and the shared protocol engine in `portable/`. It measures
@@ -26,9 +26,11 @@ visible behavior.
 
 “Tested” means the test is wired into the build, not merely present in the tree.
 The current standalone gate is `meson test -C portable/build
-comicchat-ircv3 --print-errorlogs`; it passed 1/1 with Clang 22.1.5 during this
-audit. The five server files are curated transcript fixtures, not live-server
-certification.
+comicchat-ircv3 --print-errorlogs`; it passes 1/1 at this `1adea2d` snapshot,
+and the full `meson test -C portable/build` suite passes 11/11, both re-executed
+against this commit rather than inherited from the previous audit. Each cited
+test was also re-verified as registered in `portable/meson.build`. The five
+server files are curated transcript fixtures, not live-server certification.
 
 Primary protocol sources:
 
@@ -138,14 +140,14 @@ Official capability sources: [account notify](https://ircv3.net/specs/extensions
 | `bot` | non-standard vendor CAP | **observe-only** | Offer is retained and the `bot` tag decodes; Orochi and Unreal fixtures cover discovery | **Default off.** The standard bot-mode contract is the `bot` tag plus `BOT` ISUPPORT, not a general `bot` capability. |
 | `chghost` | stable | **partial** | Bounded host state and `HostChanged` update the document-owned historical `user@host` identity; state/bound and causal model tests | Safe to request; a dedicated identity display remains absent. |
 | `echo-message` | stable | **partial** | Outgoing labels/content are retained and inbound echoes can be suppressed; tests cover correlation | **Default off.** Content-only fallback can mistake an identical echo from another bouncer session for the local message; durable pending-message identity is required. |
-| `extended-join` | stable | **unsupported** | Catalog and fixture selection only; no normalization before legacy `JOIN` | **Block.** Extended JOIN adds account and realname. The legacy handler treats `lastString` as the channel (`v2.5-beta-1-modern/ircsock.cpp:1374-1434`), so a realname can become the channel key. |
-| `invite-notify` | stable | **unsupported** | Catalog presence; no causal extension test or adapter | **Block.** The legacy INVITE path assumes an invitation for the local user (`v2.5-beta-1-modern/ircsock.cpp:1361-1367`). |
+| `extended-join` | stable | **partial** | The adapter flattens the three-parameter JOIN to the channel alone before the legacy handler, keeping the complete message for typed consumers (`v2.5-beta-1-modern/ircv3eventbridge.h:457-466,493`); the engine rejects every other shape, bounds account/realname state, and emits `Account`/`RealnameChanged` (`portable/src/net/ircv3.cpp:2431-2488`); causal test `v2.5-beta-1-modern/tests/transport_ui_bridge_test.cpp:340` covers the channel key, the preserved typed identity, and the malformed-shape rejection | **Still default off** (`portable/src/net/ircv3.cpp:539`). The realname can no longer become the channel key, and account/realname reach the same document-owned fields as `account-notify`/`setname`, so the catalog precondition is met. It stays partial for the same reason those rows do: no visible account or realname surface consumes them. |
+| `invite-notify` | stable | **unsupported** | Catalog presence only. No adapter and no causal test; `INVITE` appears in the bridge solely as a trailing-parameter rule (`v2.5-beta-1-modern/ircv3eventbridge.h:365`), which is a wire-shape concern and not third-party-invitation handling | **Block.** Unchanged. The legacy INVITE path assumes an invitation for the local user (`v2.5-beta-1-modern/ircsock.cpp:1361-1367`), and nothing distinguishes a third-party notification from one addressed to the local user. |
 | `labeled-response` | stable | **partial** | Labels, batch correlation, echo correlation, and terminal no-parameter `ACK` handling; malformed/unlabeled ACK is contained as a typed protocol error (`portable/src/net/ircv3.cpp:2521-2545`) | **Default off.** ACK no longer reaches legacy unknown-command handling, but full response presentation and durable pending-message identity are unfinished. |
-| `multi-prefix` | stable | **unsupported** | Negotiated but not normalized; no direct test | **Block.** `CUserInfo` strips only one prefix (`v2.5-beta-1-modern/userinfo.cpp:121-144`), so `@+nick` becomes nickname `+nick`. |
-| `no-implicit-names` | stable | **unsupported** | Catalog selection; legacy self-JOIN creates only a response-tracking `CCQuery` (`v2.5-beta-1-modern/ircsock.cpp:1419-1434`, `v2.5-beta-1-modern/query.cpp:105-110`) | **Block.** It does not transmit `NAMES`; when the server suppresses the implicit reply, the member list can remain empty. |
+| `multi-prefix` | stable | **partial** | `NormalizeLegacyNamesReply` strips every leading prefix symbol from each `353` token and re-emits at most one symbol, collapsing higher server ranks to the four roles Microsoft's member model can represent — owner `.`, operator `@`, voice `+`, spectator `>` (`v2.5-beta-1-modern/ircv3eventbridge.h:399-446`); it validates the `PREFIX` token and fails closed on a malformed one; direct test with `PREFIX=(qaohv)~&@%+` at `v2.5-beta-1-modern/tests/transport_ui_bridge_test.cpp:364` | **Still default off** (`portable/src/net/ircv3.cpp:546`). `CUserInfo` still strips only one prefix (`v2.5-beta-1-modern/userinfo.cpp:121-144`), but normalization now runs upstream, so `@+nick` reaches it as `@nick`, not `+nick`. Partial, not implemented: the collapse discards ranks the legacy model could otherwise hold as distinct flags, so `@+nick` loses `UF_HASVOICE`. |
+| `no-implicit-names` | stable | **partial** | Both legacy self-JOIN sites now gate on `m_ircEngine.IsEnabled("no-implicit-names")` and queue an explicit request beside the response-tracking `CCQuery`, failing closed via `OnClose(WSAENOBUFS)` when the line cannot be queued (`v2.5-beta-1-modern/ircsock.cpp:1378-1385,1536-1543`); the bounded builder rejects empty, spaced, comma-bearing, NUL-bearing, and oversize channel names (`v2.5-beta-1-modern/ircv3eventbridge.h:194`); causal test `v2.5-beta-1-modern/tests/transport_ui_bridge_test.cpp:395` | **Still default off** (`portable/src/net/ircv3.cpp:549`). It does now transmit `NAMES`, so the catalog precondition is met and a suppressed implicit reply no longer leaves the member list empty. Partial, not implemented: the builder is tested in isolation, but no legacy-consumer test proves the request is issued on JOIN — that path is MFC and CI-only. |
 | `sasl` | stable | **partial** | PLAIN, explicit EXTERNAL, and SCRAM-SHA-256; see dedicated section | Safe only on verified TLS with a usable mechanism. Product has no client-certificate provisioning and no post-registration reauthentication. |
 | `setname` | stable | **partial** | `SETNAME` state and `RealnameChanged` update a separate document-owned realname field; state/bound and causal model tests | Safe to request; a visible realname surface remains absent. |
-| `userhost-in-names` | stable | **unsupported** | Negotiated but no legacy NAMES normalization or direct test | **Block.** NAMES tokens flow into the single-prefix `CUserInfo` constructor; `nick!user@host` can become the nickname. |
+| `userhost-in-names` | stable | **partial** | `NormalizeLegacyNamesReply` finds `!` only to truncate the token at the nickname and then validates length and forbidden characters; the hostmask itself is discarded, not forwarded (`v2.5-beta-1-modern/ircv3eventbridge.h:430-434`). Covered incidentally by the `353` test at `v2.5-beta-1-modern/tests/transport_ui_bridge_test.cpp:364`, which asserts `Owner!owner@example.test` normalizes to `Owner`; no test names this capability | **Still default off** (`portable/src/net/ircv3.cpp:554`). The safety half holds — `nick!user@host` can no longer become the nickname. The catalog precondition is **not** met: it requires that NAMES adaptation "supplies the hostmask separately to the legacy user model," and nothing does. Enabling it would negotiate extra wire data the product then throws away. |
 | `draft/channel-rename` | work in progress | **partial** | The engine requires both channels plus the mandatory, possibly empty reason and migrates retained state. The legacy UI keeps the same room/member/topic/mode document, updates encoded/pretty names, tab/path/status, rewrites pending query targets, and displays the reason; malformed input and local target collisions fail closed | **Default off while draft.** The product adapter is present and causal-tested, but native MFC compilation is CI-only and a user-facing policy for an already-open local target tab remains unresolved. |
 | `draft/account-registration` | work in progress | **partial** | Secret-consuming `REGISTER`/`VERIFY` builders and typed outcomes in `portable/src/net/ircv3.cpp:2595-2658`; tests `portable/tests/ircv3_test.cpp:1083-1112` | Block until an account UI consumes the API and replies. |
 | `draft/chathistory` | work in progress | **partial** | History batches and bounded recovery command builder in `portable/src/net/ircv3.cpp:1315-1325,1989-2111`; tests `portable/tests/ircv3_test.cpp:398-408,744-787` and four CAP fixtures | **Block for now.** No production caller uses `RecoveryCommands()`. Requesting chathistory can suppress server auto-playback without replacing it. |
@@ -323,12 +325,15 @@ Status: **partial**.
   fail-closed behavior. The same test is registered in Meson and the native
   NMAKE/Windows CI lane (`portable/tests/sts_session_test.cpp`).
 
-Full STS remains **partial** because the v1 legacy session and unfinished
-Unix/BSD frontend do not yet construct this owner or supply their native config
-roots. The portable `private_config_file_from_root` seam is ready for those
-frontends, but no Unix/BSD production caller exists. `CAP DEL sts` must continue
-not to clear a stored policy; only the spec-defined secure `duration=0` update
-may do that. A preload bootstrap is also intentionally absent.
+Full STS remains **partial**, but no longer because the production sessions are
+missing. All three now construct a policy owner: the Unix/BSD frontend builds a
+`NativeSession` over the resolved policy file (`portable/src/app.cpp:211-215`,
+`portable/src/net/native_session.cpp:673`), and the v1 legacy session plans
+through `StsSession` before transport start (`v1.0-pre-modern/irc.cpp:1121-1187`).
+It remains partial because the policy lifecycle is not yet exercised end to end
+on every frontend, and because a preload bootstrap is intentionally absent.
+`CAP DEL sts` must continue not to clear a stored policy; only the spec-defined
+secure `duration=0` update may do that.
 
 ## Server profiles and fixtures
 
@@ -420,11 +425,18 @@ account/away/host/realname mutation against an MFC-independent fake model. The
 native handler is wired, but this Linux audit cannot instantiate MFC; its actual
 Windows compilation remains an MSVC CI gate.
 
-Current conspicuous gaps include direct causal tests for `invite-notify`,
-`multi-prefix`, `userhost-in-names`, `pre-away`, extended-JOIN normalization,
-full labeled response presentation, production STS session wiring, CHATHISTORY
-recovery invocation, event-playback isolation, visible redaction, and UI/model
-application of the remaining typed state events.
+Current conspicuous gaps include direct causal tests for `invite-notify` and
+`pre-away`, a legacy-consumer test for the explicit NAMES request on JOIN,
+hostmask delivery to the legacy user model for `userhost-in-names`, full labeled
+response presentation, CHATHISTORY recovery invocation, event-playback
+isolation, visible redaction, and UI/model application of the remaining typed
+state events.
+
+Closed since the previous snapshot: extended-JOIN normalization, multi-prefix
+NAMES normalization and its direct test, explicit NAMES transmission under
+`no-implicit-names`, and production STS session wiring across all three
+frontends. Normalization is not negotiation — all five NAMES/JOIN-adjacent
+capabilities below remain default-off in the catalog.
 
 ## Prioritized completion plan
 
@@ -441,16 +453,24 @@ application of the remaining typed state events.
    existing status view; channel rename preserves and retargets the legacy room.
    Implement redaction, typing/reaction, read markers, metadata, and message
    context.
-4. **Complete for v2.5 Windows and the Unix/BSD frontend; blocked for v1:**
-   wire the durable per-host policy lifecycle into the remaining production
-   session. The completed paths plan before transport start, commit verified
-   secure updates/removals, retain only a current connection receipt for
-   disconnect rebasing, and have adapter-level downgrade tests.
+4. **Complete for v2.5 Windows, the Unix/BSD frontend, and v1:** the durable
+   per-host policy lifecycle is wired into every production session. Commit
+   `70f6ad3` closed the v1 gap — `CIrcSocket::StartConnection` loads the policy,
+   plans through `sts_session_->start(...)`, and only then calls
+   `connection_.start(std::move(planned))` (`v1.0-pre-modern/irc.cpp:1121-1187`),
+   with `comicchat-v1-transport-adapter` registered in the build
+   (`portable/meson.build:488-493`). All paths plan before transport start,
+   commit verified secure updates/removals, retain only a current connection
+   receipt for disconnect rebasing, and have adapter-level downgrade tests.
+   Remaining: the preload bootstrap noted above.
 
 ### P1 — complete negotiated feature semantics
 
-1. Normalize extended JOIN, multiple NAMES prefixes, and userhost-in-names before
-   legacy parsing; add daemon-shaped fixtures and MFC consumer tests.
+1. Extended JOIN and multiple NAMES prefixes are normalized before legacy
+   parsing and directly tested; userhost-in-names is truncated safely but its
+   hostmask is discarded. Supply that hostmask to the legacy user model, add
+   daemon-shaped fixtures, and add MFC consumer tests before flipping any of
+   these defaults on.
 2. Enforce every multiline opening target/limit/blank rule and add outbound
    client-batch/multiline construction.
 3. Wire CHATHISTORY recovery/pagination into reconnect without replaying
