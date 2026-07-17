@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -439,6 +440,243 @@ void TestOutboundValidationAndTagPreservation()
 	auto incoming = engine.Process("@time=2026-01-01T00:00:00.000Z;account=bob :Bob PRIVMSG #room :hello\r\n");
 	Check(incoming.messages.size() == 1 && incoming.messages[0].FindTag("time") &&
 		incoming.messages[0].FindTag("account"), "typed messages preserve metadata for portable presentation");
+}
+
+// Brings an Engine to a state where `batch` and `draft/multiline` are enabled,
+// carrying the advertised multiline limits the builder must obey. Both
+// capabilities are product-gated off by default, so the fixture opts in the way
+// a complete frontend adapter would.
+void NegotiateMultiline(Engine* engine, std::string_view value)
+{
+	SaslConfig config;
+	Check(engine->SetCapabilityRequestEnabled("batch", true) &&
+		engine->SetCapabilityRequestEnabled("draft/multiline", true),
+		"multiline fixture opts in to catalogued capabilities");
+	engine->BeginRegistration(config, "Alice", true);
+	std::string ls = ":server CAP * LS :batch message-tags draft/multiline";
+	if (!value.empty()) {
+		ls += '=';
+		ls += value;
+	}
+	ls += "\r\n";
+	engine->Process(ls);
+	engine->Process(":server CAP Alice ACK :batch message-tags draft/multiline\r\n");
+}
+
+// Extracts the batch reference from a `BATCH +<ref> ...` opening line.
+std::string BatchReference(std::string_view opening)
+{
+	const auto plus = opening.find(" +");
+	if (plus == std::string_view::npos) return {};
+	const auto rest = opening.substr(plus + 2);
+	const auto space = rest.find(' ');
+	return std::string(rest.substr(0, space));
+}
+
+// Replays built wire lines through a fresh receiving Engine and returns the
+// reassembled multiline text, or nullopt when the batch was rejected.
+std::optional<std::string> ReplayMultiline(const std::vector<std::string>& lines)
+{
+	Engine receiver;
+	ProcessResult last;
+	for (const auto& line : lines) last = receiver.Process(line);
+	for (const auto& event : last.events)
+		if (event.type == EventType::Multiline) return event.value;
+	return std::nullopt;
+}
+
+void TestOutboundMultiline()
+{
+	using comic_chat::ircv3::MultilineLine;
+
+	Engine sender;
+	NegotiateMultiline(&sender, "max-bytes=4096,max-lines=24");
+	Check(sender.IsEnabled("batch") && sender.IsEnabled("draft/multiline"),
+		"outbound multiline fixture negotiates batch and draft/multiline");
+
+	// A logical body of two lines where the first is split across two messages
+	// via the concat tag: "hello world" then a hard line break then "again".
+	const std::vector<MultilineLine> body = {
+		{"hello ", false}, {"world", true}, {"again", false},
+	};
+	auto built = sender.PrepareMultiline("#room", body);
+	Check(built.has_value(), "multiline builder accepts a compliant body");
+	if (built) {
+		Check(built->size() == body.size() + 2,
+			"multiline builder frames every child between one open and one close");
+		Check(built->front().starts_with("BATCH +") &&
+			built->front().find("draft/multiline #room") != std::string::npos,
+			"multiline builder opens a draft/multiline batch on the requested target");
+		const auto reference = BatchReference(built->front());
+		Check(!reference.empty() && built->back() == "BATCH -" + reference + "\r\n",
+			"multiline builder closes the batch it opened");
+		Check((*built)[1].find("@batch=" + reference) != std::string::npos &&
+			(*built)[1].find("PRIVMSG #room") != std::string::npos,
+			"multiline children carry the batch tag and the opening target");
+		Check((*built)[1].find("draft/multiline-concat") == std::string::npos &&
+			(*built)[2].find("draft/multiline-concat") != std::string::npos &&
+			(*built)[3].find("draft/multiline-concat") == std::string::npos,
+			"multiline builder tags only the continuation children with concat");
+		// The causal round trip: what we build must reassemble to what we meant.
+		Check(ReplayMultiline(*built) == "hello world\nagain",
+			"built multiline batch round-trips through the receive-side reassembler");
+	}
+
+	auto notice = sender.PrepareMultiline("#room", body, true);
+	Check(notice.has_value() && (*notice)[1].find("NOTICE #room") != std::string::npos,
+		"multiline builder can frame NOTICE children");
+
+	// Unique reference tags: two batches from one engine must not collide.
+	auto first = sender.PrepareMultiline("#room", body);
+	auto second = sender.PrepareMultiline("#room", body);
+	Check(first && second &&
+		!BatchReference(first->front()).empty() &&
+		BatchReference(first->front()) != BatchReference(second->front()),
+		"multiline builder generates a unique batch reference per batch");
+
+	// Fail closed: no negotiated capability means no batch at all.
+	Engine bare;
+	SaslConfig config;
+	bare.BeginRegistration(config, "Alice", true);
+	Check(!bare.PrepareMultiline("#room", body).has_value(),
+		"multiline builder refuses to build without the negotiated capability");
+
+	// max-lines is a hard bound, enforced at the boundary rather than truncated.
+	Engine line_limited;
+	NegotiateMultiline(&line_limited, "max-bytes=4096,max-lines=2");
+	const std::vector<MultilineLine> two = {{"a", false}, {"b", false}};
+	const std::vector<MultilineLine> three = {{"a", false}, {"b", false}, {"c", false}};
+	Check(line_limited.PrepareMultiline("#room", two).has_value(),
+		"multiline builder accepts a body at the advertised max-lines");
+	Check(!line_limited.PrepareMultiline("#room", three).has_value(),
+		"multiline builder rejects a body over the advertised max-lines");
+
+	// max-bytes counts message content, not framing, and is likewise a hard bound.
+	Engine byte_limited;
+	NegotiateMultiline(&byte_limited, "max-bytes=8,max-lines=24");
+	const std::vector<MultilineLine> exact = {{"12345", false}, {"678", false}};
+	const std::vector<MultilineLine> over = {{"12345", false}, {"6789", false}};
+	Check(byte_limited.PrepareMultiline("#room", exact).has_value(),
+		"multiline builder accepts content at the advertised max-bytes");
+	Check(!byte_limited.PrepareMultiline("#room", over).has_value(),
+		"multiline builder rejects content over the advertised max-bytes");
+
+	// Prohibited concat cases, rejected rather than silently normalized.
+	const std::vector<MultilineLine> concat_first = {{"a", true}, {"b", false}};
+	const std::vector<MultilineLine> concat_blank = {{"a", false}, {"", true}};
+	const std::vector<MultilineLine> blank_ok = {{"a", false}, {"", false}, {"b", false}};
+	Check(!sender.PrepareMultiline("#room", concat_first).has_value(),
+		"multiline builder rejects concat on the first child");
+	Check(!sender.PrepareMultiline("#room", concat_blank).has_value(),
+		"multiline builder rejects concat on a blank child");
+	Check(sender.PrepareMultiline("#room", blank_ok).has_value(),
+		"multiline builder allows a blank line without concat");
+	auto blank_built = sender.PrepareMultiline("#room", blank_ok);
+	Check(blank_built && ReplayMultiline(*blank_built) == "a\n\nb",
+		"blank multiline children round-trip as empty lines");
+
+	// A batch must carry at least one message and exactly one valid target.
+	const std::vector<MultilineLine> empty_body;
+	Check(!sender.PrepareMultiline("#room", empty_body).has_value(),
+		"multiline builder rejects an empty batch");
+	Check(!sender.PrepareMultiline("#room,#other", body).has_value(),
+		"multiline builder rejects a multi-target opening");
+	Check(!sender.PrepareMultiline("", body).has_value(),
+		"multiline builder rejects an empty target");
+	const std::vector<MultilineLine> embedded = {{"a\nb", false}};
+	Check(!sender.PrepareMultiline("#room", embedded).has_value(),
+		"multiline builder rejects embedded line control in child content");
+}
+
+// The receive-side gap: a multiline batch must be validated against its
+// normalized opening target and the spec's concat rules, not merely against
+// whatever its first child happened to say.
+void TestInboundMultilineOpeningTarget()
+{
+	auto reassemble = [](std::initializer_list<std::string_view> lines) -> std::optional<std::string> {
+		Engine engine;
+		ProcessResult last;
+		for (const auto line : lines) last = engine.Process(line);
+		for (const auto& event : last.events)
+			if (event.type == EventType::Multiline) return event.value;
+		return std::nullopt;
+	};
+
+	Check(reassemble({
+		":server BATCH +m draft/multiline #room\r\n",
+		"@batch=m :Bob!u@h PRIVMSG #room :hello\r\n",
+		":server BATCH -m\r\n",
+	}) == "hello", "multiline child matching the opening target is reassembled");
+
+	Check(reassemble({
+		":server BATCH +m draft/multiline #Room\r\n",
+		"@batch=m :Bob!u@h PRIVMSG #rOOm :hello\r\n",
+		":server BATCH -m\r\n",
+	}) == "hello", "multiline opening target is compared under the active casemapping");
+
+	// Every child, not just the first, is measured against the opening target.
+	// Distinct spellings across children keep this from collapsing into a
+	// first-child comparison.
+	Check(reassemble({
+		":server BATCH +m draft/multiline #Room\r\n",
+		"@batch=m :Bob!u@h PRIVMSG #rOOm :hello\r\n",
+		"@batch=m :Bob!u@h PRIVMSG #ROOM :world\r\n",
+		":server BATCH -m\r\n",
+	}) == "hello\nworld",
+		"every multiline child is compared to the opening target under casemapping");
+
+	Check(reassemble({
+		":server BATCH +m draft/multiline #room\r\n",
+		"@batch=m :Bob!u@h PRIVMSG #other :hello\r\n",
+		":server BATCH -m\r\n",
+	}) == std::nullopt, "multiline first child diverging from the opening target is rejected");
+
+	Check(reassemble({
+		":server BATCH +m draft/multiline #room\r\n",
+		"@batch=m :Bob!u@h PRIVMSG #room :hello\r\n",
+		"@batch=m :Bob!u@h PRIVMSG #other :world\r\n",
+		":server BATCH -m\r\n",
+	}) == std::nullopt, "multiline later child diverging from the opening target is rejected");
+
+	Check(reassemble({
+		":server BATCH +m draft/multiline\r\n",
+		"@batch=m :Bob!u@h PRIVMSG #room :hello\r\n",
+		":server BATCH -m\r\n",
+	}) == std::nullopt, "multiline batch without its mandatory target parameter is rejected");
+
+	// The specification prohibits the concat tag only on blank lines, never on
+	// the first line, where it is simply a no-op: there is no previous line to
+	// join to. Dropping the batch would discard a well-formed message to enforce
+	// an unstated rule, so the tag is ignored and the text still arrives.
+	Check(reassemble({
+		":server BATCH +m draft/multiline #room\r\n",
+		"@batch=m;draft/multiline-concat :Bob!u@h PRIVMSG #room :hello\r\n",
+		":server BATCH -m\r\n",
+	}) == "hello", "multiline concat on the first child is ignored, not fatal");
+
+	// The no-op tag on the first child must not swallow the newline that a later
+	// unconcatenated child is entitled to.
+	Check(reassemble({
+		":server BATCH +m draft/multiline #room\r\n",
+		"@batch=m;draft/multiline-concat :Bob!u@h PRIVMSG #room :hello\r\n",
+		"@batch=m :Bob!u@h PRIVMSG #room :world\r\n",
+		":server BATCH -m\r\n",
+	}) == "hello\nworld", "first-child concat does not alter later child joining");
+
+	// Blank + concat remains fatal on receive, as the specification requires.
+	Check(reassemble({
+		":server BATCH +m draft/multiline #room\r\n",
+		"@batch=m :Bob!u@h PRIVMSG #room :hello\r\n",
+		"@batch=m;draft/multiline-concat :Bob!u@h PRIVMSG #room :\r\n",
+		":server BATCH -m\r\n",
+	}) == std::nullopt, "multiline concat on a blank child is rejected");
+
+	Check(reassemble({
+		":server BATCH +m draft/multiline #room\r\n",
+		"@batch=m :Bob!u@h PRIVMSG #room :hello\r\n",
+		"@batch=m;draft/multiline-concat :Bob!u@h PRIVMSG #room :\r\n",
+		":server BATCH -m\r\n",
+	}) == std::nullopt, "multiline concat on a blank child is rejected");
 }
 
 void TestBatches()
@@ -1569,6 +1807,8 @@ int main()
 	TestTypedTagSemantics();
 	TestIsupportCaseMappingAndMonitor();
 	TestCapabilityAndSaslRejectionBounds();
+	TestOutboundMultiline();
+	TestInboundMultilineOpeningTarget();
 	TestBatchFamiliesAndGlobalBound();
 	TestRetainedStateBounds();
 	TestServerProfilesAndTargetLimits();

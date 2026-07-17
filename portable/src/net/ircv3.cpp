@@ -2260,24 +2260,38 @@ std::vector<Message> Engine::FinishBatch(const std::string& id, std::vector<Even
 		return deliverable;
 	};
 	if (batch.type == "draft/multiline") {
-		if (batch.messages.empty()) {
+		// The batch type carries exactly one mandatory parameter: the target that
+		// every child must repeat. Validate against that normalized opening target
+		// rather than against whatever the first child happened to claim.
+		//
+		// Concat on the first child is a no-op, not an error: there is no previous
+		// line to join it to, and the specification prohibits the tag only on blank
+		// lines ("Clients MUST NOT send blank lines with the draft/multiline-concat
+		// tag"). Dropping the batch over it would discard a well-formed message to
+		// enforce a rule the spec does not state, so the tag is ignored here and
+		// stripped below. The send path is deliberately stricter and refuses to
+		// emit it.
+		if (batch.messages.empty() || batch.params.size() != 1) {
 			release_batch_bytes();
 			return {};
 		}
 		Message combined = batch.messages.front();
-		if (combined.params.size() < 2 || (combined.command != "PRIVMSG" && combined.command != "NOTICE")) {
+		if (combined.params.size() < 2 || (combined.command != "PRIVMSG" && combined.command != "NOTICE") ||
+			!SameIdentifier(combined.params[0], batch.params[0])) {
 			release_batch_bytes();
 			return {};
 		}
 		std::string text = combined.params.back();
 		for (std::size_t i = 1; i < batch.messages.size(); ++i) {
 			const auto& part = batch.messages[i];
+			const bool concat = part.FindTag("draft/multiline-concat") != nullptr;
 			if (part.command != combined.command || part.params.size() < 2 ||
-				part.params[0] != combined.params[0] || part.prefix != combined.prefix) {
+				!SameIdentifier(part.params[0], batch.params[0]) || part.prefix != combined.prefix ||
+				(concat && part.params.back().empty())) {
 				release_batch_bytes();
 				return {};
 			}
-			if (!part.FindTag("draft/multiline-concat")) text.push_back('\n');
+			if (!concat) text.push_back('\n');
 			text += part.params.back();
 		}
 		combined.params.back() = std::move(text);
@@ -2939,6 +2953,139 @@ std::expected<std::string, ParseFailure> Engine::PrepareOutgoingChecked(std::str
 		for (const auto& channel : Split(message.params[0], ',')) joined_channels_.erase(Casefold(channel));
 	}
 	return serialized;
+}
+
+Engine::MultilineLimits Engine::AdvertisedMultilineLimits() const
+{
+	// An absent or unparsable key leaves the engine's own receive-side bound in
+	// place, so a server that advertises nothing still cannot make the builder
+	// unbounded, and a server that advertises more than the reassembler can hold
+	// is clamped down rather than trusted.
+	MultilineLimits limits{kMaxBatchWireBytes, kMaxBatchMessages};
+	const auto value = CapabilityValue("draft/multiline");
+	if (!value) return limits;
+	for (const auto& token : Split(*value, ',')) {
+		const auto equal = token.find('=');
+		if (equal == std::string::npos) continue;
+		const auto key = token.substr(0, equal);
+		if (key != "max-bytes" && key != "max-lines") continue;
+		char* end = nullptr;
+		const auto parsed = std::strtoull(token.c_str() + equal + 1, &end, 10);
+		if (!end || *end || parsed == 0) continue;
+		const std::size_t ceiling = key == "max-bytes" ? kMaxBatchWireBytes : kMaxBatchMessages;
+		const std::size_t bounded = parsed >= ceiling ? ceiling : static_cast<std::size_t>(parsed);
+		if (key == "max-bytes") limits.max_bytes = bounded;
+		else limits.max_lines = bounded;
+	}
+	return limits;
+}
+
+std::string Engine::NextBatchReference()
+{
+	// Reference tags are chosen by the sender. The counter is monotonic, so our
+	// own references never repeat; the loop additionally skips any reference a
+	// server-opened inbound batch is currently holding. batches_ is bounded by
+	// kMaxOpenBatches, so this terminates.
+	for (;;) {
+		std::ostringstream stream;
+		stream << "ccb" << std::hex << next_batch_ref_++;
+		auto candidate = stream.str();
+		if (!batches_.contains(candidate)) return candidate;
+	}
+}
+
+std::expected<std::vector<std::string>, ParseFailure> Engine::PrepareMultiline(
+	std::string_view target, std::span<const MultilineLine> lines, const bool notice)
+{
+	if (!IsEnabled("batch") || !IsEnabled("draft/multiline"))
+		return std::unexpected(ParseFailure{"multiline requires negotiated batch and draft/multiline"});
+	// The batch type takes exactly one target. A comma list would be several
+	// targets sharing one batch, which the type does not define.
+	if (!ValidMiddleParameter(target) || target.find(',') != std::string_view::npos)
+		return std::unexpected(ParseFailure{"multiline requires exactly one valid target"});
+	if (lines.empty())
+		return std::unexpected(ParseFailure{"multiline batch requires at least one message"});
+
+	const auto limits = AdvertisedMultilineLimits();
+	if (lines.size() > limits.max_lines)
+		return std::unexpected(ParseFailure{"multiline batch exceeds advertised max-lines"});
+
+	// max-bytes counts message content, not framing. Accumulate against the
+	// remaining allowance so the sum cannot overflow or underflow.
+	std::size_t content_bytes = 0;
+	for (std::size_t index = 0; index < lines.size(); ++index) {
+		const auto& line = lines[index];
+		if (HasLineControl(line.text))
+			return std::unexpected(ParseFailure{"multiline content must not contain line control bytes"});
+		if (line.concat && index == 0)
+			return std::unexpected(ParseFailure{"multiline concat is prohibited on the first message"});
+		if (line.concat && line.text.empty())
+			return std::unexpected(ParseFailure{"multiline concat is prohibited on a blank message"});
+		if (line.text.size() > limits.max_bytes - content_bytes)
+			return std::unexpected(ParseFailure{"multiline batch exceeds advertised max-bytes"});
+		content_bytes += line.text.size();
+	}
+	if (isupport_.contains("UTF8ONLY") &&
+		!std::ranges::all_of(lines, [](const MultilineLine& line) { return ValidUtf8(line.text); }))
+		return std::unexpected(ParseFailure{"UTF8ONLY server rejects non-UTF-8 output"});
+
+	const std::string reference = NextBatchReference();
+	const std::string command = notice ? "NOTICE" : "PRIVMSG";
+	std::vector<std::string> wire;
+	wire.reserve(lines.size() + 2);
+
+	Message open;
+	open.command = "BATCH";
+	open.params = {"+" + reference, "draft/multiline", std::string(target)};
+	// Labeled-response scopes one label to the whole client-initiated batch, so
+	// it belongs on the opening BATCH and never on the individual children.
+	std::string label;
+	if (IsEnabled("labeled-response")) {
+		std::ostringstream stream;
+		stream << "cc" << std::hex << next_label_++;
+		label = stream.str();
+		open.SetTag("label", label);
+	}
+	auto serialized_open = open.SerializeChecked(true);
+	if (!serialized_open) return std::unexpected(serialized_open.error());
+	wire.push_back(std::move(*serialized_open));
+
+	std::string combined;
+	for (std::size_t index = 0; index < lines.size(); ++index) {
+		const auto& line = lines[index];
+		Message child;
+		child.command = command;
+		child.params = {std::string(target), line.text};
+		child.SetTag("batch", reference);
+		if (line.concat) child.SetTag("draft/multiline-concat", std::nullopt);
+		auto serialized = child.SerializeChecked(true);
+		// A child that cannot be framed inside the 512-byte line is a caller
+		// error: the fix is to split it into concat continuations, not to let the
+		// engine silently truncate a message the user typed.
+		if (!serialized) return std::unexpected(serialized.error());
+		wire.push_back(std::move(*serialized));
+		if (index && !line.concat) combined.push_back('\n');
+		combined += line.text;
+	}
+
+	Message close;
+	close.command = "BATCH";
+	close.params = {"-" + reference};
+	auto serialized_close = close.SerializeChecked(true);
+	if (!serialized_close) return std::unexpected(serialized_close.error());
+	wire.push_back(std::move(*serialized_close));
+
+	if (!label.empty()) {
+		if (label_commands_.size() >= kMaxPendingLabels) label_commands_.erase(label_commands_.begin());
+		label_commands_[label] = "BATCH";
+	}
+	// echo-message returns the batch reassembled into a single message, so the
+	// echo is matched against the combined text rather than any one child.
+	if (IsEnabled("echo-message")) {
+		pending_echoes_.push_back({label, command, std::string(target), std::move(combined)});
+		if (pending_echoes_.size() > 128) pending_echoes_.erase(pending_echoes_.begin());
+	}
+	return wire;
 }
 
 std::expected<std::string, ParseFailure> Engine::PrepareAccountRegistration(

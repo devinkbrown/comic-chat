@@ -34,6 +34,16 @@ struct ParseFailure {
 	std::string reason;
 };
 
+// One logical line of an outbound draft/multiline batch. `concat` appends this
+// line to the previous one with no intervening line break, which is how a single
+// long logical line is spread across several 512-byte IRC messages. The
+// specification prohibits concat on the first line of a batch and on a blank
+// line; the builder rejects both rather than normalizing them away.
+struct MultilineLine {
+	std::string text;
+	bool concat = false;
+};
+
 enum class TypingStatus {
 	Active,
 	Paused,
@@ -240,6 +250,16 @@ public:
 	// PRIVMSG/NOTICE messages so echo-message cannot create a second balloon.
 	std::expected<std::string, ParseFailure> PrepareOutgoingChecked(std::string_view wire);
 	std::string PrepareOutgoing(std::string_view wire);
+	// Builds a complete client-initiated draft/multiline batch: the opening
+	// BATCH, one child PRIVMSG (or NOTICE) per line, and the closing BATCH.
+	// Enforces the server-advertised max-bytes/max-lines, a single normalized
+	// opening target repeated by every child, and the prohibited blank/concat
+	// cases. The whole batch is rejected rather than truncated or repaired, so a
+	// caller must split its own over-long lines into concat continuations.
+	std::expected<std::vector<std::string>, ParseFailure> PrepareMultiline(
+		std::string_view target,
+		std::span<const MultilineLine> lines,
+		bool notice = false);
 	std::expected<std::string, ParseFailure> PrepareAccountRegistration(
 		std::string account, std::string email, std::string&& password);
 	std::expected<std::string, ParseFailure> PrepareAccountVerification(
@@ -298,6 +318,13 @@ private:
 		std::set<std::string> names;
 		std::set<std::string> acknowledged;
 	};
+	// Effective outbound multiline bounds: the advertised max-bytes/max-lines
+	// clamped by the engine's own receive-side batch bounds, so the builder is
+	// never laxer than the reassembler and never unbounded when a key is absent.
+	struct MultilineLimits {
+		std::size_t max_bytes = 0;
+		std::size_t max_lines = 0;
+	};
 	class SaslSession;
 	class FloodController;
 
@@ -318,6 +345,8 @@ private:
 	void RemoveCapabilityAndDependents(std::string_view name);
 	bool DependenciesAvailable(std::string_view name) const;
 	bool DependenciesEnabled(std::string_view name) const;
+	MultilineLimits AdvertisedMultilineLimits() const;
+	std::string NextBatchReference();
 	std::vector<Message> FinishBatch(const std::string& id, std::vector<Event>* events);
 	void EraseBatch(const std::string& id);
 	bool IsEcho(const Message& message);
@@ -368,6 +397,7 @@ private:
 	std::size_t metadata_entries_ = 0;
 	std::uint64_t next_label_ = 1;
 	std::uint64_t next_keepalive_ = 1;
+	std::uint64_t next_batch_ref_ = 1;
 	std::string keepalive_token_;
 	CaseMapping case_mapping_ = CaseMapping::Rfc1459;
 	bool secure_transport_ = false;
