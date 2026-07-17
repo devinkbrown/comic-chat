@@ -7,6 +7,7 @@ on:
       - ".github/workflows/build-modern.yml"
       - ".gitmodules"
       - "scripts/**"
+      - "!scripts/ai/**"
       - "portable/**"
       - "third_party/libuv"
       - "third_party/mbedtls"

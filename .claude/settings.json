@@ -1,0 +1,30 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/ai/deny-release-mutation.py\""
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "deny": [
+      "Bash",
+      "Bash(git commit *)",
+      "Bash(git merge *)",
+      "Bash(git rebase *)",
+      "Bash(git push *)",
+      "Bash(git tag *)",
+      "Bash(gh pr merge *)",
+      "Bash(gh release *)"
+    ]
+  },
+  "worktree": {
+    "baseRef": "head"
+  }
+}

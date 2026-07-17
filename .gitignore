@@ -5,6 +5,13 @@
 
 .DS_Store
 
+# Python tooling caches are reproducible local artifacts.
+__pycache__/
+*.py[cod]
+
+# Claude Code creates ephemeral linked worktrees here when isolation is used.
+.claude/worktrees/
+
 # Microsoft Source Library Manager (SLM) internal metadata
 SLM.INI
 slm.dif

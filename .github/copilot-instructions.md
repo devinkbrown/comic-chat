@@ -1,5 +1,9 @@
 # Copilot Instructions for Microsoft Comic Chat
 
+This repository contains Microsoft's read-only historical snapshots and the
+unofficial **Comic Chat: Reinked** modernization. For modern work, also follow
+`AGENTS.md` and `docs/AI-DEVELOPMENT-WORKFLOW.md`.
+
 ## Repository Layout
 
 This is a historical source archive. Each top-level folder is a standalone snapshot — files are not shared between versions.
@@ -11,12 +15,17 @@ This is a historical source archive. Each top-level folder is a standalone snaps
 | `v2.1b/cchat/` | Comic Chat 2.1 beta (Feb 1998) | Visual C++ 5.x |
 | `v2.5-beta-1/` | Comic Chat 2.5 beta 1 (Jun 1998) | Visual C++ 5.x |
 | `artifacts/` | Companion tools: avatar editor, Java client, SDK | various |
+| `v1.0-pre-modern/` | Native modern Windows port | Current MSVC/MFC |
+| `v2.5-beta-1-modern/` | Native modern Windows port | Current MSVC/MFC, C++26 |
+| `portable/` | Native Linux/BSD/Wayland/X11 port | Meson, Clang 21+, C++26 |
 
 `file dates.txt` records original file modification timestamps from the archive.
 
 ## Build System
 
-No modern build system exists. All versions use NMAKE makefiles targeting Win32 x86.
+The historical snapshots use NMAKE and old Visual C++ projects. Do not edit
+those snapshots. The modern Windows trees use current MSVC/MFC NMAKE builds,
+and `portable/` uses Meson with strict C++26 and Clang 21 or newer.
 
 **v1.0** (from `v1.0/client/`):
 ```bat
@@ -27,6 +36,17 @@ Open `chat.mdp` in Visual C++ 4.x for IDE use.
 
 **v2.5-beta-1** (from `v2.5-beta-1/`):
 Open `chat.dsp` in Visual C++ 5.x. The `.dsp`/`.dsw` project format replaced `.mdp` in VC5.
+
+**Portable native client** (from the repository root):
+```sh
+CC=clang CXX=clang++ meson setup portable/build portable --buildtype=release
+meson compile -C portable/build
+SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
+  meson test -C portable/build --print-errorlogs
+```
+
+The native Windows commands and dependency pins are documented in
+`v2.5-beta-1-modern/README.md` and `.github/workflows/build-modern.yml`.
 
 ## Architecture
 
@@ -84,11 +104,11 @@ In v2.5, `childfrm.cpp/h` adds MDI child frame support, and `chatbars.cpp/h` + `
 
 ## Conventions
 
-- **Precompiled headers** — All `.cpp` files must `#include "stdafx.h"` as the very first include. `chat.h` enforces this with a compile-time `#error`.
+- **Precompiled headers** — MFC `.cpp` files must `#include "stdafx.h"` as the very first include. `chat.h` enforces this with a compile-time `#error`. This does not apply to `portable/`.
 - **Units** — All drawing coordinates are in TWIPs (1440 per inch). Defined in `common.h` (v1.0) / `defines.h` (v2.5).
 - **MFC class naming** — `C`-prefixed class names (`CChatDoc`, `CBalloon`, etc.), `AFX_MSG` message maps, `ON_COMMAND` / `ON_UPDATE_COMMAND_UI` macros.
 - **ClassWizard markers** — `//{{AFX_` and `//}}AFX_` comment blocks are maintained by ClassWizard. Do not add or remove code inside these delimiters manually.
 - **OLE registration** — Keep `chat.reg` and COM interface GUIDs consistent when modifying automation interfaces.
 - **Asset paths** — Character art loads from `ComicArt\Avatars` and backdrops from `ComicArt\Backdrop` (hardcoded, backslash-separated Windows paths).
-- **Character encoding** — All strings are ANSI `char*`. No Unicode or `wchar_t`. Japanese support uses runtime Shift-JIS conversion via `jis2sjis.cpp`.
+- **Character encoding** — Historical/MFC strings are predominantly ANSI `char*`; Japanese support uses runtime Shift-JIS conversion via `jis2sjis.cpp`. The portable port uses Unicode shaping through ICU/HarfBuzz and must not inherit the ANSI-only constraint.
 - **AVB file format** — The `.avb` (avatar) and `.bgb` (background) binary formats are documented implicitly in `avbfile.h`. The `AVATAR_NOT_CLIENT` preprocessor flag enables `avbfile.cpp` for use in tools outside the chat client.
