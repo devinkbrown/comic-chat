@@ -61,6 +61,20 @@ class ModernIconPipelineTests(unittest.TestCase):
             for offset, size in enumerate(icons.STRIP_SIZES):
                 self.assertRegex(resource_header, rf"(?m)^#define\s+IDR_MODERN_PNG_{family}_{size}\s+{base + offset}$")
 
+    def test_generated_resource_includes_cover_every_png_without_wildcards(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="comic-chat-icon-test-", dir="/var/tmp") as temporary:
+            root = Path(temporary)
+            icons.build_resource_include(self.catalog, root)
+            icons.build_resource_make_include(self.catalog, root)
+            rc_lines = [line for line in (root / "windows/modern-icon-assets.rcinc").read_text().splitlines()
+                        if " RCDATA " in line]
+            self.assertEqual(len(rc_lines), 11 * 6 + 8 * 7)
+            self.assertTrue(any("IDR_MODERN_PNG_TOOLBAR_16" in line for line in rc_lines))
+            self.assertTrue(any("IDR_MODERN_PNG_EXPR_LAUGH_80X104" in line for line in rc_lines))
+            make_lines = [line for line in (root / "windows/modern-icon-assets.makinc").read_text().splitlines()[2:]
+                          if line.strip()]
+            self.assertEqual(len(make_lines), 1 + 11 + 11 * 6 + 8 * 7)
+
     def test_portable_runtime_uses_metadata_and_high_dpi_png_alternates(self) -> None:
         app = (ROOT / "portable" / "src" / "app.cpp").read_text(encoding="utf-8")
         self.assertIn('app_id = "io.github.devinkbrown.ComicChatReinked"', app)
@@ -100,7 +114,8 @@ class ModernIconPipelineTests(unittest.TestCase):
 
             strip_png = root / "strip.png"
             icons.run((icons.tool("magick"), str(frames[0]), str(frames[0]), "+append",
-                       "-alpha", "on", "-strip", str(strip_png)))
+                       "-alpha", "on", "-strip", "-define", "png:color-type=6", str(strip_png)))
+            icons.validate_png(strip_png, 32, 16)
             strip_bmp = root / "strip.bmp"
             icons.run((icons.tool("magick"), str(strip_png), "-alpha", "on", "-strip",
                        "-define", "bmp:format=bmp4", "-compress", "none", str(strip_bmp)))

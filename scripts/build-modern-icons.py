@@ -622,7 +622,7 @@ def build_strip(catalog: Catalog, entry: dict[str, Any], output: Path, work: Pat
         png_destination = output / "png" / "strips" / name / f"{size}.png"
         png_destination.parent.mkdir(parents=True, exist_ok=True)
         run((tool("magick"), *(str(frame) for frame in frames), "+append", "-alpha", "on", "-strip",
-             str(png_destination)))
+             "-define", "png:color-type=6", str(png_destination)))
         os.chmod(png_destination, 0o644)
         destination = output / "windows" / "strips" / f"{name}-{size}.bmp"
         destination.parent.mkdir(parents=True, exist_ok=True)
