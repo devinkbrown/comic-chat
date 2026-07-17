@@ -1,6 +1,6 @@
 # IRC and IRCv3 coverage
 
-Audit snapshot: 2026-07-16, base source commit `86edc10`.
+Audit snapshot: 2026-07-17, active integration branch.
 
 This is the compatibility ledger for the legacy Microsoft Comic Chat client in
 `v2.5-beta-1-modern/` and the shared protocol engine in `portable/`. It measures
@@ -285,8 +285,10 @@ Status: **partial**.
 - STS is observed but never sent in `CAP REQ`.
 - On plaintext, a valid `port` policy causes the adapter to discard all outbound
   responses from that line and reconnect securely before restarting CAP/SASL
-  (`portable/src/net/ircv3.cpp:1452-1486`,
-  `v2.5-beta-1-modern/ircsock.cpp:811-829`).
+  (`portable/src/net/ircv3.cpp`, `portable/src/net/sts_session.cpp`,
+  `v2.5-beta-1-modern/ircsock.cpp`). The session coordinator consumes the typed
+  update and owns both callbacks, so an upgrade callback runs instead of—not
+  after—the same line's event/message/outbound callback.
 - Secure `duration`/`preload` values are parsed; insecure connections cannot set
   persistence. The engine now emits typed upgrade, persist, and remove actions;
   duplicate normative STS keys and duplicate `sts` capability tokens are
@@ -304,15 +306,29 @@ Status: **partial**.
   restart, exact expiry, secure `duration=0`, overflow, malformed/oversized and
   over-count files, temporary residue/collision, and no-downgrade planning
   (`portable/tests/sts_policy_store_test.cpp`).
+- The v2.5 Windows session is now wired end to end. It obtains
+  `FOLDERID_LocalAppData` through the native shell API, creates/rejects the
+  application directory without a `HOME` fallback, loads before every external
+  transport start, and routes the exact `StsPolicyStore::plan` result into
+  `ConnectionEngine::start`. Verified TLS Persist/Remove updates use the
+  requested hostname, planned secure port, and current generation; the last
+  receipt is rescheduled and cleared at each verified disconnect. Internal
+  retries retain the same TLS-only plan, while replacement starts are replanned
+  (`portable/include/comicchat/net/private_config.hpp`,
+  `portable/include/comicchat/net/sts_session.hpp`,
+  `v2.5-beta-1-modern/ircsock.cpp`).
+- MFC-independent causal tests cover restart/no-downgrade, same-generation
+  retry, stale-generation isolation, secure `duration=0`, persistence before
+  output, plaintext upgrade instead of output, and unreadable/write-failure
+  fail-closed behavior. The same test is registered in Meson and the native
+  NMAKE/Windows CI lane (`portable/tests/sts_session_test.cpp`).
 
-The portable persistence and reconnect-enforcement substrate is not yet wired
-to a production session owner. Neither legacy client nor the unfinished
-Unix/BSD frontend currently supplies its native private configuration path,
-loads the store before connection selection, commits typed secure updates, or
-retains the same-session receipt needed to reschedule expiry at disconnect.
-Therefore full STS remains release-blocked despite the tested store contract.
-`CAP DEL sts` must continue not to clear a stored policy; only the spec-defined
-secure `duration=0` update may do that. A preload bootstrap is also still absent.
+Full STS remains **partial** because the v1 legacy session and unfinished
+Unix/BSD frontend do not yet construct this owner or supply their native config
+roots. The portable `private_config_file_from_root` seam is ready for those
+frontends, but no Unix/BSD production caller exists. `CAP DEL sts` must continue
+not to clear a stored policy; only the spec-defined secure `duration=0` update
+may do that. A preload bootstrap is also intentionally absent.
 
 ## Server profiles and fixtures
 
@@ -425,10 +441,11 @@ application of the remaining typed state events.
    existing status view; channel rename preserves and retargets the legacy room.
    Implement redaction, typing/reaction, read markers, metadata, and message
    context.
-4. Wire the durable per-host STS store into each production session before
-   transport start, use an OS-native private config location, commit secure
-   updates/removals, retain only the current connection's persistence receipt
-   for disconnect rebasing, and add adapter-level downgrade tests.
+4. **Complete for v2.5 Windows and the Unix/BSD frontend; blocked for v1:**
+   wire the durable per-host policy lifecycle into the remaining production
+   session. The completed paths plan before transport start, commit verified
+   secure updates/removals, retain only a current connection receipt for
+   disconnect rebasing, and have adapter-level downgrade tests.
 
 ### P1 — complete negotiated feature semantics
 

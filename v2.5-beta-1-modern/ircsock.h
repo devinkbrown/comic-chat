@@ -8,12 +8,15 @@
 #include "comicchat/memory.hpp"
 #include "comicchat/net/connection_engine.hpp"
 #include "comicchat/net/ircv3.hpp"
+#include "comicchat/net/private_config.hpp"
+#include "comicchat/net/sts_session.hpp"
 #include "ircv3eventbridge.h"
 
 #include <atomic>
 #include <deque>
 #include <memory>
 #include <new>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -530,8 +533,11 @@ private:
 	BOOL StorePassword(std::string_view password);
 	BOOL CopyPassword(std::string* password) const;
 	BOOL HasPassword() const;
+	BOOL EnsureStsPolicyLoaded();
+	BOOL FinishStsTransport(comicchat::net::GenerationId generation, BOOL retainForRetry);
 
 	comicchat::net::ConnectionEngine m_connection;
+	std::optional<comicchat::net::StsSessionPolicy> m_stsSession;
 	std::shared_ptr<WakeupState> m_wakeupState;
 	comic_chat::ircv3::Engine m_ircEngine;
 	comic_chat::ircv3::LineFramer m_lineFramer;

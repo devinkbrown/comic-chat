@@ -343,6 +343,8 @@ jobs:
           if errorlevel 1 exit /b 1
           Release\transport_ui_bridge_test.exe
           if errorlevel 1 exit /b 1
+          Release\sts_session_test.exe
+          if errorlevel 1 exit /b 1
           popd
 
       - name: Create archival ZIP files

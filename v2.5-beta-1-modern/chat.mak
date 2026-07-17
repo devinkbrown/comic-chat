@@ -130,7 +130,7 @@ LINK32_FLAGS=/nologo /subsystem:windows /FORCE:MULTIPLE /incremental:no /debug \
 # (and therefore no MFC WinMain) is present in these links.
 TEST_LINK32_FLAGS=/nologo /subsystem:console /incremental:no /debug /machine:I386 \
  /LIBPATH:"$(VCTOOLSINSTALLDIR)ATLMFC\lib\spectre\x86" \
- user32.lib gdi32.lib advapi32.lib comctl32.lib
+ user32.lib gdi32.lib advapi32.lib comctl32.lib ole32.lib shell32.lib
 
 OBJS= \
 	"$(INTDIR)\stdafx.obj" \
@@ -180,7 +180,9 @@ OBJS= \
 	"$(INTDIR)\connection_engine.obj" \
 	"$(INTDIR)\dcc_transfer_engine.obj" \
 	"$(INTDIR)\ircv3.obj" \
+	"$(INTDIR)\private_config.obj" \
 	"$(INTDIR)\sts_policy_store.obj" \
+	"$(INTDIR)\sts_session.obj" \
 	"$(INTDIR)\sound_resolver.obj" \
 	"$(INTDIR)\transport_adapter_api_compile.obj" \
 	"$(INTDIR)\modernicons.obj" \
@@ -231,7 +233,7 @@ OBJS= \
 
 ALL : "$(OUTDIR)\CChat.exe"
 
-TESTS : "$(OUTDIR)\modernui_test.exe" "$(OUTDIR)\transport_ui_bridge_test.exe"
+TESTS : "$(OUTDIR)\modernui_test.exe" "$(OUTDIR)\transport_ui_bridge_test.exe" "$(OUTDIR)\sts_session_test.exe"
 
 # Keep cleanup restricted to the two configuration directories declared above.
 # NMAKE command-line macros override makefile assignments, so recursively
@@ -268,6 +270,11 @@ $(TEST_LINK32_FLAGS) /out:"$(OUTDIR)\modernui_test.exe" "$(INTDIR)\modernui_test
 $(TEST_LINK32_FLAGS) /out:"$(OUTDIR)\transport_ui_bridge_test.exe" "$(INTDIR)\transport_ui_bridge_test.obj"
 <<
 
+"$(OUTDIR)\sts_session_test.exe" : "$(INTDIR)" "$(INTDIR)\sts_session_test.obj" "$(INTDIR)\private_config.obj" "$(INTDIR)\sts_policy_store.obj" "$(INTDIR)\sts_session.obj"
+	$(LINK32) @<<
+$(TEST_LINK32_FLAGS) /out:"$(OUTDIR)\sts_session_test.exe" "$(INTDIR)\sts_session_test.obj" "$(INTDIR)\private_config.obj" "$(INTDIR)\sts_policy_store.obj" "$(INTDIR)\sts_session.obj"
+<<
+
 # ---- Resource ----
 "$(INTDIR)\chat.res" : $(RESOURCE_INPUTS)
 	$(RSC) $(RSC_PROJ) chat.rc
@@ -291,8 +298,14 @@ $(TEST_LINK32_FLAGS) /out:"$(OUTDIR)\transport_ui_bridge_test.exe" "$(INTDIR)\tr
 "$(INTDIR)\ircv3.obj" : ..\portable\src\net\ircv3.cpp
 	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\ircv3.obj" ..\portable\src\net\ircv3.cpp
 
+"$(INTDIR)\private_config.obj" : ..\portable\src\net\private_config.cpp
+	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\private_config.obj" ..\portable\src\net\private_config.cpp
+
 "$(INTDIR)\sts_policy_store.obj" : ..\portable\src\net\sts_policy_store.cpp
 	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\sts_policy_store.obj" ..\portable\src\net\sts_policy_store.cpp
+
+"$(INTDIR)\sts_session.obj" : ..\portable\src\net\sts_session.cpp
+	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\sts_session.obj" ..\portable\src\net\sts_session.cpp
 
 "$(INTDIR)\sound_resolver.obj" : ..\portable\src\sound.cpp
 	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\sound_resolver.obj" ..\portable\src\sound.cpp
@@ -305,6 +318,9 @@ $(TEST_LINK32_FLAGS) /out:"$(OUTDIR)\transport_ui_bridge_test.exe" "$(INTDIR)\tr
 
 "$(INTDIR)\transport_ui_bridge_test.obj" : tests\transport_ui_bridge_test.cpp
 	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\transport_ui_bridge_test.obj" tests\transport_ui_bridge_test.cpp
+
+"$(INTDIR)\sts_session_test.obj" : ..\portable\tests\sts_session_test.cpp
+	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\sts_session_test.obj" ..\portable\tests\sts_session_test.cpp
 
 # ---- C sources ----
 {.}.c{$(INTDIR)}.obj:

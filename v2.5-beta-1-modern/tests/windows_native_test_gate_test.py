@@ -34,9 +34,10 @@ def main() -> None:
 
     tests_target = (
         'TESTS : "$(OUTDIR)\\modernui_test.exe" '
-        '"$(OUTDIR)\\transport_ui_bridge_test.exe"'
+        '"$(OUTDIR)\\transport_ui_bridge_test.exe" '
+        '"$(OUTDIR)\\sts_session_test.exe"'
     )
-    require(tests_target in makefile, "NMAKE TESTS does not own both standalone outputs")
+    require(tests_target in makefile, "NMAKE TESTS does not own every standalone output")
 
     modernui_link = link_recipe(makefile, "modernui_test.exe")
     for required in (
@@ -56,6 +57,18 @@ def main() -> None:
         require(forbidden not in bridge_link,
                 f"transport bridge test link imports unrelated object {forbidden}")
 
+    sts_link = link_recipe(makefile, "sts_session_test.exe")
+    for required in (
+        '"$(INTDIR)\\sts_session_test.obj"',
+        '"$(INTDIR)\\private_config.obj"',
+        '"$(INTDIR)\\sts_policy_store.obj"',
+        '"$(INTDIR)\\sts_session.obj"',
+    ):
+        require(required in sts_link, f"STS session test link omits {required}")
+    for forbidden in ("$(OBJS)", "chat.obj", "chat.res", "modernui.obj"):
+        require(forbidden not in sts_link,
+                f"STS session test link imports unrelated object {forbidden}")
+
     flags_start = makefile.index("TEST_LINK32_FLAGS=")
     flags_end = makefile.index("\n\n", flags_start)
     flags = makefile[flags_start:flags_end].lower()
@@ -65,6 +78,8 @@ def main() -> None:
         "gdi32.lib",
         "advapi32.lib",
         "comctl32.lib",
+        "ole32.lib",
+        "shell32.lib",
     ):
         require(token in flags, f"standalone UI test link flags omit {token}")
     require("/nodefaultlib" not in flags,
@@ -82,6 +97,7 @@ def main() -> None:
         'nmake /f chat.mak CFG="chat - Win32 Release" TESTS',
         'Release\\modernui_test.exe',
         'Release\\transport_ui_bridge_test.exe',
+        'Release\\sts_session_test.exe',
     )
     cursor = 0
     for command in workflow_order:

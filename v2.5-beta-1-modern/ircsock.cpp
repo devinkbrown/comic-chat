@@ -22,6 +22,7 @@
 #include "avatar.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <type_traits>
 
@@ -38,6 +39,12 @@ constexpr std::size_t kMaximumIrcWireBytes = 8191 + 512;
 constexpr std::size_t kMaximumEventBatch = 128;
 constexpr std::size_t kMaximumEventBatchesPerWake = 8;
 constexpr std::size_t kMaximumIrcv3AdapterEvents = 512;
+
+comicchat::net::StsTimePoint CurrentStsTime()
+{
+	return std::chrono::time_point_cast<std::chrono::seconds>(
+		std::chrono::system_clock::now());
+}
 
 void SecureClear(std::string* value)
 {
@@ -615,6 +622,47 @@ BOOL CIrcSocket::Connect(LPCSTR pszServer, UINT nPort, BOOL bSecure)
 	return StartConnection(pszServer, nPort, bSecure).has_value();
 }
 
+BOOL CIrcSocket::EnsureStsPolicyLoaded()
+{
+	if (m_stsSession && m_stsSession->ready())
+		return TRUE;
+	const auto path = comicchat::net::native_private_config_file("sts-policies-v1");
+	if (!path) {
+		TRACE0("IRC STS policy path is unavailable; refusing to start transport.\n");
+		m_stsSession.reset();
+		return FALSE;
+	}
+	m_stsSession.emplace(*path);
+	const auto loaded = m_stsSession->load(CurrentStsTime());
+	if (!loaded) {
+		TRACE0("IRC STS policy state is unreadable; refusing to start transport.\n");
+		return FALSE;
+	}
+	return TRUE;
+}
+
+BOOL CIrcSocket::FinishStsTransport(
+	comicchat::net::GenerationId generation,
+	BOOL retainForRetry)
+{
+	if (!m_stsSession || generation == 0)
+		return TRUE;
+	const auto finished = m_stsSession->transport_disconnected(
+		generation, retainForRetry != FALSE, CurrentStsTime());
+	if (finished)
+		return TRUE;
+	if (finished.error().code == comicchat::net::StsSessionError::no_active_connection ||
+		finished.error().code == comicchat::net::StsSessionError::stale_generation)
+		return TRUE;
+	TRACE0("IRC STS disconnect persistence failed; future starts will fail closed.\n");
+	if (retainForRetry) {
+		// The first call already cleared the receipt. End the retained retry plan
+		// before the caller stops the unhealthy transport.
+		(void)m_stsSession->transport_disconnected(generation, false, CurrentStsTime());
+	}
+	return FALSE;
+}
+
 std::expected<comicchat::net::GenerationId, CIrcSocket::AdapterError>
 CIrcSocket::StartConnection(LPCSTR pszServer, UINT nPort, BOOL bSecure)
 {
@@ -625,6 +673,8 @@ CIrcSocket::StartConnection(LPCSTR pszServer, UINT nPort, BOOL bSecure)
 	// this method and the member must remain valid throughout the restart.
 	std::string serverHost = pszServer;
 	Close();
+	if (!EnsureStsPolicyLoaded())
+		return std::unexpected(AdapterError::transport_error);
 	comicchat::net::ConnectionOptions options;
 	options.endpoint.host = serverHost;
 	options.endpoint.port = static_cast<std::uint16_t>(nPort);
@@ -653,14 +703,20 @@ CIrcSocket::StartConnection(LPCSTR pszServer, UINT nPort, BOOL bSecure)
 			!::PostMessage(target, WM_COMICCHAT_NETWORK_EVENT, 0, static_cast<LPARAM>(cookie)))
 			state->pending.store(false, std::memory_order_release);
 	});
-	auto generation = m_connection.start(std::move(options));
-	if (!generation) {
+	auto started = m_stsSession->start(
+		std::move(options), CurrentStsTime(),
+		[this](comicchat::net::ConnectionOptions planned) {
+			return m_connection.start(std::move(planned));
+		});
+	if (!started) {
 		Close();
 		return std::unexpected(AdapterError::transport_error);
 	}
 	m_serverHost = std::move(serverHost);
-	m_generation = *generation;
-	m_bSecureTransport = bSecure;
+	m_generation = started->generation;
+	// Security becomes true only after ConnectionEngine publishes a verified
+	// TLS Connected event. A planned TLS transport is not yet authenticated.
+	m_bSecureTransport = FALSE;
 	m_bTransportOpen = TRUE;
 	m_transportState = comicchat::net::State::resolving;
 	return m_generation;
@@ -668,6 +724,7 @@ CIrcSocket::StartConnection(LPCSTR pszServer, UINT nPort, BOOL bSecure)
 
 void CIrcSocket::Close()
 {
+	(void)FinishStsTransport(m_generation, FALSE);
 	m_connection.set_wakeup({});
 	m_wakeupState->hwnd.store(NULL, std::memory_order_release);
 	m_wakeupState->cookie.store(0, std::memory_order_release);
@@ -677,6 +734,7 @@ void CIrcSocket::Close()
 	m_generation = 0;
 	m_localAddress.clear();
 	m_transportState = comicchat::net::State::stopped;
+	m_bSecureTransport = FALSE;
 	m_lineFramer.Reset();
 }
 
@@ -784,11 +842,17 @@ void CIrcSocket::PollNetworkEvents(LPARAM wakeupCookie)
 		for (auto& event : events) {
 			if (event.generation != m_generation)
 				continue;
-			std::visit([this](auto&& body) {
+			std::visit([this, eventGeneration = event.generation](auto&& body) {
 			using Body = std::remove_cvref_t<decltype(body)>;
 			if constexpr (std::is_same_v<Body, comicchat::net::StateChanged>) {
 				m_transportState = body.state;
 			} else if constexpr (std::is_same_v<Body, comicchat::net::Connected>) {
+				if (!m_stsSession || !m_stsSession->connected(eventGeneration, body.tls)) {
+					TRACE0("IRC transport security state did not match the STS connection plan.\n");
+					Close();
+					OnClose(WSAECONNABORTED);
+					return;
+				}
 				m_localAddress = body.local_address;
 				m_transportState = comicchat::net::State::connected;
 				m_bSecureTransport = body.tls;
@@ -807,43 +871,56 @@ void CIrcSocket::PollNetworkEvents(LPARAM wakeupCookie)
 				}
 				for (const auto& line : *lines) {
 					auto result = m_ircEngine.Process(line);
-					// STS discovered on plaintext must be applied before any CAP or
-					// SASL response produced by this line is allowed onto the wire.
-					// The secure connection reruns capability negotiation from zero.
-					if (!m_bSecureTransport) {
-						const auto stsEvent = std::find_if(result.events.begin(), result.events.end(),
-							[](const comic_chat::ircv3::Event& event) {
-								return event.type == comic_chat::ircv3::EventType::StsPolicy &&
-									event.key == "upgrade";
-							});
-						const auto& policy = m_ircEngine.CurrentStsPolicy();
-						if (stsEvent != result.events.end() && policy && policy->port && !m_serverHost.empty()) {
+					int lineError = WSAECONNABORTED;
+					if (!m_stsSession) {
+						OnClose(lineError);
+						return;
+					}
+					const auto routed = m_stsSession->route_protocol_update(
+						result.sts_update,
+						eventGeneration,
+						CurrentStsTime(),
+						[this](std::uint16_t securePort) {
+							if (m_serverHost.empty()) return false;
 							const std::string host = m_serverHost;
-							if (!StartConnection(host.c_str(), *policy->port, TRUE))
-								OnClose(WSAECONNABORTED);
-							return;
-						}
+							return StartConnection(host.c_str(), securePort, TRUE).has_value();
+						},
+						[this, &result, &lineError]() {
+							for (auto& protocolEvent : result.events)
+								DispatchProtocolEvent(std::move(protocolEvent));
+							for (const auto& outbound : result.outbound) {
+								if (!QueueProtocolLine(outbound)) {
+									lineError = WSAENOBUFS;
+									return false;
+								}
+							}
+							for (const auto& message : result.messages)
+								DispatchProtocolMessage(message);
+							if (m_bLoginPending && m_ircEngine.RegistrationFinished()) {
+								m_bLoginPending = FALSE;
+								(void)HrIrcXLogin(FALSE);
+							}
+							return true;
+						});
+					if (!routed) {
+						TRACE0("IRC STS policy/output gate failed; closing connection.\n");
+						OnClose(lineError);
+						return;
 					}
-					for (auto& protocolEvent : result.events)
-						DispatchProtocolEvent(std::move(protocolEvent));
-					for (const auto& outbound : result.outbound) {
-						if (!QueueProtocolLine(outbound)) {
-							TRACE0("IRC protocol control message could not be queued; closing connection.\n");
-							OnClose(WSAENOBUFS);
-							return;
-						}
-					}
-					for (const auto& message : result.messages)
-						DispatchProtocolMessage(message);
-					if (m_bLoginPending && m_ircEngine.RegistrationFinished()) {
-						m_bLoginPending = FALSE;
-						(void)HrIrcXLogin(FALSE);
-					}
+					if (*routed == comicchat::net::StsProtocolDisposition::reconnected)
+						return;
 				}
 			} else if constexpr (std::is_same_v<Body, comicchat::net::Closed>) {
-				m_transportState = body.retry_after.count() > 0
+				bool retainForRetry = body.retry_after.count() > 0;
+				if (!FinishStsTransport(eventGeneration, retainForRetry ? TRUE : FALSE)) {
+					retainForRetry = false;
+					m_connection.stop();
+				}
+				m_transportState = retainForRetry
 					? comicchat::net::State::reconnect_wait
 					: comicchat::net::State::stopped;
+				m_bSecureTransport = FALSE;
+				m_lineFramer.Reset();
 				if (m_bTransportOpen) {
 					m_bTransportOpen = FALSE;
 					m_localAddress.clear();

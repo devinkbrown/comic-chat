@@ -95,6 +95,8 @@ endif
 platform_deps = []
 if host_machine.system() == 'windows'
   platform_deps += cpp.find_library('crypt32', required: true)
+  platform_deps += cpp.find_library('ole32', required: true)
+  platform_deps += cpp.find_library('shell32', required: true)
 endif
 
 # Keep the cryptographic implementation identical to the Windows port. The
@@ -267,8 +269,10 @@ core = static_library(
     'src/net/connection_engine.cpp',
     'src/net/dcc_transfer_engine.cpp',
     'src/net/ircv3.cpp',
+    'src/net/private_config.cpp',
     'src/net/sts_policy_store.cpp',
     'src/net/native_session.cpp',
+    'src/net/sts_session.cpp',
     'src/scheduler.cpp',
     'src/text.cpp',
     'src/assets.cpp',
@@ -433,6 +437,13 @@ if get_option('tests')
     dependencies: core_dep,
   )
   test('comicchat-sts-policy', sts_policy_tests, timeout: 30)
+
+  sts_session_tests = executable(
+    'comicchat-sts-session-tests',
+    'tests/sts_session_test.cpp',
+    dependencies: core_dep,
+  )
+  test('comicchat-sts-session', sts_session_tests, timeout: 30)
 
   transport_tests = executable(
     'comicchat-transport-tests',
