@@ -50,7 +50,7 @@ auto main() -> int {
     scheduler.advance_generation(1);
     constexpr std::size_t task_iterations = 25'000;
     const auto scheduler_time = measure(task_iterations, [&](const auto) {
-        auto future = scheduler.submit(1, [&](std::stop_token) { ++checksum; });
+        auto future = scheduler.submit(1, [&](comicchat::threading::StopToken) { ++checksum; });
         if (future) future->get();
     });
     scheduler.stop();

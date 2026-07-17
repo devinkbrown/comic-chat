@@ -1,4 +1,5 @@
 #include "comicchat/net/connection_engine.hpp"
+#include "comicchat/thread_compat.hpp"
 #include "comicchat/net/flood.hpp"
 
 #include <algorithm>
@@ -10,7 +11,6 @@
 #include <cstring>
 #include <functional>
 #include <mutex>
-#include <stop_token>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -74,7 +74,7 @@ public:
         socklen_t size = sizeof(address);
         REQUIRE(::getsockname(listener_, reinterpret_cast<sockaddr*>(&address), &size) == 0);
         port_ = ntohs(address.sin_port);
-        thread_ = std::jthread{[this](const std::stop_token token) { run(token); }};
+        thread_ = comicchat::threading::JThread{[this](const comicchat::threading::StopToken token) { run(token); }};
     }
 
     ~LoopbackServer() {
@@ -89,7 +89,7 @@ public:
     [[nodiscard]] auto port() const noexcept -> std::uint16_t { return port_; }
 
 private:
-    void run(const std::stop_token token) {
+    void run(const comicchat::threading::StopToken token) {
         sockaddr_in peer{};
         socklen_t size = sizeof(peer);
         const auto accepted = ::accept(listener_, reinterpret_cast<sockaddr*>(&peer), &size);
@@ -174,7 +174,7 @@ private:
     int listener_{-1};
     std::atomic_int client_{-1};
     std::uint16_t port_{};
-    std::jthread thread_;
+    comicchat::threading::JThread thread_;
 };
 
 class ProxyServer final {
@@ -192,7 +192,7 @@ public:
         socklen_t size = sizeof(address);
         REQUIRE(::getsockname(listener_, reinterpret_cast<sockaddr*>(&address), &size) == 0);
         port_ = ntohs(address.sin_port);
-        thread_ = std::jthread{[this](const std::stop_token token) { run(token); }};
+        thread_ = comicchat::threading::JThread{[this](const comicchat::threading::StopToken token) { run(token); }};
     }
 
     ~ProxyServer() {
@@ -225,7 +225,7 @@ private:
         return true;
     }
 
-    void run(const std::stop_token token) {
+    void run(const comicchat::threading::StopToken token) {
         sockaddr_in peer{};
         socklen_t size = sizeof(peer);
         const auto accepted = ::accept(listener_, reinterpret_cast<sockaddr*>(&peer), &size);
@@ -296,7 +296,7 @@ private:
     mutable std::mutex request_mutex_;
     std::string request_;
     std::vector<std::byte> socks_request_;
-    std::jthread thread_;
+    comicchat::threading::JThread thread_;
 };
 
 class ReconnectServer final {
@@ -313,7 +313,7 @@ public:
         socklen_t size = sizeof(address);
         REQUIRE(::getsockname(listener_, reinterpret_cast<sockaddr*>(&address), &size) == 0);
         port_ = ntohs(address.sin_port);
-        thread_ = std::jthread{[this](const std::stop_token token) {
+        thread_ = comicchat::threading::JThread{[this](const comicchat::threading::StopToken token) {
             for (int connection = 0; connection < 2 && !token.stop_requested(); ++connection) {
                 const auto client = ::accept(listener_, nullptr, nullptr);
                 if (client < 0) return;
@@ -346,7 +346,7 @@ private:
     int listener_{-1};
     std::atomic_int client_{-1};
     std::uint16_t port_{};
-    std::jthread thread_;
+    comicchat::threading::JThread thread_;
 };
 
 class TlsResumeServer final {
@@ -364,7 +364,7 @@ public:
         socklen_t size = sizeof(address);
         REQUIRE(::getsockname(listener_, reinterpret_cast<sockaddr*>(&address), &size) == 0);
         port_ = ntohs(address.sin_port);
-        thread_ = std::jthread{[this](const std::stop_token token) { run(token); }};
+        thread_ = comicchat::threading::JThread{[this](const comicchat::threading::StopToken token) { run(token); }};
     }
 
     ~TlsResumeServer() {
@@ -379,7 +379,7 @@ public:
     [[nodiscard]] auto port() const noexcept -> std::uint16_t { return port_; }
 
 private:
-    void run(const std::stop_token token) {
+    void run(const comicchat::threading::StopToken token) {
         mbedtls_ssl_config config;
         mbedtls_x509_crt certificate;
         mbedtls_pk_context key;
@@ -443,7 +443,7 @@ private:
     int listener_{-1};
     std::atomic_int client_{-1};
     std::uint16_t port_{};
-    std::jthread thread_;
+    comicchat::threading::JThread thread_;
 };
 
 auto wait_for(comicchat::net::ConnectionEngine& engine,
@@ -652,6 +652,30 @@ TEST_CASE("completion reservations hard-bound an unpolled event queue") {
         return std::holds_alternative<comicchat::net::SendComplete>(event.body);
     })) == accepted);
     CHECK(engine.stats().peak_queued_events <= options.limits.queued_commands);
+    engine.stop();
+}
+
+TEST_CASE("explicit disconnect closes admission and releases reserved event slots") {
+    LoopbackServer server{ServerMode::plaintext_sink};
+    auto options = options_for(server, comicchat::net::Security::plaintext);
+    options.limits.queued_commands = 8;
+    comicchat::net::ConnectionEngine engine;
+    const auto generation = engine.start(options);
+    REQUIRE(generation);
+    REQUIRE(wait_for(engine, [](const auto& event) {
+        return std::holds_alternative<comicchat::net::Connected>(event.body);
+    }));
+
+    REQUIRE(engine.post(comicchat::net::Send{*generation, 1, comicchat::net::Priority::chat,
+                                             bytes("queued-before-close"), false}));
+    REQUIRE(engine.post(comicchat::net::Disconnect{*generation, "test disconnect"}));
+    REQUIRE(wait_for(engine, [](const auto& event) {
+        const auto* closed = std::get_if<comicchat::net::Closed>(&event.body);
+        return closed != nullptr && closed->retry_after == 0ms;
+    }));
+    CHECK(engine.post(comicchat::net::Send{*generation, 2, comicchat::net::Priority::authentication,
+                                           bytes("credential"), true}) ==
+          std::unexpected{comicchat::net::EngineError::not_running});
     engine.stop();
 }
 

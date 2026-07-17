@@ -528,8 +528,6 @@ private:
 	void DispatchProtocolMessage(const comic_chat::ircv3::Message& message);
 	void DispatchProtocolEvent(comic_chat::ircv3::Event event,
 		std::optional<comic_chat::ircv3::Message> message = std::nullopt);
-	comicchat::net::Priority PriorityFor(std::string_view wire) const;
-	BOOL IsSensitive(std::string_view wire) const;
 	BOOL StorePassword(std::string_view password);
 	BOOL CopyPassword(std::string* password) const;
 	BOOL HasPassword() const;

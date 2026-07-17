@@ -47,7 +47,70 @@ void SecureClear(std::string* value)
 	for (std::size_t index = 0; index < value->size(); ++index)
 		bytes[index] = '\0';
 	value->clear();
-	value->shrink_to_fit();
+}
+
+bool AsciiEqual(std::string_view left, std::string_view right)
+{
+	if (left.size() != right.size()) return false;
+	for (std::size_t index = 0; index < left.size(); ++index) {
+		const auto lhs = static_cast<unsigned char>(left[index]);
+		const auto rhs = static_cast<unsigned char>(right[index]);
+		const auto upper = [](unsigned char byte) {
+			return byte >= 'a' && byte <= 'z' ? static_cast<unsigned char>(byte - ('a' - 'A')) : byte;
+		};
+		if (upper(lhs) != upper(rhs)) return false;
+	}
+	return true;
+}
+
+struct OutgoingClassification {
+	comicchat::net::Priority priority = comicchat::net::Priority::bulk;
+	bool sensitive = true;
+	std::string_view target;
+};
+
+OutgoingClassification ClassifyOutgoing(std::string_view wire)
+{
+	while (!wire.empty() && (wire.back() == '\r' || wire.back() == '\n')) wire.remove_suffix(1);
+	std::size_t cursor{};
+	if (cursor < wire.size() && wire[cursor] == '@') {
+		const auto end = wire.find(' ', cursor);
+		if (end == std::string_view::npos) return {};
+		cursor = end + 1;
+	}
+	while (cursor < wire.size() && wire[cursor] == ' ') ++cursor;
+	if (cursor < wire.size() && wire[cursor] == ':') {
+		const auto end = wire.find(' ', cursor);
+		if (end == std::string_view::npos) return {};
+		cursor = end + 1;
+	}
+	while (cursor < wire.size() && wire[cursor] == ' ') ++cursor;
+	const auto command_end = wire.find(' ', cursor);
+	const auto command = wire.substr(cursor, command_end - cursor);
+	if (command.empty()) return {};
+
+	OutgoingClassification result;
+	result.sensitive = AsciiEqual(command, "AUTHENTICATE") || AsciiEqual(command, "PASS") ||
+		AsciiEqual(command, "AUTH") || AsciiEqual(command, "OPER") ||
+		AsciiEqual(command, "REGISTER") || AsciiEqual(command, "VERIFY");
+	if (AsciiEqual(command, "AUTHENTICATE") || AsciiEqual(command, "PASS"))
+		result.priority = comicchat::net::Priority::authentication;
+	else if (AsciiEqual(command, "PING") || AsciiEqual(command, "PONG"))
+		result.priority = comicchat::net::Priority::pong;
+	else if (AsciiEqual(command, "CAP") || AsciiEqual(command, "NICK") ||
+		AsciiEqual(command, "USER") || AsciiEqual(command, "QUIT") || AsciiEqual(command, "MODE"))
+		result.priority = comicchat::net::Priority::control;
+	else if (AsciiEqual(command, "PRIVMSG") || AsciiEqual(command, "NOTICE"))
+		result.priority = comicchat::net::Priority::chat;
+
+	if ((AsciiEqual(command, "PRIVMSG") || AsciiEqual(command, "NOTICE") ||
+		AsciiEqual(command, "TAGMSG")) && command_end != std::string_view::npos) {
+		cursor = command_end + 1;
+		while (cursor < wire.size() && wire[cursor] == ' ') ++cursor;
+		const auto target_end = wire.find(' ', cursor);
+		result.target = wire.substr(cursor, target_end - cursor);
+	}
+	return result;
 }
 
 } // namespace
@@ -622,40 +685,15 @@ BOOL CIrcSocket::IsOpen() const
 	return m_bTransportOpen;
 }
 
-comicchat::net::Priority CIrcSocket::PriorityFor(std::string_view wire) const
-{
-	auto parsed = comic_chat::ircv3::Message::Parse(wire);
-	if (!parsed)
-		return comicchat::net::Priority::bulk;
-	if (parsed->command == "AUTHENTICATE" || parsed->command == "PASS")
-		return comicchat::net::Priority::authentication;
-	if (parsed->command == "PING" || parsed->command == "PONG")
-		return comicchat::net::Priority::pong;
-	if (parsed->command == "CAP" || parsed->command == "NICK" || parsed->command == "USER" ||
-		parsed->command == "QUIT" || parsed->command == "MODE")
-		return comicchat::net::Priority::control;
-	if (parsed->command == "PRIVMSG" || parsed->command == "NOTICE")
-		return comicchat::net::Priority::chat;
-	return comicchat::net::Priority::bulk;
-}
-
-BOOL CIrcSocket::IsSensitive(std::string_view wire) const
-{
-	auto parsed = comic_chat::ircv3::Message::Parse(wire);
-	if (!parsed)
-		return TRUE;
-	return parsed->command == "AUTHENTICATE" || parsed->command == "PASS" ||
-		parsed->command == "AUTH" || parsed->command == "OPER" ||
-		parsed->command == "REGISTER" || parsed->command == "VERIFY";
-}
-
 int CIrcSocket::Send(void* pData, int nBytes)
 {
 	if (!pData || nBytes <= 0)
 		return SOCKET_ERROR;
+	const auto classification = ClassifyOutgoing(
+		std::string_view(static_cast<const char*>(pData), static_cast<std::size_t>(nBytes)));
 	const auto result = QueueProtocolLine(
 		std::string_view(static_cast<const char*>(pData), static_cast<std::size_t>(nBytes)));
-	if (IsSensitive(std::string_view(static_cast<const char*>(pData), static_cast<std::size_t>(nBytes)))) {
+	if (classification.sensitive) {
 		volatile char* bytes = static_cast<char*>(pData);
 		for (int index = 0; index < nBytes; ++index) bytes[index] = '\0';
 	}
@@ -672,17 +710,20 @@ CIrcSocket::QueueProtocolLine(std::string_view wire)
 	auto prepared = m_ircEngine.PrepareOutgoingChecked(wire);
 	if (!prepared)
 		return std::unexpected(AdapterError::invalid_line);
+	const auto classification = ClassifyOutgoing(*prepared);
+	struct PreparedWipe {
+		std::string* value;
+		bool sensitive;
+		~PreparedWipe() { if (sensitive) SecureClear(value); }
+	} wipe{&*prepared, classification.sensitive};
 
 	comicchat::net::Send command;
 	command.generation = m_generation;
 	const auto sendId = m_nextSendId++;
 	command.id = sendId;
-	command.priority = PriorityFor(*prepared);
-	command.sensitive = IsSensitive(*prepared);
-	if (const auto parsed = comic_chat::ircv3::Message::Parse(*prepared);
-		parsed && (parsed->command == "PRIVMSG" || parsed->command == "NOTICE" ||
-			parsed->command == "TAGMSG") && !parsed->params.empty())
-		command.target = parsed->params.front();
+	command.priority = classification.priority;
+	command.sensitive = classification.sensitive;
+	if (!classification.target.empty()) command.target = classification.target;
 	command.bytes.reserve(prepared->size());
 	for (const unsigned char byte : *prepared)
 		command.bytes.push_back(static_cast<std::byte>(byte));

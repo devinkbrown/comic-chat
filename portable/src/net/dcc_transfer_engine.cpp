@@ -1,4 +1,5 @@
 #include "comicchat/net/dcc_transfer_engine.hpp"
+#include "comicchat/thread_compat.hpp"
 
 #include <algorithm>
 #include <array>
@@ -294,7 +295,7 @@ private:
         stopped_ = false;
         accepting_commands_ = true;
         terminal_ = false;
-        thread_ = std::jthread{[this](const std::stop_token token) noexcept {
+        thread_ = threading::JThread{[this](const threading::StopToken token) noexcept {
             network_thread_entry(token);
         }};
         return handle_;
@@ -414,7 +415,7 @@ private:
         }
     }
 
-    void network_thread_entry(const std::stop_token token) noexcept {
+    void network_thread_entry(const threading::StopToken token) noexcept {
         try {
             network_loop(token);
         } catch (...) {
@@ -431,7 +432,7 @@ private:
         }
     }
 
-    void network_loop(const std::stop_token token) {
+    void network_loop(const threading::StopToken token) {
         if (uv_loop_init(&loop_) != 0) {
             publish_initialization_failure("loop-init", "DCC event loop initialization failed");
             return;
@@ -928,7 +929,7 @@ private:
     DccConnectOptions connect_options_;
     DccTransferHandle handle_;
     Direction direction_{Direction::send};
-    std::jthread thread_;
+    threading::JThread thread_;
     bool stopped_{true};
     bool accepting_commands_{};
     std::size_t queued_send_bytes_{};

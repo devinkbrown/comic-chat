@@ -395,6 +395,12 @@ void TestSafeRecovery()
 
 void TestPlainAndExternal()
 {
+	Engine implicit_external;
+	implicit_external.BeginRegistration({}, "Alice", true);
+	auto implicit_offer = implicit_external.Process(":server CAP * LS :sasl=EXTERNAL\r\n");
+	Check(RequestedNames(implicit_offer.outbound).empty(),
+		"EXTERNAL is never selected without explicit client-certificate opt-in");
+
 	Engine plain;
 	SaslConfig credentials;
 	credentials.authentication_id = "user";

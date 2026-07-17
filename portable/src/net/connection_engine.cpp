@@ -1,6 +1,7 @@
 #include "comicchat/net/connection_engine.hpp"
 #include "comicchat/crypto_runtime.hpp"
 #include "comicchat/memory.hpp"
+#include "comicchat/thread_compat.hpp"
 
 #include <algorithm>
 #include <array>
@@ -176,7 +177,7 @@ public:
             target_serial_ = 0;
             stopped_ = false;
         }
-        thread_ = std::jthread{[this](const std::stop_token token) noexcept { network_thread_entry(token); }};
+        thread_ = threading::JThread{[this](const threading::StopToken token) noexcept { network_thread_entry(token); }};
         const auto posted = post(Connect{generation(), options_});
         if (!posted) {
             stop();
@@ -266,6 +267,8 @@ public:
         std::scoped_lock lock{mutex_};
         clear_command_queues_locked();
         queued_bytes_ = 0;
+        reserved_send_completions_ = 0;
+        reserved_receive_events_ = 0;
         proxy_password_.reset();
     }
 
@@ -440,18 +443,21 @@ private:
             std::scoped_lock lock{mutex_};
             const bool completion = std::holds_alternative<SendComplete>(body);
             const auto* received = std::get_if<BytesReceived>(&body);
-            if (completion) {
-                if (reserved_send_completions_ == 0) return false;
-                --reserved_send_completions_;
-            } else if (received != nullptr) {
-                if (reserved_receive_events_ == 0) return false;
-                --reserved_receive_events_;
+            const auto consume_reservation = [this, completion, received]() noexcept {
+                if (completion) {
+                    if (reserved_send_completions_ != 0) --reserved_send_completions_;
+                } else if (received != nullptr) {
+                    if (reserved_receive_events_ != 0) --reserved_receive_events_;
+                }
+            };
+            if ((completion && reserved_send_completions_ == 0) ||
+                (received != nullptr && reserved_receive_events_ == 0)) return false;
+            if (stopped_) {
+                consume_reservation();
+                return false;
             }
-            if (stopped_) return false;
 
-            if (received != nullptr && received->bytes) {
-                queued_receive_bytes_ += received->bytes->size();
-            } else if (!completion) {
+            if (received == nullptr && !completion) {
                 const bool critical = std::holds_alternative<Connected>(body) || std::holds_alternative<Closed>(body);
                 const auto body_index = body.index();
                 const auto same_kind = std::ranges::find_if(events_, [body_index](const Event& event) {
@@ -471,7 +477,18 @@ private:
                     events_.erase(replaceable);
                 }
             }
-            events_.push_back(Event{generation_, std::move(body)});
+            try {
+                events_.push_back(Event{generation_, std::move(body)});
+            } catch (...) {
+                // The reservation belongs to this event even when deque growth
+                // fails. Releasing it here keeps stop/restart and backpressure
+                // accounting exact before the callback boundary fails closed.
+                consume_reservation();
+                throw;
+            }
+            if (received != nullptr && received->bytes)
+                queued_receive_bytes_ += received->bytes->size();
+            consume_reservation();
             auto peak = peak_queued_events_.load(std::memory_order_relaxed);
             while (peak < events_.size() &&
                    !peak_queued_events_.compare_exchange_weak(
@@ -486,6 +503,15 @@ private:
             }
         }
         return true;
+    }
+
+    template <typename Function>
+    static void callback_boundary(Impl* self, Function&& function) noexcept {
+        try {
+            function();
+        } catch (...) {
+            self->fail_noexcept("callback-exception", "network callback failed safely");
+        }
     }
 
     auto take_command() -> std::optional<Command> {
@@ -547,27 +573,44 @@ private:
             close_transport();
             publish(StateChanged{State::stopped});
             publish(Closed{disconnect->reason, std::chrono::milliseconds{0}});
+            {
+                std::scoped_lock lock{mutex_};
+                stopped_ = true;
+                reserved_send_completions_ = 0;
+                reserved_receive_events_ = 0;
+            }
+            thread_.request_stop();
             return;
         }
         auto send = std::get<Send>(std::move(command));
         PendingWrite pending{send.id, send.priority, std::move(send.bytes), 0,
             send.sensitive, std::move(send.target), false};
-        transmit_[static_cast<std::size_t>(pending.priority)].push_back(std::move(pending));
+        const auto pending_size = pending.bytes.size();
+        try {
+            transmit_[static_cast<std::size_t>(pending.priority)].push_back(std::move(pending));
+        } catch (...) {
+            if (pending.sensitive && !pending.bytes.empty())
+                mbedtls_platform_zeroize(pending.bytes.data(), pending.bytes.size());
+            release_canceled_send(pending_size);
+            throw;
+        }
         if (pipeline_ == Pipeline::open) set_readiness((receive_paused_ ? 0 : UV_READABLE) | UV_WRITABLE);
     }
 
-    void network_thread_entry(const std::stop_token token) noexcept {
+    void network_thread_entry(const threading::StopToken token) noexcept {
         try {
             network_loop(token);
         } catch (...) {
-            try {
-                publish(Diagnostic{"network-exception", "network worker stopped after an internal exception"});
-            } catch (...) {
-            }
+            fail_noexcept("network-exception", "network worker stopped after an internal exception");
             cleanup_network_loop();
-            std::scoped_lock lock{mutex_};
-            stopped_ = true;
         }
+        std::scoped_lock lock{mutex_};
+        stopped_ = true;
+        clear_command_queues_locked();
+        queued_bytes_ = 0;
+        reserved_send_completions_ = 0;
+        reserved_receive_events_ = 0;
+        proxy_password_.reset();
     }
 
     auto initialize_network_loop() -> bool {
@@ -581,7 +624,7 @@ private:
         reconnect_timer_.data = this;
         deadline_timer_.data = this;
         rate_timer_.data = this;
-        if (uv_async_init(&loop_, &command_wakeup_, [](uv_async_t* wakeup) {
+        if (uv_async_init(&loop_, &command_wakeup_, [](uv_async_t* wakeup) noexcept {
             auto* self = static_cast<Impl*>(wakeup->data);
             self->command_wakeups_.fetch_add(1, std::memory_order_relaxed);
         }) != 0) {
@@ -612,7 +655,7 @@ private:
         return true;
     }
 
-    void network_loop(const std::stop_token token) {
+    void network_loop(const threading::StopToken token) {
         if (!initialize_network_loop()) {
             cleanup_network_loop();
             std::scoped_lock lock{mutex_};
@@ -651,7 +694,7 @@ private:
             uv_close(reinterpret_cast<uv_handle_t*>(&deadline_timer_), nullptr);
         if (rate_timer_initialized_ && !uv_is_closing(reinterpret_cast<uv_handle_t*>(&rate_timer_)))
             uv_close(reinterpret_cast<uv_handle_t*>(&rate_timer_), nullptr);
-        uv_walk(&loop_, [](uv_handle_t* handle, void*) {
+        uv_walk(&loop_, [](uv_handle_t* handle, void*) noexcept {
             if (!uv_is_closing(handle)) uv_close(handle, close_dynamic_handle);
         }, nullptr);
         while (uv_run(&loop_, UV_RUN_DEFAULT) != 0) {}
@@ -665,20 +708,22 @@ private:
         rate_timer_initialized_ = false;
     }
 
-    static void close_dynamic_handle(uv_handle_t* handle) {
+    static void close_dynamic_handle(uv_handle_t* handle) noexcept {
         if (handle->type == UV_TCP) delete static_cast<Attempt*>(handle->data);
     }
 
-    static void readiness_closed(uv_handle_t* handle) {
+    static void readiness_closed(uv_handle_t* handle) noexcept {
         auto* self = static_cast<Impl*>(handle->data);
         self->readiness_initialized_ = false;
         self->readiness_closing_ = false;
     }
 
-    static void readiness_callback(uv_poll_t* handle, const int status, int) {
+    static void readiness_callback(uv_poll_t* handle, const int status, int) noexcept {
         auto* self = static_cast<Impl*>(handle->data);
-        if (status < 0) self->fail_connection("socket-poll", "socket readiness monitoring failed");
-        else self->pump_pipeline();
+        callback_boundary(self, [&] {
+            if (status < 0) self->fail_connection("socket-poll", "socket readiness monitoring failed");
+            else self->pump_pipeline();
+        });
     }
 
     void set_readiness(const int events) {
@@ -706,8 +751,9 @@ private:
     void arm_deadline(const std::chrono::milliseconds duration) {
         if (!deadline_timer_initialized_) return;
         uv_timer_stop(&deadline_timer_);
-        (void)uv_timer_start(&deadline_timer_, [](uv_timer_t* timer) {
-            static_cast<Impl*>(timer->data)->pump_pipeline();
+        (void)uv_timer_start(&deadline_timer_, [](uv_timer_t* timer) noexcept {
+            auto* self = static_cast<Impl*>(timer->data);
+            callback_boundary(self, [&] { self->pump_pipeline(); });
         }, static_cast<std::uint64_t>(std::max<std::int64_t>(1, duration.count())), 0);
     }
 
@@ -745,51 +791,51 @@ private:
         }
     }
 
-    static void resolve_callback(uv_getaddrinfo_t* request, const int status, addrinfo* result) {
+    static void resolve_callback(uv_getaddrinfo_t* request, const int status, addrinfo* result) noexcept {
         auto* resolver = static_cast<ResolveRequest*>(request->data);
         auto* self = resolver->owner;
         const bool current = self->resolver_ == resolver;
         if (current) self->resolver_ = nullptr;
         const bool stale = !current || resolver->canceled || resolver->serial != self->resolve_serial_ ||
             self->pipeline_ != Pipeline::resolving;
+        callback_boundary(self, [&] {
+            if (stale) {
+                if (self->resolve_restart_pending_ && self->pipeline_ == Pipeline::reconnect_wait)
+                    self->begin_resolve();
+                return;
+            }
+            if (status < 0 || result == nullptr) {
+                self->fail_connection("dns-failed", "name resolution failed");
+                return;
+            }
+            std::vector<sockaddr_storage> ipv6;
+            std::vector<sockaddr_storage> ipv4;
+            for (auto* item = result; item != nullptr; item = item->ai_next) {
+                if (item->ai_addr == nullptr || (item->ai_family != AF_INET && item->ai_family != AF_INET6)) continue;
+                sockaddr_storage address{};
+                std::memcpy(&address, item->ai_addr,
+                            item->ai_family == AF_INET6 ? sizeof(sockaddr_in6) : sizeof(sockaddr_in));
+                (item->ai_family == AF_INET6 ? ipv6 : ipv4).push_back(address);
+            }
+            const auto count = std::max(ipv6.size(), ipv4.size());
+            for (std::size_t index = 0; index < count; ++index) {
+                if (index < ipv6.size()) self->addresses_.push_back(ipv6[index]);
+                if (index < ipv4.size()) self->addresses_.push_back(ipv4[index]);
+            }
+            if (self->addresses_.empty()) {
+                self->fail_connection("dns-empty", "name resolution returned no usable address");
+                return;
+            }
+            self->pipeline_ = Pipeline::connecting;
+            self->publish(StateChanged{State::connecting});
+            self->start_next_attempt();
+            if (self->next_address_ < self->addresses_.size())
+                (void)uv_timer_start(&self->happy_timer_, happy_timer_callback,
+                                     static_cast<std::uint64_t>(happy_eyeballs_delay.count()),
+                                     static_cast<std::uint64_t>(happy_eyeballs_delay.count()));
+        });
+        if (result != nullptr) uv_freeaddrinfo(result);
         delete resolver;
-        if (stale) {
-            if (result != nullptr) uv_freeaddrinfo(result);
-            if (self->resolve_restart_pending_ && self->pipeline_ == Pipeline::reconnect_wait)
-                self->begin_resolve();
-            return;
-        }
-        if (status < 0 || result == nullptr) {
-            if (result != nullptr) uv_freeaddrinfo(result);
-            self->fail_connection("dns-failed", "name resolution failed");
-            return;
-        }
-        std::vector<sockaddr_storage> ipv6;
-        std::vector<sockaddr_storage> ipv4;
-        for (auto* item = result; item != nullptr; item = item->ai_next) {
-            if (item->ai_addr == nullptr || (item->ai_family != AF_INET && item->ai_family != AF_INET6)) continue;
-            sockaddr_storage address{};
-            std::memcpy(&address, item->ai_addr,
-                        item->ai_family == AF_INET6 ? sizeof(sockaddr_in6) : sizeof(sockaddr_in));
-            (item->ai_family == AF_INET6 ? ipv6 : ipv4).push_back(address);
-        }
-        uv_freeaddrinfo(result);
-        const auto count = std::max(ipv6.size(), ipv4.size());
-        for (std::size_t index = 0; index < count; ++index) {
-            if (index < ipv6.size()) self->addresses_.push_back(ipv6[index]);
-            if (index < ipv4.size()) self->addresses_.push_back(ipv4[index]);
-        }
-        if (self->addresses_.empty()) {
-            self->fail_connection("dns-empty", "name resolution returned no usable address");
-            return;
-        }
-        self->pipeline_ = Pipeline::connecting;
-        self->publish(StateChanged{State::connecting});
-        self->start_next_attempt();
-        if (self->next_address_ < self->addresses_.size())
-            (void)uv_timer_start(&self->happy_timer_, happy_timer_callback,
-                                 static_cast<std::uint64_t>(happy_eyeballs_delay.count()),
-                                 static_cast<std::uint64_t>(happy_eyeballs_delay.count()));
     }
 
     void start_next_attempt() {
@@ -809,15 +855,18 @@ private:
         if (status != 0) on_connect(attempt, status);
     }
 
-    static void happy_timer_callback(uv_timer_t* timer) {
+    static void happy_timer_callback(uv_timer_t* timer) noexcept {
         auto* self = static_cast<Impl*>(timer->data);
-        self->start_next_attempt();
-        if (self->next_address_ >= self->addresses_.size()) uv_timer_stop(timer);
+        callback_boundary(self, [&] {
+            self->start_next_attempt();
+            if (self->next_address_ >= self->addresses_.size()) uv_timer_stop(timer);
+        });
     }
 
-    static void connect_callback(uv_connect_t* request, const int status) {
+    static void connect_callback(uv_connect_t* request, const int status) noexcept {
         auto* attempt = static_cast<Attempt*>(request->data);
-        attempt->owner->on_connect(attempt, status);
+        auto* self = attempt->owner;
+        callback_boundary(self, [&] { self->on_connect(attempt, status); });
     }
 
     void on_connect(Attempt* attempt, const int status) {
@@ -846,7 +895,7 @@ private:
         }
     }
 
-    static void close_attempt(Attempt* attempt) {
+    static void close_attempt(Attempt* attempt) noexcept {
         if (attempt == nullptr) return;
         auto* handle = reinterpret_cast<uv_handle_t*>(&attempt->tcp);
         if (!uv_is_closing(handle)) uv_close(handle, close_dynamic_handle);
@@ -1231,8 +1280,15 @@ private:
             if (received > 0) {
                 total += static_cast<std::size_t>(received);
                 mark_server_activity();
-                auto bytes = std::make_shared<std::vector<std::byte>>(buffer.begin(), buffer.begin() + received);
-                publish(BytesReceived{std::move(bytes)});
+                try {
+                    auto bytes = std::make_shared<std::vector<std::byte>>(buffer.begin(), buffer.begin() + received);
+                    publish(BytesReceived{std::move(bytes)});
+                } catch (...) {
+                    // Allocation may fail before publish can consume the
+                    // receive reservation.
+                    release_receive_reservation();
+                    throw;
+                }
                 continue;
             }
             release_receive_reservation();
@@ -1328,12 +1384,14 @@ private:
             if (amount == 0) {
                 set_readiness(receive_paused_ ? 0 : UV_READABLE);
                 const auto delay = bucket == nullptr ? std::chrono::milliseconds{10} : bucket->refill_delay(bucket_rate);
-                (void)uv_timer_start(&rate_timer_, [](uv_timer_t* timer) {
+                (void)uv_timer_start(&rate_timer_, [](uv_timer_t* timer) noexcept {
                     auto* self = static_cast<Impl*>(timer->data);
-                    if (self->pipeline_ == Pipeline::open) {
-                        self->set_readiness((self->receive_paused_ ? 0 : UV_READABLE) | UV_WRITABLE);
-                        self->pump_writes();
-                    }
+                    callback_boundary(self, [&] {
+                        if (self->pipeline_ == Pipeline::open) {
+                            self->set_readiness((self->receive_paused_ ? 0 : UV_READABLE) | UV_WRITABLE);
+                            self->pump_writes();
+                        }
+                    });
                 }, static_cast<std::uint64_t>(delay.count()), 0);
                 return;
             }
@@ -1373,12 +1431,14 @@ private:
         }
         if (target_throttled && rate_timer_initialized_) {
             set_readiness(receive_paused_ ? 0 : UV_READABLE);
-            (void)uv_timer_start(&rate_timer_, [](uv_timer_t* timer) {
+            (void)uv_timer_start(&rate_timer_, [](uv_timer_t* timer) noexcept {
                 auto* self = static_cast<Impl*>(timer->data);
-                if (self->pipeline_ == Pipeline::open) {
-                    self->set_readiness((self->receive_paused_ ? 0 : UV_READABLE) | UV_WRITABLE);
-                    self->pump_writes();
-                }
+                callback_boundary(self, [&] {
+                    if (self->pipeline_ == Pipeline::open) {
+                        self->set_readiness((self->receive_paused_ ? 0 : UV_READABLE) | UV_WRITABLE);
+                        self->pump_writes();
+                    }
+                });
             }, 50, 0);
         }
     }
@@ -1437,9 +1497,34 @@ private:
                              static_cast<std::uint64_t>(delay.count()), 0);
     }
 
-    static void reconnect_timer_callback(uv_timer_t* timer) {
+    static void reconnect_timer_callback(uv_timer_t* timer) noexcept {
         auto* self = static_cast<Impl*>(timer->data);
-        if (!self->intentional_close_ && self->pipeline_ == Pipeline::reconnect_wait) self->begin_resolve();
+        callback_boundary(self, [&] {
+            if (!self->intentional_close_ && self->pipeline_ == Pipeline::reconnect_wait) self->begin_resolve();
+        });
+    }
+
+    void fail_noexcept(const char* code, const char* message) noexcept {
+        // This path is called from C callbacks. It cannot allow another
+        // exception to cross libuv, and it deliberately stops instead of
+        // retrying partially-mutated callback state.
+        cancel_resolve();
+        close_transport();
+        cancel_pending_commands();
+        try {
+            (void)publish(Diagnostic{code, message});
+            (void)publish(StateChanged{State::stopped});
+            (void)publish(Closed{"transport callback failure", std::chrono::milliseconds{0}});
+        } catch (...) {
+        }
+        intentional_close_ = true;
+        pipeline_ = Pipeline::idle;
+        thread_.request_stop();
+        std::scoped_lock lock{mutex_};
+        stopped_ = true;
+        queued_bytes_ = 0;
+        reserved_send_completions_ = 0;
+        reserved_receive_events_ = 0;
     }
 
     void cancel_resolve() noexcept {
@@ -1558,7 +1643,7 @@ private:
     std::function<void()> wakeup_;
     ConnectionOptions options_;
     std::optional<LockedSecret> proxy_password_;
-    std::jthread thread_;
+    threading::JThread thread_;
     GenerationId generation_{};
     std::size_t queued_bytes_{};
     std::size_t queued_receive_bytes_{};

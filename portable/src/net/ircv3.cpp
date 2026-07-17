@@ -205,8 +205,55 @@ void SecureClear(std::string* value)
 	volatile char* bytes = value->empty() ? nullptr : value->data();
 	for (std::size_t i = 0; i < value->size(); ++i) bytes[i] = 0;
 	value->clear();
-	value->shrink_to_fit();
 }
+
+void SecureClear(std::vector<std::string>* values)
+{
+	if (!values) return;
+	for (auto& value : *values) SecureClear(&value);
+	values->clear();
+}
+
+class ScopedStringWipe final {
+public:
+	explicit ScopedStringWipe(std::string* value) noexcept : value_(value) {}
+	~ScopedStringWipe() { SecureClear(value_); }
+	ScopedStringWipe(const ScopedStringWipe&) = delete;
+	ScopedStringWipe& operator=(const ScopedStringWipe&) = delete;
+
+private:
+	std::string* value_;
+};
+
+bool IsSensitiveCommand(std::string_view command)
+{
+	return command == "AUTHENTICATE" || command == "PASS" || command == "AUTH" ||
+		command == "OPER" || command == "REGISTER" || command == "VERIFY";
+}
+
+void SecureClearMessage(Message* message)
+{
+	if (!message) return;
+	if (message->prefix) SecureClear(&*message->prefix);
+	for (auto& tag : message->tags) {
+		SecureClear(&tag.name);
+		if (tag.value) SecureClear(&*tag.value);
+	}
+	SecureClear(&message->command);
+	for (auto& param : message->params) SecureClear(&param);
+}
+
+class ScopedSensitiveMessageWipe final {
+public:
+	explicit ScopedSensitiveMessageWipe(Message* message) noexcept : message_(message) {}
+	~ScopedSensitiveMessageWipe()
+	{
+		if (message_ && IsSensitiveCommand(message_->command)) SecureClearMessage(message_);
+	}
+
+private:
+	Message* message_;
+};
 
 template <std::size_t N>
 void SecureClear(std::array<unsigned char, N>* value)
@@ -377,14 +424,19 @@ std::vector<std::string> SaslWireChunks(std::string_view encoded)
 {
 	std::vector<std::string> result;
 	if (encoded.size() > kMaxSaslEncodedBytes) return result;
-	if (encoded.empty()) {
-		result.emplace_back("AUTHENTICATE +\r\n");
-		return result;
+	try {
+		if (encoded.empty()) {
+			result.emplace_back("AUTHENTICATE +\r\n");
+			return result;
+		}
+		for (std::size_t cursor = 0; cursor < encoded.size(); cursor += kSaslChunk)
+			result.emplace_back("AUTHENTICATE " +
+				std::string(encoded.substr(cursor, (std::min)(kSaslChunk, encoded.size() - cursor))) + "\r\n");
+		if (encoded.size() % kSaslChunk == 0) result.emplace_back("AUTHENTICATE +\r\n");
+	} catch (...) {
+		SecureClear(&result);
+		throw;
 	}
-	for (std::size_t cursor = 0; cursor < encoded.size(); cursor += kSaslChunk)
-		result.emplace_back("AUTHENTICATE " +
-			std::string(encoded.substr(cursor, (std::min)(kSaslChunk, encoded.size() - cursor))) + "\r\n");
-	if (encoded.size() % kSaslChunk == 0) result.emplace_back("AUTHENTICATE +\r\n");
 	return result;
 }
 
@@ -593,6 +645,7 @@ bool Message::Parse(std::string_view wire, Message* out, std::string* error)
 		wire.remove_suffix(1);
 	}
 	Message result;
+	ScopedSensitiveMessageWipe wipe_result(&result);
 	std::size_t cursor = 0;
 	auto fail = [&](const char* reason) {
 		if (error) *error = reason;
@@ -657,6 +710,7 @@ std::expected<std::string, ParseFailure> Message::SerializeChecked(bool include_
 		return std::unexpected(ParseFailure{"invalid command"});
 	if (params.size() > kMaxParams) return std::unexpected(ParseFailure{"too many parameters"});
 	std::string tag_frame;
+	ScopedStringWipe wipe_tag_frame(IsSensitiveCommand(command) ? &tag_frame : nullptr);
 	if (include_tags && !tags.empty()) {
 		tag_frame.push_back('@');
 		for (std::size_t i = 0; i < tags.size(); ++i) {
@@ -675,6 +729,7 @@ std::expected<std::string, ParseFailure> Message::SerializeChecked(bool include_
 			return std::unexpected(ParseFailure{"tag section exceeds IRCv3 bound"});
 	}
 	std::string payload;
+	ScopedStringWipe wipe_payload(IsSensitiveCommand(command) ? &payload : nullptr);
 	if (prefix) {
 		if (prefix->empty() || HasLineControl(*prefix) || prefix->find(' ') != std::string::npos)
 			return std::unexpected(ParseFailure{"invalid prefix"});
@@ -759,9 +814,30 @@ void Message::RemoveTag(std::string_view name)
 	}), tags.end());
 }
 
+ProcessResult::ProcessResult(ProcessResult&& other) noexcept
+	: consumed(other.consumed),
+	  messages(std::move(other.messages)),
+	  outbound(std::move(other.outbound)),
+	  events(std::move(other.events))
+{
+	other.consumed = false;
+}
+
+ProcessResult& ProcessResult::operator=(ProcessResult&& other) noexcept
+{
+	if (this == &other) return *this;
+	SecureClear(&outbound);
+	consumed = other.consumed;
+	messages = std::move(other.messages);
+	outbound = std::move(other.outbound);
+	events = std::move(other.events);
+	other.consumed = false;
+	return *this;
+}
+
 ProcessResult::~ProcessResult()
 {
-	for (auto& command : outbound) SecureClear(&command);
+	SecureClear(&outbound);
 }
 
 LineFramer::LineFramer(std::size_t maximum_line_bytes) : maximum_line_bytes_(maximum_line_bytes) {}
@@ -874,20 +950,22 @@ private:
 		if (mechanism_ == "PLAIN") {
 			if (stage_++ != 0 || !challenge.empty()) return Fail();
 			std::string plain = config_.authorization_id;
+			ScopedStringWipe wipe_plain(&plain);
 			plain.push_back('\0');
 			plain += config_.authentication_id;
 			plain.push_back('\0');
 			plain += config_.password;
 			std::string encoded = Base64Encode(plain);
+			ScopedStringWipe wipe_encoded(&encoded);
 			*outbound = SaslWireChunks(encoded);
 			const bool valid = !outbound->empty();
-			SecureClear(&plain);
-			SecureClear(&encoded);
 			return valid || Fail();
 		}
 		if (mechanism_ == "EXTERNAL") {
 			if (stage_++ != 0 || !challenge.empty()) return Fail();
-			*outbound = SaslWireChunks(Base64Encode(config_.authorization_id));
+			std::string encoded = Base64Encode(config_.authorization_id);
+			ScopedStringWipe wipe_encoded(&encoded);
+			*outbound = SaslWireChunks(encoded);
 			return !outbound->empty() || Fail();
 		}
 		if (mechanism_ != "SCRAM-SHA-256") return Fail();
@@ -906,10 +984,15 @@ private:
 				return ch >= 0x21U && ch <= 0x7eU && ch != ',';
 			})) return Fail();
 		client_first_bare_ = "n=" + ScramName(config_.authentication_id) + ",r=" + nonce_;
-		const std::string gs2 = config_.authorization_id.empty()
+		std::string gs2 = config_.authorization_id.empty()
 			? "n,,"
 			: "n,a=" + ScramName(config_.authorization_id) + ',';
-		*outbound = SaslWireChunks(Base64Encode(gs2 + client_first_bare_));
+		ScopedStringWipe wipe_gs2(&gs2);
+		std::string first_message = gs2 + client_first_bare_;
+		ScopedStringWipe wipe_first_message(&first_message);
+		std::string encoded = Base64Encode(first_message);
+		ScopedStringWipe wipe_encoded(&encoded);
+		*outbound = SaslWireChunks(encoded);
 		if (outbound->empty()) return Fail();
 		++stage_;
 		return true;
@@ -970,8 +1053,10 @@ private:
 		if (!HmacSha256(secrets.salted.data(), secrets.salted.size(), "Client Key", &secrets.client_key)) return Fail();
 		if (!Sha256(std::string_view(reinterpret_cast<const char*>(secrets.client_key.data()),
 			secrets.client_key.size()), &secrets.stored_key)) return Fail();
-		const std::string final_without_proof = "c=biws,r=" + fields["r"];
-		const std::string auth_message = client_first_bare_ + ',' + server_first_ + ',' + final_without_proof;
+		std::string final_without_proof = "c=biws,r=" + fields["r"];
+		ScopedStringWipe wipe_final_without_proof(&final_without_proof);
+		std::string auth_message = client_first_bare_ + ',' + server_first_ + ',' + final_without_proof;
+		ScopedStringWipe wipe_auth_message(&auth_message);
 		if (!HmacSha256(secrets.stored_key.data(), secrets.stored_key.size(), auth_message,
 			&secrets.client_signature)) return Fail();
 		for (std::size_t i = 0; i < secrets.proof.size(); ++i)
@@ -981,13 +1066,13 @@ private:
 				&secrets.server_signature)) return Fail();
 		expected_server_signature_ = Base64Encode(secrets.server_signature.data(), secrets.server_signature.size());
 		std::string proof_encoded = Base64Encode(secrets.proof.data(), secrets.proof.size());
+		ScopedStringWipe wipe_proof_encoded(&proof_encoded);
 		std::string final_message = final_without_proof + ",p=" + proof_encoded;
+		ScopedStringWipe wipe_final_message(&final_message);
 		std::string final_encoded = Base64Encode(final_message);
+		ScopedStringWipe wipe_final_encoded(&final_encoded);
 		*outbound = SaslWireChunks(final_encoded);
 		const bool valid = !outbound->empty();
-		SecureClear(&proof_encoded);
-		SecureClear(&final_message);
-		SecureClear(&final_encoded);
 		++stage_;
 		return valid || Fail();
 	}
@@ -2429,6 +2514,7 @@ std::expected<std::string, ParseFailure> Engine::PrepareOutgoingChecked(std::str
 	auto parsed = Message::Parse(wire);
 	if (!parsed) return std::unexpected(parsed.error());
 	Message message = std::move(*parsed);
+	ScopedSensitiveMessageWipe wipe_message(&message);
 	if (isupport_.contains("UTF8ONLY")) {
 		const bool valid_params = std::ranges::all_of(message.params, ValidUtf8);
 		const bool valid_tags = std::ranges::all_of(message.tags, [](const Tag& tag) {

@@ -111,7 +111,9 @@ struct SaslConfig {
 	std::string authentication_id;
 	std::string password;
 	std::string authorization_id;
-	bool allow_external = true;
+	// EXTERNAL requires a configured client certificate. Callers must opt in
+	// after provisioning one rather than advertising it implicitly.
+	bool allow_external = false;
 	// Tests may pin a nonce. Production leaves this empty and uses the shared
 	// OS-seeded PSA CSPRNG to produce an IRC-safe token.
 	std::string nonce;
@@ -156,8 +158,8 @@ struct FloodSnapshot {
 struct ProcessResult {
 	ProcessResult() = default;
 	~ProcessResult();
-	ProcessResult(ProcessResult&&) noexcept = default;
-	ProcessResult& operator=(ProcessResult&&) noexcept = default;
+	ProcessResult(ProcessResult&& other) noexcept;
+	ProcessResult& operator=(ProcessResult&& other) noexcept;
 	ProcessResult(const ProcessResult&) = delete;
 	ProcessResult& operator=(const ProcessResult&) = delete;
 

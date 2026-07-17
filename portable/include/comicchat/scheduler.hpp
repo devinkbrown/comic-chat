@@ -2,13 +2,13 @@
 
 #include "comicchat/cpp26.hpp"
 #include "comicchat/net/connection_engine.hpp"
+#include "comicchat/thread_compat.hpp"
 
 #include <cstddef>
 #include <expected>
 #include <functional>
 #include <future>
 #include <memory>
-#include <stop_token>
 
 namespace comicchat {
 
@@ -20,7 +20,7 @@ enum class SchedulerError { stopped, queue_full, stale_generation };
 
 class WorkerScheduler final {
 public:
-    using Task = std::function<void(std::stop_token)>;
+    using Task = std::function<void(threading::StopToken)>;
 
     explicit WorkerScheduler(std::size_t workers = 0, std::size_t capacity = 256,
                              bool deterministic = COMICCHAT_DETERMINISTIC_DEFAULT != 0);
