@@ -335,6 +335,30 @@ void TestLegacyDispatchShapeGate()
 	}
 }
 
+void TestExtendedJoinPreservesTypedIdentityAndLegacyChannel()
+{
+	const auto parsed = comic_chat::ircv3::Message::Parse(
+		":Tiki!user@example.test JOIN #ink tiki-account :Tiki Example\r\n");
+	Check(parsed.has_value());
+	if (!parsed) return;
+
+	const auto adapted = AdaptProtocolMessage(*parsed);
+	Check(!adapted.rejected_legacy_shape);
+	Check(adapted.typed_context.has_value() && adapted.typed_context->message.has_value());
+	if (adapted.typed_context && adapted.typed_context->message) {
+		const auto& complete = *adapted.typed_context->message;
+		Check(complete.params ==
+			std::vector<std::string>{"#ink", "tiki-account", "Tiki Example"});
+	}
+	Check(adapted.legacy_wire ==
+		std::optional<std::string>{":Tiki!user@example.test JOIN :#ink\r\n"});
+
+	comic_chat::ircv3::Message malformed = *parsed;
+	malformed.params.pop_back();
+	const auto rejected = AdaptProtocolMessage(malformed);
+	Check(rejected.rejected_legacy_shape && !rejected.legacy_wire);
+}
+
 void TestTransportIngressPhaseAndWorkGates()
 {
 	IrcTransportIngressGate gate;
@@ -384,6 +408,7 @@ int main()
 	TestStandardReplyPresentation();
 	TestChannelRenameConsumer();
 	TestLegacyDispatchShapeGate();
+	TestExtendedJoinPreservesTypedIdentityAndLegacyChannel();
 	TestTransportIngressPhaseAndWorkGates();
 	return failures == 0 ? 0 : 1;
 }

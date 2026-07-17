@@ -331,8 +331,11 @@ inline bool HasSafeLegacyDispatchShape(const comic_chat::ircv3::Message& message
 	const auto has_nonempty = [&message](const std::size_t index) {
 		return index < message.params.size() && !message.params[index].empty();
 	};
-	if (message.command == "JOIN" || message.command == "PART" ||
-		message.command == "KILL" || message.command == "001")
+	if (message.command == "JOIN")
+		return has_nonempty(0) &&
+			(message.params.size() == 1 || message.params.size() == 3);
+	if (message.command == "PART" || message.command == "KILL" ||
+		message.command == "001")
 		return has_nonempty(0);
 	if (message.command == "WHISPER")
 		return has_nonempty(0) && has_nonempty(1) && message.params.size() >= 3;
@@ -357,10 +360,21 @@ inline std::optional<std::string> PrepareLegacyProtocolWire(
 	const comic_chat::ircv3::Message& message)
 {
 	if (!HasSafeLegacyDispatchShape(message)) return std::nullopt;
-	auto wire = message.SerializeChecked(false);
+	const comic_chat::ircv3::Message* legacy_message = &message;
+	comic_chat::ircv3::Message normalized_join;
+	if (message.command == "JOIN" && message.params.size() == 3) {
+		// extended-join adds account and realname, but Microsoft's handler uses
+		// the single trailing JOIN field as the channel key. Preserve the complete
+		// message for typed consumers and flatten only the channel into the old
+		// parser; otherwise the realname becomes LookupDoc()'s input.
+		normalized_join = message;
+		normalized_join.params.resize(1);
+		legacy_message = &normalized_join;
+	}
+	auto wire = legacy_message->SerializeChecked(false);
 	if (!wire) return std::nullopt;
-	if (LegacyHandlerNeedsTrailingParameter(message)) {
-		const auto final_start = wire->size() - 2 - message.params.back().size();
+	if (LegacyHandlerNeedsTrailingParameter(*legacy_message)) {
+		const auto final_start = wire->size() - 2 - legacy_message->params.back().size();
 		if (final_start == 0 || (*wire)[final_start - 1] != ':') {
 			wire->insert(final_start, 1, ':');
 			if (wire->size() > 512) return std::nullopt;
@@ -378,7 +392,8 @@ inline Ircv3LegacyMessageAdaptation AdaptProtocolMessage(
 {
 	Ircv3LegacyMessageAdaptation result;
 	const bool typed_only = message.command == "TAGMSG";
-	if (!message.tags.empty() || typed_only) {
+	const bool extended_join = message.command == "JOIN" && message.params.size() == 3;
+	if (!message.tags.empty() || typed_only || extended_join) {
 		comic_chat::ircv3::Event context;
 		context.type = comic_chat::ircv3::EventType::MessageContext;
 		context.source = message.prefix ? *message.prefix : std::string{};
