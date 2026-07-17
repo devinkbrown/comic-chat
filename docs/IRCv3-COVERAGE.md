@@ -147,7 +147,7 @@ Official capability sources: [account notify](https://ircv3.net/specs/extensions
 | `no-implicit-names` | stable | **partial** | Both legacy self-JOIN sites now gate on `m_ircEngine.IsEnabled("no-implicit-names")` and queue an explicit request beside the response-tracking `CCQuery`, failing closed via `OnClose(WSAENOBUFS)` when the line cannot be queued (`v2.5-beta-1-modern/ircsock.cpp:1378-1385,1536-1543`); the bounded builder rejects empty, spaced, comma-bearing, NUL-bearing, and oversize channel names (`v2.5-beta-1-modern/ircv3eventbridge.h:194`); causal test `v2.5-beta-1-modern/tests/transport_ui_bridge_test.cpp:395` | **Still default off** (`portable/src/net/ircv3.cpp:549`). It does now transmit `NAMES`, so the catalog precondition is met and a suppressed implicit reply no longer leaves the member list empty. Partial, not implemented: the builder is tested in isolation, but no legacy-consumer test proves the request is issued on JOIN — that path is MFC and CI-only. |
 | `sasl` | stable | **partial** | PLAIN, explicit EXTERNAL, and SCRAM-SHA-256; see dedicated section | Safe only on verified TLS with a usable mechanism. Product has no client-certificate provisioning and no post-registration reauthentication. |
 | `setname` | stable | **partial** | `SETNAME` state and `RealnameChanged` update a separate document-owned realname field; state/bound and causal model tests | Safe to request; a visible realname surface remains absent. |
-| `userhost-in-names` | stable | **partial** | `NormalizeLegacyNamesReply` finds `!` only to truncate the token at the nickname and then validates length and forbidden characters; the hostmask itself is discarded, not forwarded (`v2.5-beta-1-modern/ircv3eventbridge.h:430-434`). Covered incidentally by the `353` test at `v2.5-beta-1-modern/tests/transport_ui_bridge_test.cpp:364`, which asserts `Owner!owner@example.test` normalizes to `Owner`; no test names this capability | **Still default off** (`portable/src/net/ircv3.cpp:554`). The safety half holds — `nick!user@host` can no longer become the nickname. The catalog precondition is **not** met: it requires that NAMES adaptation "supplies the hostmask separately to the legacy user model," and nothing does. Enabling it would negotiate extra wire data the product then throws away. |
+| `userhost-in-names` | stable | **partial** | `NormalizeLegacyNamesReply` truncates each token at `!` so the nickname column stays clean, and now also splits the hostmask and carries it as flat identity triples in `Event::context`; `ConsumeNamesIdentities` applies each one through the same host mutation as `chghost`, reaching `CUserInfo::SetFullName` and giving `MatchesNickMask` real data (`v2.5-beta-1-modern/ircv3eventbridge.h`, `v2.5-beta-1-modern/chatview.cpp`). Causal test `TestUserhostInNamesSuppliesHostmaskToLegacyModel` covers hostmask delivery, prefixed-plus-hostmask tokens, tokens without a hostmask, and fail-closed rejection without partial writes; it was mutation-tested to confirm each case is causal | **Still default off** (`portable/src/net/ircv3.cpp:554`). The catalog precondition is now met: NAMES adaptation splits `nick!user@host` and supplies the hostmask separately. Partial, not implemented: the `chatview.cpp` consumer is MFC and compiles only under MSVC CI, and identities outside `qpInitialNames` (a later `/names`) resolve to `unknown_user`, so the capability's reach is join-time membership only. |
 | `draft/channel-rename` | work in progress | **partial** | The engine requires both channels plus the mandatory, possibly empty reason and migrates retained state. The legacy UI keeps the same room/member/topic/mode document, updates encoded/pretty names, tab/path/status, rewrites pending query targets, and displays the reason; malformed input and local target collisions fail closed | **Default off while draft.** The product adapter is present and causal-tested, but native MFC compilation is CI-only and a user-facing policy for an already-open local target tab remains unresolved. |
 | `draft/account-registration` | work in progress | **partial** | Secret-consuming `REGISTER`/`VERIFY` builders and typed outcomes in `portable/src/net/ircv3.cpp:2595-2658`; tests `portable/tests/ircv3_test.cpp:1083-1112` | Block until an account UI consumes the API and replies. |
 | `draft/chathistory` | work in progress | **partial** | History batches and bounded recovery command builder in `portable/src/net/ircv3.cpp:1315-1325,1989-2111`; tests `portable/tests/ircv3_test.cpp:398-408,744-787` and four CAP fixtures | **Block for now.** No production caller uses `RecoveryCommands()`. Requesting chathistory can suppress server auto-playback without replacing it. |
@@ -155,7 +155,7 @@ Official capability sources: [account notify](https://ircv3.net/specs/extensions
 | `draft/extended-isupport` | work in progress | **partial** | `isupport`/`draft/isupport` batches and bounded generic 005 state in `portable/src/net/ircv3.cpp:1755-1837,1989-2111`; tests `portable/tests/ircv3_test.cpp:621-667,744-787` | Keep gated until batch replacement/removal semantics and legacy consumers are causal-tested. |
 | `draft/metadata-2` | work in progress | **observe-only** | Bounded values/subscriptions, numerics, commands and batches in `portable/src/net/ircv3.cpp:1887-1949,1989-2111`; tests `portable/tests/ircv3_test.cpp:1044-1081` | Block until product consumers and outbound UI exist. |
 | `draft/message-redaction` | work in progress | **observe-only** | Retained IDs and `Redaction` event; state/bound tests | **Block.** No handler removes or marks the rendered balloon, so advertised support leaves redacted content visible. |
-| `draft/multiline` | work in progress | **partial** | Receive-side reassembly and `Multiline` event; batch tests | **Block.** No outbound builder; advertised `max-bytes`/`max-lines`, opening target, and prohibited blank/concat cases are not fully enforced. |
+| `draft/multiline` | work in progress | **partial** | Receive-side reassembly and `Multiline` event; `PrepareMultiline` builds client-initiated batches, enforcing the capability gate, a single target, advertised `max-lines`/`max-bytes` counted over content only and clamped by the engine's own bounds, the blank-line concat prohibition, a unique monotonic ref, and rejection rather than truncation of over-long lines (`portable/src/net/ircv3.cpp:2980-3070`); receive-side children validate against the normalized opening target, and first-child concat is ignored as the no-op the spec leaves undefined rather than dropping the batch (`portable/src/net/ircv3.cpp:2262-2295`); causal tests `portable/tests/ircv3_test.cpp:490-580,594-680` | **Default off while draft.** The builder and its limits are now enforced and mutation-tested. Still partial: no `FAIL BATCH MULTILINE_*` standard replies are emitted on violation (errors surface as `ParseFailure`), and no production caller sends a multiline message. |
 | `draft/oper-tag` | work in progress | **observe-only** | `draft/oper` and unprefixed `oper` decode to typed context; typed-tag tests | Block until the renderer consumes the status. Do not emit or prefer the unprefixed tag while the spec remains draft. |
 | `draft/pre-away` | work in progress | **unsupported** | Catalog entry only; no pre-registration AWAY builder or causal test | **Block.** Negotiation without use supplies no product feature. |
 | `draft/read-marker` | work in progress | **observe-only** | Bounded `MARKREAD` state and `ReadMarker` event; state/bound tests | Block until read state is displayed and outbound advancement is implemented. |
@@ -214,17 +214,17 @@ and total bytes (`portable/src/net/ircv3.cpp:1989-2172`; rejection/bounds tests 
 | --- | --- | --- |
 | `chathistory` | **partial** | Produces `ChatHistory` and unwraps messages; legacy history/time/backfill semantics are absent. |
 | `labeled-response` | **partial** | Label correlation/event and no-output ACK exist; not every response is presented by the legacy UI. |
-| `draft/multiline` | **partial** | Receive-side concatenation exists; advertised limits and all invalid combinations are not enforced, and send-side batching is absent. |
+| `draft/multiline` | **partial** | Receive-side concatenation exists and validates every child against the normalized opening target; send-side batching now exists via `PrepareMultiline` with advertised limits enforced. Remaining: no `FAIL BATCH MULTILINE_*` emission and no production caller. |
 | `netsplit`, `netjoin` | **observe-only** | Typed events exist for stable and accepted `draft/` aliases; no legacy member-list reconciliation. |
 | `draft/isupport` / `isupport` | **partial** | Applies 005 items and emits events; replacement semantics need spec-focused tests. |
 | `metadata`, `metadata-subs` | **observe-only** | Bounded state is updated before events; no product consumer. |
 | `draft/chathistory-targets` | **observe-only** | Parsed as a history-family event; no target-picker or pagination UI. |
 | Unknown batch type | **partial** | Structurally bounded and unwrapped. Safety still depends on the member commands being safe for legacy dispatch. |
 
-There is no client-initiated `BATCH`/multiline builder. Opening-message tags
-other than the label are not generally propagated to children. A multiline
-batch is validated mainly against its first child rather than a normalized
-opening target.
+`PrepareMultiline` is the only client-initiated `BATCH` builder; there is no
+general one for other batch types. Opening-message tags other than the label
+are not generally propagated to children. A multiline batch is now validated
+against its normalized opening target rather than its first child.
 
 ### ISUPPORT and ordinary IRC commands
 
@@ -426,17 +426,43 @@ native handler is wired, but this Linux audit cannot instantiate MFC; its actual
 Windows compilation remains an MSVC CI gate.
 
 Current conspicuous gaps include direct causal tests for `invite-notify` and
-`pre-away`, a legacy-consumer test for the explicit NAMES request on JOIN,
-hostmask delivery to the legacy user model for `userhost-in-names`, full labeled
-response presentation, CHATHISTORY recovery invocation, event-playback
-isolation, visible redaction, and UI/model application of the remaining typed
-state events.
+`pre-away`, a legacy-consumer test for the explicit NAMES request on JOIN, full
+labeled response presentation, `FAIL BATCH MULTILINE_*` standard replies and a
+production caller for the multiline builder, CHATHISTORY recovery invocation,
+event-playback isolation, visible redaction, and UI/model application of the
+remaining typed state events.
 
 Closed since the previous snapshot: extended-JOIN normalization, multi-prefix
 NAMES normalization and its direct test, explicit NAMES transmission under
-`no-implicit-names`, and production STS session wiring across all three
-frontends. Normalization is not negotiation — all five NAMES/JOIN-adjacent
-capabilities below remain default-off in the catalog.
+`no-implicit-names`, hostmask delivery to the legacy user model for
+`userhost-in-names`, client-initiated multiline batch construction, and
+production STS session wiring across all three frontends. Normalization is not
+negotiation — all five NAMES/JOIN-adjacent capabilities below remain default-off
+in the catalog.
+
+Three unresolved defects block the gated NAMES/JOIN capabilities, found by
+audit rather than by test failure, since the current tests assert the defective
+behavior is correct:
+
+- `extended-join` rejection discards the JOIN entirely rather than only its
+  identity fields (`portable/src/net/ircv3.cpp:2422-2429`), and identity state
+  is pruned only on QUIT, never on PART (`:2864`), so `accounts_`/`realnames_`
+  grow to `kMaxStateEntries` and then silently drop members permanently. The
+  test at `portable/tests/ircv3_test.cpp:612-617` asserts that drop is intended.
+- `no-implicit-names` in `v1.0-pre-modern` requests NAMES for `GetMyChannel()`
+  rather than the channel named by the JOIN it never parses
+  (`v1.0-pre-modern/irc.cpp:933-946`), so a channel forward queries the wrong
+  room and an empty value drops the connection.
+- An empty but legitimate `PREFIX=` ISUPPORT token makes
+  `NormalizeLegacyNamesReply` return `nullopt`, discarding the whole `353` and
+  leaving the member list permanently empty
+  (`v2.5-beta-1-modern/ircv3eventbridge.h:381-383`).
+
+The catalog default is also global across two frontends with different adapters
+and different coverage. `Engine::SetCapabilityRequestEnabled`
+(`portable/src/net/ircv3.cpp:1382`) is the per-frontend lever this ledger's
+request-policy gate describes, and no production frontend calls it. Wire it
+before any default flips.
 
 ## Prioritized completion plan
 
