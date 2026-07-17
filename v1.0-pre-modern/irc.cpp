@@ -2,9 +2,10 @@
 // Licensed under the MIT license.
 
 #include "stdafx.h"
-#include <afxsock.h>
 #include "ircsock.h"
 #include "chat.h"
+
+#include "comicchat/crypto_runtime.hpp"
 
 #include "binddoc.h"
 #include "chatDoc.h"
@@ -24,6 +25,14 @@
 #include <mmsystem.h>
 #include "roomlist.h"
 #include "admindlg.h"
+
+#include <algorithm>
+#include <cstring>
+#include <limits>
+#include <span>
+#include <type_traits>
+#include <utility>
+#include <vector>
 
 #define IDP_SOCKETS_INIT_FAILED			104   // should be guaranteed unique and in resource file
 
@@ -137,7 +146,7 @@ inline void ChatSetConnectionStatus(int iStat) {
 int ChatGetConnectionStatus() {return iConnected;}
 
 BOOL CommunicationInits() {
-	if (!AfxSocketInit()) {
+	if (!comicchat::crypto::initialize_runtime()) {
 		AfxMessageBox(IDP_SOCKETS_INIT_FAILED);
 		return FALSE;
 	}
@@ -149,7 +158,7 @@ void InitializeServerConnection() {
 	void InitializeBackDrops();
 
 	while (TRUE) {
-		if (serverConn.m_hSocket != INVALID_SOCKET) {	// first close last connection if necessary
+		if (serverConn.IsOpen()) {	// first close last connection if necessary
 			serverConn.Close();		
 		}
 
@@ -172,8 +181,10 @@ void InitializeServerConnection() {
 		bCXPrompt = TRUE;	// only good for one non-prompt (could also be set to false in above DoModal)
 		ChatSetConnectionStatus(CX_CONNECTING);
 		((CFrameWnd*)AfxGetMainWnd())->UpdateWindow();
-		VERIFY(serverConn.Create());
-		if (serverConn.Connect(GetMyServer(), GetMyPort()) || GetLastError() == WSAEWOULDBLOCK) {
+		// v1 now fails closed with authenticated TLS. Plaintext compatibility,
+		// if exposed later, must be an explicit persisted user choice and can
+		// never be selected as recovery from a TLS failure.
+		if (serverConn.Connect(GetMyServer(), GetMyPort(), TRUE)) {
 			theApp.m_bNoNetwork = FALSE;
 //			AddAndExecute(new StartHistoryEntry(GetComicsTitle(), GetMyCharacter(), 0));
 			// must initialize character (in case never enters channel), for character dialog...
@@ -485,7 +496,7 @@ void ChatPartChannel(BOOL hardDisconnect, BOOL removeMembers) {
 	}
 
 	if (hardDisconnect) {
-		if (serverConn.m_hSocket != INVALID_SOCKET) {	// close last connection if necessary
+		if (serverConn.IsOpen()) {	// close last connection if necessary
 			serverConn.Close();		
 		}
 		ChatSetConnectionStatus(CX_DISCONNECTED);
@@ -955,37 +966,315 @@ void CIrcSocket::ProcessMessage(char *line) {
 	}
 }
 
-#define RECVSIZE	513
+namespace {
 
-void CIrcSocket::OnReceive(int nErrorCode) {
-	TRACE("Entering OnReceive (code = %d).\n", nErrorCode);
-	static char recvBuff[RECVSIZE];
+constexpr std::size_t kMaximumNetworkEventBatch = 128;
+constexpr std::size_t kMaximumNetworkBatchesPerWake = 8;
 
-	if (!nErrorCode) {
-		char *startPtr = strchr(recvBuff, '\0');
-		int space = recvBuff + RECVSIZE - startPtr - 1;
-		int nRead = Receive(startPtr, space);
-		startPtr[nRead] = '\0';
-		char *eoc = strchr(recvBuff, '\n');
-		while (eoc) {
-			eoc++;
-			char message[RECVSIZE];
-			int comLen = eoc - recvBuff;
-			strncpy(message, recvBuff, comLen);
-			message[comLen] = '\0';
+} // namespace
 
-			// now move rest of message forward
-			char *eob = strchr(recvBuff, '\0');
-			int nRest = eob - eoc;
-			strncpy(recvBuff, eoc, nRest);
-			recvBuff[nRest] = '\0';
+CIrcSocket::CIrcSocket()
+	: wakeup_state_(std::make_shared<WakeupState>())
+{
+}
 
-			TRACE("Got message: %.100s\n", message);
-			ProcessMessage(message);   // handle the message (*After clearing it from the buffer!!!)
-			eoc = strchr(recvBuff, '\n'); // must do this after process message, since code is reentrant (but single threaded)
-		}
+CIrcSocket::~CIrcSocket()
+{
+	Close();
+}
+
+BOOL CIrcSocket::Connect(LPCSTR server, UINT port, BOOL secure_transport)
+{
+	return StartConnection(server, port, secure_transport).has_value();
+}
+
+std::expected<comicchat::net::GenerationId,
+	comic_chat::v1::transport::AdapterError> CIrcSocket::StartConnection(
+	LPCSTR server, UINT port, BOOL secure_transport)
+{
+	using comic_chat::v1::transport::AdapterError;
+	if (!server || !*server || port == 0 || port > 65535)
+		return std::unexpected(AdapterError::transport_error);
+
+	std::string host;
+	comicchat::net::ConnectionOptions options;
+	try {
+		host = server;
+		options.endpoint.host = host;
+		options.endpoint.port = static_cast<std::uint16_t>(port);
+		options.security = secure_transport
+			? comicchat::net::Security::tls : comicchat::net::Security::plaintext;
+		options.server_name = host;
+		options.limits.receive_bytes = 256U * 1024U;
+		options.limits.transmit_bytes = 256U * 1024U;
+		options.limits.queued_commands = 1024;
+	} catch (...) {
+		return std::unexpected(AdapterError::allocation_failed);
 	}
-	TRACE("Leaving OnReceive.\n");
+
+	Close();
+	static std::atomic<DWORD> next_cookie{1};
+	DWORD cookie = next_cookie.fetch_add(1, std::memory_order_relaxed);
+	if (cookie == 0) cookie = next_cookie.fetch_add(1, std::memory_order_relaxed);
+	const HWND hwnd = AfxGetMainWnd() ? AfxGetMainWnd()->GetSafeHwnd() : NULL;
+	wakeup_state_->hwnd.store(hwnd, std::memory_order_release);
+	wakeup_state_->gate.Reset(cookie);
+	std::expected<comicchat::net::GenerationId, comicchat::net::EngineError> generation;
+	try {
+		connection_.set_wakeup([
+			weak = std::weak_ptr<WakeupState>(wakeup_state_), cookie]() noexcept {
+			const auto state = weak.lock();
+			if (!state || !state->gate.TryMarkPending(cookie)) return;
+			const HWND target = state->hwnd.load(std::memory_order_acquire);
+			if (!target || state->gate.cookie() != cookie ||
+				!::PostMessage(target, WM_COMICCHAT_V1_NETWORK_EVENT, 0,
+					static_cast<LPARAM>(cookie)))
+				state->gate.CancelPending(cookie);
+		});
+		generation = connection_.start(std::move(options));
+	} catch (...) {
+		Close();
+		return std::unexpected(AdapterError::allocation_failed);
+	}
+	if (!generation) {
+		Close();
+		return std::unexpected(AdapterError::transport_error);
+	}
+	server_host_ = std::move(host);
+	generation_ = *generation;
+	next_send_id_ = 1;
+	transport_state_ = comicchat::net::State::resolving;
+	transport_open_ = TRUE;
+	secure_transport_ = secure_transport;
+	line_framer_.Reset();
+	session_.Begin(generation_);
+	return generation_;
+}
+
+void CIrcSocket::Close() noexcept
+{
+	wakeup_state_->gate.Disable();
+	wakeup_state_->hwnd.store(NULL, std::memory_order_release);
+	try {
+		connection_.set_wakeup({});
+	} catch (...) {
+		// An empty notifier owns no allocation; retain the fail-closed stop even
+		// if a platform standard library unexpectedly reports an exception.
+	}
+	connection_.stop();
+	session_.Stop();
+	generation_ = 0;
+	transport_state_ = comicchat::net::State::stopped;
+	transport_open_ = FALSE;
+	secure_transport_ = FALSE;
+	server_host_.clear();
+	local_address_.clear();
+	line_framer_.Reset();
+}
+
+BOOL CIrcSocket::IsOpen() const noexcept
+{
+	return transport_open_;
+}
+
+int CIrcSocket::Send(void* data, std::size_t byte_count)
+{
+	if (!data || byte_count == 0 ||
+		byte_count > static_cast<std::size_t>((std::numeric_limits<int>::max)())) return -1;
+	const auto wire = std::string_view(
+		static_cast<const char*>(data), byte_count);
+	const bool sensitive = comic_chat::v1::transport::ClassifyOutgoing(wire).sensitive;
+	const auto queued = QueueProtocolLine(wire);
+	if (sensitive) SecureZeroMemory(data, byte_count);
+	return queued ? static_cast<int>(byte_count) : -1;
+}
+
+std::expected<comicchat::net::SendId,
+	comic_chat::v1::transport::AdapterError> CIrcSocket::QueueProtocolLine(
+	std::string_view wire)
+{
+	using comic_chat::v1::transport::AdapterError;
+	if (!transport_open_ || generation_ == 0)
+		return std::unexpected(AdapterError::not_open);
+	const auto send_id = next_send_id_++;
+	std::expected<comicchat::net::Send, AdapterError> prepared;
+	try {
+		prepared = comic_chat::v1::transport::PrepareOutbound(
+			ircv3_, wire, generation_, send_id);
+	} catch (...) {
+		return std::unexpected(AdapterError::allocation_failed);
+	}
+	if (!prepared) return std::unexpected(prepared.error());
+	if (!connection_.post(std::move(*prepared)))
+		return std::unexpected(AdapterError::transport_error);
+	return send_id;
+}
+
+void CIrcSocket::DispatchProtocolMessage(const comic_chat::ircv3::Message& message)
+{
+	auto wire = message.SerializeChecked(false);
+	if (!wire) return;
+	try {
+		std::vector<char> legacy_line(wire->begin(), wire->end());
+		legacy_line.push_back('\0');
+		ProcessMessage(legacy_line.data());
+	} catch (...) {
+		Close();
+		OnClose(ERROR_NOT_ENOUGH_MEMORY);
+	}
+}
+
+void CIrcSocket::ProcessReceivedBytes(const comicchat::net::BytesReceived& received)
+{
+	if (!received.bytes) return;
+	auto lines = line_framer_.Push(std::span<const std::byte>(*received.bytes));
+	if (!lines) {
+		TRACE0("IRC transport rejected an invalid or oversized frame.\n");
+		Close();
+		OnClose(ERROR_INVALID_DATA);
+		return;
+	}
+
+	for (const auto& line : *lines) {
+		TRACE("Got IRC transport line: %.100s\n", line.c_str());
+		comic_chat::ircv3::ProcessResult result;
+		try {
+			result = ircv3_.Process(line);
+		} catch (...) {
+			Close();
+			OnClose(ERROR_NOT_ENOUGH_MEMORY);
+			return;
+		}
+
+		// STS on an explicitly-plaintext connection is an immediate one-way
+		// upgrade. No output derived from that line may precede the TLS restart.
+		if (!secure_transport_ && result.sts_update &&
+			result.sts_update->action == comic_chat::ircv3::StsPolicyAction::Upgrade &&
+			result.sts_update->port != 0 && !server_host_.empty()) {
+			const std::string host = server_host_;
+			if (!StartConnection(host.c_str(), result.sts_update->port, TRUE)) {
+				Close();
+				OnClose(ERROR_CONNECTION_ABORTED);
+			}
+			return;
+		}
+
+		for (const auto& outbound : result.outbound) {
+			if (!QueueProtocolLine(outbound)) {
+				Close();
+				OnClose(ERROR_NOT_ENOUGH_MEMORY);
+				return;
+			}
+		}
+		for (const auto& message : result.messages)
+			DispatchProtocolMessage(message);
+		if (!transport_open_) return;
+	}
+}
+
+void CIrcSocket::RequestUiWakeup(std::uint64_t cookie)
+{
+	if (!wakeup_state_->gate.TryMarkPending(cookie)) return;
+	const HWND target = wakeup_state_->hwnd.load(std::memory_order_acquire);
+	if (!target || wakeup_state_->gate.cookie() != cookie ||
+		!::PostMessage(target, WM_COMICCHAT_V1_NETWORK_EVENT, 0,
+			static_cast<LPARAM>(cookie)))
+		wakeup_state_->gate.CancelPending(cookie);
+}
+
+void CIrcSocket::PollNetworkEvents(LPARAM wakeup_cookie)
+{
+	const auto cookie = static_cast<std::uint64_t>(
+		static_cast<ULONG_PTR>(wakeup_cookie));
+	try {
+		DrainNetworkEvents(cookie);
+	} catch (...) {
+		Close();
+		OnClose(ERROR_NOT_ENOUGH_MEMORY);
+	}
+}
+
+void CIrcSocket::DrainNetworkEvents(std::uint64_t cookie)
+{
+	if (!wakeup_state_->gate.BeginDrain(cookie)) return;
+
+	bool possibly_more = false;
+	for (std::size_t batch = 0; batch < kMaximumNetworkBatchesPerWake; ++batch) {
+		auto events = connection_.poll_events(kMaximumNetworkEventBatch);
+		if (events.empty()) {
+			possibly_more = false;
+			break;
+		}
+		possibly_more = events.size() == kMaximumNetworkEventBatch;
+		for (const auto& event : events) {
+			const auto action = session_.Classify(event);
+			switch (action) {
+			case comic_chat::v1::transport::EventAction::stale:
+			case comic_chat::v1::transport::EventAction::out_of_order:
+			case comic_chat::v1::transport::EventAction::send_complete:
+				break;
+			case comic_chat::v1::transport::EventAction::state_changed:
+				transport_state_ = std::get<comicchat::net::StateChanged>(event.body).state;
+				break;
+			case comic_chat::v1::transport::EventAction::connected: {
+				const auto& connected = std::get<comicchat::net::Connected>(event.body);
+				local_address_ = connected.local_address;
+				secure_transport_ = connected.tls;
+				transport_state_ = comicchat::net::State::connected;
+				transport_open_ = TRUE;
+				line_framer_.Reset();
+				OnConnect(0);
+				if (!transport_open_) return;
+				break;
+			}
+			case comic_chat::v1::transport::EventAction::bytes_received:
+				ProcessReceivedBytes(std::get<comicchat::net::BytesReceived>(event.body));
+				if (!transport_open_) return;
+				break;
+			case comic_chat::v1::transport::EventAction::ping_due: {
+				auto ping = ircv3_.PrepareKeepalivePing();
+				if (!ping || !QueueProtocolLine(*ping)) {
+					Close();
+					OnClose(ERROR_TIMEOUT);
+					return;
+				}
+				break;
+			}
+			case comic_chat::v1::transport::EventAction::connect_failed:
+				transport_state_ = comicchat::net::State::reconnect_wait;
+				local_address_.clear();
+				line_framer_.Reset();
+				OnConnect(ERROR_CONNECTION_ABORTED);
+				return;
+			case comic_chat::v1::transport::EventAction::disconnected: {
+				const auto& closed = std::get<comicchat::net::Closed>(event.body);
+				transport_state_ = closed.retry_after > std::chrono::milliseconds::zero()
+					? comicchat::net::State::reconnect_wait : comicchat::net::State::stopped;
+				transport_open_ = closed.retry_after > std::chrono::milliseconds::zero();
+				secure_transport_ = FALSE;
+				local_address_.clear();
+				line_framer_.Reset();
+				OnClose(ERROR_CONNECTION_ABORTED);
+				break;
+			}
+			case comic_chat::v1::transport::EventAction::diagnostic: {
+				const auto* diagnostic = std::get_if<comicchat::net::Diagnostic>(&event.body);
+				if (diagnostic)
+					TRACE("IRC transport diagnostic [%s]: %s\n",
+						diagnostic->code.c_str(), diagnostic->message.c_str());
+				break;
+			}
+			}
+		}
+		if (events.size() < kMaximumNetworkEventBatch) break;
+	}
+	if (possibly_more && wakeup_state_->gate.cookie() == cookie)
+		RequestUiWakeup(cookie);
+}
+
+void ChatPollNetworkEvents(LPARAM wakeup_cookie)
+{
+	serverConn.PollNetworkEvents(wakeup_cookie);
 }
 
 
@@ -1005,18 +1294,48 @@ void CIrcSocket::OnConnect(int nErrorCode) {
 		InitializeServerConnection();
 		return;
 	}
-	// got a connection!
-	sprintf(buff, "NICK %s\r\n", GetMyName());
-	Send(buff, strlen(buff));
+
+	// Begin capability negotiation on the same UI-thread semantic edge that
+	// historically emitted NICK/USER. The identity commands remain adjacent and
+	// byte-compatible with Microsoft's client; CAP responses are now processed
+	// by the shared IRCv3 engine instead of the legacy parser.
+	try {
+		comic_chat::ircv3::SaslConfig sasl;
+		for (const auto& command : ircv3_.BeginRegistration(
+			std::move(sasl), GetMyName(), secure_transport_ != FALSE)) {
+			if (!QueueProtocolLine(command)) {
+				Close();
+				OnClose(ERROR_NOT_ENOUGH_MEMORY);
+				return;
+			}
+		}
+	} catch (...) {
+		Close();
+		OnClose(ERROR_NOT_ENOUGH_MEMORY);
+		return;
+	}
+
+	if (sprintf_s(buff, sizeof(buff), "NICK %s\r\n", GetMyName()) < 0 ||
+		Send(buff, static_cast<int>(strlen(buff))) < 0) {
+		Close();
+		OnClose(ERROR_NOT_ENOUGH_MEMORY);
+		return;
+	}
 	CString strRealName = GetMyRealName();
 	if(strRealName.IsEmpty())
 		strRealName = "Anonymous";
 	char user[60], machine[100];
-	unsigned long nChars = sizeof(user);
+	DWORD nChars = sizeof(user);
 	if (!GetUserName(user, &nChars) || nChars <= 1) strcpy(user, "NoUser");
-	if (gethostname(machine, sizeof(machine))) strcpy(machine, "NoMachine");
-	sprintf(buff, "USER %s %s %s :%s\r\n", user, machine, "myServer", strRealName);
-	Send(buff, strlen(buff));
+	DWORD machineChars = sizeof(machine);
+	if (!GetComputerName(machine, &machineChars) || machineChars == 0)
+		strcpy(machine, "NoMachine");
+	if (sprintf_s(buff, sizeof(buff), "USER %s %s %s :%s\r\n",
+		user, machine, "myServer", static_cast<LPCSTR>(strRealName)) < 0 ||
+		Send(buff, static_cast<int>(strlen(buff))) < 0) {
+		Close();
+		OnClose(ERROR_NOT_ENOUGH_MEMORY);
+	}
 }
 
 void CIrcSocket::OnClose(int nErrorCode) {
@@ -1024,7 +1343,10 @@ void CIrcSocket::OnClose(int nErrorCode) {
 	ChatSetConnectionStatus(CX_DISCONNECTED);
 }
 
-BOOL ChatTerminate() { return TRUE; }
+BOOL ChatTerminate() {
+	serverConn.Close();
+	return TRUE;
+}
 BOOL ChatIdle() { return TRUE; }
 
 void EmotionToBytes(CEmotion &em, BYTE &emotion, BYTE &intensity);

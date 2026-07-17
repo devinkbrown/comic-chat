@@ -6,6 +6,7 @@
 
 #include "stdafx.h"
 #include "chat.h"
+#include "ircsock.h"
 
 #include "MainFrm.h"
 
@@ -38,8 +39,17 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_UPDATE_COMMAND_UI(ID_VIEW_STATUS_BAR, OnUpdateViewStatusBar)
 	ON_UPDATE_COMMAND_UI(ID_FILE_PRINT_PREVIEW, OnUpdateFilePrintPreview)
 	//}}AFX_MSG_MAP
+	ON_MESSAGE(WM_COMICCHAT_V1_NETWORK_EVENT, OnComicChatNetworkEvent)
 //	ON_MESSAGE(WM_SETMESSAGESTRING, OnSetMessageString)
 END_MESSAGE_MAP()
+
+LRESULT CMainFrame::OnComicChatNetworkEvent(WPARAM, LPARAM lParam)
+{
+	// ConnectionEngine posts only a generation cookie. All MFC and protocol UI
+	// effects are drained synchronously here on the owning UI thread.
+	ChatPollNetworkEvents(lParam);
+	return 0;
+}
 
 static UINT indicators[] =
 {
@@ -180,4 +190,3 @@ void CMainFrame::OnUpdateFilePrintPreview(CCmdUI* pCmdUI)
 {
 	pCmdUI->Enable(FALSE);
 }
-

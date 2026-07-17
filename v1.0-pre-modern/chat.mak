@@ -4,7 +4,7 @@
 # Developer Studio 4.2 project.  Current MSVC compiles every product C++
 # translation unit in its post-C++23 working-draft mode; generated or
 # third-party C remains C.  The shared libuv/mbedTLS transport is linked here
-# as a dormant substrate until the v1 adapter migration is complete.
+# as the exclusive runtime transport used by the plain v1 adapter.
 
 # TARGTYPE "Win32 (x86) Application" 0x0101
 
@@ -150,6 +150,7 @@ LINK32_OBJS= \
 	"$(INTDIR)\connection_engine.obj" \
 	"$(INTDIR)\dcc_transfer_engine.obj" \
 	"$(INTDIR)\ircv3.obj" \
+	"$(INTDIR)\sts_policy_store.obj" \
 	"$(INTDIR)\transport_adapter_api_compile.obj" \
 	"$(INTDIR)\MainFrm.obj" \
 	"$(INTDIR)\memblst.obj" \
@@ -271,6 +272,7 @@ LINK32_OBJS= \
 	"$(INTDIR)\connection_engine.obj" \
 	"$(INTDIR)\dcc_transfer_engine.obj" \
 	"$(INTDIR)\ircv3.obj" \
+	"$(INTDIR)\sts_policy_store.obj" \
 	"$(INTDIR)\transport_adapter_api_compile.obj" \
 	"$(INTDIR)\MainFrm.obj" \
 	"$(INTDIR)\memblst.obj" \
@@ -322,9 +324,8 @@ LINK32_OBJS= \
 .cxx{$(CPP_SBRS)}.sbr:
    $(CPP) $(CPP_PROJ) $<  
 
-# Shared transport substrate.  These objects are linked now so API, ABI, and
-# native dependency drift fail the v1 build before the runtime adapter starts
-# owning connections.  No v1 socket call site is redirected in this step.
+# Shared runtime transport. API, ABI, and native dependency drift fail the v1
+# build; CIrcSocket delegates all IRC ownership to these objects.
 "$(INTDIR)\crypto_runtime.obj" : ..\portable\src\crypto_runtime.cpp cpp26mode.h "$(INTDIR)"
 	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\crypto_runtime.obj" ..\portable\src\crypto_runtime.cpp
 
@@ -340,7 +341,10 @@ LINK32_OBJS= \
 "$(INTDIR)\ircv3.obj" : ..\portable\src\net\ircv3.cpp cpp26mode.h "$(INTDIR)"
 	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\ircv3.obj" ..\portable\src\net\ircv3.cpp
 
-"$(INTDIR)\transport_adapter_api_compile.obj" : tests\transport_adapter_api_compile.cpp cpp26mode.h "$(INTDIR)"
+"$(INTDIR)\sts_policy_store.obj" : ..\portable\src\net\sts_policy_store.cpp cpp26mode.h "$(INTDIR)"
+	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\sts_policy_store.obj" ..\portable\src\net\sts_policy_store.cpp
+
+"$(INTDIR)\transport_adapter_api_compile.obj" : tests\transport_adapter_api_compile.cpp cpp26mode.h transportadapter.h "$(INTDIR)"
 	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\transport_adapter_api_compile.obj" tests\transport_adapter_api_compile.cpp
 
 ################################################################################
@@ -441,6 +445,7 @@ DEP_CPP_MAINF=\
 	".\bodycam.h"\
 	".\chat.h"\
 	".\dib.h"\
+	".\ircsock.h"\
 	".\MainFrm.h"\
 	".\memblst.h"\
 	".\pe.h"\
@@ -826,6 +831,7 @@ DEP_CPP_IRC_C=\
 	".\dib.h"\
 	".\histent.h"\
 	".\ircsock.h"\
+	".\transportadapter.h"\
 	".\memblst.h"\
 	".\pe.h"\
 	".\roomlist.h"\

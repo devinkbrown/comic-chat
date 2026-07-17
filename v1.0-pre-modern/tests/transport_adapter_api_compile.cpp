@@ -2,6 +2,8 @@
 #include "comicchat/net/connection_engine.hpp"
 #include "comicchat/net/dcc_transfer_engine.hpp"
 #include "comicchat/net/ircv3.hpp"
+#include "comicchat/net/sts_policy_store.hpp"
+#include "../transportadapter.h"
 
 #include <concepts>
 #include <cstddef>
@@ -13,14 +15,14 @@
 #include <utility>
 #include <vector>
 
-// This client-local translation unit deliberately contains no runtime adapter
-// and no MFC dependency.  Both MSVC's v1 product link and the portable Clang
-// gate compile it, so the exact shared APIs that the upcoming v1 adapter will
-// consume cannot drift unnoticed while the legacy socket remains active.
+// This client-local translation unit deliberately contains no MFC dependency.
+// Both MSVC's v1 product link and the portable Clang gate compile it, so the
+// exact APIs consumed by the live plain-class v1 adapter cannot drift.
 namespace {
 
 using comicchat::net::ConnectionEngine;
 using comicchat::net::DccTransferEngine;
+using comicchat::net::StsPolicyStore;
 using IrcEngine = comic_chat::ircv3::Engine;
 
 static_assert(
@@ -72,6 +74,25 @@ static_assert(
 static_assert(std::same_as<decltype(std::declval<IrcEngine &>()
                                         .FinishRegistrationAfterTimeout()),
                            std::vector<std::string>>);
+
+static_assert(std::same_as<decltype(std::declval<StsPolicyStore &>().load(
+								   std::declval<comicchat::net::StsTimePoint>())),
+				   std::expected<void, comicchat::net::StsStoreError>>);
+static_assert(std::same_as<decltype(std::declval<const StsPolicyStore &>().plan(
+								   std::declval<comicchat::net::ConnectionOptions>(),
+								   std::declval<comicchat::net::StsTimePoint>())),
+				   std::expected<comicchat::net::StsConnectionPlan,
+							 comicchat::net::StsStoreError>>);
+
+static_assert(std::same_as<decltype(comic_chat::v1::transport::PrepareOutbound(
+								   std::declval<IrcEngine &>(),
+								   std::declval<std::string_view>(),
+								   comicchat::net::GenerationId{1},
+								   comicchat::net::SendId{1})),
+				   std::expected<comicchat::net::Send,
+							 comic_chat::v1::transport::AdapterError>>);
+static_assert(noexcept(std::declval<comic_chat::v1::transport::SessionGate &>().Stop()));
+static_assert(noexcept(std::declval<comic_chat::v1::transport::WakeupGate &>().Disable()));
 
 static_assert(
     std::same_as<decltype(comicchat::crypto::initialize_runtime()), bool>);

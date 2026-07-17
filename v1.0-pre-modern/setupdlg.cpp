@@ -47,7 +47,7 @@ CSetupDialog::CSetupDialog(CWnd* pParent /*=NULL*/)
 	m_ircServer = _T("comicsrv1.microsoft.com");
 	m_myRealName = _T("Your Full Name");
 	m_myChannel = _T("#Comic_Chat");
-	m_ircPort = 6667;
+	m_ircPort = 6697;
 	m_strChatRooms = _T("");
 	m_bGetChannelList = FALSE;
 	m_radioConnect = 0;
@@ -71,7 +71,7 @@ void CSetupDialog::DoDataExchange(CDataExchange* pDX)
 	DDX_Text(pDX, IDC_CHANNEL, m_myChannel);
 	DDV_MaxChars(pDX, m_myChannel, 40);
 	DDX_Text(pDX, IDC_PORTNUM, m_ircPort);
-	DDV_MinMaxUInt(pDX, m_ircPort, 1, 100000);
+	DDV_MinMaxUInt(pDX, m_ircPort, 1, 65535);
 	DDX_CBString(pDX, IDC_CHATROOMS, m_strChatRooms);
 	DDX_Radio(pDX, IDC_CONCHAN, m_radioConnect);
 	//}}AFX_DATA_MAP

@@ -14,6 +14,7 @@ INVARIANT = ROOT / "v1.0-pre-modern" / "cpp26mode.h"
 CONTRACT = (
     ROOT / "v1.0-pre-modern" / "tests" / "transport_adapter_api_compile.cpp"
 )
+ADAPTER = ROOT / "v1.0-pre-modern" / "transportadapter.h"
 MESON = ROOT / "portable" / "meson.build"
 
 
@@ -56,7 +57,7 @@ def logical_assignments(text: str, name: str) -> list[str]:
 
 def main() -> int:
     check = Verification()
-    for path in (MAKEFILE, INVARIANT, CONTRACT, MESON):
+    for path in (MAKEFILE, INVARIANT, CONTRACT, ADAPTER, MESON):
         check.require(path.is_file(), f"required file is missing: {path.relative_to(ROOT)}")
     if check.failures:
         return check.finish()
@@ -64,6 +65,7 @@ def main() -> int:
     makefile = MAKEFILE.read_text(encoding="utf-8")
     invariant = INVARIANT.read_text(encoding="utf-8")
     contract = CONTRACT.read_text(encoding="utf-8")
+    adapter = ADAPTER.read_text(encoding="utf-8")
     meson = MESON.read_text(encoding="utf-8")
     active_makefile = "\n".join(
         line for line in makefile.splitlines() if not line.lstrip().startswith("#")
@@ -147,6 +149,7 @@ def main() -> int:
         "connection_engine.obj": r"..\portable\src\net\connection_engine.cpp",
         "dcc_transfer_engine.obj": r"..\portable\src\net\dcc_transfer_engine.cpp",
         "ircv3.obj": r"..\portable\src\net\ircv3.cpp",
+        "sts_policy_store.obj": r"..\portable\src\net\sts_policy_store.cpp",
         "transport_adapter_api_compile.obj": r"tests\transport_adapter_api_compile.cpp",
     }
     link_manifests = logical_assignments(makefile, "LINK32_OBJS")
@@ -222,13 +225,30 @@ def main() -> int:
         '"comicchat/net/connection_engine.hpp"',
         '"comicchat/net/dcc_transfer_engine.hpp"',
         '"comicchat/net/ircv3.hpp"',
+        '"comicchat/net/sts_policy_store.hpp"',
     )
     for header in contract_headers:
         check.require(header in contract, f"adapter compile contract omits {header}")
     check.require("CAsyncSocket" not in contract, "compile contract must remain MFC-independent")
+    check.require("CAsyncSocket" not in adapter, "v1 adapter policy must remain MFC-independent")
+    for token in (
+        "class SessionGate final",
+        "class WakeupGate final",
+        "PrepareOutbound(",
+        "maximum_irc_wire_bytes",
+    ):
+        check.require(token in adapter, f"v1 adapter policy omits {token}")
+    check.require(
+        '"../transportadapter.h"' in contract,
+        "adapter compile contract does not compile the live v1 policy seam",
+    )
     check.require(
         "../v1.0-pre-modern/tests/transport_adapter_api_compile.cpp" in meson,
         "portable Clang build does not compile the v1 adapter API contract",
+    )
+    check.require(
+        "../v1.0-pre-modern/tests/transport_adapter_test.cpp" in meson,
+        "portable Clang build does not run the v1 adapter causal tests",
     )
 
     return check.finish()

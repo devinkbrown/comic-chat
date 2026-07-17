@@ -299,6 +299,7 @@ MAKEFILE_SUBSTRATE_UNITS = (
     ("connection-engine", "connection_engine.obj", "../portable/src/net/connection_engine.cpp"),
     ("dcc-transfer-engine", "dcc_transfer_engine.obj", "../portable/src/net/dcc_transfer_engine.cpp"),
     ("ircv3", "ircv3.obj", "../portable/src/net/ircv3.cpp"),
+    ("sts-policy-store", "sts_policy_store.obj", "../portable/src/net/sts_policy_store.cpp"),
     (
         "adapter-contract",
         "transport_adapter_api_compile.obj",

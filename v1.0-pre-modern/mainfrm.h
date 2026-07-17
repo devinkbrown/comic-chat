@@ -43,6 +43,7 @@ protected:
 	afx_msg void OnUpdateViewStatusBar(CCmdUI* pCmdUI);
 	afx_msg void OnUpdateFilePrintPreview(CCmdUI* pCmdUI);
 	//}}AFX_MSG
+	afx_msg LRESULT OnComicChatNetworkEvent(WPARAM wParam, LPARAM lParam);
 //	afx_msg LRESULT OnSetMessageString(WPARAM wParam, LPARAM lParam);
 	DECLARE_MESSAGE_MAP()
 };
