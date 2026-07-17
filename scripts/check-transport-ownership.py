@@ -2,9 +2,10 @@
 """Enforce exclusive ownership of modern Comic Chat network transport.
 
 The v2.5 client and portable frontend are zero-tolerance surfaces.  The v1
-client is intentionally held to an exact, temporary inventory until its MFC
-socket adapter is migrated; a finding may neither be added nor silently
-removed without updating this gate in the migration commit.
+runtime is intentionally held to an exact, temporary source inventory until
+its MFC socket adapter is migrated, while its shared build substrate is already
+mandatory in both configurations.  A source finding may neither be added nor
+silently removed without updating this gate in the migration commit.
 """
 
 from __future__ import annotations
@@ -796,22 +797,19 @@ def check_makefiles(root: Path) -> tuple[list[str], tuple[str, ...]]:
                 f"v2 makefile does not prove {check} in: " + ", ".join(missing_configs)
             )
 
-    v1_present = tuple(
-        check for check in MAKEFILE_SUBSTRATE_CHECKS if any(check in view for view in checks["v1"])
-    )
-    if v1_present:
-        errors.append(
-            "v1 makefile temporary deficit inventory changed; finish or explicitly rebaseline the migration: "
-            + ", ".join(v1_present)
-        )
-    v1_deficits = tuple(
-        check for check in MAKEFILE_SUBSTRATE_CHECKS if not any(check in view for view in checks["v1"])
-    )
-    if len(v1_deficits) != len(MAKEFILE_SUBSTRATE_CHECKS):
-        errors.append(
-            f"v1 makefile deficit total drift: expected {len(MAKEFILE_SUBSTRATE_CHECKS)}, "
-            f"found {len(v1_deficits)}"
-        )
+    v1_deficits_list: list[str] = []
+    for check in MAKEFILE_SUBSTRATE_CHECKS:
+        missing_configs = [
+            configuration
+            for configuration, satisfied in zip(configurations, checks["v1"])
+            if check not in satisfied
+        ]
+        if missing_configs:
+            v1_deficits_list.append(check)
+            errors.append(
+                f"v1 makefile does not prove {check} in: " + ", ".join(missing_configs)
+            )
+    v1_deficits = tuple(v1_deficits_list)
 
     for name, views in active_views.items():
         relative = makefiles[name]

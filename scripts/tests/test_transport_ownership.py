@@ -60,7 +60,7 @@ class TransportOwnershipGateTest(unittest.TestCase):
         result = gate.audit_repository(REPOSITORY)
         self.assertEqual([], result.errors)
         self.assertEqual(28, len(result.v1_findings))
-        self.assertEqual(17, len(result.v1_makefile_deficits))
+        self.assertEqual(0, len(result.v1_makefile_deficits))
         allowed_paths = {finding.path for finding in result.allowed_network_findings}
         self.assertEqual(gate.NETWORK_IMPLEMENTATION_ALLOWLIST, allowed_paths)
 
@@ -171,11 +171,10 @@ class TransportOwnershipGateTest(unittest.TestCase):
     def test_makefile_checks_require_active_semantic_assignments_and_rules(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            write(root, "v1.0-pre-modern/chat.mak", "# migration intentionally pending\n")
             makefile = valid_v2_makefile()
             errors, deficits = self._check_makefiles(root, makefile)
             self.assertEqual([], errors)
-            self.assertEqual(17, len(deficits))
+            self.assertEqual(0, len(deficits))
 
             spoofed = makefile.replace(
                 '\t"$(INTDIR)\\connection_engine.obj" \\\n', ""
@@ -192,7 +191,7 @@ class TransportOwnershipGateTest(unittest.TestCase):
             self.assertTrue(any("object:connection-engine" in error for error in errors))
             self.assertTrue(any("library:libuv" in error for error in errors))
 
-    def test_partial_v1_makefile_migration_cannot_hide_in_deficit_count(self) -> None:
+    def test_partial_v1_makefile_substrate_is_fatal(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             write(root, "v2.5-beta-1-modern/chat.mak", valid_v2_makefile())
@@ -202,7 +201,7 @@ class TransportOwnershipGateTest(unittest.TestCase):
                 'LINK32_OBJS="$(INTDIR)\\connection_engine.obj"\n',
             )
             errors, deficits = gate.check_makefiles(root)
-            self.assertTrue(any("temporary deficit inventory changed" in error for error in errors))
+            self.assertTrue(any("v1 makefile does not prove" in error for error in errors))
             self.assertEqual(16, len(deficits))
 
     def test_schannel_experiment_must_remain_unwired(self) -> None:
@@ -226,6 +225,7 @@ class TransportOwnershipGateTest(unittest.TestCase):
             )
 
     def _check_makefiles(self, root: Path, v2_makefile: str) -> tuple[list[str], tuple[str, ...]]:
+        write(root, "v1.0-pre-modern/chat.mak", valid_v2_makefile())
         write(root, "v2.5-beta-1-modern/chat.mak", v2_makefile)
         return gate.check_makefiles(root)
 

@@ -303,13 +303,15 @@ lists, compile rules, include paths, and link libraries in both Release and
 Debug configurations. Comments and literal `!IF 0` branches cannot satisfy a
 build assertion.
 
-The still-active v1 stack is not hidden behind a directory exemption. All 28
-source findings are pinned by rule, file, line, and normalized active code line;
-all 17 missing makefile substrate checks are also counted. Any addition,
-removal, relocation, substitution, or partial makefile migration fails until
-the migration commit explicitly reduces the temporary inventory. The causal
+The still-active v1 runtime stack is not hidden behind a directory exemption.
+All 28 source findings are pinned by rule, file, line, and normalized active
+code line. The v1 build must now satisfy all 17 shared-substrate checks in both
+Release and Debug; a partial or commented-out migration is fatal. Any source
+addition, removal, relocation, or substitution fails until the runtime
+migration commit explicitly reduces the temporary inventory. The causal
 negative fixtures live in `scripts/tests/test_transport_ownership.py`, and all
-four modern CI lanes execute both the gate and its tests.
+four modern CI lanes execute the gate, its tests, and the dedicated v1 C++26
+substrate verifier.
 
 ### 1. Source ownership gate
 
