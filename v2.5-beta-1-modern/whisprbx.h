@@ -6,6 +6,7 @@
 
 #include "saywnd.h"
 #include "textcore.h"
+#include "modernicons.h"
 
 class CWhisperLeaf {
 public:
@@ -52,6 +53,7 @@ public:
 	RECT		m_richRect;
 	BOOL		m_bPostCreate;
 	BOOL		m_bInverted;		// title bar inverted, meaning unseen messages
+	comic_chat::modern_ui::DpiAwareWindowIcons m_windowIcons;
 
 // Dialog Data
 	//{{AFX_DATA(CWhisperBox)
@@ -102,4 +104,3 @@ BOOL			bWhisperInBox(CString strFilename, CString strMesg, CDWordArray *prgdwFor
 
 
 #endif // __WHISPRBX_H__
-

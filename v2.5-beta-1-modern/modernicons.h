@@ -5,10 +5,33 @@
 
 namespace comic_chat::modern_ui {
 
-// Load independent large and small frames from a multi-image icon resource.
-// LR_SHARED leaves ownership with USER32, so the receiving window can retain
-// both handles for its complete lifetime without leaking or destroying them.
-bool ApplyDpiAwareWindowIcons(CWnd& window, UINT icon_resource);
+// Own the independent large and small frames installed on one window. Windows
+// must release the pair before their HWND is destroyed so no HICON is freed
+// while USER32 can still use it.
+class DpiAwareWindowIcons final {
+public:
+	DpiAwareWindowIcons() = default;
+	~DpiAwareWindowIcons();
+	DpiAwareWindowIcons(const DpiAwareWindowIcons&) = delete;
+	DpiAwareWindowIcons& operator=(const DpiAwareWindowIcons&) = delete;
+
+private:
+	friend bool ApplyDpiAwareWindowIcons(CWnd&, UINT, DpiAwareWindowIcons&);
+	friend void ReleaseDpiAwareWindowIcons(CWnd&, DpiAwareWindowIcons&);
+	HICON big_icon_ = nullptr;
+	HICON small_icon_ = nullptr;
+};
+
+// Select exact or next-larger multi-image icon frames for the window's DPI.
+// Unlike LR_SHARED LoadImage calls, separately owned handles cannot alias a
+// differently sized frame cached earlier for the same resource identifier.
+bool ApplyDpiAwareWindowIcons(
+	CWnd& window,
+	UINT icon_resource,
+	DpiAwareWindowIcons& owned_icons);
+void ReleaseDpiAwareWindowIcons(
+	CWnd& window,
+	DpiAwareWindowIcons& owned_icons);
 
 // Rebuild a DPI-sized image list from a mapped alpha PNG resource when one is
 // embedded. The original Microsoft TOOLBAR/BITMAP remains the temporary,

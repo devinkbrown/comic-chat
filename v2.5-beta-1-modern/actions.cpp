@@ -1087,7 +1087,8 @@ CNotificationUsers* CreateNotificationBox()
 		delete pNotifBox;
 		return NULL;
 	}
-	comic_chat::modern_ui::ApplyDpiAwareWindowIcons(*pNotifBox, IDI_NOTIF);
+	comic_chat::modern_ui::ApplyDpiAwareWindowIcons(
+		*pNotifBox, IDI_NOTIF, pNotifBox->m_windowIcons);
 	pNotifBox->SetPostCreate(TRUE);
 	if (!IsRectEmpty (&theApp.m_rectNotifs))
 	{

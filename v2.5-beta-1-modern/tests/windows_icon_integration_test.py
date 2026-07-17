@@ -75,18 +75,27 @@ def main() -> None:
     require("ApplyDpiAwareWindowIcons" in header,
             "DPI-aware icon helper is not part of the Windows UI contract")
     for token in ("GetSystemMetricsForDpi", "SM_CXICON", "SM_CYICON",
-                  "SM_CXSMICON", "SM_CYSMICON", "LR_SHARED"):
+                  "SM_CXSMICON", "SM_CYSMICON", "LoadIconWithScaleDown",
+                  "DpiAwareWindowIcons", "DestroyOwnedIconPair"):
         require(token in loader, f"DPI-aware icon loader omits {token}")
+    require("LR_SHARED" not in loader and "LoadSharedIconFrame" not in loader,
+            "nonstandard per-DPI icon frames can still alias USER32's shared cache")
     require("window.SetIcon(big_icon, TRUE);" in loader and
             "window.SetIcon(small_icon, FALSE);" in loader,
             "large and small icon frames are not installed independently")
-    require("DestroyIcon" not in loader,
-            "LR_SHARED icon handles must not be destroyed by application code")
+    require("ReleaseDpiAwareWindowIcons" in loader and
+            "window.SetIcon(nullptr, TRUE);" in loader and
+            "window.SetIcon(nullptr, FALSE);" in loader and
+            "DestroyIcon" in loader,
+            "owned window icons are not detached and destroyed safely")
 
-    require("ApplyDpiAwareWindowIcons(*pNotifBox, IDI_NOTIF)" in actions,
+    require("*pNotifBox, IDI_NOTIF, pNotifBox->m_windowIcons" in actions,
             "notification window bypasses the DPI-aware icon helper")
-    require("ApplyDpiAwareWindowIcons(*wbox, IDI_WHISPER)" in whisper,
+    require("*wbox, IDI_WHISPER, wbox->m_windowIcons" in whisper,
             "whisper window bypasses the DPI-aware icon helper")
+    require("ReleaseDpiAwareWindowIcons(*this, m_windowIcons);" in notifications and
+            "ReleaseDpiAwareWindowIcons(*this, m_windowIcons);" in whisper,
+            "dialog teardown can destroy an HICON while USER32 still references it")
     require("theApp.LoadIcon(IDI_NOTIF)" not in actions and
             "theApp.LoadIcon(IDI_WHISPER)" not in whisper,
             "a single default-size HICON is still assigned as both window icons")
@@ -154,8 +163,15 @@ def main() -> None:
             f"missing modern strip binding {legacy} -> {modern} ({count} cells)")
     for token in ("IWICImagingFactory", "WICBitmapInterpolationModeFant",
                   "GUID_WICPixelFormat32bppPBGRA", "CreateDIBSection", "ILC_COLOR32",
-                  "ImageList_Add", "SetBkColor(CLR_NONE)", "RPC_E_CHANGED_MODE"):
+                  "ImageList_Add", "SetBkColor(CLR_NONE)", "RPC_E_CHANGED_MODE",
+                  "GdiFlush"):
         require(token in loader, f"WIC alpha-strip path omits {token}")
+    dib_install = loader[loader.index("bool InstallAlphaImageList("):
+                         loader.index("bool BuildPngStripImageList(")]
+    require(dib_install.index("std::memcpy(bitmap_bits") <
+            dib_install.index("GdiFlush()") <
+            dib_install.index("ImageList_Add"),
+            "DIBSection writes are not flushed before the image-list GDI consumer")
     require("expected_width" in loader and
             "static_cast<std::uint64_t>(declared_source_cell_size) * image_count" in loader and
             "source_width == expected_width && source_height == expected_height" in loader,

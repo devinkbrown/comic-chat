@@ -768,6 +768,7 @@ CNotificationUsers::CNotificationUsers(CWnd* pwndParent /*=NULL*/)
 
 CNotificationUsers::~CNotificationUsers()
 {
+	comic_chat::modern_ui::ReleaseDpiAwareWindowIcons(*this, m_windowIcons);
 	m_ImageList.DeleteImageList();
 	m_StateIcons.DeleteImageList();
 }

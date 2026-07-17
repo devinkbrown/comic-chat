@@ -248,6 +248,9 @@ bool InstallAlphaImageList(
 	CBitmap bitmap;
 	bitmap.Attach(bitmap_handle);
 	std::memcpy(bitmap_bits, strip_pixels.data(), strip_pixels.size());
+	// CreateDIBSection exposes memory directly. Synchronize the calling thread's
+	// GDI batch before handing that memory back to a GDI image-list operation.
+	if (!::GdiFlush()) return false;
 
 	CImageList replacement;
 	if (!replacement.Create(cell_width, cell_height, ILC_COLOR32, image_count, 1))
@@ -359,11 +362,20 @@ int SystemMetricForDpi(int metric, UINT dpi)
 	return scaled > 0 ? scaled : 1;
 }
 
-HICON LoadSharedIconFrame(UINT resource, int width, int height)
+bool LoadOwnedIconFrame(UINT resource, int width, int height, HICON& icon)
 {
-	return reinterpret_cast<HICON>(::LoadImage(
-		AfxGetResourceHandle(), MAKEINTRESOURCE(resource), IMAGE_ICON,
-		width, height, LR_SHARED));
+	icon = nullptr;
+	return width > 0 && height > 0 && SUCCEEDED(::LoadIconWithScaleDown(
+		AfxGetResourceHandle(), MAKEINTRESOURCEW(resource), width, height, &icon)) &&
+		icon != nullptr;
+}
+
+void DestroyOwnedIconPair(HICON& big_icon, HICON& small_icon)
+{
+	if (small_icon && small_icon != big_icon) ::DestroyIcon(small_icon);
+	if (big_icon) ::DestroyIcon(big_icon);
+	big_icon = nullptr;
+	small_icon = nullptr;
 }
 
 COLORREF SourceMaskColor(UINT resource)
@@ -573,21 +585,48 @@ bool BuildModernExpressionImageList(
 
 } // namespace
 
-bool ApplyDpiAwareWindowIcons(CWnd& window, UINT icon_resource)
+DpiAwareWindowIcons::~DpiAwareWindowIcons()
+{
+	DestroyOwnedIconPair(big_icon_, small_icon_);
+}
+
+bool ApplyDpiAwareWindowIcons(
+	CWnd& window,
+	UINT icon_resource,
+	DpiAwareWindowIcons& owned_icons)
 {
 	const HWND handle = window.GetSafeHwnd();
 	if (!handle) return false;
 	const UINT dpi = static_cast<UINT>(DpiForWindow(handle));
-	const HICON big_icon = LoadSharedIconFrame(
-		icon_resource, SystemMetricForDpi(SM_CXICON, dpi),
-		SystemMetricForDpi(SM_CYICON, dpi));
-	const HICON small_icon = LoadSharedIconFrame(
-		icon_resource, SystemMetricForDpi(SM_CXSMICON, dpi),
-		SystemMetricForDpi(SM_CYSMICON, dpi));
-	if (!big_icon || !small_icon) return false;
+	HICON big_icon = nullptr;
+	HICON small_icon = nullptr;
+	if (!LoadOwnedIconFrame(
+			icon_resource, SystemMetricForDpi(SM_CXICON, dpi),
+			SystemMetricForDpi(SM_CYICON, dpi), big_icon) ||
+		!LoadOwnedIconFrame(
+			icon_resource, SystemMetricForDpi(SM_CXSMICON, dpi),
+			SystemMetricForDpi(SM_CYSMICON, dpi), small_icon)) {
+		DestroyOwnedIconPair(big_icon, small_icon);
+		return false;
+	}
+
 	window.SetIcon(big_icon, TRUE);
 	window.SetIcon(small_icon, FALSE);
+	DestroyOwnedIconPair(owned_icons.big_icon_, owned_icons.small_icon_);
+	owned_icons.big_icon_ = big_icon;
+	owned_icons.small_icon_ = small_icon;
 	return true;
+}
+
+void ReleaseDpiAwareWindowIcons(
+	CWnd& window,
+	DpiAwareWindowIcons& owned_icons)
+{
+	if (window.GetSafeHwnd()) {
+		window.SetIcon(nullptr, TRUE);
+		window.SetIcon(nullptr, FALSE);
+	}
+	DestroyOwnedIconPair(owned_icons.big_icon_, owned_icons.small_icon_);
 }
 
 bool BuildStripImageList(

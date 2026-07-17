@@ -194,7 +194,8 @@ CWhisperBox *CreateWhisperBox()
 	CWnd *parent = CWnd::GetDesktopWindow();
 	VERIFY(wbox->Create(IDD_WHISPERBOX, parent));
 	wbox->m_bPostCreate = TRUE;
-	comic_chat::modern_ui::ApplyDpiAwareWindowIcons(*wbox, IDI_WHISPER);
+	comic_chat::modern_ui::ApplyDpiAwareWindowIcons(
+		*wbox, IDI_WHISPER, wbox->m_windowIcons);
 	if (!IsRectEmpty (&theApp.m_rectWhisper))
 	{
 		MakeRectVisibleOnScreen (&theApp.m_rectWhisper);
@@ -256,6 +257,7 @@ CWhisperLeaf::~CWhisperLeaf()
 
 CWhisperBox::~CWhisperBox()
 {
+	comic_chat::modern_ui::ReleaseDpiAwareWindowIcons(*this, m_windowIcons);
 	FreeLeaves();
 }
 

@@ -13,6 +13,7 @@
 #include "resource.h"
 #include "notif.h"
 #include "setupdlg.h"
+#include "modernicons.h"
 
 /////////////////////////////////////////////////////////////////////////////
 // Constants
@@ -150,6 +151,7 @@ public:
 	BOOL	bFillList(CCItemPtrArray* prgpNotifUsers, UINT uModifiedUsersCount);
 	BOOL	bSignalNewEntries();
 	BOOL	bSignalNewUpdate();
+	comic_chat::modern_ui::DpiAwareWindowIcons m_windowIcons;
 
 // Dialog Data
 	//{{AFX_DATA(CNotificationUsers)
