@@ -1,5 +1,6 @@
 #include "comicchat/render.hpp"
 
+#include "comicchat/balloon.hpp"
 #include "comicchat/text.hpp"
 
 #include <algorithm>
@@ -210,6 +211,151 @@ void Canvas::render_title_panel(const TitlePanel& model, TextEngine& text) {
                     center_y + shout_size * 0.35, false);
         row_top += row_height;
     }
+    cairo_restore(context);
+    cairo_surface_flush(impl_->surface.get());
+}
+
+namespace {
+
+// Map a panel-local logical (twips, Y-up) point to a device pixel through the
+// panel transform, exactly the composition fill_logical_rect applies
+// (translate(origin)·scale(scale, -scale)). Doing the mapping by hand — rather
+// than via cairo_scale(1,-1) — keeps text glyphs upright while the balloon
+// geometry still lands in the flipped logical frame.
+auto to_device(const PanelTransform& transform, const BalloonPoint point) -> DevicePoint {
+    return transform.to_device(LogicalPoint{static_cast<double>(point.x), static_cast<double>(point.y)});
+}
+
+// Trace a closed cubic-bezier outline (beta_closed_bezier output: point 0 then
+// (b1,b2,b3) triples) as a device-space Cairo path.
+void trace_bezier_outline(cairo_t* context, const PanelTransform& transform,
+                          const std::vector<BalloonPoint>& bez) {
+    if (bez.size() < 4) return;
+    const auto first = to_device(transform, bez.front());
+    cairo_move_to(context, first.x, first.y);
+    for (std::size_t i = 1; i + 2 < bez.size(); i += 3) {
+        const auto c1 = to_device(transform, bez[i]);
+        const auto c2 = to_device(transform, bez[i + 1]);
+        const auto c3 = to_device(transform, bez[i + 2]);
+        cairo_curve_to(context, c1.x, c1.y, c2.x, c2.y, c3.x, c3.y);
+    }
+    cairo_close_path(context);
+}
+
+// Trace a straight-edged polygon (action box corners) as a device path.
+void trace_polygon(cairo_t* context, const PanelTransform& transform,
+                   const std::vector<BalloonPoint>& pts) {
+    if (pts.empty()) return;
+    const auto first = to_device(transform, pts.front());
+    cairo_move_to(context, first.x, first.y);
+    for (std::size_t i = 1; i < pts.size(); ++i) {
+        const auto p = to_device(transform, pts[i]);
+        cairo_line_to(context, p.x, p.y);
+    }
+    cairo_close_path(context);
+}
+
+// The say/whisper tail (balloon.cpp:1538): a filled white pointer with a black
+// edge from a gap in the cloud bottom (around the break tip) down to the speaker
+// anchor. Not a bit-exact CArc port — the deterministic anchor/xbreak/angle math
+// is goldened separately; this is the visual fill.
+void draw_tail(cairo_t* context, const PanelTransform& transform, const TailGeometry& tail,
+               const double stroke_width, const bool dashed) {
+    constexpr int gap = 80;  // BreakSpline gapwidth (balloon.cpp:457)
+    const auto left = to_device(transform, BalloonPoint{tail.tip.x - gap, tail.tip.y});
+    const auto right = to_device(transform, BalloonPoint{tail.tip.x + gap, tail.tip.y});
+    const auto anchor = to_device(transform, tail.anchor);
+    cairo_new_path(context);
+    cairo_move_to(context, left.x, left.y);
+    cairo_line_to(context, anchor.x, anchor.y);
+    cairo_line_to(context, right.x, right.y);
+    cairo_set_source_rgba(context, 1.0, 1.0, 1.0, 1.0);
+    cairo_fill_preserve(context);
+    if (dashed) {
+        const double dashes[2] = {stroke_width * 3.0, stroke_width * 2.0};
+        cairo_set_dash(context, dashes, 2, 0.0);
+    } else {
+        cairo_set_dash(context, nullptr, 0, 0.0);
+    }
+    cairo_set_source_rgba(context, 0.0, 0.0, 0.0, 1.0);
+    cairo_set_line_width(context, stroke_width);
+    cairo_stroke(context);
+    cairo_set_dash(context, nullptr, 0, 0.0);
+}
+
+} // namespace
+
+void Canvas::render_panel(const Panel& panel, TextEngine& text) {
+    auto* context = impl_->context.get();
+    const auto transform = fit_panel_transform(impl_->width, impl_->height, source_panel_units);
+    const auto stroke_width = std::max(1.0, 28.0 * transform.scale);  // CBWoodringNormal::m_pen 28
+
+    cairo_save(context);
+
+    // Avatar body placeholders (Item 2.2 owns real compositing; here a flat
+    // rounded box gives the balloon tails something to point at).
+    for (const auto& body : panel.bodies) {
+        const auto top_left = transform.to_device(LogicalPoint{static_cast<double>(body.box.left),
+                                                               static_cast<double>(body.box.top)});
+        const auto bottom_right = transform.to_device(LogicalPoint{static_cast<double>(body.box.right),
+                                                                   static_cast<double>(body.box.bottom)});
+        set_color(context, unpack_color(body.color, 1.0));
+        cairo_rectangle(context, top_left.x, top_left.y, bottom_right.x - top_left.x,
+                        bottom_right.y - top_left.y);
+        cairo_fill(context);
+    }
+
+    for (const auto& balloon : panel.balloons) {
+        // Tail first so the cloud fill overlaps the tail's top edge.
+        if (balloon.has_tail) {
+            draw_tail(context, transform, balloon.tail, stroke_width, balloon.kind.dashed);
+        }
+
+        cairo_new_path(context);
+        if (balloon.kind.mode == BalloonMode::action) {
+            trace_polygon(context, transform, balloon.outline);
+        } else {
+            trace_bezier_outline(context, transform, balloon.outline);
+        }
+        cairo_set_source_rgba(context, 1.0, 1.0, 1.0, 1.0);
+        cairo_fill_preserve(context);
+        if (balloon.kind.dashed) {
+            const double dashes[2] = {stroke_width * 3.0, stroke_width * 2.0};
+            cairo_set_dash(context, dashes, 2, 0.0);
+        }
+        cairo_set_source_rgba(context, 0.0, 0.0, 0.0, 1.0);
+        cairo_set_line_width(context, stroke_width);
+        cairo_stroke(context);
+        cairo_set_dash(context, nullptr, 0, 0.0);
+
+        // Think trail: shrinking ellipses toward the speaker.
+        for (const auto& bubble : balloon.bubbles) {
+            const auto center = to_device(transform, bubble.center);
+            const auto radius = (static_cast<double>(bubble.radius) + bubble.width_pad) * transform.scale;
+            cairo_new_path(context);
+            cairo_arc(context, center.x, center.y, std::max(1.0, radius), 0.0, 2.0 * std::acos(-1.0));
+            cairo_set_source_rgba(context, 1.0, 1.0, 1.0, 1.0);
+            cairo_fill_preserve(context);
+            cairo_set_source_rgba(context, 0.0, 0.0, 0.0, 1.0);
+            cairo_set_line_width(context, stroke_width);
+            cairo_stroke(context);
+        }
+
+        // Balloon text, stacked from the cloud top down (device space, upright).
+        const auto text_size = static_cast<double>(balloon.line_height) * transform.scale * 0.72;
+        if (text_size >= 1.0 && !balloon.lines.empty()) {
+            set_color(context, {0.08, 0.07, 0.08, 1.0});
+            const auto center_x = (balloon.bbox.left + balloon.bbox.right) / 2;
+            auto baseline_y = balloon.bbox.top - balloon.line_height;
+            for (const auto& line : balloon.lines) {
+                const auto anchor = transform.to_device(LogicalPoint{static_cast<double>(center_x),
+                                                                     static_cast<double>(baseline_y)});
+                draw_shaped(context, text, line.text, text_size, anchor.x, anchor.y, true);
+                baseline_y -= balloon.line_height;
+            }
+        }
+    }
+
     cairo_restore(context);
     cairo_surface_flush(impl_->surface.get());
 }

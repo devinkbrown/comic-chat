@@ -306,6 +306,7 @@ core = static_library(
     'src/avatar_assets.cpp',
     'src/source_raster.cpp',
     'src/sound.cpp',
+    'src/balloon.cpp',
     'src/render.cpp',
     'src/memory.cpp',
   ],

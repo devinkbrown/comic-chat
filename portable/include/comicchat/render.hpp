@@ -1,5 +1,6 @@
 #pragma once
 
+#include "comicchat/balloon.hpp"
 #include "comicchat/cpp26.hpp"
 #include "comicchat/layout.hpp"
 
@@ -46,6 +47,15 @@ public:
     [[nodiscard]] auto pixels() const noexcept -> std::span<const std::uint32_t>;
     void clear(Rgba color);
     void render_title_panel(const TitlePanel& model, TextEngine& text);
+
+    // Emit an assembled conversation panel (Item 2.1, render-port-spec.md
+    // §2.1.f) into the logical drawing pass: avatar body placeholders, the
+    // beta-spline cloud (or action box) outline, the whisper dash / think
+    // bubbles / say tail, and the balloon text. Geometry arrives in panel-local
+    // twips (Y-up) and is mapped through the single panel transform, exactly as
+    // fill_logical_rect. Deterministic: the same Panel yields a byte-identical
+    // frame.
+    void render_panel(const Panel& panel, TextEngine& text);
 
     // The shared logical-coordinate drawing pass foundation (render-port-spec.md
     // §0). Compute the device transform that fits a `source_units`-twip square
