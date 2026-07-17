@@ -30,6 +30,35 @@ TEST_CASE("locked secrets preserve native ownership across moves and fail closed
     CHECK(rejected.error() == comicchat::SecretError::lock_failed);
 }
 
+TEST_CASE("shared locked secrets lease the original pages without copying bytes") {
+    auto unique = comicchat::LockedSecret::copy("shared-without-copy");
+    REQUIRE(unique);
+    const auto* original = unique->view().data();
+
+    auto shared = std::move(*unique).share();
+    REQUIRE(shared);
+    CHECK(unique->view().empty());
+    CHECK(shared->is_locked());
+    CHECK(shared->view().data() == original);
+
+    const auto second_owner = *shared;
+    CHECK(second_owner.view().data() == original);
+    CHECK(std::string_view{reinterpret_cast<const char*>(second_owner.view().data()), second_owner.view().size()} ==
+          "shared-without-copy");
+}
+
+TEST_CASE("shared locked secret allocation failure retains unique zeroizing ownership") {
+    auto unique = comicchat::LockedSecret::copy("fail-closed-share");
+    REQUIRE(unique);
+    comicchat::testing::fail_next_secret_share();
+    const auto rejected = std::move(*unique).share();
+    REQUIRE_FALSE(rejected);
+    CHECK(rejected.error() == comicchat::SecretError::allocation);
+    CHECK(unique->is_locked());
+    unique->clear();
+    CHECK(unique->view().empty());
+}
+
 TEST_CASE("frame PMR arena fails closed at its memory bound") {
     comicchat::FrameArena arena{128};
     {

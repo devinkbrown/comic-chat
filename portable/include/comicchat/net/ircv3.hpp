@@ -9,6 +9,8 @@
 #error "Comic Chat shared networking requires the post-C++23/C++26 language mode"
 #endif
 
+#include "comicchat/memory.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -217,6 +219,14 @@ public:
 		SaslConfig&& sasl,
 		std::string nick,
 		bool secure_transport);
+	// Native frontends can hand over a shared lease on already page-locked
+	// password bytes. The config password must be empty; supplying both forms is
+	// rejected fail-closed. The lease is released at the SASL terminal state.
+	std::vector<std::string> BeginRegistration(
+		SaslConfig&& sasl,
+		comicchat::SharedLockedSecret password,
+		std::string nick,
+		bool secure_transport);
 	ProcessResult Process(std::string_view wire);
 	// Completes registration without CAP END for a server that rejected or
 	// ignored CAP. This is also the bounded timeout fallback used by legacy
@@ -312,6 +322,12 @@ private:
 	bool IsEcho(const Message& message);
 	std::optional<StsPolicyUpdate> UpdateSts(
 		std::optional<std::string> value, std::vector<Event>* events);
+	std::vector<std::string> BeginRegistrationLocked(
+		SaslConfig&& sasl,
+		comicchat::SharedLockedSecret password,
+		std::string nick,
+		bool secure_transport);
+	void ClearSaslSecrets() noexcept;
 	std::string Casefold(std::string_view value) const;
 	bool SameIdentifier(std::string_view left, std::string_view right) const;
 	void ReindexState(CaseMapping previous);
@@ -342,6 +358,7 @@ private:
 	ServerIdentity server_identity_;
 	std::optional<StsPolicy> sts_policy_;
 	SaslConfig sasl_config_;
+	comicchat::SharedLockedSecret sasl_password_;
 	std::unique_ptr<SaslSession> sasl_;
 	std::unique_ptr<FloodController> flood_;
 	std::string nick_;

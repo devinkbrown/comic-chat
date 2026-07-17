@@ -24,6 +24,7 @@ namespace comicchat {
 namespace {
 
 std::atomic_bool fail_next_lock{};
+std::atomic_bool fail_next_share{};
 
 auto page_size() noexcept -> std::size_t {
 #if defined(_WIN32)
@@ -78,9 +79,9 @@ void free_pages(void* address, const std::size_t size, const bool locked) noexce
 
 } // namespace
 
-class LockedSecret::Impl final {
+class SecretStorage final {
 public:
-    ~Impl() { clear(); }
+    ~SecretStorage() { clear(); }
 
     void clear() noexcept {
         free_pages(address, allocation_size, locked);
@@ -97,14 +98,14 @@ public:
 };
 
 LockedSecret::LockedSecret() = default;
-LockedSecret::LockedSecret(std::unique_ptr<Impl> impl) : impl_{std::move(impl)} {}
+LockedSecret::LockedSecret(std::unique_ptr<SecretStorage> impl) : impl_{std::move(impl)} {}
 LockedSecret::~LockedSecret() = default;
 LockedSecret::LockedSecret(LockedSecret&&) noexcept = default;
 auto LockedSecret::operator=(LockedSecret&&) noexcept -> LockedSecret& = default;
 
 auto LockedSecret::copy(const std::string_view value) -> std::expected<LockedSecret, SecretError> {
     try {
-        auto impl = std::make_unique<Impl>();
+        auto impl = std::make_unique<SecretStorage>();
         const auto allocation_size = rounded_page_size(value.size());
         if (!allocation_size) return std::unexpected{SecretError::invalid_size};
         impl->address = allocate_pages(*allocation_size);
@@ -125,10 +126,31 @@ auto LockedSecret::view() const noexcept -> std::span<const std::byte> {
     return {static_cast<const std::byte*>(impl_->address), impl_->used_size};
 }
 auto LockedSecret::is_locked() const noexcept -> bool { return impl_ && impl_->address != nullptr && impl_->locked; }
+auto LockedSecret::share() && -> std::expected<SharedLockedSecret, SecretError> {
+    if (!is_locked()) return std::unexpected{SecretError::lock_failed};
+    if (fail_next_share.exchange(false, std::memory_order_relaxed))
+        return std::unexpected{SecretError::allocation};
+    try {
+        std::shared_ptr<const SecretStorage> shared{std::move(impl_)};
+        return SharedLockedSecret{std::move(shared)};
+    } catch (const std::bad_alloc&) {
+        return std::unexpected{SecretError::allocation};
+    }
+}
 void LockedSecret::clear() noexcept { if (impl_) impl_->clear(); }
+
+SharedLockedSecret::SharedLockedSecret(std::shared_ptr<const SecretStorage> impl) noexcept : impl_{std::move(impl)} {}
+auto SharedLockedSecret::view() const noexcept -> std::span<const std::byte> {
+    if (!impl_ || impl_->address == nullptr) return {};
+    return {static_cast<const std::byte*>(impl_->address), impl_->used_size};
+}
+auto SharedLockedSecret::is_locked() const noexcept -> bool {
+    return impl_ && impl_->address != nullptr && impl_->locked;
+}
 
 namespace testing {
 void fail_next_secret_lock() noexcept { fail_next_lock.store(true, std::memory_order_relaxed); }
+void fail_next_secret_share() noexcept { fail_next_share.store(true, std::memory_order_relaxed); }
 } // namespace testing
 
 class FrameArena::Impl final {

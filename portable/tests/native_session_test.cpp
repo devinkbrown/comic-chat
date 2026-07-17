@@ -114,6 +114,16 @@ auto bytes(const std::string& value) -> std::shared_ptr<const std::vector<std::b
     return result;
 }
 
+auto sent_wires(const std::vector<Command>& commands) -> std::vector<std::string> {
+    std::vector<std::string> result;
+    for (const auto& command : commands) {
+        const auto* send = std::get_if<comicchat::net::Send>(&command);
+        if (!send) continue;
+        result.emplace_back(reinterpret_cast<const char*>(send->bytes.data()), send->bytes.size());
+    }
+    return result;
+}
+
 TEST_CASE("native user paths create private config and cache directories "
           "without symlink traversal") {
 #if defined(_WIN32)
@@ -360,6 +370,59 @@ TEST_CASE("session credentials fail closed when native page locking is unavailab
     REQUIRE_FALSE(started);
     CHECK(started.error() == comicchat::net::NativeSessionError::credential_lock_failed);
     CHECK(observed->starts.empty());
+}
+
+TEST_CASE("session credentials fail closed when a locked lease cannot be created") {
+    TemporaryDirectory temporary;
+    auto fake = std::make_unique<FakeTransport>();
+    auto* observed = fake.get();
+    NativeSession session{temporary.path / "sts-policies", std::move(fake), [] { return at(100); }};
+    auto request = options(Security::tls);
+    request.sasl.authentication_id = "Alice";
+    request.sasl.password = "secret";
+    comicchat::testing::fail_next_secret_share();
+    const auto started = session.start(std::move(request));
+
+    REQUIRE_FALSE(started);
+    CHECK(started.error() == comicchat::net::NativeSessionError::invalid_options);
+    CHECK(observed->starts.empty());
+}
+
+TEST_CASE("native SASL reuses one locked password lease across reconnect registration") {
+    TemporaryDirectory temporary;
+    auto fake = std::make_unique<FakeTransport>();
+    auto* observed = fake.get();
+    NativeSession session{temporary.path / "sts-policies", std::move(fake), [] { return at(100); }};
+    auto request = options(Security::tls);
+    request.sasl.authentication_id = "user";
+    request.sasl.password = "pencil";
+    REQUIRE(session.start(std::move(request)));
+
+    const auto authenticate = [&] {
+        observed->push(Event{1, BytesReceived{bytes(":server CAP Alice LS :sasl=PLAIN\r\n")}});
+        (void)session.poll();
+        observed->push(Event{1, BytesReceived{bytes(":server CAP Alice ACK :sasl\r\n")}});
+        (void)session.poll();
+        observed->push(Event{1, BytesReceived{bytes("AUTHENTICATE +\r\n")}});
+        (void)session.poll();
+        const auto wires = sent_wires(observed->posts);
+        CHECK(std::ranges::find(wires, "AUTHENTICATE PLAIN\r\n") != wires.end());
+        CHECK(std::ranges::find(wires, "AUTHENTICATE AHVzZXIAcGVuY2ls\r\n") != wires.end());
+    };
+
+    observed->push(Event{1, Connected{"irc.example", "127.0.0.1", true, false}});
+    (void)session.poll();
+    observed->posts.clear();
+    authenticate();
+    observed->push(Event{1, BytesReceived{bytes(":server 903 Alice :SASL authentication successful\r\n")}});
+    (void)session.poll();
+
+    observed->push(Event{1, Closed{"transport failure", 500ms}});
+    (void)session.poll();
+    observed->push(Event{1, Connected{"irc.example", "127.0.0.1", true, true}});
+    (void)session.poll();
+    observed->posts.clear();
+    authenticate();
 }
 
 TEST_CASE("an excessive IRC line burst closes before parsing any line") {

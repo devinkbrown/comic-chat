@@ -639,6 +639,55 @@ void TestSaslRvalueConfigWipesShortStringStorage()
 	Check(engine.SecretsCleared(), "registration teardown wipes the engine-owned SASL config");
 }
 
+void TestSharedLockedSaslPassword()
+{
+	auto unique = comicchat::LockedSecret::copy("pencil");
+	Check(unique.has_value(), "locked SASL fixture allocates");
+	if (!unique) return;
+	const auto* original_address = unique->view().data();
+	auto shared = std::move(*unique).share();
+	Check(shared.has_value() && shared->view().data() == original_address,
+		"locked SASL handoff preserves the original page address");
+	if (!shared) return;
+
+	SaslConfig config;
+	config.authentication_id = "user";
+	Engine engine;
+	engine.BeginRegistration(std::move(config), *shared, "Alice", true);
+	auto request = engine.Process(":server CAP * LS :sasl=PLAIN\r\n");
+	Check(RequestedNames(request.outbound) == std::vector<std::string>{"sasl"},
+		"locked SASL password participates in capability selection");
+	auto start = engine.Process(":server CAP Alice ACK :sasl\r\n");
+	Check(start.outbound == std::vector<std::string>{"AUTHENTICATE PLAIN\r\n"},
+		"locked SASL password starts PLAIN");
+	auto response = engine.Process("AUTHENTICATE +\r\n");
+	Check(response.outbound.size() == 1 &&
+		Decode(AuthenticatePayload(response.outbound.front())) == std::string("\0user\0pencil", 12),
+		"PLAIN consumes the locked bytes without a config password");
+	engine.Process(":server 903 Alice :SASL authentication successful\r\n");
+	Check(engine.SecretsCleared() && shared->view().data() == original_address,
+		"engine releases its lease at terminal success while another locked owner remains");
+
+	SaslConfig ambiguous;
+	ambiguous.authentication_id = "user";
+	ambiguous.password = "pageable-copy";
+	Engine rejected;
+	rejected.BeginRegistration(std::move(ambiguous), *shared, "Alice", true);
+	auto rejected_offer = rejected.Process(":server CAP * LS :sasl=PLAIN\r\n");
+	Check(RequestedNames(rejected_offer.outbound).empty() && ambiguous.password.empty(),
+		"mixed pageable and locked password sources are consumed and rejected fail-closed");
+
+	comicchat::testing::fail_next_secret_lock();
+	SaslConfig lock_failure;
+	lock_failure.authentication_id = "user";
+	lock_failure.password = "must-lock";
+	Engine no_fallback;
+	no_fallback.BeginRegistration(std::move(lock_failure), "Alice", true);
+	auto no_fallback_offer = no_fallback.Process(":server CAP * LS :sasl=PLAIN\r\n");
+	Check(RequestedNames(no_fallback_offer.outbound).empty() && lock_failure.password.empty(),
+		"generic SASL password lock failure never falls back to pageable storage");
+}
+
 void TestScramSha256Rfc7677()
 {
 	Engine engine;
@@ -1405,6 +1454,7 @@ int main()
 	TestSafeRecovery();
 	TestPlainAndExternal();
 	TestSaslRvalueConfigWipesShortStringStorage();
+	TestSharedLockedSaslPassword();
 	TestScramSha256Rfc7677();
 	TestScramAuthzidChannelBindingAndFailClosedSignature();
 	TestIndependentWireBounds();

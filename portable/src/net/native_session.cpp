@@ -282,7 +282,7 @@ class NativeSession::Impl final {
             return std::unexpected{NativeSessionError::invalid_options};
         }
 
-        std::optional<LockedSecret> password;
+        std::optional<SharedLockedSecret> password;
         if (!options.sasl.password.empty()) {
             auto locked = LockedSecret::copy(options.sasl.password);
             secure_clear(options.sasl.password);
@@ -291,7 +291,9 @@ class NativeSession::Impl final {
                                            ? NativeSessionError::credential_lock_failed
                                            : NativeSessionError::invalid_options};
             }
-            password.emplace(std::move(*locked));
+            auto shared = std::move(*locked).share();
+            if (!shared) return std::unexpected{NativeSessionError::invalid_options};
+            password.emplace(std::move(*shared));
         }
 
         std::optional<LockedSecret> proxy_password;
@@ -388,9 +390,9 @@ class NativeSession::Impl final {
         connected_ = false;
         tls_verified_ = false;
         receipt_.reset();
+        protocol_.reset();
         password_.reset();
         proxy_password_.reset();
-        protocol_.reset();
         generation_ = 0;
     }
 
@@ -437,15 +439,6 @@ class NativeSession::Impl final {
         return transport_->post(std::move(command)).has_value();
     }
 
-    auto reconstruct_sasl() const -> comic_chat::ircv3::SaslConfig {
-        auto result = sasl_template_;
-        if (password_) {
-            const auto view = password_->view();
-            result.password.assign(reinterpret_cast<const char*>(view.data()), view.size());
-        }
-        return result;
-    }
-
     auto start_transport(ConnectionOptions options) -> std::expected<GenerationId, EngineError> {
         if (proxy_password_) {
             const auto view = proxy_password_->view();
@@ -456,9 +449,9 @@ class NativeSession::Impl final {
     }
 
     auto queue_registration() -> bool {
-        auto sasl = reconstruct_sasl();
-        const ConditionalStringWipe password_wipe{&sasl.password, true};
-        auto commands = protocol_->BeginRegistration(std::move(sasl), nickname_, tls_verified_);
+        auto sasl = sasl_template_;
+        auto commands = protocol_->BeginRegistration(
+            std::move(sasl), password_ ? *password_ : SharedLockedSecret{}, nickname_, tls_verified_);
         for (auto& command : commands) {
             if (!queue_protocol_line(std::move(command))) return false;
         }
@@ -586,7 +579,7 @@ class NativeSession::Impl final {
         append_state(output, remaining, body.state);
     }
 
-    void handle_body(Connected body, NativeSessionPoll& output, std::size_t& remaining, std::size_t&) {
+    void handle_body(const Connected& body, NativeSessionPoll& output, std::size_t& remaining, std::size_t&) {
         if (connected_) {
             append_diagnostic(output, remaining, "transport-phase-violation",
                               "transport reported a duplicate connected event");
@@ -611,7 +604,7 @@ class NativeSession::Impl final {
         }
     }
 
-    void handle_body(BytesReceived body, NativeSessionPoll& output, std::size_t& remaining,
+    void handle_body(const BytesReceived& body, NativeSessionPoll& output, std::size_t& remaining,
                      std::size_t& remaining_lines) {
         if (!body.bytes) return;
         if (!connected_) {
@@ -650,7 +643,7 @@ class NativeSession::Impl final {
         }
     }
 
-    void handle_body(Closed body, NativeSessionPoll& output, std::size_t& remaining, std::size_t&) {
+    void handle_body(const Closed& body, NativeSessionPoll& output, std::size_t& remaining, std::size_t&) {
         bool reschedule_failed{};
         if (connected_ && tls_verified_) {
             const auto rescheduled = store_.reschedule_on_verified_disconnect(
@@ -686,7 +679,7 @@ class NativeSession::Impl final {
     ConnectionOptions current_connection_;
     std::string requested_hostname_;
     comic_chat::ircv3::SaslConfig sasl_template_;
-    std::optional<LockedSecret> password_;
+    std::optional<SharedLockedSecret> password_;
     std::optional<LockedSecret> proxy_password_;
     std::optional<StsPolicyReceipt> receipt_;
     std::string nickname_;

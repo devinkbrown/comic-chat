@@ -16,6 +16,9 @@ namespace comicchat {
 
 enum class SecretError { allocation, invalid_size, lock_failed };
 
+class SecretStorage;
+class SharedLockedSecret;
+
 class LockedSecret final {
 public:
     static auto copy(std::string_view value) -> std::expected<LockedSecret, SecretError>;
@@ -28,12 +31,37 @@ public:
 
     [[nodiscard]] auto view() const noexcept -> std::span<const std::byte>;
     [[nodiscard]] auto is_locked() const noexcept -> bool;
+    // Consumes the unique owner and creates an immutable, reference-counted
+    // lease over the same locked pages. No credential bytes are copied.
+    [[nodiscard]] auto share() && -> std::expected<SharedLockedSecret, SecretError>;
     void clear() noexcept;
 
 private:
-    class Impl;
-    explicit LockedSecret(std::unique_ptr<Impl> impl);
-    std::unique_ptr<Impl> impl_;
+    explicit LockedSecret(std::unique_ptr<SecretStorage> impl);
+    std::unique_ptr<SecretStorage> impl_;
+};
+
+// A copyable ownership token for immutable credentials that remain in the
+// original page-locked allocation. Destruction of the last lease zeroizes and
+// releases the pages; there is deliberately no mutating clear operation while
+// multiple consumers may hold a lease.
+class SharedLockedSecret final {
+public:
+    SharedLockedSecret() = default;
+    ~SharedLockedSecret() = default;
+    SharedLockedSecret(const SharedLockedSecret&) noexcept = default;
+    auto operator=(const SharedLockedSecret&) noexcept -> SharedLockedSecret& = default;
+    SharedLockedSecret(SharedLockedSecret&&) noexcept = default;
+    auto operator=(SharedLockedSecret&&) noexcept -> SharedLockedSecret& = default;
+
+    [[nodiscard]] auto view() const noexcept -> std::span<const std::byte>;
+    [[nodiscard]] auto is_locked() const noexcept -> bool;
+    [[nodiscard]] explicit operator bool() const noexcept { return is_locked(); }
+
+private:
+    friend class LockedSecret;
+    explicit SharedLockedSecret(std::shared_ptr<const SecretStorage> impl) noexcept;
+    std::shared_ptr<const SecretStorage> impl_;
 };
 
 class FrameArena final {
@@ -99,5 +127,6 @@ namespace comicchat::testing {
 
 // One-shot fault injection used by the native memory/connection tests.
 void fail_next_secret_lock() noexcept;
+void fail_next_secret_share() noexcept;
 
 } // namespace comicchat::testing
