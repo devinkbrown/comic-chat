@@ -1,8 +1,9 @@
 #include "comicchat/net/dcc_transfer_engine.hpp"
 
 #include <algorithm>
-#include <chrono>
+#include <array>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstring>
 #include <functional>
@@ -11,6 +12,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 #include <catch2/catch_test_macros.hpp>
@@ -38,6 +40,16 @@ auto wait_for(comicchat::net::DccTransferEngine& engine,
 }
 
 } // namespace
+
+static_assert(!std::is_move_constructible_v<comicchat::net::DccTransferEngine>);
+static_assert(!std::is_move_assignable_v<comicchat::net::DccTransferEngine>);
+
+TEST_CASE("DCC engine is an immovable thread-lifetime owner") {
+    comicchat::net::DccTransferEngine engine;
+    CHECK(engine.handle() == comicchat::net::DccTransferHandle{});
+    engine.stop();
+    CHECK(engine.handle() == comicchat::net::DccTransferHandle{});
+}
 
 TEST_CASE("legacy DCC IPv4 decimal conversion is strict and host ordered") {
     CHECK(comicchat::net::dcc_legacy_ipv4_decimal("127.0.0.1") == 2'130'706'433U);
@@ -334,6 +346,86 @@ TEST_CASE("DCC wakeups may throw and request a self-thread stop") {
     const auto started = std::chrono::steady_clock::now();
     sender.stop();
     CHECK(std::chrono::steady_clock::now() - started < 1s);
+}
+
+TEST_CASE("DCC restarts after a wakeup callback stopped the previous transfer") {
+    comicchat::net::DccTransferEngine engine;
+    std::atomic<unsigned int> wakeups{};
+    std::atomic_bool parked{};
+    std::atomic_bool restart_entered{};
+    std::atomic_bool callback_restart_rejected{};
+    comicchat::net::DccListenOptions listen;
+    listen.bind_address = "127.0.0.1";
+    listen.file_size = 1;
+    listen.deadlines.accept = 2s;
+    engine.set_wakeup([&] {
+        if (wakeups.fetch_add(1, std::memory_order_relaxed) != 0) return;
+        engine.stop();
+        // Re-entry is explicitly supported. A same-worker restart must fail
+        // closed instead of move-assigning (and joining) its own JThread.
+        callback_restart_rejected.store(
+            engine.start_listen(listen) ==
+                std::unexpected{comicchat::net::DccError::already_running},
+            std::memory_order_release);
+        // Park the network thread inside the callback until the restart below
+        // is under way, so the restart is guaranteed to race a live worker
+        // rather than one that already exited.
+        parked.store(true, std::memory_order_release);
+        const auto release = std::chrono::steady_clock::now() + 5s;
+        while (!restart_entered.load(std::memory_order_acquire) &&
+               std::chrono::steady_clock::now() < release)
+            std::this_thread::sleep_for(1ms);
+    });
+
+    const auto first = engine.start_listen(listen);
+    REQUIRE(first.has_value());
+    const auto park_deadline = std::chrono::steady_clock::now() + 2s;
+    while (!parked.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < park_deadline)
+        std::this_thread::sleep_for(1ms);
+    REQUIRE(parked.load(std::memory_order_acquire));
+    REQUIRE(callback_restart_rejected.load(std::memory_order_acquire));
+
+    restart_entered.store(true, std::memory_order_release);
+    const auto second = engine.start_listen(listen);
+    REQUIRE(second.has_value());
+    CHECK(second->generation > first->generation);
+    CHECK(second->transfer > first->transfer);
+    REQUIRE(wait_for(engine, [&](const auto& event) {
+        return std::holds_alternative<comicchat::net::DccListening>(event.body) &&
+            event.handle.generation == second->generation;
+    }));
+    CHECK(engine.post(comicchat::net::DccCancel{*first, "stale"}) ==
+          std::unexpected{comicchat::net::DccError::stale_transfer});
+    engine.stop();
+}
+
+TEST_CASE("DCC concurrent stop wakeups cannot race async-handle closure") {
+    comicchat::net::DccTransferEngine engine;
+    comicchat::net::DccListenOptions listen;
+    listen.bind_address = "127.0.0.1";
+    listen.file_size = 1;
+    listen.deadlines.accept = 2s;
+
+    for (unsigned int cycle = 0; cycle < 24; ++cycle) {
+        const auto handle = engine.start_listen(listen);
+        REQUIRE(handle.has_value());
+        REQUIRE(wait_for(engine, [](const auto& event) {
+            return std::holds_alternative<comicchat::net::DccListening>(event.body);
+        }));
+
+        std::atomic_bool release{};
+        std::array<std::thread, 8> stoppers;
+        for (auto& stopper : stoppers) {
+            stopper = std::thread{[&] {
+                while (!release.load(std::memory_order_acquire)) std::this_thread::yield();
+                engine.stop();
+            }};
+        }
+        release.store(true, std::memory_order_release);
+        for (auto& stopper : stoppers) stopper.join();
+        CHECK(engine.post(comicchat::net::DccCancel{*handle, "stopped"}) ==
+              std::unexpected{comicchat::net::DccError::not_running});
+    }
 }
 
 TEST_CASE("rejecting an offered DCC peer retains the listener for the intended peer") {
