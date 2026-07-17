@@ -86,6 +86,10 @@ struct PageConfig final {
     std::int32_t border_width{panel_border_width};
     std::int32_t max_text_width{page_default_max_text_width};
     FontMetrics font{};
+    // The font pixel size (twips) the balloon text is measured/drawn at. Stamped
+    // onto every produced Balloon so render_panel draws each line at exactly the
+    // size the cloud was fitted to (must match the FontMetrics/TextMeasure size).
+    double text_size{};
     std::uint32_t seed{1U};
 };
 

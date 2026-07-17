@@ -262,6 +262,13 @@ struct Balloon final {
     std::vector<ThinkBubble> bubbles;        // think trail (empty otherwise)
     bool has_tail{};                         // false for action boxes
     int line_height{};                       // for text stacking
+    // The font pixel size (in panel twips) the text was MEASURED at
+    // (build_font_metrics / measure_text_width). render_panel draws each line at
+    // this size * transform.scale, so the drawn glyphs are the same size the
+    // cloud was fitted to and the text lands inside the outline. Set by the
+    // page/comic_page assembly from message_text_size; 0 means "unset" and the
+    // renderer falls back to a line-height estimate (synthetic-width demos only).
+    double text_size{};
 };
 
 // One placed avatar body slot (from Item 2.3 placement + Item 2.2 geometry). The

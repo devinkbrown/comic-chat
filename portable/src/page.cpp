@@ -370,6 +370,8 @@ auto Page::layout_panel(PanelState& draft) -> Page::LayoutOutcome {
         req.place_top = brect.top;
 
         Balloon balloon = layout_balloon(req);
+        // Draw the text at the same font pixel size the cloud was fitted to.
+        balloon.text_size = config_.text_size;
 
         // *** PRNG order, step 2: SetBBox -> ShiftLines (balloon.cpp:768) draws
         //     one randfloat() per laid-out line. shift_line_offsets drops these
@@ -387,6 +389,7 @@ auto Page::layout_panel(PanelState& draft) -> Page::LayoutOutcome {
                 // ForceFitBalloon (panel.cpp:153) + SplitHeight remainder.
                 std::string leftover;
                 Balloon forced = force_fit_split(req, free_rect, leftover);
+                forced.text_size = config_.text_size;
                 draft.rendered.balloons.push_back(std::move(forced));
                 return {Fit::fit_with_leftover, leftover};
             }

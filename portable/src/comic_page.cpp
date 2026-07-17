@@ -61,6 +61,10 @@ auto nick_color(const std::string_view nick) noexcept -> std::uint32_t {
     return palette[fnv1a(nick) % palette.size()];
 }
 
+auto nick_avatar_id(const std::string_view nick) noexcept -> std::uint32_t {
+    return fnv1a(nick);
+}
+
 auto message_seed(const std::string_view nick, const std::string_view text) noexcept -> std::uint32_t {
     // Fold nick and text together so distinct speakers/lines seed distinctly but
     // an identical line reproduces the same panel byte-for-byte.
@@ -118,7 +122,11 @@ auto build_message_panel(const MessagePanelRequest& request, const TextMeasure& 
     const std::int32_t desired_left = centered_left(anchor.arrow_x, width);
     balloon_request.place_left = desired_left - probe.bbox.left;
 
-    panel.balloons.push_back(layout_balloon(balloon_request));
+    auto balloon = layout_balloon(balloon_request);
+    // Thread the measured font pixel size onto the balloon so render_panel draws
+    // the text at the size the cloud was fitted to (drawn size == measured size).
+    balloon.text_size = request.text_size;
+    panel.balloons.push_back(std::move(balloon));
     return panel;
 }
 

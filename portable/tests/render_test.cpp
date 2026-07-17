@@ -1,6 +1,8 @@
 #include "comicchat/avatar_assets.hpp"
 #include "comicchat/balloon.hpp"
+#include "comicchat/comic_page.hpp"
 #include "comicchat/layout.hpp"
+#include "comicchat/page.hpp"
 #include "comicchat/render.hpp"
 #include "comicchat/text.hpp"
 
@@ -590,4 +592,95 @@ TEST_CASE("render_panel blits the composited avatar raster over the color-box pl
 
     // Emit the headless PNG artifact showing an actual avatar in the panel.
     CHECK(avatars.write_png("avatar_panel_render.png"));
+}
+
+// ===================================================================
+// Render fidelity — the balloon text must FIT inside the cloud outline. The
+// cloud is sized by measuring the wrapped lines at message_text_size, so the
+// drawn text (threaded balloon.text_size == message_text_size) must land inside
+// the drawn beta-spline outline. This is the regression gate for the "text
+// overflows the balloon" defect (render.cpp used to draw at line_height*0.72).
+// ===================================================================
+
+namespace {
+
+// The horizontal span [min_x, max_x] of a balloon's drawn beta-spline outline,
+// in panel twips -- the true visual edge the text must sit inside of.
+auto outline_x_span(const comicchat::Balloon& balloon) -> std::pair<int, int> {
+    int min_x = std::numeric_limits<int>::max();
+    int max_x = std::numeric_limits<int>::min();
+    for (const auto& point : balloon.outline) {
+        min_x = std::min(min_x, point.x);
+        max_x = std::max(max_x, point.x);
+    }
+    return {min_x, max_x};
+}
+
+// Assert every wrapped line, drawn centered at the cloud center at the threaded
+// text pixel size, stays strictly inside the cloud outline. Uses the SAME engine
+// to measure that render_panel draws with, so measured == drawn width.
+void check_text_fits_cloud(comicchat::TextEngine& engine, const comicchat::Balloon& balloon) {
+    REQUIRE_FALSE(balloon.lines.empty());
+    REQUIRE(balloon.text_size > 0.0);
+    const auto [min_x, max_x] = outline_x_span(balloon);
+    // Mirror render.cpp: each line is drawn left-anchored at bbox.left + the
+    // ShiftLines offset (maxWidth - width_i)/2 (center-justified say/whisper/think).
+    const bool left_justify = balloon.kind.mode == comicchat::BalloonMode::action;
+    const int max_line_width = comicchat::widest_line_width(balloon.lines);
+    for (const auto& line : balloon.lines) {
+        if (line.text.empty()) continue;
+        const auto width = engine.measure_width(line.text, balloon.text_size);
+        REQUIRE(width.has_value());
+        const int offset = left_justify ? 0 : (max_line_width - line.width) / 2;
+        const int left_x = balloon.bbox.left + offset;
+        // The drawn ink span [left_x, left_x + width] lies inside the outline.
+        CHECK(left_x >= min_x);
+        CHECK(left_x + *width <= max_x);
+    }
+}
+
+} // namespace
+
+TEST_CASE("balloon text stays inside the cloud outline (no overflow)") {
+    const auto font = comicchat::find_portable_comic_font();
+    REQUIRE(font.has_value());
+    auto text = comicchat::TextEngine::create(*font);
+    REQUIRE(text.has_value());
+
+    // The exact --say line the visual gate renders, plus a long multi-line case.
+    for (const std::string_view message : {"hello comic world",
+                                           "the quick brown fox jumps over the lazy dog again",
+                                           "SHORT"}) {
+        const auto panel = comicchat::build_say_panel(**text, "Ada", message);
+        REQUIRE(panel.balloons.size() == 1);
+        check_text_fits_cloud(**text, panel.balloons.front());
+    }
+}
+
+TEST_CASE("page-composed balloon text stays inside the cloud outline") {
+    using namespace comicchat;
+    const auto font = find_portable_comic_font();
+    REQUIRE(font.has_value());
+    auto text = TextEngine::create(*font);
+    REQUIRE(text.has_value());
+
+    const auto metrics = build_font_metrics(**text, message_text_size, 0, 0);
+    REQUIRE(metrics.has_value());
+    PageConfig cfg;
+    cfg.font = *metrics;
+    cfg.text_size = message_text_size;
+    cfg.max_text_width = message_balloon_max_width;
+    Page page{cfg, measure_text_width(**text, message_text_size)};
+
+    PageAvatar ada;
+    ada.avatar_id = nick_avatar_id("Ada");
+    ada.color = nick_color("Ada");
+    page.add_line(Line{ada, "hello comic world", bm_say});
+
+    REQUIRE_FALSE(page.panels().empty());
+    const auto& panel = page.panels().back();
+    REQUIRE_FALSE(panel.balloons.empty());
+    for (const auto& balloon : panel.balloons) {
+        check_text_fits_cloud(**text, balloon);
+    }
 }

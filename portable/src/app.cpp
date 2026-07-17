@@ -2,6 +2,7 @@
 #include "comicchat/config.hpp"
 #include "comicchat/net/ircv3.hpp"
 #include "comicchat/net/native_session.hpp"
+#include "comicchat/page.hpp"
 #include "comicchat/render.hpp"
 #include "comicchat/text.hpp"
 
@@ -13,6 +14,7 @@
 #include <exception>
 #include <filesystem>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -287,13 +289,49 @@ auto main(const int argc, char** argv) -> int {
         apply_modern_window_icon(window.get());
         std::unique_ptr<SDL_Texture, TextureDeleter> texture;
         std::unique_ptr<comicchat::Canvas> canvas;
-        // The most recent chat line rendered as a comic panel. Empty until the
-        // first message arrives, so the title card shows on an idle connection.
+
+        // The faithful page-composition model (CUnitPanelPage::AddLine, panel.cpp:1061):
+        // chat lines accumulate into `page`, which runs the real LayoutAvatars /
+        // LayoutBalloons expert placement and emits framed comic Panels. The live
+        // view shows the tail (current) panel; empty until the first line, so the
+        // title card holds on an idle connection.
+        const auto page_font = comicchat::build_font_metrics(**text, comicchat::message_text_size, 0, 0);
+        comicchat::PageConfig page_config;
+        page_config.font = page_font.value_or(comicchat::FontMetrics{});
+        page_config.text_size = comicchat::message_text_size;
+        page_config.max_text_width = comicchat::message_balloon_max_width;
+        comicchat::Page page{page_config, comicchat::measure_text_width(**text, comicchat::message_text_size)};
+
+        // The most recent assembled panel (page.panels().back()).
         std::optional<comicchat::Panel> current_panel;
-        // The speaker's deterministically-assigned avatar provider, rebuilt each
-        // time the panel changes. Empty until the first message (or when no
-        // avatar set resolves), in which case render_panel keeps the color box.
-        comicchat::PanelAvatarProvider current_avatar;
+        // Per-speaker avatar providers, keyed by the PageAvatar id a body carries,
+        // so each body in a multi-speaker panel composites its OWN speaker's
+        // avatar. Empty entries (no avatar set resolves) leave the color box.
+        std::map<std::uint32_t, comicchat::PanelAvatarProvider> avatar_providers;
+        const comicchat::PanelAvatarProvider current_avatar =
+            [&avatar_providers](const comicchat::PanelBody& body, std::int32_t target_width,
+                                std::int32_t target_height) -> std::optional<comicchat::AvatarBitmap> {
+            const auto found = avatar_providers.find(body.avatar_id);
+            if (found == avatar_providers.end() || !found->second) return std::nullopt;
+            return found->second(body, target_width, target_height);
+        };
+
+        // Feed one chat line into the page and refresh the current panel + the
+        // speaker's avatar provider (deterministic nick -> id/color/avatar).
+        const auto feed_line = [&](std::string_view nick, std::string_view line_text) {
+            const auto avatar_id = comicchat::nick_avatar_id(nick);
+            comicchat::PageAvatar speaker;
+            speaker.avatar_id = avatar_id;
+            speaker.body_width = comicchat::message_body_width;
+            speaker.body_height = comicchat::message_body_height;
+            speaker.face_fraction = 0.5;
+            speaker.color = comicchat::nick_color(nick);
+            if (auto provider = comicchat::make_nick_avatar_provider(nick)) {
+                avatar_providers[avatar_id] = std::move(provider);
+            }
+            page.add_line(comicchat::Line{speaker, std::string{line_text}, comicchat::bm_say});
+            if (!page.panels().empty()) current_panel = page.panels().back();
+        };
 
         const auto rebuild = [&] {
             int width{};
@@ -315,11 +353,10 @@ auto main(const int argc, char** argv) -> int {
                 throw std::runtime_error{SDL_GetError()};
             }
         };
-        // A synthetic --say line drives the same message -> panel builder the
-        // live feed uses, so a headless --png snapshot shows a real comic panel.
+        // A synthetic --say line drives the same page-composition path the live
+        // feed uses, so a headless --png snapshot shows a real framed comic panel.
         if (arguments->say) {
-            current_panel = comicchat::build_say_panel(**text, arguments->say->nick, arguments->say->text);
-            current_avatar = comicchat::make_nick_avatar_provider(arguments->say->nick);
+            feed_line(arguments->say->nick, arguments->say->text);
         }
         rebuild();
         if (arguments->png && !arguments->png->empty() && !canvas->write_png(*arguments->png)) {
@@ -347,12 +384,12 @@ auto main(const int argc, char** argv) -> int {
                 for (const auto& diagnostic : network.diagnostics) {
                     std::cerr << "IRC session [" << diagnostic.code << "]: " << diagnostic.message << '\n';
                 }
-                // First live increment: the newest channel line replaces the
-                // panel. Multi-message page accounting / panel splitting is 2.5b.
+                // Each channel line is accumulated into the page (AddLine): the
+                // real multi-body / multi-balloon panel composition, with the tail
+                // panel shown live.
                 for (const auto& message : network.messages) {
                     if (auto line = channel_line(message, arguments->connection->channel)) {
-                        current_panel = comicchat::build_say_panel(**text, line->nick, line->text);
-                        current_avatar = comicchat::make_nick_avatar_provider(line->nick);
+                        feed_line(line->nick, line->text);
                         rebuild();
                         redraw = true;
                     }

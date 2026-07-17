@@ -73,11 +73,22 @@ struct MessagePanelRequest final {
     FontMetrics font{};
     std::int32_t max_text_width{message_balloon_max_width};
     std::uint32_t seed{};
+    // The font pixel size (twips) the balloon text is measured/drawn at. Stored on
+    // the produced Balloon so render_panel draws the glyphs at exactly the size the
+    // cloud was fitted to (message_text_size by default; keep it consistent with
+    // the FontMetrics/TextMeasure the caller derives).
+    double text_size{message_text_size};
 };
 
 // Deterministic per-nick body tint, folded from an FNV-1a hash into a small
 // curated comic palette so the same nick always draws the same colour.
 [[nodiscard]] auto nick_color(std::string_view nick) noexcept -> std::uint32_t;
+
+// Deterministic per-nick avatar identity (the CAvatarX id analogue): the FNV-1a
+// of the nick, the same fold nick_color and assign_avatar use. The live page
+// wiring registers a PageAvatar under this id and keys its avatar provider by it,
+// so a body's avatar_id resolves back to the speaker's composited raster.
+[[nodiscard]] auto nick_avatar_id(std::string_view nick) noexcept -> std::uint32_t;
 
 // Deterministic per-message panel seed (the CPanel::m_seed analogue). Stored on
 // the Panel; a Phase 2.5b RNG-driven cloud_estimate placement would consume it.

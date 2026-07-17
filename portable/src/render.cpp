@@ -20,6 +20,9 @@ namespace comicchat {
 namespace {
 
 constexpr double source_panel_units = 2300.0;
+// CUnitPanel::m_borderWidth (panel.cpp:64). The panel-frame pen is
+// PS_SOLID, 2 * m_borderWidth (panel.cpp:65).
+constexpr double source_border_width = 60.0;
 constexpr double source_icon_size = 500.0;
 constexpr double source_icon_space = 100.0;
 constexpr double source_below_starring = 300.0;
@@ -337,6 +340,16 @@ void Canvas::render_panel(const Panel& panel, TextEngine& text, const PanelAvata
 
     cairo_save(context);
 
+    // CUnitPanel::Draw (panel.cpp:666) clips every element to the panel rectangle
+    // [0,0]..[m_unitWidth,-m_unitHeight] (IntersectClipRect, panel.cpp:678) before
+    // drawing the backdrop, bodies, balloons, and border. Reproduce that clip so a
+    // cloud/tail that docks past the panel edge is trimmed exactly as the source,
+    // instead of spilling onto the page/letterbox.
+    const auto panel_tl = transform.to_device(LogicalPoint{0.0, 0.0});
+    const auto panel_br = transform.to_device(LogicalPoint{source_panel_units, -source_panel_units});
+    cairo_rectangle(context, panel_tl.x, panel_tl.y, panel_br.x - panel_tl.x, panel_br.y - panel_tl.y);
+    cairo_clip(context);
+
     // Avatar bodies. Map the logical (twips, Y-up) body box through the panel
     // transform to a device rect (this applies the Y-up->Y-down flip once), then
     // blit the Item 2.2 composited raster the provider resolves. When no provider
@@ -402,20 +415,62 @@ void Canvas::render_panel(const Panel& panel, TextEngine& text, const PanelAvata
             cairo_stroke(context);
         }
 
-        // Balloon text, stacked from the cloud top down (device space, upright).
-        const auto text_size = static_cast<double>(balloon.line_height) * transform.scale * 0.72;
+        // Balloon text (CBalloon::DrawText, balloon.cpp:1315). Faithful port: draw
+        // each wrapped line at the SAME font pixel size the cloud was measured and
+        // sized at (balloon.text_size, threaded from message_text_size), so the
+        // drawn glyphs match the cloud fit and stay inside the outline -- not a
+        // 0.72 * line_height fudge. The source stacks lines from the text top:
+        // TextOut(rgiLeftX[i], iBaseY) with iBaseY = m_bbox.Top and stepping down
+        // by m_lineHeight per line (m_bbox.Top is the TEXT top, one lineHeight
+        // above the first baseline in GDI TA_TOP twips). Here bbox.top is that same
+        // text top; we place each line's cell top at bbox.top - i*lineHeight and
+        // convert to a Cairo baseline by adding the font ascent.
+        const auto text_size = balloon.text_size > 0.0
+                                   ? balloon.text_size * transform.scale
+                                   : static_cast<double>(balloon.line_height) * transform.scale * 0.72;
         if (text_size >= 1.0 && !balloon.lines.empty()) {
             set_color(context, {0.08, 0.07, 0.08, 1.0});
-            const auto center_x = (balloon.bbox.left + balloon.bbox.right) / 2;
-            auto baseline_y = balloon.bbox.top - balloon.line_height;
+            auto* face = static_cast<FT_Face>(text.native_face());
+            auto* cairo_face = cairo_ft_font_face_create_for_ft_face(face, 0);
+            cairo_set_font_face(context, cairo_face);
+            cairo_set_font_size(context, text_size);
+            cairo_font_face_destroy(cairo_face);
+            cairo_font_extents_t extents{};
+            cairo_font_extents(context, &extents);
+
+            // Per-line left x == ShiftLines' rgiLeftX (balloon.cpp:768): centered
+            // balloons offset each line by (maxWidth - width_i)/2 from the text
+            // origin (bbox.left, the text-frame x=0 after SetBBox), the action box
+            // is FT_LEFT_JUSTIFY at offset 0. This is the source's own text origin,
+            // NOT the cloud-outline center -- centering on the cloud center would
+            // bias text by XBORDER and clip the widest line. Drawing left-anchored
+            // there keeps every line inside the XBORDER text margin of the cloud.
+            const bool left_justify = balloon.kind.mode == BalloonMode::action;
+            const auto max_line_width = widest_line_width(balloon.lines);
+            auto cell_top_y = balloon.bbox.top;
             for (const auto& line : balloon.lines) {
-                const auto anchor = transform.to_device(LogicalPoint{static_cast<double>(center_x),
-                                                                     static_cast<double>(baseline_y)});
-                draw_shaped(context, text, line.text, text_size, anchor.x, anchor.y, true);
-                baseline_y -= balloon.line_height;
+                const auto offset = left_justify ? 0 : (max_line_width - line.width) / 2;
+                const auto left_x = balloon.bbox.left + offset;
+                const auto anchor = transform.to_device(
+                    LogicalPoint{static_cast<double>(left_x), static_cast<double>(cell_top_y)});
+                draw_shaped(context, text, line.text, text_size, anchor.x,
+                            anchor.y + extents.ascent, /*centered=*/false);
+                cell_top_y -= balloon.line_height;
             }
         }
     }
+
+    // CUnitPanel::DrawBorder (panel.cpp:713): the panel frame, a closed rectangle
+    // [0,0]..[m_unitWidth,-m_unitHeight] stroked with m_borderPen
+    // (PS_SOLID, 2 * m_borderWidth, black). Drawn last, still under the panel clip,
+    // so the pen's outer half is trimmed exactly as the source and the inner half
+    // frames the panel content.
+    cairo_new_path(context);
+    cairo_rectangle(context, panel_tl.x, panel_tl.y, panel_br.x - panel_tl.x, panel_br.y - panel_tl.y);
+    cairo_set_source_rgba(context, 0.0, 0.0, 0.0, 1.0);
+    cairo_set_line_width(context, std::max(1.0, 2.0 * source_border_width * transform.scale));
+    cairo_set_dash(context, nullptr, 0, 0.0);
+    cairo_stroke(context);
 
     cairo_restore(context);
     cairo_surface_flush(impl_->surface.get());
