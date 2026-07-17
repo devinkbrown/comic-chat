@@ -1,6 +1,6 @@
 # IRC and IRCv3 coverage
 
-Audit snapshot: 2026-07-16, base source commit `43282a7`.
+Audit snapshot: 2026-07-16, base source commit `86edc10`.
 
 This is the compatibility ledger for the legacy Microsoft Comic Chat client in
 `v2.5-beta-1-modern/` and the shared protocol engine in `portable/`. It measures
@@ -72,9 +72,11 @@ The intended path is:
 Step 5 remains the principal completion gap, but it is no longer absent. The
 identity events above have causal MFC-independent model tests. Standard
 `FAIL`/`WARN`/`NOTE` descriptions also reach Microsoft's existing status view
-once, through the focused document. `RENAME`, redaction, typing/reaction, read
-markers, metadata, and complete message contexts still lack legacy view/model
-consumers. A typed portable event is not, by itself, legacy-client support.
+once, through the focused document. Channel rename preserves the existing room
+document/member/topic/mode state while updating its tab/path/status and queued
+legacy query targets. Redaction, typing/reaction, read markers, metadata, and
+complete message contexts still lack legacy view/model consumers. A typed
+portable event is not, by itself, legacy-client support.
 
 ## Capability request safety
 
@@ -144,7 +146,7 @@ Official capability sources: [account notify](https://ircv3.net/specs/extensions
 | `sasl` | stable | **partial** | PLAIN, explicit EXTERNAL, and SCRAM-SHA-256; see dedicated section | Safe only on verified TLS with a usable mechanism. Product has no client-certificate provisioning and no post-registration reauthentication. |
 | `setname` | stable | **partial** | `SETNAME` state and `RealnameChanged` update a separate document-owned realname field; state/bound and causal model tests | Safe to request; a visible realname surface remains absent. |
 | `userhost-in-names` | stable | **unsupported** | Negotiated but no legacy NAMES normalization or direct test | **Block.** NAMES tokens flow into the single-prefix `CUserInfo` constructor; `nick!user@host` can become the nickname. |
-| `draft/channel-rename` | work in progress | **observe-only** | `RENAME` migrates portable channel-keyed state and emits `ChannelRenamed`; `portable/src/net/ircv3.cpp:2193-2343`; test `portable/tests/ircv3_test.cpp:873-883` | **Block.** No legacy document/tab/member-list rename occurs. |
+| `draft/channel-rename` | work in progress | **partial** | The engine requires both channels plus the mandatory, possibly empty reason and migrates retained state. The legacy UI keeps the same room/member/topic/mode document, updates encoded/pretty names, tab/path/status, rewrites pending query targets, and displays the reason; malformed input and local target collisions fail closed | **Default off while draft.** The product adapter is present and causal-tested, but native MFC compilation is CI-only and a user-facing policy for an already-open local target tab remains unresolved. |
 | `draft/account-registration` | work in progress | **partial** | Secret-consuming `REGISTER`/`VERIFY` builders and typed outcomes in `portable/src/net/ircv3.cpp:2595-2658`; tests `portable/tests/ircv3_test.cpp:1083-1112` | Block until an account UI consumes the API and replies. |
 | `draft/chathistory` | work in progress | **partial** | History batches and bounded recovery command builder in `portable/src/net/ircv3.cpp:1315-1325,1989-2111`; tests `portable/tests/ircv3_test.cpp:398-408,744-787` and four CAP fixtures | **Block for now.** No production caller uses `RecoveryCommands()`. Requesting chathistory can suppress server auto-playback without replacing it. |
 | `draft/event-playback` | work in progress | **partial** | Dependency and generic batch unwrapping; no historical/live distinction at legacy boundary | **Block.** Historical JOIN/MODE/NICK/etc. can be replayed into the legacy model as live state. |
@@ -420,8 +422,9 @@ application of the remaining typed state events.
    typed-only before legacy dispatch. Visible consumers remain part of item 3.
 3. **Partially complete:** account/away/host/realname have document-owned UI-
    thread consumers and model-level tests, and standard replies reach the
-   existing status view. Implement rename, redaction, typing/reaction, read
-   markers, metadata, and message context.
+   existing status view; channel rename preserves and retargets the legacy room.
+   Implement redaction, typing/reaction, read markers, metadata, and message
+   context.
 4. Wire the durable per-host STS store into each production session before
    transport start, use an OS-native private config location, commit secure
    updates/removals, retain only the current connection's persistence receipt
