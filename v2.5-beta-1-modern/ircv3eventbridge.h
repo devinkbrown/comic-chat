@@ -339,6 +339,8 @@ inline bool HasSafeLegacyDispatchShape(const comic_chat::ircv3::Message& message
 		return has_nonempty(0);
 	if (message.command == "WHISPER")
 		return has_nonempty(0) && has_nonempty(1) && message.params.size() >= 3;
+	if (message.command == "353")
+		return message.params.size() == 4 && has_nonempty(2) && has_nonempty(3);
 	return true;
 }
 
@@ -347,7 +349,8 @@ inline bool LegacyHandlerNeedsTrailingParameter(const comic_chat::ircv3::Message
 	if (message.params.empty()) return false;
 	if (message.command == "NICK" || message.command == "JOIN" ||
 		message.command == "INVITE" || message.command == "PRIVMSG" ||
-		message.command == "NOTICE" || message.command == "ERROR") return true;
+		message.command == "NOTICE" || message.command == "ERROR" ||
+		message.command == "353") return true;
 	if ((message.command == "KICK" || message.command == "WHISPER" ||
 		 message.command == "DATA" || message.command == "PROP") &&
 		message.params.size() >= 3) return true;
@@ -356,20 +359,100 @@ inline bool LegacyHandlerNeedsTrailingParameter(const comic_chat::ircv3::Message
 	return false;
 }
 
+inline std::optional<comic_chat::ircv3::Message> NormalizeLegacyNamesReply(
+	const comic_chat::ircv3::Message& message,
+	std::string_view prefix_token)
+{
+	if (message.command != "353") return message;
+	if (!HasSafeLegacyDispatchShape(message) || prefix_token.size() > 66 ||
+		prefix_token.empty() || prefix_token.front() != '(')
+		return std::nullopt;
+	const auto close = prefix_token.find(')');
+	if (close == std::string_view::npos || close <= 1 || close + 1 >= prefix_token.size())
+		return std::nullopt;
+	const auto modes = prefix_token.substr(1, close - 1);
+	const auto symbols = prefix_token.substr(close + 1);
+	if (modes.size() != symbols.size() || modes.size() > 32)
+		return std::nullopt;
+	for (std::size_t index = 0; index < symbols.size(); ++index) {
+		const unsigned char mode = modes[index];
+		const unsigned char symbol = symbols[index];
+		if (mode <= 0x20U || mode == 0x7fU || symbol <= 0x20U || symbol == 0x7fU ||
+			modes.find(modes[index]) != index || symbols.find(symbols[index]) != index)
+			return std::nullopt;
+	}
+
+	auto legacy_status = [](const char mode, const char symbol) noexcept -> char {
+		// Microsoft's member model has owner, operator, spectator, and voice.
+		// Collapse higher ranked server roles to the closest representable role,
+		// while preserving IRCX's original literal status symbols.
+		if (symbol == '.') return '.';
+		if (symbol == '>') return '>';
+		if (mode == 'q') return '.';
+		if (mode == 'a' || mode == 'o' || mode == 'h' || symbol == '@') return '@';
+		if (mode == 'v' || symbol == '+') return '+';
+		return '\0';
+	};
+
+	std::string names;
+	const std::string_view source = message.params.back();
+	names.reserve(source.size());
+	for (std::size_t cursor = 0; cursor < source.size();) {
+		while (cursor < source.size() && source[cursor] == ' ') ++cursor;
+		if (cursor == source.size()) break;
+		const auto end = source.find(' ', cursor);
+		const auto token = source.substr(cursor,
+			end == std::string_view::npos ? source.size() - cursor : end - cursor);
+
+		std::size_t nickname_start = 0;
+		char selected_status = '\0';
+		while (nickname_start < token.size()) {
+			const auto status = symbols.find(token[nickname_start]);
+			if (status == std::string_view::npos) break;
+			if (selected_status == '\0')
+				selected_status = legacy_status(modes[status], symbols[status]);
+			++nickname_start;
+		}
+		const auto hostmask = token.find('!', nickname_start);
+		const auto nickname_end = hostmask == std::string_view::npos ? token.size() : hostmask;
+		const auto nickname = token.substr(nickname_start, nickname_end - nickname_start);
+		if (nickname.empty() || nickname.size() > kIrcv3LegacyNicknameMaximum ||
+			nickname.find_first_of(" ,\a\r\n\0") != std::string_view::npos)
+			return std::nullopt;
+
+		if (!names.empty()) names.push_back(' ');
+		if (selected_status != '\0') names.push_back(selected_status);
+		names.append(nickname);
+		if (end == std::string_view::npos) break;
+		cursor = end + 1;
+	}
+	if (names.empty()) return std::nullopt;
+
+	auto normalized = message;
+	normalized.params.back() = std::move(names);
+	return normalized;
+}
+
 inline std::optional<std::string> PrepareLegacyProtocolWire(
-	const comic_chat::ircv3::Message& message)
+	const comic_chat::ircv3::Message& message,
+	std::string_view prefix_token = "(ov)@+")
 {
 	if (!HasSafeLegacyDispatchShape(message)) return std::nullopt;
 	const comic_chat::ircv3::Message* legacy_message = &message;
-	comic_chat::ircv3::Message normalized_join;
+	comic_chat::ircv3::Message normalized;
 	if (message.command == "JOIN" && message.params.size() == 3) {
 		// extended-join adds account and realname, but Microsoft's handler uses
 		// the single trailing JOIN field as the channel key. Preserve the complete
 		// message for typed consumers and flatten only the channel into the old
 		// parser; otherwise the realname becomes LookupDoc()'s input.
-		normalized_join = message;
-		normalized_join.params.resize(1);
-		legacy_message = &normalized_join;
+		normalized = message;
+		normalized.params.resize(1);
+		legacy_message = &normalized;
+	} else if (message.command == "353") {
+		auto names = NormalizeLegacyNamesReply(message, prefix_token);
+		if (!names) return std::nullopt;
+		normalized = std::move(*names);
+		legacy_message = &normalized;
 	}
 	auto wire = legacy_message->SerializeChecked(false);
 	if (!wire) return std::nullopt;
@@ -388,7 +471,8 @@ inline std::optional<std::string> PrepareLegacyProtocolWire(
 // metadata, including when a server has stripped every tag, and must never be
 // presented to the legacy unknown-command/history path.
 inline Ircv3LegacyMessageAdaptation AdaptProtocolMessage(
-	const comic_chat::ircv3::Message& message)
+	const comic_chat::ircv3::Message& message,
+	std::string_view prefix_token = "(ov)@+")
 {
 	Ircv3LegacyMessageAdaptation result;
 	const bool typed_only = message.command == "TAGMSG";
@@ -405,7 +489,7 @@ inline Ircv3LegacyMessageAdaptation AdaptProtocolMessage(
 		if (!HasSafeLegacyDispatchShape(message)) {
 			result.rejected_legacy_shape = true;
 		} else {
-			result.legacy_wire = PrepareLegacyProtocolWire(message);
+			result.legacy_wire = PrepareLegacyProtocolWire(message, prefix_token);
 		}
 	}
 	return result;

@@ -42,6 +42,7 @@ using comic_chat::legacy_ui::IrcProtocolLineBudget;
 using comic_chat::legacy_ui::IrcTransportIngressAction;
 using comic_chat::legacy_ui::IrcTransportIngressGate;
 using comic_chat::legacy_ui::IrcTransportIngressPhase;
+using comic_chat::legacy_ui::NormalizeLegacyNamesReply;
 
 struct FakeUser {
 	std::string account;
@@ -359,6 +360,37 @@ void TestExtendedJoinPreservesTypedIdentityAndLegacyChannel()
 	Check(rejected.rejected_legacy_shape && !rejected.legacy_wire);
 }
 
+void TestNamesExtensionsNormalizeBeforeLegacyMembership()
+{
+	const auto parsed = comic_chat::ircv3::Message::Parse(
+		":server 353 me = #ink :~&@%+Owner!owner@example.test @+Op!op@example.test "
+		"+Voice!voice@example.test Plain!plain@example.test\r\n");
+	Check(parsed.has_value());
+	if (!parsed) return;
+
+	const auto normalized = NormalizeLegacyNamesReply(*parsed, "(qaohv)~&@%+");
+	Check(normalized.has_value());
+	if (normalized)
+		Check(normalized->params.back() == ".Owner @Op +Voice Plain");
+	const auto wire = PrepareLegacyProtocolWire(*parsed, "(qaohv)~&@%+");
+	Check(wire == std::optional<std::string>{
+		":server 353 me = #ink :.Owner @Op +Voice Plain\r\n"});
+
+	comic_chat::ircv3::Message single = *parsed;
+	single.params.back() = "@Only!user@example.test";
+	const auto single_wire = PrepareLegacyProtocolWire(single, "(ov)@+");
+	Check(single_wire && single_wire->ends_with("353 me = #ink :@Only\r\n"));
+
+	for (const std::string_view invalid : {
+		"", "ov)@+", "(ov@+", "(ov)@", "(oo)@+", "(ov)@@"})
+		Check(!NormalizeLegacyNamesReply(*parsed, invalid));
+
+	comic_chat::ircv3::Message malformed = *parsed;
+	malformed.params.pop_back();
+	Check(!HasSafeLegacyDispatchShape(malformed));
+	Check(AdaptProtocolMessage(malformed).rejected_legacy_shape);
+}
+
 void TestTransportIngressPhaseAndWorkGates()
 {
 	IrcTransportIngressGate gate;
@@ -409,6 +441,7 @@ int main()
 	TestChannelRenameConsumer();
 	TestLegacyDispatchShapeGate();
 	TestExtendedJoinPreservesTypedIdentityAndLegacyChannel();
+	TestNamesExtensionsNormalizeBeforeLegacyMembership();
 	TestTransportIngressPhaseAndWorkGates();
 	return failures == 0 ? 0 : 1;
 }

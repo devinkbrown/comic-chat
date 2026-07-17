@@ -813,7 +813,10 @@ CIrcSocket::QueueProtocolLine(std::string_view wire)
 
 void CIrcSocket::DispatchProtocolMessage(const comic_chat::ircv3::Message& message)
 {
-	auto adapted = comic_chat::legacy_ui::AdaptProtocolMessage(message);
+	std::string_view prefixToken = "(ov)@+";
+	const auto prefix = m_ircEngine.Isupport().find("PREFIX");
+	if (prefix != m_ircEngine.Isupport().end()) prefixToken = prefix->second;
+	auto adapted = comic_chat::legacy_ui::AdaptProtocolMessage(message, prefixToken);
 	if (adapted.typed_context) {
 		auto context = std::move(*adapted.typed_context);
 		DispatchProtocolEvent(std::move(context.event), std::move(context.message));
