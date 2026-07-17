@@ -125,6 +125,22 @@ struct StsPolicy {
 	bool preload = false;
 };
 
+enum class StsPolicyAction {
+	Upgrade,
+	Persist,
+	Remove,
+};
+
+// A typed, transport-facing result of processing an STS advertisement. Only a
+// certificate-verified Engine emits Persist or Remove. Upgrade is emitted only
+// on plaintext and must be applied before any output from the same IRC line.
+struct StsPolicyUpdate {
+	StsPolicyAction action = StsPolicyAction::Upgrade;
+	std::uint16_t port{};
+	std::uint64_t duration{};
+	bool preload = false;
+};
+
 enum class CaseMapping {
 	Ascii,
 	Rfc1459,
@@ -167,6 +183,7 @@ struct ProcessResult {
 	std::vector<Message> messages;
 	std::vector<std::string> outbound;
 	std::vector<Event> events;
+	std::optional<StsPolicyUpdate> sts_update;
 };
 
 class LineFramer {
@@ -287,7 +304,8 @@ private:
 	std::vector<Message> FinishBatch(const std::string& id, std::vector<Event>* events);
 	void EraseBatch(const std::string& id);
 	bool IsEcho(const Message& message);
-	void UpdateSts(std::optional<std::string> value, std::vector<Event>* events);
+	std::optional<StsPolicyUpdate> UpdateSts(
+		std::optional<std::string> value, std::vector<Event>* events);
 	std::string Casefold(std::string_view value) const;
 	bool SameIdentifier(std::string_view left, std::string_view right) const;
 	void ReindexState(CaseMapping previous);

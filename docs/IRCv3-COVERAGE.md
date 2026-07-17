@@ -274,15 +274,31 @@ Status: **partial**.
   (`portable/src/net/ircv3.cpp:1452-1486`,
   `v2.5-beta-1-modern/ircsock.cpp:811-829`).
 - Secure `duration`/`preload` values are parsed; insecure connections cannot set
-  persistence. Tests cover parsing and `CAP DEL` behavior
-  (`portable/tests/ircv3_test.cpp:189-252`).
+  persistence. The engine now emits typed upgrade, persist, and remove actions;
+  duplicate normative STS keys and duplicate `sts` capability tokens are
+  rejected. Tests cover parsing, typed actions, capability advertisements, and
+  `CAP DEL` behavior
+  (`portable/tests/ircv3_test.cpp:189-280`).
+- `StsPolicyStore` provides a portable, hostname-keyed durable cache contract.
+  It bounds files to 256 KiB, entries to 1,024, and hostname keys to 255 bytes;
+  parses into a replacement snapshot; rejects symlink/reparse and unsafe Unix
+  files; and commits through bounded unique, exclusive, same-directory
+  temporary files plus an atomic replacement (mode `0600` on Unix and the
+  caller's private-directory ACL on Windows). Its pre-start
+  `ConnectionOptions` plan forces TLS and the last verified secure port, so
+  retrying a failed TLS connection cannot select plaintext. Focused tests cover
+  restart, exact expiry, secure `duration=0`, overflow, malformed/oversized and
+  over-count files, temporary residue/collision, and no-downgrade planning
+  (`portable/tests/sts_policy_store_test.cpp`).
 
-The policy lives only inside one `Engine` instance. There is no durable,
-per-host STS cache, expiry scheduler, preload bootstrap, or reconnect-time lookup.
-Consequently secure `duration` is not enforced across client restarts or fresh
-connections. This is a release-blocking security gap if the product advertises
-full STS. `CAP DEL sts` must continue not to clear a stored policy; only the
-spec-defined secure `duration=0` update may do that.
+The portable persistence and reconnect-enforcement substrate is not yet wired
+to a production session owner. Neither legacy client nor the unfinished
+Unix/BSD frontend currently supplies its native private configuration path,
+loads the store before connection selection, commits typed secure updates, or
+retains the same-session receipt needed to reschedule expiry at disconnect.
+Therefore full STS remains release-blocked despite the tested store contract.
+`CAP DEL sts` must continue not to clear a stored policy; only the spec-defined
+secure `duration=0` update may do that. A preload bootstrap is also still absent.
 
 ## Server profiles and fixtures
 
@@ -393,8 +409,10 @@ application of every typed state event.
 3. Implement actual legacy event consumers for account/away/host/realname,
    rename, standard replies, redaction, typing/reaction, read markers, metadata,
    and message context; add model-level tests.
-4. Add a durable, per-host STS policy store with expiry, secure `duration=0`
-   removal, reconnect enforcement, and downgrade tests.
+4. Wire the durable per-host STS store into each production session before
+   transport start, use an OS-native private config location, commit secure
+   updates/removals, retain only the current connection's persistence receipt
+   for disconnect rebasing, and add adapter-level downgrade tests.
 
 ### P1 — complete negotiated feature semantics
 

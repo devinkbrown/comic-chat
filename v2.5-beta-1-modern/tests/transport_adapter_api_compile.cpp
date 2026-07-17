@@ -1,6 +1,8 @@
 #include "comicchat/net/connection_engine.hpp"
 #include "comicchat/net/dcc_transfer_engine.hpp"
+#include "comicchat/net/sts_policy_store.hpp"
 
+#include <chrono>
 #include <concepts>
 #include <cstddef>
 #include <expected>
@@ -15,6 +17,7 @@ namespace {
 
 using comicchat::net::ConnectionEngine;
 using comicchat::net::DccTransferEngine;
+using comicchat::net::StsPolicyStore;
 
 static_assert(std::same_as<
     decltype(std::declval<ConnectionEngine&>().start(
@@ -52,5 +55,11 @@ static_assert(std::same_as<
     decltype(comicchat::net::dcc_ipv4_scope(std::declval<std::string_view>())),
     std::expected<comicchat::net::DccAddressScope, comicchat::net::DccError>>);
 static_assert(noexcept(std::declval<DccTransferEngine&>().stop()));
+
+static_assert(std::same_as<
+    decltype(std::declval<const StsPolicyStore&>().plan(
+        std::declval<comicchat::net::ConnectionOptions>(),
+        std::declval<comicchat::net::StsTimePoint>())),
+    std::expected<comicchat::net::StsConnectionPlan, comicchat::net::StsStoreError>>);
 
 } // namespace

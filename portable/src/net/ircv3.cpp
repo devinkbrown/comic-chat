@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <charconv>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -857,9 +858,11 @@ ProcessResult::ProcessResult(ProcessResult&& other) noexcept
 	: consumed(other.consumed),
 	  messages(std::move(other.messages)),
 	  outbound(std::move(other.outbound)),
-	  events(std::move(other.events))
+	  events(std::move(other.events)),
+	  sts_update(std::move(other.sts_update))
 {
 	other.consumed = false;
+	other.sts_update.reset();
 }
 
 ProcessResult& ProcessResult::operator=(ProcessResult&& other) noexcept
@@ -870,7 +873,9 @@ ProcessResult& ProcessResult::operator=(ProcessResult&& other) noexcept
 	messages = std::move(other.messages);
 	outbound = std::move(other.outbound);
 	events = std::move(other.events);
+	sts_update = std::move(other.sts_update);
 	other.consumed = false;
+	other.sts_update.reset();
 	return *this;
 }
 
@@ -1471,40 +1476,94 @@ void Engine::RemoveCapabilityAndDependents(std::string_view name)
 		[](const CapabilityRequest& request) { return request.names.empty(); }), capability_requests_.end());
 }
 
-void Engine::UpdateSts(std::optional<std::string> value, std::vector<Event>* events)
+// The outer optional is engaged only when exactly one STS capability token is
+// present. The inner optional preserves the distinction between `sts` and
+// `sts=value`. Ambiguous duplicate advertisements never select a policy.
+static auto UniqueStsValue(const std::string_view list)
+	-> std::optional<std::optional<std::string>>
 {
-	if (!value) return;
+	std::optional<std::optional<std::string>> result;
+	for (auto token : SplitWords(list)) {
+		while (!token.empty() && (token.front() == '-' || token.front() == '~' || token.front() == '='))
+			token.erase(token.begin());
+		const auto equal = token.find('=');
+		if (token.substr(0, equal) != "sts") continue;
+		if (result) return std::nullopt;
+		result.emplace(equal == std::string::npos
+			? std::optional<std::string>{}
+			: std::optional<std::string>{token.substr(equal + 1)});
+	}
+	return result;
+}
+
+std::optional<StsPolicyUpdate> Engine::UpdateSts(
+	std::optional<std::string> value, std::vector<Event>* events)
+{
+	if (!value) return std::nullopt;
 	StsPolicy policy;
+	bool saw_port = false;
+	bool saw_duration = false;
+	bool saw_preload = false;
 	for (const auto& token : Split(*value, ',')) {
 		const auto equal = token.find('=');
-		const auto key = Lower(token.substr(0, equal));
-		const auto content = equal == std::string::npos ? std::string{} : token.substr(equal + 1);
-		char* end = nullptr;
+		const auto key = token.substr(0, equal);
+		const auto content = equal == std::string::npos ? std::string_view{} :
+			std::string_view(token).substr(equal + 1);
 		if (key == "port") {
-			const auto port = std::strtoul(content.c_str(), &end, 10);
-			if (end && !*end && port > 0 && port <= 65535) policy.port = static_cast<unsigned int>(port);
+			if (saw_port) return std::nullopt;
+			saw_port = true;
+			if (!secure_transport_) {
+				unsigned int port{};
+				const auto [end, error] = std::from_chars(
+					content.data(), content.data() + content.size(), port);
+				if (error != std::errc{} || end != content.data() + content.size() ||
+					port == 0 || port > 65'535U) return std::nullopt;
+				policy.port = port;
+			}
 		} else if (key == "duration") {
-			const auto duration = std::strtoull(content.c_str(), &end, 10);
-			if (end && !*end) policy.duration = duration;
-		} else if (key == "preload") policy.preload = true;
+			if (saw_duration) return std::nullopt;
+			saw_duration = true;
+			if (secure_transport_) {
+				std::uint64_t duration{};
+				const auto [end, error] = std::from_chars(
+					content.data(), content.data() + content.size(), duration);
+				if (error != std::errc{} || end != content.data() + content.size()) return std::nullopt;
+				policy.duration = duration;
+			}
+		} else if (key == "preload") {
+			if (saw_preload) return std::nullopt;
+			saw_preload = true;
+			if (secure_transport_) policy.preload = true;
+		}
 	}
+	std::optional<StsPolicyUpdate> update;
 	if (secure_transport_) {
 		// A port is an insecure-connection upgrade instruction and has no
 		// persistence meaning after TLS is established.
 		policy.port.reset();
-		if (policy.duration && *policy.duration == 0) sts_policy_.reset();
-		else if (policy.duration) sts_policy_ = policy;
+		if (!policy.duration) return std::nullopt;
+		if (*policy.duration == 0) {
+			sts_policy_.reset();
+			update = StsPolicyUpdate{StsPolicyAction::Remove, 0, 0, false};
+		} else {
+			sts_policy_ = policy;
+			update = StsPolicyUpdate{StsPolicyAction::Persist, 0, *policy.duration, policy.preload};
+		}
 	} else {
 		// Persistence and preload are trusted only after certificate-verified TLS.
 		policy.duration.reset();
 		policy.preload = false;
-		if (policy.port) sts_policy_ = policy;
+		if (!policy.port) return std::nullopt;
+		sts_policy_ = policy;
+		update = StsPolicyUpdate{
+			StsPolicyAction::Upgrade, static_cast<std::uint16_t>(*policy.port), 0, false};
 	}
 	Event event;
 	event.type = EventType::StsPolicy;
 	event.key = secure_transport_ ? "secure" : "upgrade";
 	event.value = *value;
 	events->push_back(std::move(event));
+	return update;
 }
 
 ProcessResult Engine::HandleCap(const Message& message)
@@ -1542,10 +1601,10 @@ ProcessResult Engine::HandleCap(const Message& message)
 		const bool continued = subcommand_index + 1 < message.params.size() - 1 &&
 			message.params[message.params.size() - 2] == "*";
 		if (continued) return result;
+		const auto sts = UniqueStsValue(ls_accumulator_);
 		ParseCapabilityList(ls_accumulator_, true);
 		ls_accumulator_.clear();
-		const auto sts = offered_.find("sts");
-		if (sts != offered_.end()) UpdateSts(sts->second, &result.events);
+		if (sts) result.sts_update = UpdateSts(*sts, &result.events);
 		result.outbound = RequestCapabilities(SelectCapabilities());
 		if (pending_ack_.empty()) MaybeFinishRegistration(&result.outbound);
 		return result;
@@ -1618,9 +1677,9 @@ ProcessResult Engine::HandleCap(const Message& message)
 		return result;
 	}
 	if (subcommand == "NEW") {
+		const auto sts = UniqueStsValue(list);
 		ParseCapabilityList(list, false);
-		const auto sts = offered_.find("sts");
-		if (sts != offered_.end()) UpdateSts(sts->second, &result.events);
+		if (sts) result.sts_update = UpdateSts(*sts, &result.events);
 		result.outbound = RequestCapabilities(SelectCapabilities());
 		return result;
 	}

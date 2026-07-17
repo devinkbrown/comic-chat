@@ -180,6 +180,7 @@ OBJS= \
 	"$(INTDIR)\connection_engine.obj" \
 	"$(INTDIR)\dcc_transfer_engine.obj" \
 	"$(INTDIR)\ircv3.obj" \
+	"$(INTDIR)\sts_policy_store.obj" \
 	"$(INTDIR)\sound_resolver.obj" \
 	"$(INTDIR)\transport_adapter_api_compile.obj" \
 	"$(INTDIR)\modernicons.obj" \
@@ -289,6 +290,9 @@ $(TEST_LINK32_FLAGS) /out:"$(OUTDIR)\transport_ui_bridge_test.exe" "$(INTDIR)\tr
 
 "$(INTDIR)\ircv3.obj" : ..\portable\src\net\ircv3.cpp
 	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\ircv3.obj" ..\portable\src\net\ircv3.cpp
+
+"$(INTDIR)\sts_policy_store.obj" : ..\portable\src\net\sts_policy_store.cpp
+	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\sts_policy_store.obj" ..\portable\src\net\sts_policy_store.cpp
 
 "$(INTDIR)\sound_resolver.obj" : ..\portable\src\sound.cpp
 	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\sound_resolver.obj" ..\portable\src\sound.cpp

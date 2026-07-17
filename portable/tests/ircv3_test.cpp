@@ -25,6 +25,7 @@ using comic_chat::ircv3::Message;
 using comic_chat::ircv3::ProcessResult;
 using comic_chat::ircv3::SaslConfig;
 using comic_chat::ircv3::ServerProfile;
+using comic_chat::ircv3::StsPolicyAction;
 using comic_chat::ircv3::TypingStatus;
 
 namespace {
@@ -221,6 +222,9 @@ void TestCapabilityState()
 		engine.IsOffered("draft/multiline"),
 		"multiline advertisement is retained without requesting incomplete product behavior");
 	Check(std::find(requested.begin(), requested.end(), "sts") == requested.end(), "STS observed but never requested");
+	Check(second.sts_update && second.sts_update->action == StsPolicyAction::Upgrade &&
+		second.sts_update->port == 6697,
+		"plaintext STS produces a typed pre-output secure-upgrade instruction");
 	Check(engine.CurrentStsPolicy() && engine.CurrentStsPolicy()->port == 6697, "insecure STS upgrade port retained");
 	Check(!engine.CurrentStsPolicy()->duration && !engine.CurrentStsPolicy()->preload,
 		"insecure connection cannot establish STS persistence");
@@ -244,12 +248,34 @@ void TestCapabilityState()
 		"CAP DEL cannot clear STS policy or implicit cap-notify");
 	Engine secure_sts;
 	secure_sts.BeginRegistration(config, "Alice", true);
-	secure_sts.Process(":server CAP * LS :sts=port=7000,duration=3600,preload\r\n");
+	auto secure_persist = secure_sts.Process(":server CAP * LS :sts=port=7000,duration=3600,preload\r\n");
 	Check(secure_sts.CurrentStsPolicy() && !secure_sts.CurrentStsPolicy()->port &&
 		secure_sts.CurrentStsPolicy()->duration == 3600 && secure_sts.CurrentStsPolicy()->preload,
 		"TLS-verified STS stores only persistence policy");
-	secure_sts.Process(":server CAP Alice NEW :sts=duration=0\r\n");
+	Check(secure_persist.sts_update && secure_persist.sts_update->action == StsPolicyAction::Persist &&
+		secure_persist.sts_update->duration == 3600 && secure_persist.sts_update->preload,
+		"TLS-verified STS produces a typed durable-persistence instruction");
+	auto unrelated_new = secure_sts.Process(":server CAP Alice NEW :away-notify\r\n");
+	Check(!unrelated_new.sts_update,
+		"unrelated CAP NEW does not refresh the previously advertised STS duration");
+	auto duplicate_capability = secure_sts.Process(
+		":server CAP Alice NEW :sts=duration=5 sts=duration=0\r\n");
+	Check(!duplicate_capability.sts_update && secure_sts.CurrentStsPolicy() &&
+		secure_sts.CurrentStsPolicy()->duration == 3600,
+		"duplicate STS capability tokens in CAP NEW cannot select or remove a durable policy");
+	auto secure_remove = secure_sts.Process(":server CAP Alice NEW :sts=duration=0\r\n");
 	Check(!secure_sts.CurrentStsPolicy(), "secure duration zero clears STS persistence");
+	Check(secure_remove.sts_update && secure_remove.sts_update->action == StsPolicyAction::Remove,
+		"secure duration zero produces a typed durable-removal instruction");
+	auto duplicate = secure_sts.Process(":server CAP Alice NEW :sts=duration=5,duration=6\r\n");
+	Check(!duplicate.sts_update && !secure_sts.CurrentStsPolicy(),
+		"duplicate normative STS keys invalidate the advertised policy");
+	Engine duplicate_ls;
+	duplicate_ls.BeginRegistration(config, "Alice", true);
+	auto ambiguous_ls = duplicate_ls.Process(
+		":server CAP * LS :sts=duration=3600 sts=duration=0\r\n");
+	Check(!ambiguous_ls.sts_update && !duplicate_ls.CurrentStsPolicy(),
+		"duplicate STS capability tokens in completed CAP LS cannot select a durable policy");
 
 	Engine expanded;
 	expanded.BeginRegistration(config, "Alice", true);

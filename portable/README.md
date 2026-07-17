@@ -121,7 +121,11 @@ The connection path provides:
 
 Plaintext is never selected implicitly: callers must set
 `Security::plaintext`. STS parsing and persistence belong to the IRCv3 policy
-engine, which emits the upgrade policy before transport options are created.
+engine. The shared `StsPolicyStore` provides bounded atomic persistence and a
+pre-start `ConnectionOptions` plan; frontends must supply a native private
+configuration path and apply that plan before creating a transport generation.
+Production frontend wiring is still incomplete, so this substrate is not yet a
+claim of end-to-end persistent STS.
 IRCv3 also owns CAP 302, SASL EXTERNAL/PLAIN/SCRAM-SHA-256, labels, batches,
 multiline, history recovery, read markers, metadata, redaction, and safe
 reconnect commands.

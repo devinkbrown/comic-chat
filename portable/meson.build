@@ -267,6 +267,7 @@ core = static_library(
     'src/net/connection_engine.cpp',
     'src/net/dcc_transfer_engine.cpp',
     'src/net/ircv3.cpp',
+    'src/net/sts_policy_store.cpp',
     'src/scheduler.cpp',
     'src/text.cpp',
     'src/assets.cpp',
@@ -423,6 +424,13 @@ if get_option('tests')
     cpp_args: ['-DCOMICCHAT_IRC_FIXTURE_DIR="' + meson.project_source_root() + '/tests/fixtures/irc"'],
   )
   test('comicchat-ircv3', ircv3_tests, timeout: 30)
+
+  sts_policy_tests = executable(
+    'comicchat-sts-policy-tests',
+    'tests/sts_policy_store_test.cpp',
+    dependencies: core_dep,
+  )
+  test('comicchat-sts-policy', sts_policy_tests, timeout: 30)
 
   transport_tests = executable(
     'comicchat-transport-tests',
