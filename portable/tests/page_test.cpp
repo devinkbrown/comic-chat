@@ -330,6 +330,78 @@ TEST_CASE("a talk-to partner is pulled in as a bodiless-balloon avatar") {
 }
 
 // ===========================================================================
+// LayoutAvatars body scaling (Item 2.2, panel.cpp:740,759-819): placed bodies
+// normalize onto a shared maxBodyHeight instead of rendering at their raw
+// pre-fitted dimensions.
+// ===========================================================================
+TEST_CASE("a lone body normalizes to maxBodyHeight, not its raw body_height") {
+    // Disable the zoom-in branch so this isolates the maxBodyHeight
+    // normalization step (panel.cpp:759-775) from the zoom step (panel.cpp:
+    // 791-806) that would otherwise also scale a lone (non-overflowing) body.
+    auto cfg = config();
+    cfg.zoom_avatars = false;
+
+    Page page{cfg, monospace_measure(100)};
+    page.add_line(say_line(1, "hi"));  // panel 0: a single 400x800 body.
+
+    const auto& panel = page.panels().front();
+    REQUIRE(panel.bodies.size() == 1);
+    const auto& body = panel.bodies.front();
+
+    // maxBodyHeight = (int)(m_unitHeight / 1.9) = (int)(2300 / 1.9) = 1210
+    // (panel.cpp:740). A lone body's normHeight defaults to its own
+    // body_height, so maxNorm == normHeight and the body normalizes to
+    // exactly maxBodyHeight, not its raw 800.
+    constexpr std::int32_t expected_height = 1210;
+    CHECK(body.box.top - body.box.bottom == expected_height);
+    CHECK(body.box.bottom == -cfg.unit_height);  // SetBBox floor (panel.cpp:816).
+
+    // width scales by the same ratio: scaleRatio = 1210/800 = 1.5125,
+    // ROUND(400 * 1.5125) = 605 (panel.cpp:771).
+    constexpr std::int32_t expected_width = 605;
+    CHECK(body.box.right - body.box.left == expected_width);
+}
+
+// The zoom-in branch (panel.cpp:791-806) fills unused panel width once bodies
+// no longer overflow it, capped by the "don't cut at neck" head factor.
+TEST_CASE("a lone narrow body zooms in to fill unused panel width") {
+    Page page{config(), monospace_measure(100)};  // zoom_avatars defaults true.
+    page.add_line(say_line(1, "hi"));
+
+    const auto& body = page.panels().front().bodies.front();
+    const auto height = body.box.top - body.box.bottom;
+    const auto width = body.box.right - body.box.left;
+
+    // Normalized-only geometry (see the disabled-zoom case above) would be
+    // 1210x605; zooming a lone narrow body up to fill the 2300-wide panel
+    // must make it taller and wider than that.
+    CHECK(height > 1210);
+    CHECK(width > 605);
+    CHECK(body.box.bottom == -config().unit_height);  // floor still pinned.
+}
+
+// Multiple bodies whose normalized+zoomed widths sum past the panel width
+// still place left-to-right with a (possibly zero, never negative) margin.
+TEST_CASE("scaled multi-body placement keeps left-to-right order and floor") {
+    Page page{config(), monospace_measure(100)};
+    page.add_line(say_line(1, "aa"));
+    page.add_line(say_line(2, "bb"));
+    page.add_line(say_line(3, "cc"));
+    page.add_line(say_line(4, "dd"));
+
+    const auto& tail = page.panels().back();
+    REQUIRE(tail.bodies.size() >= 2);
+    for (const auto& body : tail.bodies) {
+        CHECK(body.box.bottom == -config().unit_height);
+        CHECK(body.box.top > body.box.bottom);
+        CHECK(body.box.right > body.box.left);
+    }
+    for (std::size_t i = 1; i < tail.bodies.size(); ++i) {
+        CHECK(tail.bodies[i].box.left > tail.bodies[i - 1].box.left);
+    }
+}
+
+// ===========================================================================
 // PRNG threading (the 2.1 MEDIUM): the panel PRNG must be advanced by the
 // ShiftLines per-line draws after each balloon, in Microsoft rand() order.
 // ===========================================================================

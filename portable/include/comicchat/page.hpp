@@ -33,8 +33,15 @@
 //
 // HONEST LIMITS (see page.cpp for the anchored detail):
 //   * Body dimensions (width/height/face_fraction) are consumed pre-fitted from
-//     the caller's avatar-selection; the GetDimInfo art-scaling/zoom of
-//     LayoutAvatars (panel.cpp:759-808) is Item 2.2 and is NOT re-derived here.
+//     the caller's avatar-selection; LayoutAvatars' maxBodyHeight normalization,
+//     shrink-to-fit, and zoom-in (panel.cpp:740,759-819, GetDimInfo art-scaling)
+//     ARE re-derived (Item 2.2, see scale_avatar_bodies() in page.cpp). The one
+//     remaining gap is headHeight: the portable pipeline carries no measured
+//     per-avatar head-pixel metric, so PageAvatar::head_height, when left unset,
+//     falls back to a documented fraction of body_height (page.cpp) instead of a
+//     real one. AdjustArtToCoord (panel.cpp:790,808), the source's raster-blit
+//     coordinate remap, is not needed here because the portable renderer scales
+//     the body bitmap directly into the placed box.
 //   * The portable renderer pre-wraps text to a fixed width; the source re-wraps
 //     to the chosen goalWidth inside SetBBox, so the ShiftLines draw COUNT tracks
 //     the portable line count, not the source goalWidth re-wrap.
@@ -63,6 +70,18 @@ struct PageAvatar final {
     std::uint32_t avatar_id{};
     std::int32_t body_width{page_default_body_width};    // fitted body width, panel twips
     std::int32_t body_height{page_default_body_height};  // fitted body height, panel twips
+    // GetDimInfo's normHeight (panel.cpp:761): the pose-relative height
+    // LayoutAvatars compares across the panel's placed bodies to pick the common
+    // scale (panel.cpp:763,768). 0 ("unset") falls back to body_height, i.e. a
+    // single standing pose normalizes to its own full height.
+    std::int32_t norm_height{0};
+    // GetDimInfo's headHeight (panel.cpp:761): consulted only to cap the zoom-in
+    // factor so a zoomed body's head isn't cropped ("don't cut at neck",
+    // panel.cpp:797). HONEST LIMIT: the portable avatar pipeline has no measured
+    // per-avatar head-pixel metric, so 0 ("unset") falls back to a documented
+    // fraction of body_height (head_height_body_fraction, page.cpp) rather than a
+    // real one.
+    std::int32_t head_height{0};
     double face_fraction{0.5};  // faceX / width at the unflipped (right) pose
     std::uint32_t color{0x6c8ebfU};
     std::vector<std::uint32_t> talk_tos{};
@@ -91,6 +110,12 @@ struct PageConfig final {
     // size the cloud was fitted to (must match the FontMetrics/TextMeasure size).
     double text_size{};
     std::uint32_t seed{1U};
+    // bZoomIn (panel.cpp:791): zoom placed bodies up to fill unused panel width
+    // once they no longer overflow it. A normal chat panel is never an
+    // "establishing shot" (Establishing() is always false for the portable
+    // conversation model, panel.cpp:791), so this is the sole gate on the zoom
+    // branch; the shrink-to-fit branch (panel.cpp:780) always runs regardless.
+    bool zoom_avatars{true};
 };
 
 // Per-panel provenance for tests / callers: the panel's m_seed, the element

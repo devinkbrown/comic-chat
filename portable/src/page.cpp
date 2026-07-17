@@ -177,6 +177,147 @@ void adjust_route_rgns(std::vector<PlacedBalloon>& placed, int this_arrow_x, int
     return layout_balloon(fit);
 }
 
+// vector2d.h:46 ROUND — round-half-away-from-zero. Duplicated locally from
+// layout.cpp's (internal-linkage) helper of the same name to avoid a
+// cross-translation-unit dependency for one three-line function.
+[[nodiscard]] auto round_half(const double value) -> int {
+    return value > 0.0 ? static_cast<int>(value + 0.5) : static_cast<int>(value - 0.5);
+}
+
+// HONEST LIMIT (page.hpp): the portable avatar pipeline carries no measured
+// per-avatar head-pixel metric, so an unset PageAvatar::head_height falls back
+// to this fraction of body_height. 0.32 approximates a standing figure's
+// head:body ratio closely enough to keep the "don't cut at neck" zoom cap
+// (panel.cpp:797) meaningfully conservative rather than a no-op.
+inline constexpr double head_height_body_fraction = 0.32;
+
+// GetDimInfo normHeight fallback (panel.cpp:761): unset (0) means this
+// avatar's single composited pose normalizes to its own full body height.
+[[nodiscard]] auto effective_norm_height(const PageAvatar& sel) -> std::int32_t {
+    return sel.norm_height > 0 ? sel.norm_height : sel.body_height;
+}
+
+// GetDimInfo headHeight fallback (panel.cpp:761); see head_height_body_fraction.
+[[nodiscard]] auto effective_head_height(const PageAvatar& sel) -> std::int32_t {
+    if (sel.head_height > 0) {
+        return sel.head_height;
+    }
+    return round_half(static_cast<double>(sel.body_height) * head_height_body_fraction);
+}
+
+// One placed body's final scaled geometry (LayoutAvatars panel.cpp:759-806).
+struct ScaledBody final {
+    std::int32_t width{};
+    std::int32_t height{};
+};
+
+// CUnitPanel::LayoutAvatars body scaling (panel.cpp:740,759-819): normalize
+// every placed body onto a common maxBodyHeight, then either shrink (combined
+// width overflows the panel) or zoom in (config.zoom_avatars, and the source's
+// Establishing() is always false for a chat panel) to fill unused panel width,
+// capped so a zoomed head is never cropped.
+//
+// Deliberate divergence from the source: after the zoom branch (panel.cpp:801-
+// 806) the literal MS `top[i]` is stale (computed from the pre-zoom height) and
+// SetBBox (panel.cpp:816) uses it as-is, sinking the zoomed box's bottom below
+// the panel floor — compensated in the source by AdjustArtToCoord's separate
+// raster-blit remap (panel.cpp:790,808), which this port does not carry (see
+// the HONEST LIMITS in page.hpp). The portable renderer scales the body bitmap
+// straight into the returned box, so the box bottom is always recomputed from
+// the FINAL height and pinned to -unit_height, keeping every body's feet on the
+// panel floor regardless of scaling.
+[[nodiscard]] auto scale_avatar_bodies(const std::vector<PlacedBody>& order_bodies,
+                                       const std::map<std::uint32_t, PageAvatar>& registry,
+                                       const PageConfig& config) -> std::vector<ScaledBody> {
+    const std::size_t count = order_bodies.size();
+    std::vector<ScaledBody> scaled(count);
+    if (count == 0) {
+        return scaled;
+    }
+
+    // maxBodyHeight = (int)(m_unitHeight / 1.9) (panel.cpp:740): a C-style
+    // truncating cast (toward zero), not a round.
+    const auto max_body_height =
+        static_cast<std::int32_t>(static_cast<double>(config.unit_height) / 1.9);
+
+    std::vector<std::int32_t> raw_width(count);
+    std::vector<std::int32_t> raw_height(count);
+    std::vector<std::int32_t> norm_height(count);
+    std::vector<std::int32_t> head_height(count);
+    std::int32_t max_norm = 0;
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto& sel = registry.at(order_bodies[i].avatar_id);
+        raw_width[i] = sel.body_width;
+        raw_height[i] = sel.body_height;
+        norm_height[i] = effective_norm_height(sel);
+        head_height[i] = effective_head_height(sel);
+        max_norm = std::max(max_norm, norm_height[i]);
+    }
+    // maxNorm <= 0 only if every placed body has a zero/negative body_height
+    // (real avatar art never is); guard the divide the source has no need to.
+    if (max_norm <= 0) {
+        for (std::size_t i = 0; i < count; ++i) {
+            scaled[i] = ScaledBody{raw_width[i], raw_height[i]};
+        }
+        return scaled;
+    }
+
+    std::vector<std::int32_t> width(count);
+    std::vector<std::int32_t> height(count);
+    std::int32_t sum_width = 0;
+    for (std::size_t i = 0; i < count; ++i) {
+        // panel.cpp:768-774: scale every body so its normHeight maps onto the
+        // shared maxBodyHeight, carrying width and headHeight along by the same
+        // ratio.
+        const auto new_height = round_half(static_cast<double>(max_body_height) *
+                                           (static_cast<double>(norm_height[i]) /
+                                            static_cast<double>(max_norm)));
+        const double scale_ratio = raw_height[i] != 0
+                                       ? static_cast<double>(new_height) / static_cast<double>(raw_height[i])
+                                       : 0.0;
+        height[i] = new_height;
+        width[i] = round_half(scale_ratio * static_cast<double>(raw_width[i]));
+        head_height[i] = round_half(scale_ratio * static_cast<double>(head_height[i]));
+        sum_width += width[i];
+    }
+
+    // sumWidth = bdyWidth + (bdyCount+1)*minMargin (panel.cpp:777); minMargin is
+    // always 0 in the portable driver, so sumWidth == bdyWidth already.
+    if (sum_width > 0 && sum_width > config.unit_width) {
+        // panel.cpp:780-789: shrink every body to fit the panel width.
+        const double reduction = static_cast<double>(config.unit_width) / static_cast<double>(sum_width);
+        for (std::size_t i = 0; i < count; ++i) {
+            height[i] = round_half(static_cast<double>(height[i]) * reduction);
+            width[i] = round_half(static_cast<double>(width[i]) * reduction);
+        }
+    } else if (sum_width > 0 && config.zoom_avatars) {
+        // panel.cpp:791-806: zoom every body up to fill unused panel width,
+        // capped so the tallest head isn't cropped.
+        double zoom_factor = static_cast<double>(config.unit_width) / static_cast<double>(sum_width);
+        std::int32_t max_head_height = 0;
+        for (std::size_t i = 0; i < count; ++i) {
+            max_head_height = std::max(max_head_height, head_height[i]);
+        }
+        if (max_head_height > 0) {
+            const double head_factor =
+                static_cast<double>(max_body_height) / (static_cast<double>(max_head_height) * 1.2);
+            zoom_factor = std::min(zoom_factor, head_factor);
+        }
+        if (zoom_factor < 1.1) {
+            zoom_factor = 1.0;  // panel.cpp:799: not worth a tiny zoom.
+        }
+        for (std::size_t i = 0; i < count; ++i) {
+            height[i] = round_half(static_cast<double>(height[i]) * zoom_factor);
+            width[i] = round_half(static_cast<double>(width[i]) * zoom_factor);
+        }
+    }
+
+    for (std::size_t i = 0; i < count; ++i) {
+        scaled[i] = ScaledBody{width[i], height[i]};
+    }
+    return scaled;
+}
+
 // Distinct speaker ids in first-appearance (element) order. Within a panel each
 // avatar speaks at most once (AvatarInPanel forces a new panel), so this is the
 // balloon/element order LayoutBalloons iterates.
@@ -276,14 +417,17 @@ auto Page::layout_panel(PanelState& draft) -> Page::LayoutOutcome {
     const auto order = order_conversation(speakers, avatars, draft.historesis_in);
     draft.historesis_out = order.historesis;
 
-    // Body slots in placement order (panel.cpp:759-775 collect widths).
+    // Body slots in placement order, fed the SCALED widths (panel.cpp:759-819:
+    // collect raw dims, normalize onto maxBodyHeight, then shrink or zoom).
+    const auto scaled_bodies = scale_avatar_bodies(order.bodies, registry_, config_);
     std::vector<BodySlot> slots;
     slots.reserve(order.bodies.size());
     int body_width_sum = 0;
-    for (const auto& placed : order.bodies) {
+    for (std::size_t i = 0; i < order.bodies.size(); ++i) {
+        const auto& placed = order.bodies[i];
         const auto& sel = registry_.at(placed.avatar_id);
-        slots.push_back(BodySlot{placed.avatar_id, sel.body_width, sel.face_fraction, placed.flip});
-        body_width_sum += sel.body_width;
+        slots.push_back(BodySlot{placed.avatar_id, scaled_bodies[i].width, sel.face_fraction, placed.flip});
+        body_width_sum += scaled_bodies[i].width;
     }
 
     // margin = (m_unitWidth - bdyWidth) / (bdyCount+1) (panel.cpp:810).
@@ -309,9 +453,12 @@ auto Page::layout_panel(PanelState& draft) -> Page::LayoutOutcome {
         const auto& placed = order.bodies[i];
         const auto& anchor = anchors[i];
         const auto& sel = registry_.at(placed.avatar_id);
+        const auto& dims = scaled_bodies[i];
         // SetBBox (panel.cpp:816): Bottom = panel floor, Top = floor + height.
-        Rect box{anchor.left, -config_.unit_height, anchor.left + sel.body_width,
-                 -config_.unit_height + sel.body_height};
+        // (Bottom is always the floor here, not the source's literal stale
+        // top[i]-height[i] after a zoom — see scale_avatar_bodies' doc comment.)
+        Rect box{anchor.left, -config_.unit_height, anchor.left + dims.width,
+                 -config_.unit_height + dims.height};
         placements[placed.avatar_id] = BodyPlacement{anchor.arrow_x, box, placed.flip, sel.color};
         draft.info.body_order.push_back(placed.avatar_id);
 
