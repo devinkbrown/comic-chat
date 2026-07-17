@@ -326,6 +326,18 @@ TEST_CASE("layout_balloon docks the cloud and points its tail at the speaker's a
     const auto thought = comicchat::layout_balloon(think);
     CHECK_FALSE(thought.has_tail);
     CHECK_FALSE(thought.bubbles.empty());
+    // Regression (cpp-reviewer HIGH): the think-bubble entry Y is the TEXT bbox
+    // bottom (bbox.top - nLines*lineHeight - baseAdd), not the cloud route-region
+    // bottom -- they differ by the AddWavies scallops, which changes bubble count
+    // and spacing. Reconstruct the expected entry and confirm the trail derives
+    // from it, and that the two bottoms genuinely differ so the fix matters.
+    const int think_text_bottom =
+        thought.bbox.top - 2 * think.font.line_height - think.font.base_add;
+    CHECK(think_text_bottom != thought.route_region.bottom);
+    const comicchat::BalloonPoint expect_entry{
+        (thought.route_region.left + thought.route_region.right) / 2, think_text_bottom};
+    const comicchat::BalloonPoint expect_tail{think.arrow_x, think.speaker_top + 200};
+    CHECK(thought.bubbles == comicchat::think_bubbles(expect_entry, expect_tail));
 
     comicchat::BalloonRequest box = request;
     box.kind = {comicchat::BalloonMode::action, false};

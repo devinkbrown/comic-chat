@@ -510,8 +510,15 @@ auto layout_balloon(const BalloonRequest& request) -> Balloon {
         out.route_region.right, out.route_region.bottom, last_left, last_width});
 
     if (request.kind.mode == BalloonMode::think) {
+        // CBWoodringThink::Draw (balloon.cpp:1970): the bubble entry X centers on
+        // the cloud route region, but the entry Y is the TEXT bbox bottom
+        // (fInfo.m_bbox.Bottom = -(nLines*lineHeight + baseAdd)), not the cloud
+        // bbox bottom -- the cloud bottom sits lower by the AddWavies scallops and
+        // the finalY inset, which would change the bubble count and spacing.
+        const int text_bbox_bottom =
+            bbox_top - n_lines * request.font.line_height - request.font.base_add;
         const BalloonPoint entry{(out.route_region.left + out.route_region.right) / 2,
-                                 out.route_region.bottom};
+                                 text_bbox_bottom};
         const BalloonPoint tail{request.arrow_x, request.speaker_top + 200};
         out.bubbles = think_bubbles(entry, tail);
         out.has_tail = false;  // think replaces the tail with the bubble trail
