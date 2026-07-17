@@ -1,11 +1,15 @@
 #include "../transportadapter.h"
 
 #include <atomic>
+#include <array>
 #include <cassert>
 #include <chrono>
 #include <cstddef>
 #include <memory>
+#include <optional>
+#include <span>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -153,6 +157,167 @@ void TestBoundedOutboundFacade()
 	assert(rejected_line.error() == AdapterError::invalid_line);
 }
 
+void TestCheckedLegacyOutboundBuilder()
+{
+	using comic_chat::v1::transport::BuildLegacyOutbound;
+	using comic_chat::v1::transport::maximum_legacy_wire_bytes;
+
+	const std::array<std::string_view, 1> target{"#ink"};
+	constexpr std::size_t privmsg_overhead = std::string_view{"PRIVMSG #ink :\r\n"}.size();
+	std::string exact_payload(maximum_legacy_wire_bytes - privmsg_overhead, 'x');
+	auto exact = BuildLegacyOutbound("PRIVMSG", target, exact_payload);
+	assert(exact.has_value());
+	assert(exact->size() == maximum_legacy_wire_bytes);
+	assert(exact->starts_with("PRIVMSG #ink :"));
+	assert(exact->ends_with("\r\n"));
+	comic_chat::ircv3::Engine engine;
+	assert(!engine.BeginRegistration({}, "Tiki", true).empty());
+	auto exact_send = comic_chat::v1::transport::PrepareOutbound(
+		engine, *exact, 17, 1);
+	assert(exact_send.has_value());
+	assert(exact_send->generation == 17);
+	assert(exact_send->id == 1);
+
+	std::size_t posts{};
+	std::string posted;
+	const auto post_if_valid = [&](auto&& built) {
+		if (!built) return false;
+		++posts;
+		posted = std::move(*built);
+		return true;
+	};
+	assert(post_if_valid(BuildLegacyOutbound("PRIVMSG", target, exact_payload)));
+	assert(posts == 1);
+	assert(posted.size() == maximum_legacy_wire_bytes);
+
+	exact_payload.push_back('x');
+	auto too_long = BuildLegacyOutbound("PRIVMSG", target, exact_payload);
+	assert(!too_long.has_value());
+	assert(too_long.error() == AdapterError::line_too_long);
+	assert(!post_if_valid(BuildLegacyOutbound("PRIVMSG", target, exact_payload)));
+	assert(posts == 1);
+
+	const std::string eight_kibibytes(8U * 1024U, 'm');
+	auto huge = BuildLegacyOutbound("PRIVMSG", target, eight_kibibytes);
+	assert(!huge.has_value());
+	assert(huge.error() == AdapterError::line_too_long);
+
+	std::string profile = "# HeresInfo: ";
+	profile.append(400, 'p');
+	auto profile_line = BuildLegacyOutbound("PRIVMSG", target, profile);
+	assert(profile_line.has_value());
+	assert(profile_line->ends_with("\r\n"));
+	const std::string profile_body(400, 'p');
+	const std::array<std::string_view, 2> profile_parts{"# HeresInfo: ", profile_body};
+	auto fragmented_profile = BuildLegacyOutbound(
+		"PRIVMSG", target, std::span<const std::string_view>{profile_parts});
+	assert(fragmented_profile == profile_line);
+	profile.append(8U * 1024U, 'p');
+	auto oversized_profile = BuildLegacyOutbound("PRIVMSG", target, profile);
+	assert(!oversized_profile.has_value());
+	assert(oversized_profile.error() == AdapterError::line_too_long);
+	const std::array<std::string_view, 2> oversized_profile_parts{
+		"# HeresInfo: ", eight_kibibytes};
+	assert(BuildLegacyOutbound("PRIVMSG", target,
+		std::span<const std::string_view>{oversized_profile_parts}).error() ==
+		AdapterError::line_too_long);
+
+	std::string annotation{"(#"};
+	annotation.push_back('\x01');
+	annotation.push_back('\x02');
+	annotation.push_back(static_cast<char>(0x80));
+	annotation += ") hello";
+	auto annotated = BuildLegacyOutbound("PRIVMSG", target, annotation);
+	assert(annotated.has_value());
+	assert(annotated->find(annotation) != std::string::npos);
+	const std::array<std::string_view, 3> annotation_parts{
+		std::string_view{annotation}.substr(0, 2),
+		std::string_view{annotation}.substr(2, 3),
+		std::string_view{annotation}.substr(5)};
+	auto fragmented_annotation = BuildLegacyOutbound(
+		"PRIVMSG", target, std::span<const std::string_view>{annotation_parts});
+	assert(fragmented_annotation.has_value());
+	assert(fragmented_annotation == annotated);
+	const std::array<std::string_view, 2> injected_annotation_parts{
+		std::string_view{annotation}, "\r\nOPER root"};
+	assert(BuildLegacyOutbound("PRIVMSG", target,
+		std::span<const std::string_view>{injected_annotation_parts}).error() ==
+		AdapterError::invalid_line);
+
+	const std::array<std::string_view, 1> injected_target{"#ink\rJOIN #other"};
+	assert(BuildLegacyOutbound("PRIVMSG", injected_target, "hello").error() ==
+		AdapterError::invalid_line);
+	assert(BuildLegacyOutbound("PRIVMSG\nOPER", target, "hello").error() ==
+		AdapterError::invalid_line);
+	assert(BuildLegacyOutbound("PRIVMSG", target, "hello\r\nOPER root").error() ==
+		AdapterError::invalid_line);
+	constexpr char nul_target_bytes[] = {'#', 'i', 'n', 'k', '\0', 'x'};
+	const std::array<std::string_view, 1> nul_target{
+		std::string_view{nul_target_bytes, sizeof(nul_target_bytes)}};
+	assert(BuildLegacyOutbound("PRIVMSG", nul_target, "hello").error() ==
+		AdapterError::invalid_line);
+	constexpr char nul_payload_bytes[] = {'h', 'i', '\0', 'x'};
+	assert(BuildLegacyOutbound("PRIVMSG", target,
+		std::string_view{nul_payload_bytes, sizeof(nul_payload_bytes)}).error() ==
+		AdapterError::invalid_line);
+
+	const std::array<std::string_view, 2> mode_params{"#ink", "+o"};
+	auto mode = BuildLegacyOutbound("MODE", mode_params, std::nullopt);
+	assert(mode.has_value());
+	assert(*mode == "MODE #ink +o\r\n");
+
+	assert(BuildLegacyOutbound("", {}, std::nullopt).error() ==
+		AdapterError::invalid_line);
+	const std::string oversized_command(maximum_legacy_wire_bytes - 1U, 'A');
+	assert(BuildLegacyOutbound(oversized_command, {}, std::nullopt).error() ==
+		AdapterError::line_too_long);
+	const std::array<std::string_view, 1> empty_parameter{""};
+	assert(BuildLegacyOutbound("LIST", empty_parameter, std::nullopt).error() ==
+		AdapterError::invalid_line);
+	const std::array<std::string_view, 1> oversized_parameter{eight_kibibytes};
+	assert(BuildLegacyOutbound("LIST", oversized_parameter, std::nullopt).error() ==
+		AdapterError::line_too_long);
+	const std::string maximum_command(maximum_legacy_wire_bytes - 2U, 'A');
+	assert(BuildLegacyOutbound(maximum_command, {}, std::string_view{}).error() ==
+		AdapterError::line_too_long);
+}
+
+void TestLegacyOutboundMicrosoftWireGrammar()
+{
+	using comic_chat::v1::transport::BuildLegacyOutbound;
+	const std::array<std::string_view, 1> channel{"#ink"};
+	assert(BuildLegacyOutbound("PART", channel, std::nullopt) ==
+		std::string{"PART #ink\r\n"});
+	assert(BuildLegacyOutbound("JOIN", channel, std::nullopt) ==
+		std::string{"JOIN #ink\r\n"});
+	const std::array<std::string_view, 1> nickname{"Tiki"};
+	assert(BuildLegacyOutbound("NICK", nickname, std::nullopt) ==
+		std::string{"NICK Tiki\r\n"});
+	assert(BuildLegacyOutbound("PONG", nickname, std::nullopt) ==
+		std::string{"PONG Tiki\r\n"});
+
+	const std::array<std::string_view, 1> target{"Alice"};
+	const std::array<std::string_view, 4> avatar{
+		"#", " Appears as ", "Tiki", "."};
+	assert(BuildLegacyOutbound("PRIVMSG", target,
+		std::span<const std::string_view>{avatar}) ==
+		std::string{"PRIVMSG Alice :# Appears as Tiki.\r\n"});
+	const std::array<std::string_view, 3> profile{
+		"#", " HeresInfo: ", "likes ink"};
+	assert(BuildLegacyOutbound("PRIVMSG", target,
+		std::span<const std::string_view>{profile}) ==
+		std::string{"PRIVMSG Alice :# HeresInfo: likes ink\r\n"});
+
+	const std::array<std::string_view, 2> kick_parameters{"#ink", "Alice"};
+	assert(BuildLegacyOutbound("KICK", kick_parameters, "reason") ==
+		std::string{"KICK #ink Alice :reason\r\n"});
+	assert(BuildLegacyOutbound("TOPIC", channel, "new topic") ==
+		std::string{"TOPIC #ink :new topic\r\n"});
+	const std::array<std::string_view, 3> mode_parameters{"#ink", "+o", "Alice"};
+	assert(BuildLegacyOutbound("MODE", mode_parameters, std::nullopt) ==
+		std::string{"MODE #ink +o Alice\r\n"});
+}
+
 void TestBoundedLegacyInboundFacade()
 {
 	comic_chat::ircv3::Message message;
@@ -222,6 +387,8 @@ int main()
 	TestGenerationAndOrdering();
 	TestWakeupCoalescingAndCookieIsolation();
 	TestBoundedOutboundFacade();
+	TestCheckedLegacyOutboundBuilder();
+	TestLegacyOutboundMicrosoftWireGrammar();
 	TestBoundedLegacyInboundFacade();
 	return 0;
 }

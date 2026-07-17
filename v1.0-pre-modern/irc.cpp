@@ -27,9 +27,13 @@
 #include "admindlg.h"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <span>
+#include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -58,7 +62,6 @@ void ShowSay( CUserInfo *pui, const char *psz, BOOL cooked, UCHAR mode = SM_SAY)
 
 static CIrcSocket serverConn;
 CMapStringToPtr mapNickToPtr(10);
-static char outBuff[513];			// enough?
 static int	memberCount = 0;
 CPtrArray whisperees;
 
@@ -67,6 +70,53 @@ static BOOL bSendComicsData = TRUE;
 BOOL bCXPrompt = TRUE;
 static int iConnected = CX_DISCONNECTED;
 static CString strCurrentChannel;
+
+namespace {
+
+[[nodiscard]] std::string_view CStringBytes(const CString& value) noexcept
+{
+	return {static_cast<LPCSTR>(value), static_cast<std::size_t>(value.GetLength())};
+}
+
+[[nodiscard]] bool SendBuiltLegacyOutbound(
+	CIrcSocket& socket,
+	std::string_view command,
+	std::expected<std::string, comic_chat::v1::transport::AdapterError> wire)
+{
+	(void)command; // TRACE is compiled out of release MFC builds.
+	if (!wire) {
+		TRACE("Rejected legacy IRC output for command %.*s (adapter error %u).\n",
+			static_cast<int>(command.size()), command.data(),
+			static_cast<unsigned int>(wire.error()));
+		return false;
+	}
+	const auto byte_count = wire->size();
+	return socket.Send(wire->data(), byte_count) == static_cast<int>(byte_count);
+}
+
+[[nodiscard]] bool SendLegacyOutbound(
+	CIrcSocket& socket,
+	std::string_view command,
+	std::span<const std::string_view> middle_parameters,
+	std::optional<std::string_view> trailing = std::nullopt)
+{
+	return SendBuiltLegacyOutbound(socket, command,
+		comic_chat::v1::transport::BuildLegacyOutbound(
+			command, middle_parameters, trailing));
+}
+
+[[nodiscard]] bool SendLegacyOutbound(
+	CIrcSocket& socket,
+	std::string_view command,
+	std::span<const std::string_view> middle_parameters,
+	std::span<const std::string_view> trailing_fragments)
+{
+	return SendBuiltLegacyOutbound(socket, command,
+		comic_chat::v1::transport::BuildLegacyOutbound(
+			command, middle_parameters, trailing_fragments));
+}
+
+} // namespace
 
 BOOL ToggleSendComicsData() {
 	bSendComicsData = ! bSendComicsData;
@@ -499,8 +549,8 @@ void CIUserPart(const char *nickname) {			// assume for now that parts represent
 
 void ChatPartChannel(BOOL hardDisconnect, BOOL removeMembers) {
 	if (strCurrentChannel != "") {
-		sprintf(outBuff, "PART %s\r\n", strCurrentChannel);  // exit gracefully
-		serverConn.Send(outBuff, strlen(outBuff));
+		const std::array<std::string_view, 1> parameters{CStringBytes(strCurrentChannel)};
+		(void)SendLegacyOutbound(serverConn, "PART", parameters);
 		strCurrentChannel = "";
 	}
 
@@ -528,9 +578,11 @@ void ChatPartChannel(BOOL hardDisconnect, BOOL removeMembers) {
 void ChatAnnounceNewAvatar(const char *avName, const char *addressee) {
 	if (bSendComicsData) {
 		if (!addressee) addressee = GetMyChannel();
-		sprintf(outBuff, "PRIVMSG %s :#%s%s.\r\n",
-				addressee, APPEARSPREFIX, avName);
-		serverConn.Send(outBuff, strlen(outBuff));
+		const std::array<std::string_view, 1> parameters{
+			addressee ? std::string_view{addressee} : std::string_view{}};
+		const std::array<std::string_view, 4> trailing{
+			"#", APPEARSPREFIX, avName ? std::string_view{avName} : std::string_view{}, "."};
+		(void)SendLegacyOutbound(serverConn, "PRIVMSG", parameters, trailing);
 	}
 }
 
@@ -554,9 +606,10 @@ void ProcessComment(CUserInfo *pui, char *mesg, char *rest) {					// BETA1 - add
 
 		TRACE("You've been probed!\n");
 		GetProfileString(profStr);
-		sprintf(outBuff, "PRIVMSG %s :#%s%s\r\n", pui->GetName(), HERESINFOPREFIX,
-			    profStr);
-		serverConn.Send(outBuff, strlen(outBuff));
+		const std::array<std::string_view, 1> parameters{pui->GetName()};
+		const std::array<std::string_view, 3> trailing{
+			"#", HERESINFOPREFIX, CStringBytes(profStr)};
+		(void)SendLegacyOutbound(serverConn, "PRIVMSG", parameters, trailing);
 		return;
 	}
 	match = !strncmp(mesg, HERESINFOPREFIX, strlen(HERESINFOPREFIX));
@@ -744,13 +797,17 @@ void ProcessWhoIsChannels(char *args) {
 	// now do a list only on these channels...
 	int upper = channels.GetUpperBound();
 	if (upper < 0) return;				// not a member of a single channel
-	CString command = "LIST ";
-	for (int i = 0; i <= upper; i++) {
-		command += channels[i];
-		if (i != upper) command += ",";
+	try {
+		std::string channel_list;
+		for (int i = 0; i <= upper; i++) {
+			if (i != 0) channel_list.push_back(',');
+			channel_list.append(CStringBytes(channels[i]));
+		}
+		const std::array<std::string_view, 1> parameters{channel_list};
+		(void)SendLegacyOutbound(serverConn, "LIST", parameters);
+	} catch (...) {
+		TRACE0("Could not allocate the legacy LIST request.\n");
 	}
-	command += "\r\n";
-	serverConn.Send(command, command.GetLength());
 }
 
 void PreMemberNameChange(CUserInfo *pui, LV_ITEM &item) {
@@ -845,9 +902,8 @@ void CIrcSocket::ProcessMessage(char *line) {
 	char *rest = ParseMessage(line, &prefix, &command);
 
 	if (!strcmp(command, "PING")) {  // ignore sender for now
-		sprintf(outBuff, "PONG %s\r\n", "djk2");
-		TRACE("%s", outBuff);
-		Send(outBuff, strlen(outBuff));
+		const std::array<std::string_view, 1> parameters{"djk2"};
+		(void)SendLegacyOutbound(*this, "PONG", parameters);
 	}
 	else if (!strcmp(command, "PRIVMSG")) {
 		if (!puiSelf) return; // Don't process privmsgs out of channel
@@ -1290,8 +1346,6 @@ void ChatPollNetworkEvents(LPARAM wakeup_cookie)
 
 
 void CIrcSocket::OnConnect(int nErrorCode) {
-	char buff[255];
-
 	TRACE("Connecting (code = %d)...\n", nErrorCode);
 	if (nErrorCode) {  // couldn't connect
 		CString mesg;
@@ -1326,8 +1380,10 @@ void CIrcSocket::OnConnect(int nErrorCode) {
 		return;
 	}
 
-	if (sprintf_s(buff, sizeof(buff), "NICK %s\r\n", GetMyName()) < 0 ||
-		Send(buff, static_cast<int>(strlen(buff))) < 0) {
+	const char* nickname = GetMyName();
+	const std::array<std::string_view, 1> nick_parameters{
+		nickname ? std::string_view{nickname} : std::string_view{}};
+	if (!SendLegacyOutbound(*this, "NICK", nick_parameters)) {
 		Close();
 		OnClose(ERROR_NOT_ENOUGH_MEMORY);
 		return;
@@ -1341,9 +1397,8 @@ void CIrcSocket::OnConnect(int nErrorCode) {
 	DWORD machineChars = sizeof(machine);
 	if (!GetComputerName(machine, &machineChars) || machineChars == 0)
 		strcpy(machine, "NoMachine");
-	if (sprintf_s(buff, sizeof(buff), "USER %s %s %s :%s\r\n",
-		user, machine, "myServer", static_cast<LPCSTR>(strRealName)) < 0 ||
-		Send(buff, static_cast<int>(strlen(buff))) < 0) {
+	const std::array<std::string_view, 3> user_parameters{user, machine, "myServer"};
+	if (!SendLegacyOutbound(*this, "USER", user_parameters, CStringBytes(strRealName))) {
 		Close();
 		OnClose(ERROR_NOT_ENOUGH_MEMORY);
 	}
@@ -1362,15 +1417,17 @@ BOOL ChatIdle() { return TRUE; }
 
 void EmotionToBytes(CEmotion &em, BYTE &emotion, BYTE &intensity);
 
-static BOOL InsertAnnotations(char *buff, UCHAR mode)
+static std::expected<std::string, comic_chat::v1::transport::AdapterError>
+BuildAnnotations(UCHAR mode)
 {
 	void GetAddressees(CString &);
 	UCHAR faceIndex, torsoIndex, requested, faceEmotion, faceIntensity, torsoEmotion, torsoIntensity;
 	CEmotion face, torso;
-    CAvatarX *av = MyAvatar();
+	CAvatarX *av = MyAvatar();
 
-	if(av)
-	{
+	std::string result;
+	if (!av) return result;
+	try {
 		av->GetIndices(faceIndex, torsoIndex, requested);
 		av->GetEmotions(face, torso);
 		BYTE faceIndexByte = IndexToByte(faceIndex);
@@ -1379,20 +1436,30 @@ static BOOL InsertAnnotations(char *buff, UCHAR mode)
 		EmotionToBytes(face, faceEmotion, faceIntensity);
 		EmotionToBytes(torso, torsoEmotion, torsoIntensity);
 
-		sprintf(buff, "(#%c%c%c%c%c%c%c%c%s%c%c",
-				GESTUREPREFIX, torsoIndexByte, torsoEmotion, torsoIntensity,
-				EXPRESSIONPREFIX, faceIndexByte, faceEmotion, faceIntensity,
-				requested ? "R" : "",
-				MODEPREFIX, modeByte);
+		result.reserve(32);
+		result.append("(#");
+		result.push_back(static_cast<char>(GESTUREPREFIX));
+		result.push_back(static_cast<char>(torsoIndexByte));
+		result.push_back(static_cast<char>(torsoEmotion));
+		result.push_back(static_cast<char>(torsoIntensity));
+		result.push_back(static_cast<char>(EXPRESSIONPREFIX));
+		result.push_back(static_cast<char>(faceIndexByte));
+		result.push_back(static_cast<char>(faceEmotion));
+		result.push_back(static_cast<char>(faceIntensity));
+		if (requested) result.push_back('R');
+		result.push_back(static_cast<char>(MODEPREFIX));
+		result.push_back(static_cast<char>(modeByte));
 		if (av->m_talkTo.GetUpperBound() >= 0) {
 			CString str="T";
 			GetAddressees(str);
-			strcat(buff, str);
+			result.append(CStringBytes(str));
 		}
-
-		strcat(buff, ") ");
+		result.append(") ");
+		return result;
+	} catch (...) {
+		return std::unexpected(
+			comic_chat::v1::transport::AdapterError::allocation_failed);
 	}
-	return TRUE;
 }
 
 void ProcessNonComicsMsg(CString &str, UCHAR &mode) {
@@ -1431,9 +1498,12 @@ BOOL ChatSendText(CString& str, UCHAR mode)
 	}
 
 	if(ChatGetConnectionStatus() == CX_INCHANNEL) {  // only do this if there is a room to send to
-		char annotations[100] = "";
-		if (theApp.m_bComicView && bSendComicsData)
-			InsertAnnotations(annotations, mode);
+		std::string annotations;
+		if (theApp.m_bComicView && bSendComicsData) {
+			auto built = BuildAnnotations(mode);
+			if (!built) return FALSE;
+			annotations = std::move(*built);
+		}
 		CString addressee;
 		if (mode != SM_WHISPER) addressee = GetMyChannel();
 		else GetAddressees2(addressee);
@@ -1441,8 +1511,11 @@ BOOL ChatSendText(CString& str, UCHAR mode)
 			ProcessNonComicsMsg(str, mode);
 		if (bSendComicsData && theApp.m_bComicView && mode == SM_ACTION)
 			str = myStr;   // if sending a cooked action, make sure to prepend the name first
-		sprintf(outBuff, "PRIVMSG %s :%s%s\r\n", addressee, annotations, str);
-		serverConn.Send(outBuff, strlen(outBuff));
+		const std::array<std::string_view, 1> parameters{CStringBytes(addressee)};
+		const std::array<std::string_view, 2> trailing{
+			std::string_view{annotations}, CStringBytes(str)};
+		if (!SendLegacyOutbound(serverConn, "PRIVMSG", parameters, trailing))
+			return FALSE;
 	}
 
 	ShowSay(puiSelf, myStr, theApp.m_bComicView, myMode);		// don't receive PRIVMSGs sent by self, so do explicit show
@@ -1452,8 +1525,10 @@ BOOL ChatSendText(CString& str, UCHAR mode)
 void ChatGetInfo (CUserInfo *pui) {
 	// send message requesting info directly to target
 
-	sprintf(outBuff, "PRIVMSG %s :#%s\r\n", pui->GetName(), GETINFOPREFIX);
-	serverConn.Send(outBuff, strlen(outBuff));
+	const std::array<std::string_view, 1> parameters{pui->GetName()};
+	const std::array<std::string_view, 2> trailing{"#", GETINFOPREFIX};
+	if (!SendLegacyOutbound(serverConn, "PRIVMSG", parameters, trailing))
+		return;
 	// BETA1 fix: set a bit indicating that we requested this info,
 	// so people can't  nefariously send us info that we don't want to show.
 	pui->SetRequestInfo(TRUE);
@@ -1461,8 +1536,9 @@ void ChatGetInfo (CUserInfo *pui) {
 
 #if 0
 void ChatRingUser (CUserInfo *pui) {
-	sprintf(outBuff, "PRIVMSG %s :#%s\r\n", pui->GetName(), RINGPREFIX);
-	serverConn.Send(outBuff, strlen(outBuff));
+	const std::array<std::string_view, 1> parameters{pui->GetName()};
+	const std::array<std::string_view, 2> trailing{"#", RINGPREFIX};
+	(void)SendLegacyOutbound(serverConn, "PRIVMSG", parameters, trailing);
 }
 
 
@@ -1506,16 +1582,15 @@ void GetAddressees2(CString &s) {
 }
 
 void ChatFillRoomList (CRoomList *rl) {
-	CString users, command;
+	CString users;
 	rl->m_user.GetWindowText(users);
 	users.TrimLeft();
 	if (users.GetLength() == 0) {
-		command = "LIST\r\n";
+		(void)SendLegacyOutbound(serverConn, "LIST", {});
 	} else {
-		command.Format("WHOIS %s\r\n", users);
+		const std::array<std::string_view, 1> parameters{CStringBytes(users)};
+		(void)SendLegacyOutbound(serverConn, "WHOIS", parameters);
 	}
-
-	serverConn.Send(command, command.GetLength());
 }
 
 void StartRoomList() {
@@ -1565,19 +1640,23 @@ void ChatKickUser(CUserInfo *pui) {
 	kickDlg.m_strKick = strDlg;
 	//	kickDlg.m_Kick.SetWindowText(strDlg);
 	if (kickDlg.DoModal() == IDOK) {
-		CString command;
-		command.Format("KICK %s %s :%s\r\n", GetMyChannel(), pui->GetName(),
-						kickDlg.m_reason);
-		serverConn.Send(command, command.GetLength());
+		const char* channel = GetMyChannel();
+		const std::array<std::string_view, 2> parameters{
+			channel ? std::string_view{channel} : std::string_view{},
+			pui->GetName() ? std::string_view{pui->GetName()} : std::string_view{}};
+		(void)SendLegacyOutbound(
+			serverConn, "KICK", parameters, CStringBytes(kickDlg.m_reason));
 	}
 }
 
 void ChatSetTopic() {
 	CTopicDlg topicDlg;
 	if (topicDlg.DoModal() == IDOK) {
-		CString command;
-		command.Format("TOPIC %s :%s\r\n", GetMyChannel(), topicDlg.m_topic);
-		serverConn.Send(command, command.GetLength());
+		const char* channel = GetMyChannel();
+		const std::array<std::string_view, 1> parameters{
+			channel ? std::string_view{channel} : std::string_view{}};
+		(void)SendLegacyOutbound(
+			serverConn, "TOPIC", parameters, CStringBytes(topicDlg.m_topic));
 	}
 }
 
@@ -1623,8 +1702,9 @@ void ChatSetNick(const char *nick) {
 			// we have to do this anyway if we're connecting and the names haven't changed,
 			// since if we have a bad nick, we'll need to get back a bad nick response.
 			// Otherwise, we know we don't have a bad nick, w/ other connect statuses.
-			sprintf(outBuff, "NICK %s\r\n", nick);
-			serverConn.Send(outBuff, strlen(outBuff));
+			const std::array<std::string_view, 1> parameters{
+				nick ? std::string_view{nick} : std::string_view{}};
+			(void)SendLegacyOutbound(serverConn, "NICK", parameters);
 		}
 	} else 
 		if (stricmp(nick, oldNick))
@@ -1632,8 +1712,10 @@ void ChatSetNick(const char *nick) {
 }
 
 void ChatJoinChannel() {
-	sprintf(outBuff, "JOIN %s\r\n", GetMyChannel());
-	serverConn.Send(outBuff, strlen(outBuff));
+	const char* channel = GetMyChannel();
+	const std::array<std::string_view, 1> parameters{
+		channel ? std::string_view{channel} : std::string_view{}};
+	(void)SendLegacyOutbound(serverConn, "JOIN", parameters);
 }
 
 
@@ -1678,6 +1760,11 @@ void ChatSwitchChannel() {
 
 void ChatSetOperator(CUserInfo *pui, BOOL makeOp) {
 	char switcher = makeOp ? '+' : '-';
-	sprintf(outBuff, "MODE %s %co %s\r\n", GetMyChannel(), switcher, pui->GetName());
-	serverConn.Send(outBuff, strlen(outBuff));
+	const std::array<char, 2> mode{switcher, 'o'};
+	const char* channel = GetMyChannel();
+	const std::array<std::string_view, 3> parameters{
+		channel ? std::string_view{channel} : std::string_view{},
+		std::string_view{mode.data(), mode.size()},
+		pui && pui->GetName() ? std::string_view{pui->GetName()} : std::string_view{}};
+	(void)SendLegacyOutbound(serverConn, "MODE", parameters);
 }

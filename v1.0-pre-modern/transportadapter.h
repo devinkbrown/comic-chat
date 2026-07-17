@@ -12,6 +12,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -33,6 +35,104 @@ enum class AdapterError : std::uint8_t {
 	allocation_failed,
 	transport_error,
 };
+
+namespace detail {
+
+// Builds the exact Microsoft-era IRC wire shape without ever formatting into a
+// fixed buffer. The optional span represents one trailing field assembled from
+// zero or more fragments, avoiding a second allocation for comic annotations,
+// profiles, and other historical compound payloads.
+[[nodiscard]] inline std::expected<std::string, AdapterError> BuildLegacyOutboundParts(
+	std::string_view command,
+	std::span<const std::string_view> middle_parameters,
+	std::optional<std::span<const std::string_view>> trailing_fragments)
+{
+	if (command.empty()) return std::unexpected(AdapterError::invalid_line);
+	if (command.size() > maximum_legacy_wire_bytes - 2U)
+		return std::unexpected(AdapterError::line_too_long);
+	for (const unsigned char byte : command) {
+		if (!((byte >= 'A' && byte <= 'Z') || (byte >= 'a' && byte <= 'z') ||
+			(byte >= '0' && byte <= '9'))) {
+			return std::unexpected(AdapterError::invalid_line);
+		}
+	}
+
+	std::size_t wire_bytes = command.size() + 2U; // terminating CRLF
+	for (const auto parameter : middle_parameters) {
+		if (parameter.empty() || parameter.front() == ':')
+			return std::unexpected(AdapterError::invalid_line);
+		if (wire_bytes >= maximum_legacy_wire_bytes ||
+			parameter.size() > maximum_legacy_wire_bytes - wire_bytes - 1U)
+			return std::unexpected(AdapterError::line_too_long);
+		for (const unsigned char byte : parameter) {
+			if (byte <= 0x20U || byte == 0x7fU)
+				return std::unexpected(AdapterError::invalid_line);
+		}
+		wire_bytes += 1U + parameter.size();
+	}
+	if (trailing_fragments) {
+		if (wire_bytes > maximum_legacy_wire_bytes - 2U)
+			return std::unexpected(AdapterError::line_too_long);
+		wire_bytes += 2U;
+		for (const auto fragment : *trailing_fragments) {
+			if (fragment.size() > maximum_legacy_wire_bytes - wire_bytes)
+				return std::unexpected(AdapterError::line_too_long);
+			for (const char byte : fragment) {
+				if (byte == '\0' || byte == '\r' || byte == '\n')
+					return std::unexpected(AdapterError::invalid_line);
+			}
+			wire_bytes += fragment.size();
+		}
+	}
+
+	try {
+		std::string wire;
+		wire.reserve(wire_bytes);
+		wire.append(command);
+		for (const auto parameter : middle_parameters) {
+			wire.push_back(' ');
+			wire.append(parameter);
+		}
+		if (trailing_fragments) {
+			wire.append(" :");
+			for (const auto fragment : *trailing_fragments)
+				wire.append(fragment);
+		}
+		wire.append("\r\n");
+		return wire;
+	} catch (...) {
+		return std::unexpected(AdapterError::allocation_failed);
+	}
+}
+
+} // namespace detail
+
+// Middle parameters remain space-delimited tokens, while the optional final
+// value is emitted as the traditional ` :trailing` field. Comic annotations
+// and CTCP SOH bytes are data and remain intact; only bytes that can terminate
+// or split the IRC record are rejected.
+[[nodiscard]] inline std::expected<std::string, AdapterError> BuildLegacyOutbound(
+	std::string_view command,
+	std::span<const std::string_view> middle_parameters,
+	std::optional<std::string_view> trailing)
+{
+	if (!trailing)
+		return detail::BuildLegacyOutboundParts(command, middle_parameters, std::nullopt);
+	const std::string_view fragment = *trailing;
+	return detail::BuildLegacyOutboundParts(
+		command, middle_parameters, std::span<const std::string_view>{&fragment, 1U});
+}
+
+// Fragmented trailing data is emitted as one IRC trailing field. This overload
+// lets fixed legacy prefixes and existing CString payloads share the builder's
+// single bounded allocation without concatenating into a temporary string.
+[[nodiscard]] inline std::expected<std::string, AdapterError> BuildLegacyOutbound(
+	std::string_view command,
+	std::span<const std::string_view> middle_parameters,
+	std::span<const std::string_view> trailing_fragments)
+{
+	return detail::BuildLegacyOutboundParts(command, middle_parameters, trailing_fragments);
+}
 
 // Microsoft's v1 parser stores nick, user, and host components in independent
 // 50-byte buffers and assumes the traditional 512-byte IRC framing limit.
