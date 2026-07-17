@@ -128,7 +128,25 @@ LRESULT CChatView::OnIrcv3Event(WPARAM wParam, LPARAM lParam)
 				break;
 			}
 		});
-	return result == comic_chat::legacy_ui::Ircv3UserMutationResult::applied ? 1 : 0;
+	if (result == comic_chat::legacy_ui::Ircv3UserMutationResult::applied)
+		return 1;
+
+	// Microsoft's numeric-error path wrote human-readable failures into the
+	// shared status view. Keep that behavior for IRCv3 FAIL/WARN/NOTE, but only
+	// let the focused document render a session-global event so multiple open
+	// room views cannot duplicate it.
+	const auto status = comic_chat::legacy_ui::ClassifyStandardReply(adapter->event);
+	if (!status || GetFocusedDoc() != doc)
+		return 0;
+	COLORREF color = RGB(0, 92, 184);
+	if (status->severity == comic_chat::legacy_ui::Ircv3StatusSeverity::error)
+		color = RGB(220, 53, 69);
+	else if (status->severity == comic_chat::legacy_ui::Ircv3StatusSeverity::warning)
+		color = RGB(184, 115, 0);
+	CIrcPrint print;
+	print.SetFormat(PT_WHOLESTRING, status->text.c_str(), color, 0, TRUE);
+	AddToStatus(print, status->text.c_str());
+	return 1;
 }
 
 /////////////////////////////////////////////////////////////////////////////

@@ -47,6 +47,17 @@ enum class Ircv3UserMutationResult {
 	applied,
 };
 
+enum class Ircv3StatusSeverity {
+	error,
+	warning,
+	information,
+};
+
+struct Ircv3StatusPresentation {
+	Ircv3StatusSeverity severity = Ircv3StatusSeverity::information;
+	std::string text;
+};
+
 constexpr std::size_t kIrcv3LegacyNicknameMaximum = 255;
 constexpr std::size_t kIrcv3LegacyIdentityPartMaximum = 255;
 constexpr std::size_t kIrcv3LegacyUserValueMaximum = 512;
@@ -54,6 +65,45 @@ constexpr std::size_t kIrcv3LegacyUserValueMaximum = 512;
 inline bool ValidUserMutationText(std::string_view value, std::size_t maximum) noexcept
 {
 	return value.size() <= maximum && value.find('\0') == std::string_view::npos;
+}
+
+inline bool ValidStandardReplyToken(std::string_view value) noexcept
+{
+	if (value.empty() || value.size() > 64) return false;
+	return std::ranges::all_of(value, [](const unsigned char ch) {
+		return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+			(ch >= '0' && ch <= '9') || ch == '-' || ch == '_' || ch == '*';
+	});
+}
+
+// Standard replies replace ad-hoc server notices only when their required
+// human description reaches the user. Format a bounded, tag-free status line;
+// the native view chooses colors using Microsoft's original status renderer.
+inline std::optional<Ircv3StatusPresentation> ClassifyStandardReply(
+	const comic_chat::ircv3::Event& event)
+{
+	if (event.type != comic_chat::ircv3::EventType::StandardReply ||
+		!ValidStandardReplyToken(event.target) || !ValidStandardReplyToken(event.value) ||
+		event.detail.empty() || !ValidUserMutationText(event.detail, 512))
+		return std::nullopt;
+
+	Ircv3StatusPresentation result;
+	if (event.key == "FAIL") result.severity = Ircv3StatusSeverity::error;
+	else if (event.key == "WARN") result.severity = Ircv3StatusSeverity::warning;
+	else if (event.key == "NOTE") result.severity = Ircv3StatusSeverity::information;
+	else return std::nullopt;
+	result.text.reserve(event.key.size() + event.target.size() + event.value.size() +
+		event.detail.size() + 8);
+	result.text = '[';
+	result.text += event.key;
+	result.text += "] ";
+	result.text += event.target;
+	result.text += '/';
+	result.text += event.value;
+	result.text += ": ";
+	for (const unsigned char ch : event.detail)
+		result.text.push_back(ch < 0x20 || ch == 0x7f ? ' ' : static_cast<char>(ch));
+	return result;
 }
 
 inline Ircv3UserMutation ClassifyUserMutation(

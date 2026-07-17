@@ -220,8 +220,8 @@ void TestCapabilityState()
 	Check(std::find(requested.begin(), requested.end(), "batch") == requested.end() &&
 		std::find(requested.begin(), requested.end(), "labeled-response") == requested.end() &&
 		std::find(requested.begin(), requested.end(), "echo-message") == requested.end() &&
-		std::find(requested.begin(), requested.end(), "standard-replies") == requested.end(),
-		"observe-only response and batch features default to discoverable but not requested");
+		std::find(requested.begin(), requested.end(), "standard-replies") != requested.end(),
+		"only response features with a visible consumer are requested by default");
 	Check(std::find(requested.begin(), requested.end(), "draft/multiline") == requested.end() &&
 		engine.IsOffered("draft/multiline"),
 		"multiline advertisement is retained without requesting incomplete product behavior");
@@ -286,7 +286,9 @@ void TestCapabilityState()
 		"account-notify chghost setname draft/account-registration draft/extended-isupport draft/oper-tag "
 		"draft/pre-away extended-monitor bot\r\n");
 	const auto expanded_requested = RequestedNames(expanded_ls.outbound);
-	for (const auto* name : {"standard-replies", "draft/account-registration", "draft/extended-isupport",
+	Check(std::find(expanded_requested.begin(), expanded_requested.end(), "standard-replies") !=
+		expanded_requested.end(), "visible standard replies are requested");
+	for (const auto* name : {"draft/account-registration", "draft/extended-isupport",
 		"draft/oper-tag", "draft/pre-away", "extended-monitor", "bot"}) {
 		Check(std::find(expanded_requested.begin(), expanded_requested.end(), name) == expanded_requested.end(),
 			"capability without a complete product consumer is not requested by default");

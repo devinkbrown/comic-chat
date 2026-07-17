@@ -477,9 +477,7 @@ const std::vector<CapabilityDefinition>& CapabilityCatalog()
 		// product enables this only alongside a complete batch consumer.
 		{"batch", {}, false},
 		{"server-time", {}},
-		// FAIL/WARN/NOTE are consumed by the protocol engine. Do not request them
-		// until the frontend exposes every reply instead of hiding it from users.
-		{"standard-replies", {}, false},
+		{"standard-replies", {}},
 		{"cap-notify", {}},
 		{"account-notify", {}},
 		{"account-tag", {}},

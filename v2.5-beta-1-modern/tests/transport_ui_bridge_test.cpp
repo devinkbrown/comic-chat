@@ -21,7 +21,9 @@ namespace {
 using comic_chat::ircv3::Event;
 using comic_chat::ircv3::EventType;
 using comic_chat::legacy_ui::ClassifyUserMutation;
+using comic_chat::legacy_ui::ClassifyStandardReply;
 using comic_chat::legacy_ui::ConsumeUserMutation;
+using comic_chat::legacy_ui::Ircv3StatusSeverity;
 using comic_chat::legacy_ui::Ircv3UserMutation;
 using comic_chat::legacy_ui::Ircv3UserMutationKind;
 using comic_chat::legacy_ui::Ircv3UserMutationResult;
@@ -186,11 +188,52 @@ void TestTypedUserMutationsReachOwnedModels()
 	Check(ConsumeUserMutation(event, find, apply) == Ircv3UserMutationResult::ignored);
 }
 
+void TestStandardReplyPresentation()
+{
+	Event reply;
+	reply.type = EventType::StandardReply;
+	reply.key = "FAIL";
+	reply.target = "CHATHISTORY";
+	reply.value = "INVALID_PARAMS";
+	reply.detail = "The selector is invalid";
+	auto presentation = ClassifyStandardReply(reply);
+	Check(presentation && presentation->severity == Ircv3StatusSeverity::error &&
+		presentation->text == "[FAIL] CHATHISTORY/INVALID_PARAMS: The selector is invalid");
+
+	reply.key = "WARN";
+	presentation = ClassifyStandardReply(reply);
+	Check(presentation && presentation->severity == Ircv3StatusSeverity::warning);
+	reply.key = "NOTE";
+	presentation = ClassifyStandardReply(reply);
+	Check(presentation && presentation->severity == Ircv3StatusSeverity::information);
+
+	reply.key = "NOTICE";
+	Check(!ClassifyStandardReply(reply));
+	reply.key = "FAIL";
+	reply.target = "BAD COMMAND";
+	Check(!ClassifyStandardReply(reply));
+	reply.target = "PRIVMSG";
+	reply.value = std::string("BAD\0CODE", 8);
+	Check(!ClassifyStandardReply(reply));
+	reply.value = "REJECTED";
+	reply.detail = std::string(513, 'x');
+	Check(!ClassifyStandardReply(reply));
+	reply.detail = std::string("format\x01control", 14);
+	presentation = ClassifyStandardReply(reply);
+	Check(presentation && presentation->text == "[FAIL] PRIVMSG/REJECTED: format control");
+	reply.detail = std::string("unsafe\0description", 18);
+	Check(!ClassifyStandardReply(reply));
+	reply.type = EventType::ProtocolError;
+	reply.detail = "not a server reply";
+	Check(!ClassifyStandardReply(reply));
+}
+
 } // namespace
 
 int main()
 {
 	TestTypedUserMutationClassification();
 	TestTypedUserMutationsReachOwnedModels();
+	TestStandardReplyPresentation();
 	return failures == 0 ? 0 : 1;
 }
