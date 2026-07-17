@@ -177,4 +177,191 @@ auto TextEngine::shape(const std::string_view utf8, const double pixel_size)
 
 auto TextEngine::native_face() const noexcept -> void* { return impl_->face; }
 
+auto TextEngine::size_metrics(const double pixel_size) -> std::expected<SizeMetrics, TextError> {
+    if (!std::isfinite(pixel_size) || pixel_size <= 0.0) return std::unexpected{TextError::font_size};
+    std::scoped_lock lock{impl_->mutex};
+    const auto rounded_size = static_cast<FT_UInt>(std::max(1.0, std::round(pixel_size)));
+    if (FT_Set_Pixel_Sizes(impl_->face, 0, rounded_size) != 0) return std::unexpected{TextError::font_size};
+    // FT_Size_Metrics are 26.6 fixed point; map to GDI TEXTMETRIC field names.
+    const auto& metrics = impl_->face->size->metrics;
+    const auto round26_6 = [](const FT_Pos value) -> std::int32_t {
+        return static_cast<std::int32_t>((value + (value >= 0 ? 32 : -32)) / 64);
+    };
+    const std::int32_t ascent = round26_6(metrics.ascender);   // tm.tmAscent
+    const std::int32_t descent = -round26_6(metrics.descender); // descender <= 0 -> positive tm.tmDescent
+    const std::int32_t line_spacing = round26_6(metrics.height); // baseline-to-baseline advised advance
+    const std::int32_t height = ascent + descent;                // tm.tmHeight
+    const std::int32_t external_leading = std::max(0, line_spacing - height); // tm.tmExternalLeading
+    return SizeMetrics{ascent, descent, height, external_leading};
+}
+
+auto TextEngine::measure_width(const std::string_view utf8, const double pixel_size)
+    -> std::expected<std::int32_t, TextError> {
+    const auto glyphs = shape(utf8, pixel_size); // takes the mutex itself; do not hold it here
+    if (!glyphs) return std::unexpected{glyphs.error()};
+    double total = 0.0;
+    for (const auto& glyph : *glyphs) total += glyph.x_advance;
+    return static_cast<std::int32_t>(std::llround(total));
+}
+
+auto build_font_metrics(TextEngine& engine, const double pixel_size, const std::int32_t n_leading,
+                        const std::int32_t n_base_add) -> std::expected<FontMetrics, TextError> {
+    const auto raw = engine.size_metrics(pixel_size);
+    if (!raw) return std::unexpected{raw.error()};
+    const auto continuation = engine.measure_width(continuation_ellipsis, pixel_size);
+    if (!continuation) return std::unexpected{continuation.error()};
+
+    // CFontInfo::CFontInfo (balloon.cpp:606-643), in source order.
+    FontMetrics metrics{};
+    metrics.leading = n_leading + raw->external_leading;    // m_leading (balloon.cpp:624)
+    metrics.base_add = n_base_add - raw->external_leading;  // m_baseAdd (balloon.cpp:625)
+    metrics.top_offset = (n_leading != 0) ? 0 : far_east_top_offset; // (balloon.cpp:635-638)
+    metrics.line_height = raw->height + metrics.leading;    // m_lineHeight (balloon.cpp:640)
+    metrics.continuation_width = *continuation;             // m_continuationWidth (balloon.cpp:642)
+    return metrics;
+}
+
+auto measure_text_width(TextEngine& engine, const double pixel_size) -> TextMeasure {
+    // Captures `engine` by reference: the returned measure must not outlive it.
+    return [&engine, pixel_size](const std::string_view text) -> std::int32_t {
+        if (text.empty()) return 0;
+        const auto width = engine.measure_width(text, pixel_size);
+        return width ? *width : 0;
+    };
+}
+
+namespace {
+
+// Advance past exactly one UTF-8 code point starting at byte `index`.
+[[nodiscard]] auto utf8_next(const std::string_view text, const std::size_t index) -> std::size_t {
+    if (index >= text.size()) return text.size();
+    const auto lead = static_cast<unsigned char>(text[index]);
+    std::size_t length = 1;
+    if (lead >= 0xF0) {
+        length = 4;
+    } else if (lead >= 0xE0) {
+        length = 3;
+    } else if (lead >= 0xC0) {
+        length = 2;
+    }
+    return std::min(text.size(), index + length);
+}
+
+} // namespace
+
+auto widest_line_width(const std::vector<TextLine>& lines) noexcept -> std::int32_t {
+    std::int32_t widest = 0;
+    for (const auto& line : lines)
+        if (line.width > widest) widest = line.width;
+    return widest;
+}
+
+auto compute_label_bbox(const Rect& request, const FontMetrics& metrics, const std::int32_t n_lines,
+                        const std::int32_t max_line_width, const LabelJustify justify) noexcept -> Rect {
+    const std::int32_t desired_width = request.right - request.left; // iDesiredWidth (balloon.cpp:688)
+    Rect out{};
+    out.top = request.top; // fInfo.m_bbox.Top = m_bbox.Top (balloon.cpp:698)
+    if (justify == LabelJustify::left) {                          // FT_LEFT_JUSTIFY (balloon.cpp:699)
+        out.left = request.left;
+    } else {                                                      // CENTER (balloon.cpp:705)
+        out.left = (desired_width - max_line_width) / 2 + request.left;
+    }
+    out.right = out.left + max_line_width; // (balloon.cpp:702 / 707)
+    // fInfo.m_bbox.Bottom = Top - nLines*m_lineHeight - m_baseAdd (balloon.cpp:711).
+    out.bottom = out.top - n_lines * metrics.line_height - metrics.base_add;
+    return out;
+}
+
+auto break_into_lines(const TextMeasure& measure, const std::int32_t max_width,
+                      const std::string_view text) -> std::vector<TextLine> {
+    std::vector<TextLine> lines;
+    const auto full = [&] { return static_cast<std::int32_t>(lines.size()) >= max_label_lines; };
+    const auto emit = [&](std::string line) {
+        const std::int32_t width = line.empty() ? 0 : measure(line);
+        lines.push_back(TextLine{std::move(line), width});
+    };
+
+    // Break a single word wider than the box at UTF-8 boundaries; emit the full
+    // lines and return the trailing partial so following words can share it
+    // (ForceLineBreak, balloon.cpp:407).
+    const auto force_break = [&](const std::string_view word) -> std::string {
+        std::string current;
+        std::size_t index = 0;
+        while (index < word.size()) {
+            const std::size_t next = utf8_next(word, index);
+            const std::string_view glyph = word.substr(index, next - index);
+            std::string candidate = current + std::string(glyph);
+            if (!current.empty() && measure(candidate) > max_width) {
+                emit(std::move(current));
+                if (full()) return {};
+                current = std::string(glyph);
+            } else {
+                current = std::move(candidate);
+            }
+            index = next;
+        }
+        return current;
+    };
+
+    // Explicit '\n' is a hard break (UpcomingReturn, balloon.cpp:384); each
+    // segment then greedily wraps its space-delimited words.
+    std::size_t paragraph_start = 0;
+    while (paragraph_start <= text.size() && !full()) {
+        const std::size_t newline = text.find('\n', paragraph_start);
+        const std::size_t paragraph_end = (newline == std::string_view::npos) ? text.size() : newline;
+        const std::string_view paragraph = text.substr(paragraph_start, paragraph_end - paragraph_start);
+
+        std::string current;
+        std::size_t word_start = 0;
+        while (word_start < paragraph.size() && !full()) {
+            while (word_start < paragraph.size() && paragraph[word_start] == ' ') ++word_start; // skip spaces
+            if (word_start >= paragraph.size()) break;
+            std::size_t word_end = word_start;
+            while (word_end < paragraph.size() && paragraph[word_end] != ' ') ++word_end;
+            const std::string_view word = paragraph.substr(word_start, word_end - word_start);
+            word_start = word_end;
+
+            std::string candidate = current.empty() ? std::string(word) : current + " " + std::string(word);
+            if (measure(candidate) <= max_width) {
+                current = std::move(candidate);
+                continue;
+            }
+            if (!current.empty()) {
+                emit(std::move(current));
+                current.clear();
+                if (full()) break;
+            }
+            if (measure(std::string(word)) <= max_width) {
+                current = std::string(word);
+            } else {
+                current = force_break(word); // emits complete lines, keeps the remainder
+            }
+        }
+        if (!full()) emit(std::move(current)); // paragraph's final (or only/blank) line
+
+        if (newline == std::string_view::npos) break;
+        paragraph_start = newline + 1;
+    }
+    return lines;
+}
+
+auto ellipsize_single_line(const TextMeasure& measure, const std::int32_t max_width,
+                           const std::string_view text, const std::string_view ellipsis) -> std::string {
+    if (text.empty() || measure(text) <= max_width) return std::string{text};
+    const std::string ell{ellipsis};
+    if (measure(ell) > max_width) return {}; // not even the ellipsis fits
+    std::string best = ell;                  // empty prefix + ellipsis
+    std::string prefix;
+    std::size_t index = 0;
+    while (index < text.size()) {
+        const std::size_t next = utf8_next(text, index);
+        std::string candidate = prefix + std::string(text.substr(index, next - index));
+        if (measure(candidate + ell) > max_width) break;
+        prefix = std::move(candidate);
+        best = prefix + ell;
+        index = next;
+    }
+    return best;
+}
+
 } // namespace comicchat
