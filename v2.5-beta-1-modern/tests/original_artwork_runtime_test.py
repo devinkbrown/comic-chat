@@ -31,12 +31,15 @@ def main() -> None:
     require("COLORONCOLOR" in loader,
             "source-palette scaling no longer preserves original pixel relationships")
 
-    face_body = re.search(
-        r"bool BuildExpressionImageList\([^}]+?\n\}", loader, re.DOTALL)
-    require(face_body is not None, "cannot audit bodycam artwork selector")
-    require("image_list.DeleteImageList();" in face_body.group(0) and
-            "return false;" in face_body.group(0),
-            "bodycam can retain or select a generated expression image list")
+    face_start = loader.find("bool BuildExpressionImageList(")
+    require(face_start >= 0, "cannot audit bodycam artwork selector")
+    face_body = loader[face_start:]
+    require("BuildModernExpressionImageList(image_list, *binding)" in face_body,
+            "bodycam does not probe the complete generated expression set")
+    require(face_body.index("BuildModernExpressionImageList(image_list, *binding)") <
+            face_body.index("image_list.DeleteImageList();") <
+            face_body.index("return false;"),
+            "failed expression probes can retain a stale generated list")
     require("else\n\t\t\tIcons.GetIcon (i)->Draw" in bodycam,
             "bodycam no longer falls back to the original Microsoft CDIBs")
 
@@ -78,7 +81,7 @@ def main() -> None:
             "Microsoft's NetMeeting glyph is falsely exposed as Send File")
 
     print("original artwork fallback audit passed: 11 ICOs, 6 bitmap families, "
-          "bodycam CDIB fallback; modern strip probe precedes source fallback")
+          "atomic bodycam CDIB fallback; modern probes precede source fallback")
 
 
 if __name__ == "__main__":

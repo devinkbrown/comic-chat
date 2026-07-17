@@ -105,10 +105,10 @@ public:
 	CRuleIcons();
 	virtual	~CRuleIcons();
 
-	HBITMAP		GetIcon(SHORT nIndex)	{ return m_hbmpIcon[nIndex]; }
+	BOOL		Draw(HDC hdc, SHORT nIndex, CPoint point);
 
 protected:
-	HBITMAP		m_hbmpIcon[g_nIconCount];
+	CImageList	m_icons;
 };
 
 

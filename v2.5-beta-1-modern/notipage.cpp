@@ -17,6 +17,7 @@
 #include "chatdoc.h"
 #include "actions.h"
 #include "ui.h"
+#include "modernicons.h"
 #include <mmsystem.h>
 
 // for ASSERT and FAIL
@@ -96,13 +97,10 @@ CNotifsListCtrl::CNotifsListCtrl()
 	m_uSortColumn = 0;
 	m_bSortAscending = FALSE;
 
-	m_ilActiveStatus.Create(IDB_INACTIVE, 16, 1, RGB(0, 0, 255));
-	CBitmap	bmp;
-	if (bmp.LoadBitmap(IDB_ACTIVE))
-	{
-		m_ilActiveStatus.Add(&bmp, RGB(0, 0, 255));
-		bmp.DeleteObject();
-	}
+	// Notification model semantics: 0 = inactive, 1 = active.
+	const UINT statusResources[] = {IDB_INACTIVE, IDB_ACTIVE};
+	comic_chat::modern_ui::BuildOrderedImageList(
+		m_ilActiveStatus, statusResources, 2, 16, nullptr);
 }
 
 
@@ -756,8 +754,12 @@ CNotificationUsers::CNotificationUsers(CWnd* pwndParent /*=NULL*/)
 	m_bSortAscending = FALSE;
 	m_uSortColumn = 0;
 
-	m_ImageList.Create(IDB_CONNECT, 16, 2, RGB(0, 0, 255));
-	m_StateIcons.Create(IDB_OLDNEW, 16, 1, RGB(0, 0, 255));
+	// IDB_CONNECT retains connected/disconnected cells 0/1; IDB_OLDNEW retains
+	// its single LVIS state image at index zero.
+	comic_chat::modern_ui::BuildStripImageList(
+		m_ImageList, IDB_CONNECT, 16, 2, nullptr);
+	comic_chat::modern_ui::BuildStripImageList(
+		m_StateIcons, IDB_OLDNEW, 16, 1, nullptr);
 
 	m_sizeDialog.cx = m_sizeDialog.cy = 0;
 	m_sizeMinimal.cx = m_sizeMinimal.cy = 0;

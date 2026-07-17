@@ -20,8 +20,19 @@ bool BuildStripImageList(
 	int image_count,
 	HWND themed_window);
 
-// Bodycam metrics remain DPI-aware. BuildExpressionImageList intentionally
-// returns false so the caller draws the original eight Microsoft CDIBs.
+// Build explicitly ordered one-cell states as one atomic list. The modern path
+// is all-or-nothing; missing PNG data falls back to the complete ordered set of
+// original Microsoft bitmaps without changing state indices.
+bool BuildOrderedImageList(
+	CImageList& image_list,
+	const UINT* legacy_resources,
+	int resource_count,
+	int cell_size,
+	HWND themed_window);
+
+// Bodycam metrics and expression PNG resources use the same declared DPI size
+// tiers. Missing or invalid generated data leaves the list empty so CBodyCam
+// draws Microsoft's original eight CDIBs.
 CSize ExpressionFaceSizeForDpi(UINT dpi);
 bool BuildExpressionImageList(
 	CImageList& image_list,

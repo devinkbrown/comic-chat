@@ -19,6 +19,7 @@
 #include "cdebug.h"
 #include "protsupp.h"
 #include "whisprbx.h"
+#include "modernicons.h"
 
 
 // for ASSERT and FAIL
@@ -965,18 +966,10 @@ CRulesPage::CRulesPage() : CCSPropertyPage(CRulesPage::IDD)
 	//}}AFX_DATA_INIT
 	m_bRulesColumnSet = FALSE;
 
-	m_ilActiveStatus.Create(IDB_INACTIVE, 16, 1, RGB(0, 0, 255));
-	CBitmap	bmp;
-	if (bmp.LoadBitmap(IDB_ACTIVE))
-	{
-		m_ilActiveStatus.Add(&bmp, RGB(0, 0, 255));
-		bmp.DeleteObject();
-	}
-	if (bmp.LoadBitmap(IDB_STOPPED))
-	{
-		m_ilActiveStatus.Add(&bmp, RGB(0, 0, 128));
-		bmp.DeleteObject();
-	}
+	// Rule model semantics: 0 = inactive, 1 = active, 2 = stopped.
+	const UINT statusResources[] = {IDB_INACTIVE, IDB_ACTIVE, IDB_STOPPED};
+	comic_chat::modern_ui::BuildOrderedImageList(
+		m_ilActiveStatus, statusResources, 3, 16, nullptr);
 }
 
 
@@ -1424,18 +1417,26 @@ const DWORD CRulesPage::m_nHelpIDs[] =
 // CRuleIcons
 CRuleIcons::CRuleIcons()
 {
-	// 0 - Inactive
-	// 1 - Active
-	for (SHORT nCnt = 0; nCnt < g_nIconCount; nCnt++)
-		m_hbmpIcon[nCnt] = LoadBitmap(AfxGetResourceHandle(), MAKEINTRESOURCE(IDB_INACTIVE+nCnt));
+	// Rule-set list semantics: 0 = inactive, 1 = active. Keep this explicit;
+	// the legacy IDs happen to be contiguous but the model must not depend on it.
+	const UINT statusResources[] = {IDB_INACTIVE, IDB_ACTIVE};
+	comic_chat::modern_ui::BuildOrderedImageList(
+		m_icons, statusResources, g_nIconCount, g_nIconWidth, nullptr);
 }
 
 
 CRuleIcons::~CRuleIcons()
 {
-	for (SHORT nCnt = 0; nCnt < g_nIconCount; nCnt++)
-		if (m_hbmpIcon[nCnt])
-			DeleteObject((HBITMAP) m_hbmpIcon[nCnt]);
+	m_icons.DeleteImageList();
+}
+
+
+BOOL CRuleIcons::Draw(HDC hdc, SHORT nIndex, CPoint point)
+{
+	const HIMAGELIST imageList = m_icons.GetSafeHandle();
+	if (!imageList || nIndex < 0 || nIndex >= g_nIconCount) return FALSE;
+	return ::ImageList_Draw(
+		imageList, nIndex, hdc, point.x, point.y, ILD_TRANSPARENT);
 }
 
 
@@ -1458,8 +1459,6 @@ void CRuleSetsListBox::DrawItem(LPDRAWITEMSTRUCT lpDrawItemStruct)
 	DWORD		rgbSelTextOld;
 	DWORD		rgbSel;
 	DWORD		rgbSelText;
-	HDC			hdcBitmap;
-	HBITMAP		hbmpOld;
 	HBRUSH		hbrush;
 	CCRuleSet*	pRuleSet;
 
@@ -1489,16 +1488,15 @@ void CRuleSetsListBox::DrawItem(LPDRAWITEMSTRUCT lpDrawItemStruct)
 			return;
 		}
 
-		hdcBitmap = CreateCompatibleDC(lpDrawItemStruct->hDC);
-		hbmpOld = (HBITMAP) SelectObject(hdcBitmap, m_icons.GetIcon(pRuleSet->bActive() ? g_nActiveIndex : g_nInactiveIndex));
-		BitBlt(lpDrawItemStruct->hDC, g_nIconMargin, lpDrawItemStruct->rcItem.top+1, g_nIconWidth, g_nIconHeight, hdcBitmap, 0, 0, SRCCOPY);
+		m_icons.Draw(
+			lpDrawItemStruct->hDC,
+			pRuleSet->bActive() ? g_nActiveIndex : g_nInactiveIndex,
+			CPoint(g_nIconMargin, lpDrawItemStruct->rcItem.top + 1));
 
 		rgbSelTextOld = SetTextColor(lpDrawItemStruct->hDC, rgbSelText);
 		rgbSelOld = SetBkColor(lpDrawItemStruct->hDC, rgbSel);
 		TextOut(lpDrawItemStruct->hDC, g_nIconWidth+2*g_nIconMargin, lpDrawItemStruct->rcItem.top+1, pRuleSet->GetName(), pRuleSet->GetName().GetLength());
 
-		SelectObject(hdcBitmap, hbmpOld);
-		DeleteDC(hdcBitmap);
 	}
 
 	if (lpDrawItemStruct->itemState & ODS_FOCUS)

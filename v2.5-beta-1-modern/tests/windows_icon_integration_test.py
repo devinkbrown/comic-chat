@@ -23,6 +23,9 @@ def main() -> None:
     resources = (MODERN / "resource.h").read_text(encoding="cp1252")
     actions = (MODERN / "actions.cpp").read_text(encoding="cp1252")
     whisper = (MODERN / "whisprbx.cpp").read_text(encoding="cp1252")
+    notifications = (MODERN / "notipage.cpp").read_text(encoding="cp1252")
+    automation = (MODERN / "autopage.cpp").read_text(encoding="cp1252")
+    automation_header = (MODERN / "autopage.h").read_text(encoding="cp1252")
 
     resource_files = {
         match.replace("\\\\", "\\").lower()
@@ -83,6 +86,18 @@ def main() -> None:
                 rf"^#define\s+{name}\s+{base + offset}$", resources, re.MULTILINE) is not None,
                 f"modern PNG resource ID drifted: {name}")
 
+    expression_sizes = ((20, 26), (25, 33), (30, 39), (40, 52),
+                        (50, 65), (60, 78), (80, 104))
+    expression_order = ("HAPPY", "COY", "BORED", "SCARED", "SAD",
+                        "ANGRY", "SHOUT", "LAUGH")
+    for size_index, (width, height) in enumerate(expression_sizes):
+        for emotion_index, emotion in enumerate(expression_order):
+            name = f"IDR_MODERN_PNG_EXPR_{emotion}_{width}X{height}"
+            expected = 4200 + size_index * 10 + emotion_index
+            require(re.search(
+                rf"^#define\s+{name}\s+{expected}$", resources, re.MULTILINE) is not None,
+                f"modern expression resource ID drifted: {name}")
+
     expected_bindings = {
         "IDR_MAINFRAME": ("IDR_MODERN_PNG_TOOLBAR_16", 10),
         "IDB_TABS": ("IDR_MODERN_PNG_TABS_16", 4),
@@ -104,10 +119,10 @@ def main() -> None:
                   "GUID_WICPixelFormat32bppPBGRA", "CreateDIBSection", "ILC_COLOR32",
                   "ImageList_Add", "SetBkColor(CLR_NONE)", "RPC_E_CHANGED_MODE"):
         require(token in loader, f"WIC alpha-strip path omits {token}")
-    require("source_width != static_cast<std::uint64_t>(source_height) * image_count" in loader,
-            "modern horizontal strip does not enforce an exact square-cell count")
-    require("source_height != static_cast<UINT>(declared_source_cell_size)" in loader,
-            "modern strip does not validate the size declared by its resource ID")
+    require("expected_width" in loader and
+            "static_cast<std::uint64_t>(declared_source_cell_size) * image_count" in loader and
+            "source_width == expected_width && source_height == expected_height" in loader,
+            "modern horizontal strip does not enforce its exact declared cell geometry")
     require("kModernStripSizes[] = {16, 20, 24, 32, 40, 48}" in loader and
             "distance == best_distance" in loader,
             "modern strip selection lost exact/nearest optical-size preference")
@@ -120,9 +135,51 @@ def main() -> None:
     require("windowscodecs.lib" in makefile_lower,
             "Windows build does not link the inbox WIC codec library")
 
+    # Expressions use all eight generated PNGs in Microsoft's canonical bodycam
+    # order. A failed set must leave no stale list, selecting the original DIBs.
+    first_expression_block = re.search(
+        r"\{20, 26, \{([^}]+)\}\}", loader)
+    require(first_expression_block is not None,
+            "20x26 expression resource block is missing")
+    offsets = [first_expression_block.group(1).index(
+        f"IDR_MODERN_PNG_EXPR_{emotion}_20X26") for emotion in expression_order]
+    require(offsets == sorted(offsets), "expression index order no longer matches Microsoft")
+    for token in ("FindExpressionSize(face_size)", "BuildModernExpressionImageList",
+                  "kExpressionCount", "image_list.DeleteImageList();"):
+        require(token in loader, f"atomic expression path omits {token}")
+
+    # Direct notification/rule/status consumers must use alpha-capable loaders,
+    # not construct partial masked lists or depend on contiguous bitmap IDs.
+    require(notifications.count("BuildOrderedImageList(") == 1 and
+            notifications.count("BuildStripImageList(") == 2,
+            "notification status/connect/old-new lists bypass modern loaders")
+    require("{IDB_INACTIVE, IDB_ACTIVE}" in notifications,
+            "notification inactive/active indices drifted")
+    require("pItem->iImage = (pNotif->bActive() ? 1 : 0);" in notifications and
+            "pItem->iImage = (pUser->GetFlags() & g_wConnected) ? 0 : 1;" in notifications and
+            "INDEXTOSTATEIMAGEMASK((pUser->GetFlags() & g_wNew) ? 1 : 0)" in notifications,
+            "notification active/connect/new state consumers drifted from source indices")
+    require(automation.count("BuildOrderedImageList(") == 2 and
+            "{IDB_INACTIVE, IDB_ACTIVE, IDB_STOPPED}" in automation and
+            "{IDB_INACTIVE, IDB_ACTIVE}" in automation,
+            "automation status lists lost their explicit state order")
+    require("pRule->bActive() ? (pRule->bStopped() ? 2 : 1) : 0" in automation,
+            "rule inactive/active/stopped consumer drifted from source indices")
+    for forbidden in ("m_ilActiveStatus.Create(IDB_INACTIVE", "IDB_INACTIVE+nCnt"):
+        require(forbidden not in notifications + automation,
+                f"direct masked/status bitmap path remains: {forbidden}")
+    require("CImageList\tm_icons;" in automation_header and
+            "ImageList_Draw" in automation,
+            "owner-drawn rule-set status still uses raw HBITMAP BitBlt")
+    require("BuildModernOrderedImageList" in loader and
+            "BuildLegacyOrderedImageList" in loader and
+            loader.index("BuildModernOrderedImageList(", loader.index("bool BuildOrderedImageList(")) <
+            loader.index("BuildLegacyOrderedImageList(", loader.index("bool BuildOrderedImageList(")),
+            "ordered state lists do not use atomic modern-to-source fallback")
+
     print(f"Windows icon integration passed: {len(resource_files)} resource files, "
           f"{len(expected_bindings)} x {len(modern_sizes)} WIC alpha-strip resources, "
-          "distinct DPI-aware window icons")
+          "56 expression resources, direct state consumers, distinct DPI-aware window icons")
 
 
 if __name__ == "__main__":
