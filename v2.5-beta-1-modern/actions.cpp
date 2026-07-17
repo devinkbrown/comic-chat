@@ -15,6 +15,7 @@
 #include "notipage.h"
 #include "whisprbx.h"
 #include "sounddlg.h"
+#include "modernicons.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -1086,12 +1087,7 @@ CNotificationUsers* CreateNotificationBox()
 		delete pNotifBox;
 		return NULL;
 	}
-	HICON hIcon = theApp.LoadIcon(IDI_NOTIF);
-	if (hIcon)
-	{
-		pNotifBox->SetIcon(hIcon, TRUE);
-		pNotifBox->SetIcon(hIcon, FALSE);
-	}
+	comic_chat::modern_ui::ApplyDpiAwareWindowIcons(*pNotifBox, IDI_NOTIF);
 	pNotifBox->SetPostCreate(TRUE);
 	if (!IsRectEmpty (&theApp.m_rectNotifs))
 	{

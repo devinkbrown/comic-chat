@@ -5,6 +5,11 @@
 
 namespace comic_chat::modern_ui {
 
+// Load independent large and small frames from a multi-image icon resource.
+// LR_SHARED leaves ownership with USER32, so the receiving window can retain
+// both handles for its complete lifetime without leaking or destroying them.
+bool ApplyDpiAwareWindowIcons(CWnd& window, UINT icon_resource);
+
 // Rebuild a DPI-sized image list exclusively from the original Microsoft
 // TOOLBAR/BITMAP resource. Command/index order and source pixels are unchanged.
 bool BuildStripImageList(

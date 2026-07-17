@@ -65,6 +65,55 @@ C_PROJ=/nologo $(CPP_CFG) /W3 /Zi /D "WIN32" /D "_WINDOWS" /D "_MBCS" \
 
 RSC_PROJ=/l 0x409 /fo"$(INTDIR)\chat.res" /i "." /i "$(ARTINC)" $(RSC_CFG)
 
+RESOURCE_ICON_INPUTS= \
+	res\chat.ico \
+	res\chatdoc.ico \
+	res\room.ico \
+	res\ruleset.ico \
+	res\avatar.ico \
+	res\backgd.ico \
+	res\ratings.ico \
+	res\whisper.ico \
+	res\notif.ico \
+	res\tosrv.ico \
+	res\tonet.ico
+
+RESOURCE_BITMAP_INPUTS= \
+	res\balloons.bmp \
+	res\tiki2.bmp \
+	res\toolbar.bmp \
+	res\tabbar.bmp \
+	res\member.bmp \
+	res\oldnew.bmp \
+	res\connect.bmp \
+	res\stopped.bmp \
+	res\inactive.bmp \
+	res\active.bmp \
+	res\texttool.bmp \
+	res\usertool.bmp \
+	res\fc_hap_l.bmp \
+	res\fc_laf_l.bmp \
+	res\fc_sho_l.bmp \
+	res\fc_ang_l.bmp \
+	res\fc_sad_l.bmp \
+	res\fc_sca_l.bmp \
+	res\fc_bor_l.bmp \
+	res\fc_coy_l.bmp \
+	res\palette.dib
+
+RESOURCE_INPUTS= \
+	chat.rc \
+	resource.h \
+	cchat.rcv \
+	chatver.rc \
+	chatver.h \
+	res\chat.rc2 \
+	$(ARTINC)\textview.rc \
+	$(ARTINC)\tvres.h \
+	$(ARTINC)\hand.cur \
+	$(RESOURCE_ICON_INPUTS) \
+	$(RESOURCE_BITMAP_INPUTS)
+
 LINK32_FLAGS=/nologo /subsystem:windows /FORCE:MULTIPLE /incremental:no /debug \
  /machine:I386 /nodefaultlib:"libc" \
  /LIBPATH:"$(VCTOOLSINSTALLDIR)ATLMFC\lib\spectre\x86" /LIBPATH:"$(ARTLIB)" \
@@ -186,7 +235,7 @@ $(LINK32_FLAGS) $(OBJS)
 <<
 
 # ---- Resource ----
-"$(INTDIR)\chat.res" : chat.rc
+"$(INTDIR)\chat.res" : $(RESOURCE_INPUTS)
 	$(RSC) $(RSC_PROJ) chat.rc
 
 # ---- C++ sources (no PCH) ----

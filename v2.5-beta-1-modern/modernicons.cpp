@@ -1,9 +1,35 @@
 #include "stdafx.h"
 #include "resource.h"
 #include "modernicons.h"
+#include "modernui.h"
 
 namespace comic_chat::modern_ui {
 namespace {
+
+using GetSystemMetricsForDpiFn = int(WINAPI*)(int, UINT);
+
+int SystemMetricForDpi(int metric, UINT dpi)
+{
+	if (HMODULE user = ::GetModuleHandleW(L"user32.dll")) {
+		if (const auto get_metric = reinterpret_cast<GetSystemMetricsForDpiFn>(
+			::GetProcAddress(user, "GetSystemMetricsForDpi"))) {
+			const int value = get_metric(metric, dpi);
+			if (value > 0) return value;
+		}
+	}
+	const int system_value = ::GetSystemMetrics(metric);
+	const UINT system_dpi = SystemDpi();
+	const int scaled = ::MulDiv(system_value, static_cast<int>(dpi),
+		static_cast<int>(system_dpi ? system_dpi : 96U));
+	return scaled > 0 ? scaled : 1;
+}
+
+HICON LoadSharedIconFrame(UINT resource, int width, int height)
+{
+	return reinterpret_cast<HICON>(::LoadImage(
+		AfxGetResourceHandle(), MAKEINTRESOURCE(resource), IMAGE_ICON,
+		width, height, LR_SHARED));
+}
 
 COLORREF SourceMaskColor(UINT resource)
 {
@@ -46,6 +72,23 @@ bool SourceCellBounds(
 }
 
 } // namespace
+
+bool ApplyDpiAwareWindowIcons(CWnd& window, UINT icon_resource)
+{
+	const HWND handle = window.GetSafeHwnd();
+	if (!handle) return false;
+	const UINT dpi = static_cast<UINT>(DpiForWindow(handle));
+	const HICON big_icon = LoadSharedIconFrame(
+		icon_resource, SystemMetricForDpi(SM_CXICON, dpi),
+		SystemMetricForDpi(SM_CYICON, dpi));
+	const HICON small_icon = LoadSharedIconFrame(
+		icon_resource, SystemMetricForDpi(SM_CXSMICON, dpi),
+		SystemMetricForDpi(SM_CYSMICON, dpi));
+	if (!big_icon || !small_icon) return false;
+	window.SetIcon(big_icon, TRUE);
+	window.SetIcon(small_icon, FALSE);
+	return true;
+}
 
 bool BuildStripImageList(
 	CImageList& image_list,
