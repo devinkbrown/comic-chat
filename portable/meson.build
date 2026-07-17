@@ -481,6 +481,7 @@ if get_option('tests')
     'comicchat-transport-ui-bridge-tests',
     '../v2.5-beta-1-modern/tests/transport_ui_bridge_test.cpp',
     include_directories: inc,
+    dependencies: core_dep,
   )
   test('comicchat-transport-ui-bridge', transport_ui_bridge_tests, timeout: 30)
 

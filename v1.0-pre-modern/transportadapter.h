@@ -71,6 +71,18 @@ enum class AdapterError : std::uint8_t {
 	if (!wire) return std::unexpected(AdapterError::invalid_line);
 	if (wire->size() > maximum_legacy_wire_bytes)
 		return std::unexpected(AdapterError::line_too_long);
+	const bool needs_legacy_trailing = !message.params.empty() &&
+		(message.command == "PRIVMSG" || message.command == "NICK" ||
+		 message.command == "319" || message.command == "322" ||
+		 message.command == "353" || message.command == "ERROR" ||
+		 (message.command == "KICK" && message.params.size() >= 3));
+	if (needs_legacy_trailing) {
+		const auto final_start = wire->size() - 2 - message.params.back().size();
+		if (final_start == 0 || (*wire)[final_start - 1] != ':')
+			wire->insert(final_start, 1, ':');
+		if (wire->size() > maximum_legacy_wire_bytes)
+			return std::unexpected(AdapterError::line_too_long);
+	}
 	return std::move(*wire);
 }
 

@@ -300,11 +300,14 @@ end:		char *szEnd = strpbrk(szBody, "\r\n");
 			if (!szEnd)
 				szEnd = (char *)strchr(szBody, '\0');
 			int cbLen = szEnd - szBody;
-			if (pParse->lastString = (char*) malloc(cbLen+1))
-			{
-				strncpy(pParse->lastString, szBody, cbLen);
-				pParse->lastString[cbLen] = '\0';
+			pParse->lastString = (char*) malloc(cbLen+1);
+			if (!pParse->lastString) {
+				FreeParse(pParse);
+				pParse->nArgs = 0;
+				return;
 			}
+			strncpy(pParse->lastString, szBody, cbLen);
+			pParse->lastString[cbLen] = '\0';
 			break;
 		}
 		char *szToken;
@@ -323,8 +326,14 @@ end:		char *szEnd = strpbrk(szBody, "\r\n");
 			if (!szToken)
 				break;
 		}
+		char* duplicated = strdup(szToken);
+		if (!duplicated) {
+			FreeParse(pParse);
+			pParse->nArgs = 0;
+			return;
+		}
 		pParse->nOffsets[pParse->nArgs] = szCurToken - szStart;
-		pParse->args[pParse->nArgs++] = strdup(szToken);
+		pParse->args[pParse->nArgs++] = duplicated;
 		if (pParse->nArgs == MAXARGS)
 		{
 			TRACE("Too many parameters - Have to use lastString for remaining message.\n");

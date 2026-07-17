@@ -222,7 +222,56 @@ Ircv3UserMutationResult ConsumeUserMutation(
 struct Ircv3LegacyMessageAdaptation {
 	std::optional<Ircv3AdapterEvent> typed_context;
 	std::optional<std::string> legacy_wire;
+	bool rejected_legacy_shape{};
 };
+
+// The historical parser uses a one-based args array (args[0] is the command)
+// and several release-build handlers dereference mandatory arguments after an
+// ASSERT-only check. Reject malformed typed messages before flattening them;
+// this keeps Microsoft's valid wire behavior without preserving its null-
+// dereference trust boundary.
+inline bool HasSafeLegacyDispatchShape(const comic_chat::ircv3::Message& message) noexcept
+{
+	const auto has_nonempty = [&message](const std::size_t index) {
+		return index < message.params.size() && !message.params[index].empty();
+	};
+	if (message.command == "JOIN" || message.command == "PART" ||
+		message.command == "KILL" || message.command == "001")
+		return has_nonempty(0);
+	if (message.command == "WHISPER")
+		return has_nonempty(0) && has_nonempty(1) && message.params.size() >= 3;
+	return true;
+}
+
+inline bool LegacyHandlerNeedsTrailingParameter(const comic_chat::ircv3::Message& message) noexcept
+{
+	if (message.params.empty()) return false;
+	if (message.command == "NICK" || message.command == "JOIN" ||
+		message.command == "INVITE" || message.command == "PRIVMSG" ||
+		message.command == "NOTICE" || message.command == "ERROR") return true;
+	if ((message.command == "KICK" || message.command == "WHISPER" ||
+		 message.command == "DATA" || message.command == "PROP") &&
+		message.params.size() >= 3) return true;
+	if (message.command == "TOPIC" && message.params.size() >= 2) return true;
+	if (message.command == "001" && message.params.size() >= 2) return true;
+	return false;
+}
+
+inline std::optional<std::string> PrepareLegacyProtocolWire(
+	const comic_chat::ircv3::Message& message)
+{
+	if (!HasSafeLegacyDispatchShape(message)) return std::nullopt;
+	auto wire = message.SerializeChecked(false);
+	if (!wire) return std::nullopt;
+	if (LegacyHandlerNeedsTrailingParameter(message)) {
+		const auto final_start = wire->size() - 2 - message.params.back().size();
+		if (final_start == 0 || (*wire)[final_start - 1] != ':') {
+			wire->insert(final_start, 1, ':');
+			if (wire->size() > 512) return std::nullopt;
+		}
+	}
+	return std::move(*wire);
+}
 
 // Preserve the complete parsed message for typed consumers before flattening
 // ordinary IRC into the historical command parser. TAGMSG is tag-only protocol
@@ -242,8 +291,11 @@ inline Ircv3LegacyMessageAdaptation AdaptProtocolMessage(
 		result.typed_context = Ircv3AdapterEvent{std::move(context), message};
 	}
 	if (!typed_only) {
-		auto wire = message.SerializeChecked(false);
-		if (wire) result.legacy_wire = std::move(*wire);
+		if (!HasSafeLegacyDispatchShape(message)) {
+			result.rejected_legacy_shape = true;
+		} else {
+			result.legacy_wire = PrepareLegacyProtocolWire(message);
+		}
 	}
 	return result;
 }

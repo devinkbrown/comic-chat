@@ -161,7 +161,30 @@ void TestBoundedLegacyInboundFacade()
 	message.params = {"#ink", "hello"};
 	auto prepared = comic_chat::v1::transport::PrepareLegacyInbound(message);
 	assert(prepared.has_value());
-	assert(prepared->starts_with(":nick!user@host.example PRIVMSG #ink hello"));
+	assert(prepared->starts_with(":nick!user@host.example PRIVMSG #ink :hello"));
+	message.params[1] = "hello world";
+	prepared = comic_chat::v1::transport::PrepareLegacyInbound(message);
+	assert(prepared && prepared->ends_with("PRIVMSG #ink :hello world\r\n"));
+
+	message.command = "NICK";
+	message.params = {"newnick"};
+	prepared = comic_chat::v1::transport::PrepareLegacyInbound(message);
+	assert(prepared && prepared->ends_with("NICK :newnick\r\n"));
+	message.command = "353";
+	message.params = {"me", "=", "#ink", "one two"};
+	prepared = comic_chat::v1::transport::PrepareLegacyInbound(message);
+	assert(prepared && prepared->ends_with("353 me = #ink :one two\r\n"));
+	message.command = "KICK";
+	message.params = {"#ink", "nick"};
+	prepared = comic_chat::v1::transport::PrepareLegacyInbound(message);
+	assert(prepared && prepared->ends_with("KICK #ink nick\r\n"));
+	message.params.push_back("reason");
+	prepared = comic_chat::v1::transport::PrepareLegacyInbound(message);
+	assert(prepared && prepared->ends_with("KICK #ink nick :reason\r\n"));
+	message.command = "ERROR";
+	message.params = {"closing"};
+	prepared = comic_chat::v1::transport::PrepareLegacyInbound(message);
+	assert(prepared && prepared->ends_with("ERROR :closing\r\n"));
 
 	message.prefix = std::string(
 		comic_chat::v1::transport::maximum_legacy_prefix_component_bytes, 'n') +
@@ -185,7 +208,8 @@ void TestBoundedLegacyInboundFacade()
 	assert(!comic_chat::v1::transport::PrepareLegacyInbound(message).has_value());
 
 	message.prefix = "nick!user@host";
-	message.params[1] = std::string(comic_chat::v1::transport::maximum_legacy_wire_bytes, 'x');
+	message.command = "PRIVMSG";
+	message.params = {"#ink", std::string(comic_chat::v1::transport::maximum_legacy_wire_bytes, 'x')};
 	auto oversized = comic_chat::v1::transport::PrepareLegacyInbound(message);
 	assert(!oversized.has_value());
 	assert(oversized.error() == AdapterError::invalid_line);

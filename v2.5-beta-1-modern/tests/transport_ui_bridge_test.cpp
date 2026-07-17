@@ -3,6 +3,9 @@
 
 #include <map>
 #include <string>
+#include <string_view>
+#include <tuple>
+#include <vector>
 
 using ::comicchat::net::State;
 using comic_chat::modern_ui::TransportState;
@@ -31,6 +34,9 @@ using comic_chat::legacy_ui::Ircv3StatusSeverity;
 using comic_chat::legacy_ui::Ircv3UserMutation;
 using comic_chat::legacy_ui::Ircv3UserMutationKind;
 using comic_chat::legacy_ui::Ircv3UserMutationResult;
+using comic_chat::legacy_ui::AdaptProtocolMessage;
+using comic_chat::legacy_ui::HasSafeLegacyDispatchShape;
+using comic_chat::legacy_ui::PrepareLegacyProtocolWire;
 
 struct FakeUser {
 	std::string account;
@@ -275,6 +281,55 @@ void TestChannelRenameConsumer()
 	Check(!ClassifyChannelRename(event));
 }
 
+void TestLegacyDispatchShapeGate()
+{
+	comic_chat::ircv3::Message message;
+	message.prefix = "nick!user@host";
+	for (const std::string_view command : {"JOIN", "PART", "KILL", "001"}) {
+		message.command = std::string(command);
+		message.params.clear();
+		Check(!HasSafeLegacyDispatchShape(message));
+		auto rejected = AdaptProtocolMessage(message);
+		Check(rejected.rejected_legacy_shape && !rejected.legacy_wire);
+		message.params = {command == "001" ? "localnick" : "#ink"};
+		Check(HasSafeLegacyDispatchShape(message));
+		Check(AdaptProtocolMessage(message).legacy_wire.has_value());
+	}
+
+	message.command = "WHISPER";
+	for (const auto& malformed : {
+		std::vector<std::string>{},
+		std::vector<std::string>{"#ink"},
+		std::vector<std::string>{"#ink", "nick"}}) {
+		message.params = malformed;
+		Check(!HasSafeLegacyDispatchShape(message));
+		Check(AdaptProtocolMessage(message).rejected_legacy_shape);
+	}
+	message.params = {"#ink", "nick", "hello"};
+	Check(HasSafeLegacyDispatchShape(message));
+	Check(AdaptProtocolMessage(message).legacy_wire.has_value());
+
+	message.command = "NOTICE";
+	message.params.clear();
+	Check(HasSafeLegacyDispatchShape(message));
+	Check(AdaptProtocolMessage(message).legacy_wire.has_value());
+
+	for (const auto& [command, params, suffix] : {
+		std::tuple{"NICK", std::vector<std::string>{"newnick"}, std::string{"NICK :newnick\r\n"}},
+		std::tuple{"JOIN", std::vector<std::string>{"#ink"}, std::string{"JOIN :#ink\r\n"}},
+		std::tuple{"INVITE", std::vector<std::string>{"me", "#ink"}, std::string{"INVITE me :#ink\r\n"}},
+		std::tuple{"PRIVMSG", std::vector<std::string>{"#ink", "hello"}, std::string{"PRIVMSG #ink :hello\r\n"}},
+		std::tuple{"NOTICE", std::vector<std::string>{"me", "hello"}, std::string{"NOTICE me :hello\r\n"}},
+		std::tuple{"KICK", std::vector<std::string>{"#ink", "nick", "reason"}, std::string{"KICK #ink nick :reason\r\n"}},
+		std::tuple{"WHISPER", std::vector<std::string>{"#ink", "nick", "hello"}, std::string{"WHISPER #ink nick :hello\r\n"}},
+		std::tuple{"001", std::vector<std::string>{"me", "welcome"}, std::string{"001 me :welcome\r\n"}}}) {
+		message.command = command;
+		message.params = params;
+		auto wire = PrepareLegacyProtocolWire(message);
+		Check(wire && wire->ends_with(suffix));
+	}
+}
+
 } // namespace
 
 int main()
@@ -283,5 +338,6 @@ int main()
 	TestTypedUserMutationsReachOwnedModels();
 	TestStandardReplyPresentation();
 	TestChannelRenameConsumer();
+	TestLegacyDispatchShapeGate();
 	return failures == 0 ? 0 : 1;
 }
