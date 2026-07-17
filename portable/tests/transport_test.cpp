@@ -28,6 +28,7 @@
 #include <mbedtls/x509_crt.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 #include <psa/crypto.h>
 
@@ -443,6 +444,250 @@ private:
     int listener_{-1};
     std::atomic_int client_{-1};
     std::uint16_t port_{};
+    comicchat::threading::JThread thread_;
+};
+
+auto serve_one_tls_session(
+    const int accepted,
+    const comicchat::threading::StopToken& token,
+    std::atomic_bool* clean_peer_shutdown = nullptr) -> bool {
+    mbedtls_ssl_context ssl;
+    mbedtls_ssl_config config;
+    mbedtls_x509_crt certificate;
+    mbedtls_pk_context key;
+    mbedtls_ctr_drbg_context random;
+    mbedtls_entropy_context entropy;
+    mbedtls_net_context client;
+    mbedtls_ssl_init(&ssl);
+    mbedtls_ssl_config_init(&config);
+    mbedtls_x509_crt_init(&certificate);
+    mbedtls_pk_init(&key);
+    mbedtls_ctr_drbg_init(&random);
+    mbedtls_entropy_init(&entropy);
+    mbedtls_net_init(&client);
+    client.fd = accepted;
+    static constexpr unsigned char personalization[] = "comic-chat-stale-tls";
+    const std::string certificate_path = std::string{MBEDTLS_DATA_DIR} + "/server6.crt";
+    const std::string key_path = std::string{MBEDTLS_DATA_DIR} + "/server6.key";
+    bool established{};
+    const auto initialized =
+        mbedtls_ctr_drbg_seed(&random, mbedtls_entropy_func, &entropy, personalization,
+                              sizeof(personalization) - 1) == 0 &&
+        mbedtls_x509_crt_parse_file(&certificate, certificate_path.c_str()) == 0 &&
+        mbedtls_pk_parse_keyfile(&key, key_path.c_str(), nullptr,
+                                 mbedtls_ctr_drbg_random, &random) == 0 &&
+        mbedtls_ssl_config_defaults(&config, MBEDTLS_SSL_IS_SERVER,
+                                    MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT) == 0 &&
+        mbedtls_ssl_conf_own_cert(&config, &certificate, &key) == 0;
+    if (initialized && !token.stop_requested()) {
+        mbedtls_ssl_conf_rng(&config, mbedtls_ctr_drbg_random, &random);
+        if (mbedtls_ssl_setup(&ssl, &config) == 0) {
+            mbedtls_ssl_set_bio(&ssl, &client, mbedtls_net_send, mbedtls_net_recv, nullptr);
+            established = mbedtls_ssl_handshake(&ssl) == 0;
+            if (established && clean_peer_shutdown != nullptr) {
+                std::array<unsigned char, 1> input{};
+                clean_peer_shutdown->store(
+                    mbedtls_ssl_read(&ssl, input.data(), input.size()) ==
+                    MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY);
+            }
+        }
+    }
+    client.fd = -1;
+    mbedtls_ssl_free(&ssl);
+    mbedtls_ssl_config_free(&config);
+    mbedtls_x509_crt_free(&certificate);
+    mbedtls_pk_free(&key);
+    mbedtls_ctr_drbg_free(&random);
+    mbedtls_entropy_free(&entropy);
+    return established;
+}
+
+// Holds an established TLS socket open until the client shuts down, proving
+// that the established-session guard still permits close_notify on the socket
+// whose keys belong to it.
+class TlsCleanShutdownServer final {
+public:
+    TlsCleanShutdownServer() {
+        warm_mbedtls_cpu_features();
+        listener_ = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        REQUIRE(listener_ >= 0);
+        const int reuse = 1;
+        REQUIRE(::setsockopt(listener_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) == 0);
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        address.sin_port = 0;
+        REQUIRE(::bind(listener_, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == 0);
+        REQUIRE(::listen(listener_, 1) == 0);
+        socklen_t size = sizeof(address);
+        REQUIRE(::getsockname(listener_, reinterpret_cast<sockaddr*>(&address), &size) == 0);
+        port_ = ntohs(address.sin_port);
+        thread_ = comicchat::threading::JThread{[this](const comicchat::threading::StopToken token) {
+            const auto accepted = ::accept(listener_, nullptr, nullptr);
+            if (accepted < 0 || token.stop_requested()) return;
+            client_.store(accepted);
+            (void)serve_one_tls_session(accepted, token, &clean_shutdown_);
+            if (const auto client = client_.exchange(-1); client >= 0) {
+                (void)::shutdown(client, SHUT_RDWR);
+                (void)::close(client);
+            }
+        }};
+    }
+
+    ~TlsCleanShutdownServer() {
+        thread_.request_stop();
+        if (const auto client = client_.load(); client >= 0) (void)::shutdown(client, SHUT_RDWR);
+        if (listener_ >= 0) (void)::shutdown(listener_, SHUT_RDWR);
+        if (thread_.joinable()) thread_.join();
+        if (const auto client = client_.exchange(-1); client >= 0) (void)::close(client);
+        if (listener_ >= 0) (void)::close(listener_);
+    }
+
+    [[nodiscard]] auto port() const noexcept -> std::uint16_t { return port_; }
+
+    [[nodiscard]] auto wait_for_clean_shutdown(
+        const std::chrono::milliseconds timeout = 3s) const -> bool {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (clean_shutdown_.load()) return true;
+            std::this_thread::sleep_for(2ms);
+        }
+        return false;
+    }
+
+private:
+    int listener_{-1};
+    std::atomic_int client_{-1};
+    std::atomic_bool clean_shutdown_{};
+    std::uint16_t port_{};
+    comicchat::threading::JThread thread_;
+};
+
+// Drives the reconnect shape that strands TLS state: the first connection
+// negotiates SOCKS5 and terminates a complete TLS session before dropping, and
+// the second rejects the SOCKS5 greeting so the engine fails before any new TLS
+// handshake begins. Everything the client writes on that second socket after the
+// rejection is recorded, since none of it can legitimately be TLS.
+class StaleTlsReconnectProxy final {
+public:
+    StaleTlsReconnectProxy() {
+        warm_mbedtls_cpu_features();
+        listener_ = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        REQUIRE(listener_ >= 0);
+        const int reuse = 1;
+        REQUIRE(::setsockopt(listener_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) == 0);
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        address.sin_port = 0;
+        REQUIRE(::bind(listener_, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == 0);
+        REQUIRE(::listen(listener_, 2) == 0);
+        socklen_t size = sizeof(address);
+        REQUIRE(::getsockname(listener_, reinterpret_cast<sockaddr*>(&address), &size) == 0);
+        port_ = ntohs(address.sin_port);
+        thread_ = comicchat::threading::JThread{[this](const comicchat::threading::StopToken token) { run(token); }};
+    }
+
+    ~StaleTlsReconnectProxy() {
+        thread_.request_stop();
+        if (const auto client = client_.load(); client >= 0) (void)::shutdown(client, SHUT_RDWR);
+        if (listener_ >= 0) (void)::shutdown(listener_, SHUT_RDWR);
+        if (thread_.joinable()) thread_.join();
+        if (const auto client = client_.exchange(-1); client >= 0) (void)::close(client);
+        if (listener_ >= 0) (void)::close(listener_);
+    }
+
+    [[nodiscard]] auto port() const noexcept -> std::uint16_t { return port_; }
+    [[nodiscard]] auto tls_session_completed() const noexcept -> bool { return tls_completed_.load(); }
+    [[nodiscard]] auto greeting_rejected() const noexcept -> bool { return greeting_rejected_.load(); }
+
+    [[nodiscard]] auto bytes_after_rejection() const -> std::vector<std::byte> {
+        std::scoped_lock lock{trailing_mutex_};
+        return trailing_;
+    }
+
+    [[nodiscard]] auto wait_for_rejected_socket_drain(const std::chrono::milliseconds timeout = 3s) const -> bool {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (drained_.load()) return true;
+            std::this_thread::sleep_for(2ms);
+        }
+        return false;
+    }
+
+private:
+    static auto read_exact(const int socket, std::span<std::byte> output) -> bool {
+        std::size_t offset{};
+        while (offset < output.size()) {
+            const auto count = ::recv(socket, output.data() + offset, output.size() - offset, 0);
+            if (count <= 0) return false;
+            offset += static_cast<std::size_t>(count);
+        }
+        return true;
+    }
+
+    static auto accept_socks_greeting(const int socket) -> bool {
+        std::array<std::byte, 3> greeting{};
+        if (!read_exact(socket, greeting)) return false;
+        return greeting[0] == std::byte{5};
+    }
+
+    void run(const comicchat::threading::StopToken token) {
+        const auto tunnel = ::accept(listener_, nullptr, nullptr);
+        if (tunnel < 0 || token.stop_requested()) return;
+        client_.store(tunnel);
+        if (accept_socks_greeting(tunnel)) {
+            constexpr std::array<std::byte, 2> greeting_reply{std::byte{5}, std::byte{0}};
+            (void)::send(tunnel, greeting_reply.data(), greeting_reply.size(), 0);
+            // An IPv4 literal target keeps the SOCKS5 connect request fixed-width.
+            std::array<std::byte, 10> request{};
+            if (read_exact(tunnel, request)) {
+                constexpr std::array<std::byte, 10> connected{
+                    std::byte{5}, std::byte{0}, std::byte{0}, std::byte{1}, std::byte{127},
+                    std::byte{0}, std::byte{0}, std::byte{1}, std::byte{0}, std::byte{1},
+                };
+                (void)::send(tunnel, connected.data(), connected.size(), 0);
+                tls_completed_.store(serve_one_tls_session(tunnel, token));
+            }
+        }
+        // Dropping the tunnel without close_notify leaves the client holding a
+        // fully established session and sends it into reconnect.
+        const auto finished = client_.exchange(-1);
+        if (finished >= 0) {
+            (void)::shutdown(finished, SHUT_RDWR);
+            (void)::close(finished);
+        }
+        if (token.stop_requested()) return;
+
+        const auto rejected = ::accept(listener_, nullptr, nullptr);
+        if (rejected < 0 || token.stop_requested()) return;
+        client_.store(rejected);
+        if (accept_socks_greeting(rejected)) {
+            constexpr std::array<std::byte, 2> refusal{std::byte{5}, std::byte{0xff}};
+            (void)::send(rejected, refusal.data(), refusal.size(), 0);
+            greeting_rejected_.store(true);
+            timeval timeout{};
+            timeout.tv_sec = 2;
+            (void)::setsockopt(rejected, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+            std::array<std::byte, 512> input{};
+            while (!token.stop_requested()) {
+                const auto count = ::recv(rejected, input.data(), input.size(), 0);
+                if (count <= 0) break;
+                std::scoped_lock lock{trailing_mutex_};
+                trailing_.insert(trailing_.end(), input.begin(), input.begin() + count);
+            }
+        }
+        drained_.store(true);
+    }
+
+    int listener_{-1};
+    std::atomic_int client_{-1};
+    std::atomic_bool tls_completed_{};
+    std::atomic_bool greeting_rejected_{};
+    std::atomic_bool drained_{};
+    std::uint16_t port_{};
+    mutable std::mutex trailing_mutex_;
+    std::vector<std::byte> trailing_;
     comicchat::threading::JThread thread_;
 };
 
@@ -974,4 +1219,56 @@ TEST_CASE("TLS reconnect reports actual cached-session resumption") {
         return connected != nullptr && connected->tls && connected->resumed;
     }, 3s));
     engine.stop();
+}
+
+TEST_CASE("a proxy reconnect that fails before TLS emits no prior-session close_notify") {
+    StaleTlsReconnectProxy proxy;
+    comicchat::net::ConnectionOptions options;
+    options.endpoint = {"127.0.0.1", 6667};
+    options.security = comicchat::net::Security::tls;
+    options.server_name = "localhost";
+    options.ca_file = std::string{MBEDTLS_DATA_DIR} + "/test-ca2.crt";
+    options.proxy.kind = comicchat::net::ProxyKind::socks5;
+    options.proxy.host = "127.0.0.1";
+    options.proxy.port = proxy.port();
+    options.deadlines.connect = 1s;
+    options.deadlines.handshake = 1s;
+    options.deadlines.idle = 5s;
+    comicchat::net::ConnectionEngine engine;
+    REQUIRE(engine.start(options).has_value());
+    REQUIRE(wait_for(engine, [](const auto& event) {
+        const auto* connected = std::get_if<comicchat::net::Connected>(&event.body);
+        return connected != nullptr && connected->tls;
+    }));
+    REQUIRE(wait_for(engine, [](const auto& event) {
+        const auto* diagnostic = std::get_if<comicchat::net::Diagnostic>(&event.body);
+        return diagnostic != nullptr && diagnostic->code == "proxy-auth";
+    }, 5s));
+    REQUIRE(proxy.wait_for_rejected_socket_drain());
+    CHECK(proxy.tls_session_completed());
+    CHECK(proxy.greeting_rejected());
+    // TLS state stranded past its socket encrypts close_notify under the dropped
+    // session and hands the alert to the proxy that just refused the tunnel.
+    CHECK(proxy.bytes_after_rejection().empty());
+    engine.stop();
+}
+
+TEST_CASE("intentional TLS shutdown sends close_notify only on its established socket") {
+    TlsCleanShutdownServer server;
+    comicchat::net::ConnectionOptions options;
+    options.endpoint = {"127.0.0.1", server.port()};
+    options.security = comicchat::net::Security::tls;
+    options.server_name = "localhost";
+    options.ca_file = std::string{MBEDTLS_DATA_DIR} + "/test-ca2.crt";
+    options.deadlines.connect = 1s;
+    options.deadlines.handshake = 1s;
+    options.deadlines.idle = 5s;
+    comicchat::net::ConnectionEngine engine;
+    REQUIRE(engine.start(options).has_value());
+    REQUIRE(wait_for(engine, [](const auto& event) {
+        const auto* connected = std::get_if<comicchat::net::Connected>(&event.body);
+        return connected != nullptr && connected->tls;
+    }));
+    engine.stop();
+    CHECK(server.wait_for_clean_shutdown());
 }

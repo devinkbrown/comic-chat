@@ -389,6 +389,7 @@ private:
     }
 
     void reset_tls_configuration() noexcept {
+        tls_established_ = false;
         mbedtls_ssl_free(&ssl_);
         mbedtls_ssl_init(&ssl_);
         mbedtls_ssl_config_free(&tls_config_);
@@ -1131,6 +1132,9 @@ private:
             fail_connection("tls-config", "TLS trust configuration failed");
             return;
         }
+        // A fresh context carries no session, so the flag tracks it from here;
+        // the handshake completing is what makes close_notify sendable again.
+        tls_established_ = false;
         mbedtls_ssl_free(&ssl_);
         mbedtls_ssl_init(&ssl_);
         if (mbedtls_ssl_setup(&ssl_, &tls_config_) != 0 ||
@@ -1249,6 +1253,7 @@ private:
             if (!resume_reference_.empty()) mbedtls_platform_zeroize(resume_reference_.data(), resume_reference_.size());
             resume_reference_.clear();
             resume_offered_ = false;
+            tls_established_ = true;
             pipeline_ = Pipeline::open;
             receive_paused_ = false;
             mark_server_activity();
@@ -1539,7 +1544,11 @@ private:
     }
 
     void close_transport() noexcept {
-        if (has_socket_ && options_.security == Security::tls) (void)mbedtls_ssl_close_notify(&ssl_);
+        // close_notify may only be sent while the current socket still carries
+        // the session those keys belong to. A context left established past its
+        // socket would encrypt the alert under the old session and emit it onto
+        // whatever socket the BIO now points at, such as a reconnect proxy.
+        if (has_socket_ && tls_established_) (void)mbedtls_ssl_close_notify(&ssl_);
         if (happy_timer_initialized_) uv_timer_stop(&happy_timer_);
         if (deadline_timer_initialized_) uv_timer_stop(&deadline_timer_);
         if (rate_timer_initialized_) uv_timer_stop(&rate_timer_);
@@ -1555,6 +1564,12 @@ private:
             winner_ = nullptr;
         }
         has_socket_ = false;
+        // The ssl_ context is scoped to one socket. Returning it to a pristine
+        // state here keeps the next attempt from inheriting this session; the
+        // resumption ticket lives in session_ and is deliberately untouched.
+        tls_established_ = false;
+        mbedtls_ssl_free(&ssl_);
+        mbedtls_ssl_init(&ssl_);
         pipeline_ = Pipeline::idle;
         receive_paused_ = false;
         proxy_phase_ = ProxyPhase::none;
@@ -1687,6 +1702,7 @@ private:
     std::uint64_t resolve_serial_{};
     bool resolve_restart_pending_{};
     bool has_socket_{};
+    bool tls_established_{};
     bool readiness_initialized_{};
     bool readiness_closing_{};
     bool intentional_close_{};
