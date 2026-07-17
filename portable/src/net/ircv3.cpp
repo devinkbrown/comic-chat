@@ -39,6 +39,10 @@ constexpr std::size_t kMaxBatchMessages = 512;
 constexpr std::size_t kMaxBatchWireBytes = 256U * 1024U;
 constexpr std::size_t kMaxTotalBatchWireBytes = 1024U * 1024U;
 constexpr std::size_t kMaxPendingLabels = 1024;
+// Bounded per-channel history depth requested by the automatic reconnect
+// recovery emitter. This only requests history into a chathistory batch; it
+// never replays uncertain history as live state.
+constexpr std::size_t kReconnectHistoryLimit = 100;
 constexpr std::size_t kMaxCapabilityBytes = 32U * 1024U;
 constexpr std::size_t kMaxCapabilities = 512;
 constexpr std::size_t kMaxStateEntries = 4096;
@@ -1331,6 +1335,11 @@ std::vector<std::string> Engine::BeginRegistrationLocked(
 	metadata_subscriptions_.clear();
 	metadata_entries_ = 0;
 	redacted_.clear();
+	// Remember the channels we were in so a reconnect's RPL_WELCOME can emit
+	// bounded recovery. Only refresh the snapshot when there is live membership
+	// to remember, so a reconnect attempt that fails before 001 does not erase
+	// the memory when the next attempt re-registers on an already-cleared set.
+	if (!joined_channels_.empty()) recovery_channels_ = joined_channels_;
 	joined_channels_.clear();
 	isupport_.clear();
 	monitor_online_.clear();
@@ -1465,16 +1474,22 @@ std::expected<std::string, ParseFailure> Engine::PrepareKeepalivePing()
 	return message.SerializeChecked(false);
 }
 
-std::vector<std::string> Engine::RecoveryCommands(std::size_t history_limit) const
+std::vector<std::string> Engine::BuildRecoveryCommands(
+	const std::set<std::string>& channels, std::size_t history_limit) const
 {
 	std::vector<std::string> commands;
-	for (const auto& channel : joined_channels_) {
+	for (const auto& channel : channels) {
 		commands.push_back("JOIN " + channel + "\r\n");
 		if (IsEnabled("draft/chathistory"))
 			commands.push_back("CHATHISTORY LATEST " + channel + " * " +
 				std::to_string(history_limit) + "\r\n");
 	}
 	return commands;
+}
+
+std::vector<std::string> Engine::RecoveryCommands(std::size_t history_limit) const
+{
+	return BuildRecoveryCommands(joined_channels_, history_limit);
 }
 
 void Engine::ParseCapabilityList(std::string_view list, bool replace)
@@ -2209,9 +2224,17 @@ std::vector<Message> Engine::FinishBatch(const std::string& id, std::vector<Even
 	};
 	auto deliver = [&](std::vector<Message> messages) {
 		if (batch.label) {
+			// Full presentation: the caller receives the label, the originating
+			// command it correlates to, the response kind, and a content
+			// descriptor (batch type + delivered message count) so a labeled
+			// batch response is fully associated with the command that produced
+			// it rather than arriving as an anonymous stream.
 			Event event;
 			event.type = EventType::LabeledResponse;
 			event.key = *batch.label;
+			event.detail = "batch";
+			event.context.push_back(batch.type);
+			event.context.push_back(std::to_string(messages.size()));
 			const auto pending = label_commands_.find(event.key);
 			if (pending != label_commands_.end()) {
 				event.value = pending->second;
@@ -2801,6 +2824,21 @@ ProcessResult Engine::Process(std::string_view wire)
 			return HandleMetadataNumeric(message, *numeric);
 	}
 	ProcessResult result = std::move(join_state);
+	// RPL_WELCOME (001) marks a completed (re)registration. When we reconnected
+	// while holding prior channel memberships, emit bounded recovery so the
+	// session is restored without the frontend re-deriving it: rejoin each
+	// remembered channel and request a bounded CHATHISTORY LATEST window. This
+	// is gated on negotiated chathistory — recovery exists to recover missed
+	// history, and it only *requests* history (into a chathistory batch), never
+	// replaying uncertain history as live state. The snapshot is single-shot.
+	if (message.command == "001") {
+		if (!recovery_channels_.empty() && IsEnabled("draft/chathistory")) {
+			auto recovery = BuildRecoveryCommands(recovery_channels_, kReconnectHistoryLimit);
+			result.outbound.insert(result.outbound.end(),
+				std::make_move_iterator(recovery.begin()), std::make_move_iterator(recovery.end()));
+		}
+		recovery_channels_.clear();
+	}
 	if (message.command == "004" && message.params.size() >= 3 &&
 		message.params[1].size() <= kMaxIdentityBytes &&
 		message.params[2].size() <= kMaxIdentityBytes) {
@@ -2816,9 +2854,15 @@ ProcessResult Engine::Process(std::string_view wire)
 	}
 	if (message.command == "005") HandleIsupport(message, &result.events);
 	if (const auto* label = message.FindTag("label"); label && label->value) {
+		// Full presentation: a single labeled reply is correlated to its
+		// originating command and tagged with the response kind plus the
+		// responding command, so the caller can associate this reply with the
+		// command it answered instead of matching on the raw label tag alone.
 		Event event;
 		event.type = EventType::LabeledResponse;
 		event.key = *label->value;
+		event.detail = "message";
+		event.context.push_back(message.command);
 		const auto pending = label_commands_.find(event.key);
 		if (pending != label_commands_.end()) {
 			event.value = pending->second;
@@ -3005,15 +3049,20 @@ std::expected<std::vector<std::string>, ParseFailure> Engine::PrepareMultiline(
 	if (!IsEnabled("batch") || !IsEnabled("draft/multiline"))
 		return std::unexpected(ParseFailure{"multiline requires negotiated batch and draft/multiline"});
 	// The batch type takes exactly one target. A comma list would be several
-	// targets sharing one batch, which the type does not define.
+	// targets sharing one batch, which the type does not define. Each rejection
+	// carries the matching IRCv3 multiline standard-reply code so a frontend can
+	// present the specific failure without parsing the free-text reason.
 	if (!ValidMiddleParameter(target) || target.find(',') != std::string_view::npos)
-		return std::unexpected(ParseFailure{"multiline requires exactly one valid target"});
+		return std::unexpected(ParseFailure{
+			"multiline requires exactly one valid target", "MULTILINE_INVALID_TARGET"});
 	if (lines.empty())
-		return std::unexpected(ParseFailure{"multiline batch requires at least one message"});
+		return std::unexpected(ParseFailure{
+			"multiline batch requires at least one message", "MULTILINE_INVALID"});
 
 	const auto limits = AdvertisedMultilineLimits();
 	if (lines.size() > limits.max_lines)
-		return std::unexpected(ParseFailure{"multiline batch exceeds advertised max-lines"});
+		return std::unexpected(ParseFailure{
+			"multiline batch exceeds advertised max-lines", "MULTILINE_MAX_LINES"});
 
 	// max-bytes counts message content, not framing. Accumulate against the
 	// remaining allowance so the sum cannot overflow or underflow.
@@ -3021,18 +3070,23 @@ std::expected<std::vector<std::string>, ParseFailure> Engine::PrepareMultiline(
 	for (std::size_t index = 0; index < lines.size(); ++index) {
 		const auto& line = lines[index];
 		if (HasLineControl(line.text))
-			return std::unexpected(ParseFailure{"multiline content must not contain line control bytes"});
+			return std::unexpected(ParseFailure{
+				"multiline content must not contain line control bytes", "MULTILINE_INVALID"});
 		if (line.concat && index == 0)
-			return std::unexpected(ParseFailure{"multiline concat is prohibited on the first message"});
+			return std::unexpected(ParseFailure{
+				"multiline concat is prohibited on the first message", "MULTILINE_INVALID"});
 		if (line.concat && line.text.empty())
-			return std::unexpected(ParseFailure{"multiline concat is prohibited on a blank message"});
+			return std::unexpected(ParseFailure{
+				"multiline concat is prohibited on a blank message", "MULTILINE_INVALID"});
 		if (line.text.size() > limits.max_bytes - content_bytes)
-			return std::unexpected(ParseFailure{"multiline batch exceeds advertised max-bytes"});
+			return std::unexpected(ParseFailure{
+				"multiline batch exceeds advertised max-bytes", "MULTILINE_MAX_BYTES"});
 		content_bytes += line.text.size();
 	}
 	if (isupport_.contains("UTF8ONLY") &&
 		!std::ranges::all_of(lines, [](const MultilineLine& line) { return ValidUtf8(line.text); }))
-		return std::unexpected(ParseFailure{"UTF8ONLY server rejects non-UTF-8 output"});
+		return std::unexpected(ParseFailure{
+			"UTF8ONLY server rejects non-UTF-8 output", "MULTILINE_INVALID"});
 
 	const std::string reference = NextBatchReference();
 	const std::string command = notice ? "NOTICE" : "PRIVMSG";

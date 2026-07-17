@@ -586,6 +586,30 @@ void TestOutboundMultiline()
 	const std::vector<MultilineLine> embedded = {{"a\nb", false}};
 	Check(!sender.PrepareMultiline("#room", embedded).has_value(),
 		"multiline builder rejects embedded line control in child content");
+
+	// Structured failure taxonomy: every rejection carries the matching IRCv3
+	// multiline standard-reply code so a frontend can present the specific
+	// failure. Reject-not-truncate is unchanged; only the code is asserted here.
+	auto failure_code = [](const std::expected<std::vector<std::string>, comic_chat::ircv3::ParseFailure>& built) {
+		return built.has_value() ? std::string{"<accepted>"} : built.error().code;
+	};
+	Check(failure_code(line_limited.PrepareMultiline("#room", three)) == "MULTILINE_MAX_LINES",
+		"over-max-lines rejection carries MULTILINE_MAX_LINES");
+	Check(failure_code(byte_limited.PrepareMultiline("#room", over)) == "MULTILINE_MAX_BYTES",
+		"over-max-bytes rejection carries MULTILINE_MAX_BYTES");
+	Check(failure_code(sender.PrepareMultiline("#room,#other", body)) == "MULTILINE_INVALID_TARGET",
+		"comma/invalid target rejection carries MULTILINE_INVALID_TARGET");
+	Check(failure_code(sender.PrepareMultiline("", body)) == "MULTILINE_INVALID_TARGET",
+		"empty target rejection carries MULTILINE_INVALID_TARGET");
+	Check(failure_code(sender.PrepareMultiline("#room", concat_first)) == "MULTILINE_INVALID",
+		"concat-on-first rejection carries MULTILINE_INVALID");
+	Check(failure_code(sender.PrepareMultiline("#room", concat_blank)) == "MULTILINE_INVALID",
+		"concat-on-blank rejection carries MULTILINE_INVALID");
+	Check(failure_code(sender.PrepareMultiline("#room", empty_body)) == "MULTILINE_INVALID",
+		"empty-batch rejection carries MULTILINE_INVALID");
+	// A successful build still yields a value, not a code.
+	Check(sender.PrepareMultiline("#room", body).has_value(),
+		"a compliant multiline body still builds after the taxonomy checks");
 }
 
 // The receive-side gap: a multiline batch must be validated against its
@@ -889,6 +913,12 @@ void TestLabelsAndEchoes()
 	Check(echoed.consumed && echoed.messages.empty(), "echo-message does not create duplicate balloon");
 	Check(echoed.events.size() == 1 && echoed.events[0].type == EventType::LabeledResponse,
 		"echo still resolves label correlation");
+	// Full presentation: a single labeled reply is fully associated with the
+	// command it answered (value), classified by response kind (detail), and
+	// carries the responding command as a content descriptor (context).
+	Check(echoed.events[0].value == "PRIVMSG" && echoed.events[0].detail == "message" &&
+		echoed.events[0].context == std::vector<std::string>{"PRIVMSG"},
+		"single labeled reply presents originating command, kind, and responder");
 
 	const auto join = engine.PrepareOutgoing("JOIN #other\r\n");
 	Message labeled_join;
@@ -907,6 +937,25 @@ void TestLabelsAndEchoes()
 		malformed_ack.events[0].type == EventType::ProtocolError &&
 		malformed_ack.events[0].key == "invalid-labeled-ack",
 		"malformed or unlabeled ACK is contained as a protocol error");
+
+	// Full presentation of a labeled *batch* response: the terminal event
+	// associates the originating command with the response kind and a content
+	// descriptor (batch type + delivered message count), so a multi-message
+	// labeled reply is not delivered as an anonymous stream.
+	const auto who = engine.PrepareOutgoing("WHO #room\r\n");
+	Message labeled_who;
+	Check(Message::Parse(who, &labeled_who), "labeled WHO parses");
+	const auto* who_label = labeled_who.FindTag("label");
+	Check(who_label && who_label->value, "WHO receives a correlation label");
+	engine.Process("@label=" + *who_label->value + " :server BATCH +lr labeled-response\r\n");
+	engine.Process("@batch=lr :server 352 Alice #room u h server Alice H :0 Real\r\n");
+	const auto closed = engine.Process(":server BATCH -lr\r\n");
+	const comic_chat::ircv3::Event* labeled_batch = nullptr;
+	for (const auto& event : closed.events)
+		if (event.type == EventType::LabeledResponse) labeled_batch = &event;
+	Check(labeled_batch && labeled_batch->value == "WHO" && labeled_batch->detail == "batch" &&
+		labeled_batch->context == std::vector<std::string>{"labeled-response", "1"},
+		"labeled batch response presents originating command, kind, batch type and count");
 }
 
 void TestSafeRecovery()
@@ -922,6 +971,50 @@ void TestSafeRecovery()
 		"JOIN #room\r\n",
 		"CHATHISTORY LATEST #room * 50\r\n",
 	}, "recovery rejoins then requests bounded history without resending chat");
+}
+
+void TestReconnectRecovery()
+{
+	// A reconnect must re-emit the bounded recovery commands from the engine
+	// itself, on the reconnect's RPL_WELCOME, without the frontend re-deriving
+	// state and without replaying uncertain history as live state.
+	Engine engine;
+	Check(engine.SetCapabilityRequestEnabled("batch", true) &&
+		engine.SetCapabilityRequestEnabled("draft/chathistory", true),
+		"reconnect recovery test opts complete product path in");
+
+	Enable(&engine, "batch message-tags server-time draft/chathistory");
+	engine.PrepareOutgoing("JOIN #room\r\n");
+	// First connection: 001 must NOT emit recovery — there was no prior session.
+	auto first_welcome = engine.Process(":server 001 Alice :Welcome\r\n");
+	Check(first_welcome.outbound.empty(),
+		"a first-connection RPL_WELCOME emits no recovery commands");
+
+	// Reconnect on the same engine: re-register (snapshots the membership) and
+	// re-negotiate chathistory, then deliver the reconnect's RPL_WELCOME.
+	Enable(&engine, "batch message-tags server-time draft/chathistory");
+	auto reconnect_welcome = engine.Process(":server 001 Alice :Welcome back\r\n");
+	Check(reconnect_welcome.outbound == std::vector<std::string>{
+		"JOIN #room\r\n",
+		"CHATHISTORY LATEST #room * 100\r\n",
+	}, "reconnect RPL_WELCOME emits bounded rejoin + CHATHISTORY recovery");
+
+	// The recovery snapshot is single-shot: a duplicate 001 does not re-emit.
+	auto duplicate_welcome = engine.Process(":server 001 Alice :Welcome back\r\n");
+	Check(duplicate_welcome.outbound.empty(),
+		"a repeated RPL_WELCOME does not re-emit recovery from a consumed snapshot");
+
+	// Gated on chathistory: a reconnect without draft/chathistory negotiated
+	// emits no recovery commands (there is no history to recover, and rejoining
+	// is the frontend's policy in that mode).
+	Engine ungated;
+	Enable(&ungated, "batch message-tags server-time");
+	ungated.PrepareOutgoing("JOIN #room\r\n");
+	ungated.Process(":server 001 Alice :Welcome\r\n");
+	Enable(&ungated, "batch message-tags server-time");
+	auto ungated_welcome = ungated.Process(":server 001 Alice :Welcome back\r\n");
+	Check(ungated_welcome.outbound.empty(),
+		"a reconnect without negotiated chathistory emits no recovery commands");
 }
 
 void TestPlainAndExternal()
@@ -1805,6 +1898,7 @@ int main()
 	TestExtendedJoinStateAndShape();
 	TestLabelsAndEchoes();
 	TestSafeRecovery();
+	TestReconnectRecovery();
 	TestPlainAndExternal();
 	TestSaslRvalueConfigWipesShortStringStorage();
 	TestSharedLockedSaslPassword();
