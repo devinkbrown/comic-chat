@@ -1372,7 +1372,7 @@ void TestLegacyUiEventBridge()
 	if (privmsg) {
 		const auto adapted = comic_chat::legacy_ui::AdaptProtocolMessage(*privmsg);
 		Check(adapted.typed_context && adapted.legacy_wire &&
-			*adapted.legacy_wire == ":Nick!u@h PRIVMSG #room hello\r\n",
+			*adapted.legacy_wire == ":Nick!u@h PRIVMSG #room :hello\r\n",
 			"ordinary tagged chat still reaches the legacy parser only after typed context capture");
 	}
 }
