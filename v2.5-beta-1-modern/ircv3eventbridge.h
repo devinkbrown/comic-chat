@@ -452,22 +452,30 @@ inline std::optional<comic_chat::ircv3::Message> NormalizeLegacyNamesReply(
 	std::vector<std::string>* identities = nullptr)
 {
 	if (message.command != "353") return message;
-	if (!HasSafeLegacyDispatchShape(message) || prefix_token.size() > 66 ||
-		prefix_token.empty() || prefix_token.front() != '(')
+	if (!HasSafeLegacyDispatchShape(message) || prefix_token.size() > 66)
 		return std::nullopt;
-	const auto close = prefix_token.find(')');
-	if (close == std::string_view::npos || close <= 1 || close + 1 >= prefix_token.size())
-		return std::nullopt;
-	const auto modes = prefix_token.substr(1, close - 1);
-	const auto symbols = prefix_token.substr(close + 1);
-	if (modes.size() != symbols.size() || modes.size() > 32)
-		return std::nullopt;
-	for (std::size_t index = 0; index < symbols.size(); ++index) {
-		const unsigned char mode = modes[index];
-		const unsigned char symbol = symbols[index];
-		if (mode <= 0x20U || mode == 0x7fU || symbol <= 0x20U || symbol == 0x7fU ||
-			modes.find(modes[index]) != index || symbols.find(symbols[index]) != index)
+	// An empty PREFIX= is a legitimate ISUPPORT token meaning the network has no
+	// status prefixes. Normalize with an empty prefix set -- the strip loop below
+	// becomes a no-op and nicknames pass through, while the userhost split still
+	// runs. Dropping the whole 353 over it would leave the member list empty.
+	std::string_view modes;
+	std::string_view symbols;
+	if (!prefix_token.empty()) {
+		if (prefix_token.front() != '(') return std::nullopt;
+		const auto close = prefix_token.find(')');
+		if (close == std::string_view::npos || close <= 1 || close + 1 >= prefix_token.size())
 			return std::nullopt;
+		modes = prefix_token.substr(1, close - 1);
+		symbols = prefix_token.substr(close + 1);
+		if (modes.size() != symbols.size() || modes.size() > 32)
+			return std::nullopt;
+		for (std::size_t index = 0; index < symbols.size(); ++index) {
+			const unsigned char mode = modes[index];
+			const unsigned char symbol = symbols[index];
+			if (mode <= 0x20U || mode == 0x7fU || symbol <= 0x20U || symbol == 0x7fU ||
+				modes.find(modes[index]) != index || symbols.find(symbols[index]) != index)
+				return std::nullopt;
+		}
 	}
 
 	auto legacy_status = [](const char mode, const char symbol) noexcept -> char {

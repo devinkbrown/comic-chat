@@ -385,8 +385,25 @@ void TestNamesExtensionsNormalizeBeforeLegacyMembership()
 	Check(single_wire && single_wire->ends_with("353 me = #ink :@Only\r\n"));
 
 	for (const std::string_view invalid : {
-		"", "ov)@+", "(ov@+", "(ov)@", "(oo)@+", "(ov)@@"})
+		"ov)@+", "(ov@+", "(ov)@", "(oo)@+", "(ov)@@"})
 		Check(!NormalizeLegacyNamesReply(*parsed, invalid));
+
+	// An empty PREFIX= is a legitimate ISUPPORT token: the network has no status
+	// prefixes. It must normalize with an empty prefix set -- stripping nothing,
+	// still splitting hostmasks -- not drop the whole 353 and leave the member
+	// list empty.
+	const auto no_prefix = comic_chat::ircv3::Message::Parse(
+		":server 353 me = #ink :Alice!a@host Bob!b@host\r\n");
+	Check(no_prefix.has_value());
+	if (no_prefix) {
+		std::vector<std::string> no_prefix_identities;
+		const auto flat = NormalizeLegacyNamesReply(*no_prefix, "", &no_prefix_identities);
+		Check(flat.has_value());
+		if (flat)
+			Check(flat->params.back() == "Alice Bob");
+		Check(no_prefix_identities == std::vector<std::string>{
+			"Alice", "a", "host", "Bob", "b", "host"});
+	}
 
 	comic_chat::ircv3::Message malformed = *parsed;
 	malformed.params.pop_back();
@@ -496,9 +513,11 @@ void TestUserhostInNamesSuppliesHostmaskToLegacyModel()
 	const auto big_normalized = NormalizeLegacyNamesReply(oversize_host, "(ov)@+", &big_out);
 	Check(big_normalized && big_normalized->params.back() == "Big" && big_out.empty());
 
-	// Fail-closed: rejected input yields nullopt and never partially writes out.
+	// Fail-closed: malformed input yields nullopt and never partially writes out.
+	// An empty PREFIX is not malformed (it means "no status prefixes") and is
+	// covered as a positive case in TestNamesExtensionsNormalizeBeforeLegacyMembership.
 	for (const std::string_view invalid : {
-		"", "ov)@+", "(ov@+", "(ov)@", "(oo)@+", "(ov)@@"}) {
+		"ov)@+", "(ov@+", "(ov)@", "(oo)@+", "(ov)@@"}) {
 		std::vector<std::string> untouched{"stale"};
 		Check(!NormalizeLegacyNamesReply(*parsed, invalid, &untouched));
 		Check(untouched == std::vector<std::string>{"stale"});
