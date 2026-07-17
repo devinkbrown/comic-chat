@@ -694,6 +694,26 @@ void TestNoImplicitNamesBuildsOneBoundedRequest()
 	}
 }
 
+void TestNoImplicitNamesQueriesTheJoinedChannel()
+{
+	using comic_chat::v1::transport::LegacyJoinChannel;
+	// Ordinary and trailing-colon JOIN forms both yield the bare channel.
+	assert(LegacyJoinChannel("#ink") == "#ink");
+	assert(LegacyJoinChannel(":#ink") == "#ink");
+	assert(LegacyJoinChannel("#ink\r\n") == "#ink");
+	assert(LegacyJoinChannel(" :#ink\r\n") == "#ink");
+	// The actual defect: a server forward echoes a different channel than the one
+	// requested. The query must follow the wire, so NAMES targets where we landed.
+	assert(LegacyJoinChannel("##ink") == "##ink");
+	assert(PrepareExplicitNamesRequest(true, LegacyJoinChannel("##ink")) ==
+		std::optional<std::string>{"NAMES ##ink\r\n"});
+	// A malformed JOIN with no channel extracts empty, which the request builder
+	// then rejects -- no NAMES for a room we cannot name.
+	assert(LegacyJoinChannel("").empty());
+	assert(LegacyJoinChannel(" \r\n").empty());
+	assert(!PrepareExplicitNamesRequest(true, LegacyJoinChannel("")));
+}
+
 } // namespace
 
 int main()
@@ -709,5 +729,6 @@ int main()
 	TestExtendedJoinNormalizesForMicrosoftParser();
 	TestNamesExtensionsNormalizeForV1Membership();
 	TestNoImplicitNamesBuildsOneBoundedRequest();
+	TestNoImplicitNamesQueriesTheJoinedChannel();
 	return 0;
 }

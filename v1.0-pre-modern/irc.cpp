@@ -931,9 +931,14 @@ void CIrcSocket::ProcessMessage(char *line) {
 		}
 		else {
 			const bool names_required = ircv3_.IsEnabled("no-implicit-names");
-			const char* joined_channel = GetMyChannel();
+			// Query the channel the server actually placed us in, recovered from
+			// this JOIN's own parameters, not GetMyChannel(): a server-side forward
+			// echoes a different channel, and GetMyChannel() would query the wrong
+			// room (or, when empty, drop the connection).
+			const auto joined_channel = comic_chat::v1::transport::LegacyJoinChannel(
+				rest ? std::string_view{rest} : std::string_view{});
 			const auto names = comic_chat::v1::transport::PrepareExplicitNamesRequest(
-				names_required, joined_channel ? std::string_view{joined_channel} : std::string_view{});
+				names_required, joined_channel);
 			if (names_required && !names) {
 				Close();
 				OnClose(ERROR_INVALID_DATA);

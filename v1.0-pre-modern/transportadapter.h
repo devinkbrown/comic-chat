@@ -199,6 +199,25 @@ namespace detail {
 	return true;
 }
 
+// no-implicit-names must query the channel the server actually placed us in,
+// not the channel we asked to join. A server-side forward (Libera's +f, numeric
+// 470) lands us in a different channel and echoes "JOIN <other>", so the
+// configured channel would query a room we are not in -- or, when empty, drop
+// the connection. Recover the channel from the JOIN's own parameters instead,
+// accepting both the ordinary "JOIN #chan" and trailing ":#chan" forms. The
+// result is still validated by PrepareExplicitNamesRequest before use.
+[[nodiscard]] inline std::string_view LegacyJoinChannel(std::string_view join_params) noexcept
+{
+	std::size_t start = 0;
+	while (start < join_params.size() && join_params[start] == ' ') ++start;
+	if (start < join_params.size() && join_params[start] == ':') ++start;
+	std::size_t end = start;
+	while (end < join_params.size() && join_params[end] != ' ' &&
+		join_params[end] != '\r' && join_params[end] != '\n')
+		++end;
+	return join_params.substr(start, end - start);
+}
+
 // no-implicit-names suppresses only the server's automatic reply. Build the
 // one explicit query the Microsoft UI needs after its own JOIN, while keeping
 // the disabled path allocation-free and incapable of duplicating a request.
