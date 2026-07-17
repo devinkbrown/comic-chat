@@ -46,6 +46,32 @@ def main() -> None:
         require(script_input.lower() in makefile_lower,
                 f"chat.res omits included resource input {script_input}")
 
+    generated_root = r"..\\portable\\assets\\icons\\generated\\windows\\"
+    generated_icons = {
+        "IDR_MAINFRAME": "chat.ico", "IDI_CHAT_DOC": "chatdoc.ico",
+        "IDI_CHAT_ROOM": "room.ico", "IDI_RULESET": "ruleset.ico",
+        "IDI_AVATAR": "avatar.ico", "IDI_BACKGROUND": "backgd.ico",
+        "IDI_RATINGS": "ratings.ico", "IDI_WHISPER": "whisper.ico",
+        "IDI_NOTIF": "notif.ico", "IDI_CONNECT_SRV": "tosrv.ico",
+        "IDI_CONNECT_NET": "tonet.ico",
+    }
+    for resource, filename in generated_icons.items():
+        require(re.search(
+            rf'^{resource}\s+ICON\s+[^\r\n]*"{re.escape(generated_root + filename)}"$',
+            rc, re.MULTILINE) is not None,
+            f"{resource} is not bound to generated windows/{filename}")
+    rc_include = r'#include "..\portable\assets\icons\generated\windows\modern-icon-assets.rcinc"'
+    require(rc_include in rc, "chat.rc does not include generated alpha RCDATA")
+    for token in ("MODERN_ICON_MAKINC=", "MODERN_ICON_RCINC=",
+                  "!IF !EXIST(\"$(MODERN_ICON_MAKINC)\")",
+                  "!IF !EXIST(\"$(MODERN_ICON_RCINC)\")",
+                  "!INCLUDE \"$(MODERN_ICON_MAKINC)\"",
+                  "$(MODERN_ICON_RESOURCE_INPUTS)"):
+        require(token.lower() in makefile_lower,
+                f"NMAKE generated-resource contract omits {token}")
+    require(makefile_lower.count("!error missing generated modern icon") == 2,
+            "NMAKE generated-resource absence is not fail-fast")
+
     require("ApplyDpiAwareWindowIcons" in header,
             "DPI-aware icon helper is not part of the Windows UI contract")
     for token in ("GetSystemMetricsForDpi", "SM_CXICON", "SM_CYICON",
@@ -97,6 +123,17 @@ def main() -> None:
             require(re.search(
                 rf"^#define\s+{name}\s+{expected}$", resources, re.MULTILINE) is not None,
                 f"modern expression resource ID drifted: {name}")
+
+    numeric_defines = [(name, int(value)) for name, value in re.findall(
+        r"^#define\s+(\w+)\s+(\d+)\s*$", resources, re.MULTILINE)]
+    modern_defines = [(name, value) for name, value in numeric_defines
+                      if name.startswith("IDR_MODERN_PNG_")]
+    modern_ids = {value for _, value in modern_defines}
+    require(len(modern_defines) == 122 and len(modern_ids) == 122,
+            "generated PNG IDs are missing or collide with each other")
+    require(not [(name, value) for name, value in numeric_defines
+                 if 4000 <= value <= 4267 and not name.startswith("IDR_MODERN_PNG_")],
+            "generated PNG range collides with a legacy resource/control ID")
 
     expected_bindings = {
         "IDR_MAINFRAME": ("IDR_MODERN_PNG_TOOLBAR_16", 10),
@@ -177,7 +214,8 @@ def main() -> None:
             loader.index("BuildLegacyOrderedImageList(", loader.index("bool BuildOrderedImageList(")),
             "ordered state lists do not use atomic modern-to-source fallback")
 
-    print(f"Windows icon integration passed: {len(resource_files)} resource files, "
+    print(f"Windows icon integration passed: {len(resource_files)} source fallback files, "
+          f"{len(generated_icons)} generated ICO bindings, "
           f"{len(expected_bindings)} x {len(modern_sizes)} WIC alpha-strip resources, "
           "56 expression resources, direct state consumers, distinct DPI-aware window icons")
 

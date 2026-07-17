@@ -53,10 +53,11 @@ def main() -> None:
     }
     for resource, filename in expected_icons.items():
         require(re.search(
-            rf"^{resource}\s+ICON\s+[^\r\n]*\"res\\\\{re.escape(filename)}\"$",
+            rf"^{resource}\s+ICON\s+[^\r\n]*\"\.\.\\\\portable\\\\assets\\\\icons\\\\generated\\\\windows\\\\{re.escape(filename)}\"$",
             rc, re.MULTILINE) is not None,
-            f"{resource} is not bound to original res/{filename}")
-        require((MODERN / "res" / filename).is_file(), f"missing original res/{filename}")
+            f"{resource} is not bound to generated windows/{filename}")
+        require((MODERN / "res" / filename).is_file(),
+                f"missing archived Microsoft source res/{filename}")
 
     expected_bitmaps = {
         "IDB_SAY_BAR": "balloons.bmp", "IDR_MAINFRAME": "toolbar.bmp",
@@ -80,8 +81,8 @@ def main() -> None:
     require("ID_SEND_FILE" not in user_toolbar.group(0),
             "Microsoft's NetMeeting glyph is falsely exposed as Send File")
 
-    print("original artwork fallback audit passed: 11 ICOs, 6 bitmap families, "
-          "atomic bodycam CDIB fallback; modern probes precede source fallback")
+    print("original artwork fallback audit passed: 11 generated ICO bindings, "
+          "6 bitmap families, atomic bodycam CDIB fallback; modern probes precede source fallback")
 
 
 if __name__ == "__main__":

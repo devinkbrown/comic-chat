@@ -70,17 +70,17 @@ END
 
 // Icon with lowest ID value placed first to ensure application icon
 // remains consistent on all systems.
-IDR_MAINFRAME           ICON    DISCARDABLE     "res\\chat.ico"
-IDI_CHAT_DOC            ICON    DISCARDABLE     "res\\chatdoc.ico"
-IDI_CHAT_ROOM           ICON    DISCARDABLE     "res\\room.ico"
-IDI_RULESET             ICON    DISCARDABLE     "res\\ruleset.ico"
-IDI_AVATAR              ICON    DISCARDABLE     "res\\avatar.ico"
-IDI_BACKGROUND          ICON    DISCARDABLE     "res\\backgd.ico"
-IDI_RATINGS             ICON    DISCARDABLE     "res\\ratings.ico"
-IDI_WHISPER             ICON    DISCARDABLE     "res\\whisper.ico"
-IDI_NOTIF               ICON    DISCARDABLE     "res\\notif.ico"
-IDI_CONNECT_SRV         ICON    DISCARDABLE     "res\\tosrv.ico"
-IDI_CONNECT_NET         ICON    DISCARDABLE     "res\\tonet.ico"
+IDR_MAINFRAME           ICON    DISCARDABLE     "..\\portable\\assets\\icons\\generated\\windows\\chat.ico"
+IDI_CHAT_DOC            ICON    DISCARDABLE     "..\\portable\\assets\\icons\\generated\\windows\\chatdoc.ico"
+IDI_CHAT_ROOM           ICON    DISCARDABLE     "..\\portable\\assets\\icons\\generated\\windows\\room.ico"
+IDI_RULESET             ICON    DISCARDABLE     "..\\portable\\assets\\icons\\generated\\windows\\ruleset.ico"
+IDI_AVATAR              ICON    DISCARDABLE     "..\\portable\\assets\\icons\\generated\\windows\\avatar.ico"
+IDI_BACKGROUND          ICON    DISCARDABLE     "..\\portable\\assets\\icons\\generated\\windows\\backgd.ico"
+IDI_RATINGS             ICON    DISCARDABLE     "..\\portable\\assets\\icons\\generated\\windows\\ratings.ico"
+IDI_WHISPER             ICON    DISCARDABLE     "..\\portable\\assets\\icons\\generated\\windows\\whisper.ico"
+IDI_NOTIF               ICON    DISCARDABLE     "..\\portable\\assets\\icons\\generated\\windows\\notif.ico"
+IDI_CONNECT_SRV         ICON    DISCARDABLE     "..\\portable\\assets\\icons\\generated\\windows\\tosrv.ico"
+IDI_CONNECT_NET         ICON    DISCARDABLE     "..\\portable\\assets\\icons\\generated\\windows\\tonet.ico"
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -99,6 +99,15 @@ IDB_INACTIVE            BITMAP  DISCARDABLE     "res\\inactive.bmp"
 IDB_ACTIVE              BITMAP  DISCARDABLE     "res\\active.bmp"
 IDR_TEXTTOOLBAR         BITMAP  MOVEABLE PURE   "res\\texttool.bmp"
 IDR_USERTOOLBAR         BITMAP  MOVEABLE PURE   "res\\usertool.bmp"
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated alpha PNG resources
+//
+
+// This include is a required output of scripts/build-modern-icons.py. The
+// NMAKE file fails before RC starts if the generated catalog is absent.
+#include "..\portable\assets\icons\generated\windows\modern-icon-assets.rcinc"
 
 /////////////////////////////////////////////////////////////////////////////
 //

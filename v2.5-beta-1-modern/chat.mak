@@ -38,6 +38,21 @@ ARTINC=..\artifacts\inc
 ARTLIB=..\artifacts\lib\i386
 PORTABLELIB=..\artifacts\lib
 
+# Modern native resources are generated before NMAKE. Keep the generated make
+# fragment mandatory: omitting it would produce a valid-looking executable that
+# silently uses only the legacy bitmap/DIB fallback artwork.
+MODERN_ICON_ROOT=..\portable\assets\icons\generated
+MODERN_ICON_RCINC=$(MODERN_ICON_ROOT)\windows\modern-icon-assets.rcinc
+MODERN_ICON_MAKINC=$(MODERN_ICON_ROOT)\windows\modern-icon-assets.makinc
+
+!IF !EXIST("$(MODERN_ICON_MAKINC)")
+!ERROR Missing generated modern icon dependency include. Run: python ..\scripts\build-modern-icons.py generate
+!ENDIF
+!IF !EXIST("$(MODERN_ICON_RCINC)")
+!ERROR Missing generated modern icon resource include. Run: python ..\scripts\build-modern-icons.py generate
+!ENDIF
+!INCLUDE "$(MODERN_ICON_MAKINC)"
+
 # /Zi is kept in both configs so Release is still debuggable (it emits a PDB but
 # does not disable optimization). The MFC/CRT static libraries are selected
 # automatically by the _DEBUG/NDEBUG define + /MT[d]. cpp26mode.h is force-
@@ -64,19 +79,6 @@ C_PROJ=/nologo $(CPP_CFG) /W3 /Zi /D "WIN32" /D "_WINDOWS" /D "_MBCS" \
  /Fo"$(INTDIR)\\" /Fd"$(INTDIR)\\" /c
 
 RSC_PROJ=/l 0x409 /fo"$(INTDIR)\chat.res" /i "." /i "$(ARTINC)" $(RSC_CFG)
-
-RESOURCE_ICON_INPUTS= \
-	res\chat.ico \
-	res\chatdoc.ico \
-	res\room.ico \
-	res\ruleset.ico \
-	res\avatar.ico \
-	res\backgd.ico \
-	res\ratings.ico \
-	res\whisper.ico \
-	res\notif.ico \
-	res\tosrv.ico \
-	res\tonet.ico
 
 RESOURCE_BITMAP_INPUTS= \
 	res\balloons.bmp \
@@ -111,8 +113,8 @@ RESOURCE_INPUTS= \
 	$(ARTINC)\textview.rc \
 	$(ARTINC)\tvres.h \
 	$(ARTINC)\hand.cur \
-	$(RESOURCE_ICON_INPUTS) \
-	$(RESOURCE_BITMAP_INPUTS)
+	$(RESOURCE_BITMAP_INPUTS) \
+	$(MODERN_ICON_RESOURCE_INPUTS)
 
 LINK32_FLAGS=/nologo /subsystem:windows /FORCE:MULTIPLE /incremental:no /debug \
  /machine:I386 /nodefaultlib:"libc" \
