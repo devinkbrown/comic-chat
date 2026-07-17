@@ -993,7 +993,11 @@ private:
 		if (mechanism_ != "SCRAM-SHA-256") return Fail();
 		if (stage_ == 0) return ScramFirst(challenge, outbound);
 		if (stage_ == 1) return ScramProof(challenge, outbound);
-		if (stage_ == 2) return ScramFinal(challenge);
+		if (stage_ == 2) {
+			if (!ScramFinal(challenge)) return false;
+			outbound->emplace_back("AUTHENTICATE +\r\n");
+			return true;
+		}
 		return Fail();
 	}
 

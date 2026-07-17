@@ -498,7 +498,8 @@ void TestScramSha256Rfc7677()
 		"p=dHzbZapWIk4jUhN+Ute9ytag9zjfMHgsqmmiz7AndVQ=", "RFC 7677 client proof");
 	const std::string server_final = "v=6rriTRBi23WpRR/wtup+mMhUZUn/dB5nLTJRsjl95G4=";
 	auto verified = engine.Process("AUTHENTICATE " + Encode(server_final) + "\r\n");
-	Check(verified.outbound.empty(), "valid SCRAM server signature accepted");
+	Check(verified.outbound == std::vector<std::string>{"AUTHENTICATE +\r\n"},
+		"SCRAM server-final is acknowledged with the required empty client response");
 	auto terminal = engine.Process(":server 903 Alice :SASL authentication successful\r\n");
 	Check(engine.SaslSucceeded() && engine.SecretsCleared(), "SCRAM success and zeroization");
 	Check(terminal.outbound == std::vector<std::string>{"CAP END\r\n"}, "SCRAM gates CAP END");
@@ -531,7 +532,8 @@ void TestScramAuthzidChannelBindingAndFailClosedSignature()
 		"authzid GS2 header is bound into the exact client proof");
 	const std::string server_final = "v=JSkgQiC3n4EdbfUYiMEuWlXkwy+dO2Diu+4iofWkqRc=";
 	auto verified = engine.Process("AUTHENTICATE " + Encode(server_final) + "\r\n");
-	Check(verified.outbound.empty(), "authzid-bound server signature is accepted");
+	Check(verified.outbound == std::vector<std::string>{"AUTHENTICATE +\r\n"},
+		"authzid-bound server-final is acknowledged after signature verification");
 	auto terminal = engine.Process(":server 903 Alice :SASL authentication successful\r\n");
 	Check(engine.SaslSucceeded() && engine.SecretsCleared(),
 		"authzid-bound SCRAM succeeds and zeroizes secrets");
