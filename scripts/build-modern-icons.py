@@ -136,7 +136,7 @@ class Catalog:
     raw: dict[str, Any]
     stage_root: Path
     reference_root: Path
-    icons: tuple[dict[str, str], ...]
+    icons: tuple[dict[str, Any], ...]
     strips: tuple[dict[str, Any], ...]
     expressions: tuple[dict[str, str], ...]
     quality: PixelQuality
@@ -201,6 +201,11 @@ def load_catalog(path: Path = DEFAULT_MANIFEST) -> Catalog:
 
     icons = raw.get("icons")
     require(isinstance(icons, list), "icons must be a list")
+    for entry in icons:
+        require(isinstance(entry, dict), "each standalone icon must be an object")
+        if "allow_opaque_canvas" in entry:
+            require(type(entry["allow_opaque_canvas"]) is bool,
+                    f"{entry.get('name')!r} allow_opaque_canvas must be a JSON boolean")
     actual_icons = {entry.get("name"): entry.get("resource") for entry in icons if isinstance(entry, dict)}
     require(actual_icons == EXPECTED_ICONS,
             "standalone icon coverage must exactly match the 11 legacy semantic resources")
@@ -252,6 +257,40 @@ def load_catalog(path: Path = DEFAULT_MANIFEST) -> Catalog:
     require(pixel_quality.min_alpha_levels >= 2, "alpha-level limit is too weak")
     for key in ("icon_min_drawables", "icon_min_paints", "strip_min_drawables", "strip_min_paints"):
         require(isinstance(quality.get(key), int) and quality[key] >= 2, f"{key} is too weak")
+    for entry in strips:
+        exceptions = entry.get("quality_exceptions", [])
+        require(isinstance(exceptions, list),
+                f"{entry['name']!r} quality_exceptions must be a list")
+        seen_exceptions: set[tuple[str, int]] = set()
+        for exception in exceptions:
+            require(isinstance(exception, dict),
+                    f"{entry['name']!r} quality exception must be an object")
+            allowed = {"cell", "size", "reason", "min_alpha_levels", "max_visible_fraction"}
+            require(set(exception) <= allowed,
+                    f"{entry['name']!r} quality exception has unsupported fields")
+            cell, size = exception.get("cell"), exception.get("size")
+            require(cell in entry["cells"] and size in STRIP_SIZES,
+                    f"{entry['name']!r} quality exception targets an unknown cell or size")
+            key = (cell, size)
+            require(key not in seen_exceptions,
+                    f"duplicate quality exception for {entry['name']}/{cell}@{size}")
+            seen_exceptions.add(key)
+            reason = exception.get("reason")
+            require(isinstance(reason, str) and len(reason.strip()) >= 24,
+                    f"{entry['name']}/{cell}@{size} quality exception needs a specific reason")
+            has_alpha = "min_alpha_levels" in exception
+            has_coverage = "max_visible_fraction" in exception
+            require(has_alpha or has_coverage,
+                    f"{entry['name']}/{cell}@{size} quality exception changes no threshold")
+            if has_alpha:
+                alpha = exception["min_alpha_levels"]
+                require(type(alpha) is int and 2 <= alpha < pixel_quality.min_alpha_levels,
+                        f"{entry['name']}/{cell}@{size} alpha exception is not narrowly relaxed")
+            if has_coverage:
+                coverage = exception["max_visible_fraction"]
+                require(isinstance(coverage, (int, float)) and not isinstance(coverage, bool) and
+                        pixel_quality.max_visible_fraction < float(coverage) < 1,
+                        f"{entry['name']}/{cell}@{size} coverage exception is not narrowly relaxed")
 
     return Catalog(
         path=path,
@@ -444,15 +483,17 @@ def render_svg(source: Path, width: int, destination: Path, height: int | None =
 
 
 def rgba_quality(pixels: Sequence[tuple[int, int, int, int]], quality: PixelQuality,
-                 label: str, *, require_color: bool) -> None:
+                 label: str, *, require_color: bool, require_transparency: bool = True) -> None:
     require(pixels, f"{label} has no pixels")
     visible = [pixel for pixel in pixels if pixel[3] > 8]
     visible_fraction = len(visible) / len(pixels)
-    require(quality.min_visible_fraction <= visible_fraction <= quality.max_visible_fraction,
+    require(visible_fraction >= quality.min_visible_fraction and
+            (not require_transparency or visible_fraction <= quality.max_visible_fraction),
             f"{label} visible coverage {visible_fraction:.3f} is outside the detailed-icon range")
-    require(any(pixel[3] <= 8 for pixel in pixels), f"{label} has no transparent background")
+    if require_transparency:
+        require(any(pixel[3] <= 8 for pixel in pixels), f"{label} has no transparent background")
     alpha_levels = {pixel[3] for pixel in pixels}
-    require(len(alpha_levels) >= quality.min_alpha_levels,
+    require(not require_transparency or len(alpha_levels) >= quality.min_alpha_levels,
             f"{label} has only {len(alpha_levels)} alpha levels; antialiased detail is missing")
     visible_colors = {(r, g, b, a) for r, g, b, a in visible}
     require(len(visible_colors) >= quality.min_unique_visible_colors,
@@ -483,7 +524,7 @@ def decode_dib_payload(payload: bytes, size: int, label: str) -> list[tuple[int,
     return result
 
 
-def validate_ico(path: Path, catalog: Catalog) -> None:
+def validate_ico(path: Path, catalog: Catalog, *, allow_opaque_canvas: bool = False) -> None:
     data = path.read_bytes()
     require(len(data) >= 6, f"{path} is truncated")
     reserved, kind, count = struct.unpack_from("<HHH", data, 0)
@@ -505,7 +546,8 @@ def validate_ico(path: Path, catalog: Catalog) -> None:
                 f"{path} frame {width}px payload range is invalid")
         ranges.append((offset, offset + length))
         pixels = decode_dib_payload(data[offset:offset + length], width, f"{path}:{width}px")
-        rgba_quality(pixels, catalog.quality, f"{path}:{width}px", require_color=True)
+        rgba_quality(pixels, catalog.quality, f"{path}:{width}px", require_color=True,
+                     require_transparency=not allow_opaque_canvas)
         actual.append(width)
     require(tuple(actual) == ICO_SIZES, f"{path} frame order/sizes are {actual}, expected {ICO_SIZES}")
     for previous, current in zip(sorted(ranges), sorted(ranges)[1:]):
@@ -591,7 +633,22 @@ def source_for_expression(name: str, width: int, height: int) -> Path:
     return override if override.is_file() else expression_master(name)
 
 
-def build_icon(catalog: Catalog, entry: dict[str, str], output: Path, work: Path) -> None:
+def quality_for_strip(catalog: Catalog, entry: dict[str, Any], cell: str, size: int) -> PixelQuality:
+    """Apply only a documented exception for one exact native strip cell and size."""
+    quality = catalog.quality
+    for exception in entry.get("quality_exceptions", []):
+        if exception["cell"] == cell and exception["size"] == size:
+            return PixelQuality(
+                quality.min_visible_fraction,
+                float(exception.get("max_visible_fraction", quality.max_visible_fraction)),
+                quality.min_chromatic_fraction,
+                quality.min_unique_visible_colors,
+                int(exception.get("min_alpha_levels", quality.min_alpha_levels)),
+            )
+    return quality
+
+
+def build_icon(catalog: Catalog, entry: dict[str, Any], output: Path, work: Path) -> None:
     name = entry["name"]
     frames: list[Path] = []
     for size in ICO_SIZES:
@@ -608,7 +665,7 @@ def build_icon(catalog: Catalog, entry: dict[str, str], output: Path, work: Path
     # portable parser and for deterministic Windows resource inspection.
     run((tool("icotool"), "--create", "--output", str(ico_output), *(str(frame) for frame in frames)))
     os.chmod(ico_output, 0o644)
-    validate_ico(ico_output, catalog)
+    validate_ico(ico_output, catalog, allow_opaque_canvas=bool(entry.get("allow_opaque_canvas")))
 
 
 def build_strip(catalog: Catalog, entry: dict[str, Any], output: Path, work: Path) -> None:
@@ -633,7 +690,8 @@ def build_strip(catalog: Catalog, entry: dict[str, Any], output: Path, work: Pat
         for index, cell in enumerate(entry["cells"]):
             cell_pixels = [pixels[y * size * len(frames) + index * size + x]
                            for y in range(size) for x in range(size)]
-            rgba_quality(cell_pixels, catalog.quality, f"{destination}:{cell}", require_color=False)
+            rgba_quality(cell_pixels, quality_for_strip(catalog, entry, cell, size),
+                         f"{destination}:{cell}", require_color=False)
 
 
 def build_expression(catalog: Catalog, entry: dict[str, str], output: Path, work: Path) -> None:
@@ -667,18 +725,19 @@ def build_resource_include(catalog: Catalog, output: Path) -> None:
             symbol = f"IDR_MODERN_PNG_{family}_{size}"
             require(base + offset == EXPECTED_STRIP_RESOURCE_IDS[entry["name"]] + offset,
                     f"resource block arithmetic drifted for {symbol}")
-            resource_path = (
-                f"..\\portable\\assets\\icons\\generated\\png\\strips\\{entry['name']}\\{size}.png"
-            )
+            resource_path = str(
+                Path("..") / "portable" / "assets" / "icons" / "generated" /
+                "png" / "strips" / entry["name"] / f"{size}.png"
+            ).replace("/", "\\").replace("\\", "\\\\")
             lines.append(f'{symbol:<34} RCDATA  "{resource_path}"')
         lines.append("")
     for size_index, (width, height) in enumerate(EXPRESSION_SIZES):
         for entry in catalog.expressions:
             symbol = f"IDR_MODERN_PNG_EXPR_{entry['name'].upper()}_{width}X{height}"
-            resource_path = (
-                "..\\portable\\assets\\icons\\generated\\png\\expressions\\"
-                f"{entry['name']}\\{width}x{height}.png"
-            )
+            resource_path = str(
+                Path("..") / "portable" / "assets" / "icons" / "generated" /
+                "png" / "expressions" / entry["name"] / f"{width}x{height}.png"
+            ).replace("/", "\\").replace("\\", "\\\\")
             lines.append(f'{symbol:<44} RCDATA  "{resource_path}"')
         lines.append("")
     destination = output / "windows" / "modern-icon-assets.rcinc"
@@ -714,6 +773,8 @@ def validate_resource_contract(catalog: Catalog, root: Path) -> None:
                               include, re.MULTILINE)
     expected_declaration_count = (len(catalog.strips) * len(STRIP_SIZES) +
                                   len(catalog.expressions) * len(EXPRESSION_SIZES))
+    require(expected_declaration_count == 122,
+            "Windows runtime contract must contain 66 strip and 56 expression declarations")
     require(len(declarations) == expected_declaration_count,
             "generated RCDATA include has missing or duplicate icon declarations")
     actual_symbols = {symbol for symbol, _ in declarations}
@@ -783,7 +844,11 @@ def build_catalog(catalog: Catalog, output: Path) -> None:
             "generation is blocked until the source-reconstructed face revision has explicit visual approval")
     lint_sources(catalog, complete=True)
     output.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="comic-chat-icons-", dir="/var/tmp") as temporary:
+    # Keep raster work beside the output as well. This honors the caller's
+    # chosen filesystem and avoids small or separately-quota'd system temp
+    # volumes on Windows and BSD builders.
+    with tempfile.TemporaryDirectory(prefix=".comic-chat-icons-work-",
+                                     dir=output.parent) as temporary:
         work = Path(temporary)
         for entry in catalog.icons:
             build_icon(catalog, entry, output, work / "icons" / entry["name"])
@@ -823,7 +888,7 @@ def verify_catalog(catalog: Catalog, root: Path | None = None) -> None:
 
     for entry in catalog.icons:
         generated = root / "windows" / f"{entry['name']}.ico"
-        validate_ico(generated, catalog)
+        validate_ico(generated, catalog, allow_opaque_canvas=bool(entry.get("allow_opaque_canvas")))
         reference = catalog.reference_root / f"{entry['name']}.ico"
         require(reference.is_file(), f"missing Microsoft reference {reference}")
         require(sha256(generated) != sha256(reference), f"{generated} is still the original Microsoft ICO")
@@ -838,7 +903,8 @@ def verify_catalog(catalog: Catalog, root: Path | None = None) -> None:
             for index, cell in enumerate(entry["cells"]):
                 cell_pixels = [pixels[y * size * len(entry["cells"]) + index * size + x]
                                for y in range(size) for x in range(size)]
-                rgba_quality(cell_pixels, catalog.quality, f"{generated}:{cell}", require_color=False)
+                rgba_quality(cell_pixels, quality_for_strip(catalog, entry, cell, size),
+                             f"{generated}:{cell}", require_color=False)
         reference = catalog.reference_root / f"{entry['name']}.bmp"
         require(reference.is_file(), f"missing Microsoft reference {reference}")
         require(sha256(root / "windows" / "strips" / f"{entry['name']}-16.bmp") != sha256(reference),
@@ -875,7 +941,11 @@ def replace_generated_tree(catalog: Catalog, source: Path) -> None:
 
 
 def generate(catalog: Catalog) -> None:
-    with tempfile.TemporaryDirectory(prefix="comic-chat-icons-output-", dir="/var/tmp") as temporary:
+    # Stage beside the destination so the final directory rename is atomic and
+    # can never cross filesystems, while remaining portable to Windows and BSD.
+    catalog.stage_root.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".comic-chat-icons-output-",
+                                     dir=catalog.stage_root.parent) as temporary:
         output = Path(temporary) / "generated"
         build_catalog(catalog, output)
         verify_catalog(catalog, output)
@@ -886,7 +956,9 @@ def generate(catalog: Catalog) -> None:
 
 def verify_rebuild(catalog: Catalog) -> None:
     verify_catalog(catalog)
-    with tempfile.TemporaryDirectory(prefix="comic-chat-icons-rebuild-", dir="/var/tmp") as temporary:
+    catalog.stage_root.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".comic-chat-icons-rebuild-",
+                                     dir=catalog.stage_root.parent) as temporary:
         rebuilt = Path(temporary) / "generated"
         build_catalog(catalog, rebuilt)
         verify_catalog(catalog, rebuilt)

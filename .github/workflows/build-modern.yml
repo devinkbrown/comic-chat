@@ -8,11 +8,16 @@ on:
       - ".gitmodules"
       - "scripts/**"
       - "portable/**"
+      - "third_party/libuv"
       - "third_party/mbedtls"
       - "v1.0-pre-modern/**"
       - "v2.5-beta-1-modern/**"
       - "artifacts/inc/**"
       - "artifacts/lib/i386/zlib.lib"
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}"
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -58,6 +63,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          python3 scripts/build-modern-icons.py lint --complete
+          python3 scripts/build-modern-icons.py verify
+          python3 v2.5-beta-1-modern/tests/dialog_chrome_test.py
+          python3 v2.5-beta-1-modern/tests/modern_icon_pipeline_test.py
+          python3 v2.5-beta-1-modern/tests/original_artwork_runtime_test.py
+          python3 v2.5-beta-1-modern/tests/source_strip_topology_test.py
+          python3 v2.5-beta-1-modern/tests/windows_icon_integration_test.py
           CC=clang-22 CXX=clang++-22 meson setup portable/build-ci portable \
             --buildtype=release \
             --force-fallback-for=sdl3,harfbuzz,icu,catch2
@@ -112,13 +124,15 @@ jobs:
           usesh: true
           copyback: false
           prepare: |
-            pkg install -y llvm22 meson ninja pkgconf cairo catch2 fontconfig freetype2 harfbuzz icu libuv sdl3
+            pkg install -y python3 llvm22 meson ninja pkgconf cairo catch2 fontconfig freetype2 harfbuzz icu libuv sdl3
           run: |
             set -eu
             export CC=/usr/local/llvm22/bin/clang
             export CXX=/usr/local/llvm22/bin/clang++
             "$CXX" --version
             "$CXX" --version | grep -F 'clang version 22.'
+            python3 scripts/build-modern-icons.py lint --complete
+            python3 scripts/build-modern-icons.py verify
             meson setup portable/build-freebsd portable --buildtype=release
             meson compile -C portable/build-freebsd
             SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
@@ -147,7 +161,7 @@ jobs:
           usesh: true
           copyback: false
           prepare: |
-            pkg_add llvm%21 meson ninja cairo harfbuzz icu4c libuv sdl3
+            pkg_add python%3 llvm%21 meson ninja cairo harfbuzz icu4c libuv sdl3
           run: |
             set -eu
             export CC=/usr/local/llvm21/bin/clang
@@ -155,6 +169,8 @@ jobs:
             export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/X11R6/lib/pkgconfig
             "$CXX" --version
             "$CXX" --version | grep -F 'clang version 21.'
+            python3 scripts/build-modern-icons.py lint --complete
+            python3 scripts/build-modern-icons.py verify
             meson setup portable/build-openbsd portable --buildtype=release --force-fallback-for=catch2
             meson compile -C portable/build-openbsd
             SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
@@ -191,6 +207,14 @@ jobs:
               throw "$($entry.Key) submodule drift: expected $($entry.Value), got $actual"
             }
           }
+
+      - name: Verify generated native icon catalog
+        shell: pwsh
+        run: |
+          python scripts/build-modern-icons.py lint --complete
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/build-modern-icons.py verify
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build pinned x86 native dependencies
         shell: pwsh

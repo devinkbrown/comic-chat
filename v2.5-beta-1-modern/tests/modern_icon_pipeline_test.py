@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import re
+import struct
 import sys
 import tempfile
 import unittest
@@ -34,7 +37,6 @@ DETAILED_SVG = """\
 </svg>
 """
 
-
 class ModernIconPipelineTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -62,15 +64,20 @@ class ModernIconPipelineTests(unittest.TestCase):
                 self.assertRegex(resource_header, rf"(?m)^#define\s+IDR_MODERN_PNG_{family}_{size}\s+{base + offset}$")
 
     def test_generated_resource_includes_cover_every_png_without_wildcards(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="comic-chat-icon-test-", dir="/var/tmp") as temporary:
+        with tempfile.TemporaryDirectory(prefix="comic-chat-icon-test-") as temporary:
             root = Path(temporary)
             icons.build_resource_include(self.catalog, root)
             icons.build_resource_make_include(self.catalog, root)
             rc_lines = [line for line in (root / "windows/modern-icon-assets.rcinc").read_text().splitlines()
                         if " RCDATA " in line]
+            self.assertEqual(len(rc_lines), 122)
             self.assertEqual(len(rc_lines), 11 * 6 + 8 * 7)
             self.assertTrue(any("IDR_MODERN_PNG_TOOLBAR_16" in line for line in rc_lines))
             self.assertTrue(any("IDR_MODERN_PNG_EXPR_LAUGH_80X104" in line for line in rc_lines))
+            rc_text = "\n".join(rc_lines)
+            self.assertIn(r'"..\\portable\\assets\\icons\\generated\\png\\strips\\toolbar\\16.png"',
+                          rc_text)
+            self.assertNotIn(r'"..\portable\assets\icons\generated', rc_text)
             make_lines = [line for line in (root / "windows/modern-icon-assets.makinc").read_text().splitlines()[2:]
                           if line.strip()]
             self.assertEqual(len(make_lines), 1 + 11 + 11 * 6 + 8 * 7)
@@ -95,8 +102,57 @@ class ModernIconPipelineTests(unittest.TestCase):
         self.assertEqual(tree.getroot().findtext("id"), app_id)
         self.assertEqual(tree.getroot().find("launchable").text, f"{app_id}.desktop")
 
+    def test_meson_native_asset_ladders_match_manifest(self) -> None:
+        meson = (ROOT / "portable" / "assets" / "icons" / "meson.build").read_text(encoding="utf-8")
+
+        def values(name: str) -> list[str]:
+            match = re.search(rf"(?ms)^{re.escape(name)}\s*=\s*\[(.*?)\]", meson)
+            self.assertIsNotNone(match, f"missing Meson array {name}")
+            return re.findall(r"'([^']+)'|\b(\d+)\b", match.group(1))
+
+        icon_sizes = [int(quoted or number) for quoted, number in values("modern_icon_sizes")]
+        strip_sizes = [int(quoted or number) for quoted, number in values("modern_strip_sizes")]
+        strip_names = [quoted or number for quoted, number in values("modern_strip_families")]
+        expression_sizes = [quoted or number for quoted, number in values("modern_expression_sizes")]
+        expression_names = [quoted or number for quoted, number in values("modern_expression_names")]
+        self.assertEqual(icon_sizes, self.catalog.raw["ico_sizes"])
+        self.assertEqual(strip_sizes, self.catalog.raw["strip_sizes"])
+        self.assertEqual(set(strip_names), {entry["name"] for entry in self.catalog.strips})
+        self.assertEqual(expression_sizes,
+                         [f"{width}x{height}" for width, height in self.catalog.raw["expression_sizes"]])
+        self.assertEqual(expression_names, [entry["name"] for entry in self.catalog.expressions])
+
+    def test_opaque_ico_requires_explicit_boolean_opt_in(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="comic-chat-icon-test-") as temporary:
+            root = Path(temporary)
+            # Preserve the generator's exact 32-bit DIB container, but make
+            # every frame's alpha fully opaque to isolate the policy toggle.
+            data = bytearray((self.catalog.stage_root / "windows" / "chat.ico").read_bytes())
+            frame_count = struct.unpack_from("<H", data, 4)[0]
+            for index in range(frame_count):
+                entry_offset = 6 + index * 16
+                width_byte, _, _, _, _, _, length, payload_offset = struct.unpack_from(
+                    "<BBBBHHII", data, entry_offset)
+                size = 256 if width_byte == 0 else width_byte
+                header_size = struct.unpack_from("<I", data, payload_offset)[0]
+                self.assertLessEqual(header_size + size * size * 4, length)
+                for pixel in range(size * size):
+                    data[payload_offset + header_size + pixel * 4 + 3] = 255
+            ico = root / "opaque.ico"
+            ico.write_bytes(data)
+            icons.validate_ico(ico, self.catalog, allow_opaque_canvas=True)
+            with self.assertRaises(icons.IconBuildError):
+                icons.validate_ico(ico, self.catalog, allow_opaque_canvas=False)
+
+            invalid = json.loads(json.dumps(self.catalog.raw))
+            invalid["icons"][0]["allow_opaque_canvas"] = "false"
+            invalid_manifest = root / "manifest.json"
+            invalid_manifest.write_text(json.dumps(invalid), encoding="utf-8")
+            with self.assertRaises(icons.IconBuildError):
+                icons.load_catalog(invalid_manifest)
+
     def test_vector_and_native_container_quality_smoke(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="comic-chat-icon-test-", dir="/var/tmp") as temporary:
+        with tempfile.TemporaryDirectory(prefix="comic-chat-icon-test-") as temporary:
             root = Path(temporary)
             source = root / "fixture.svg"
             source.write_text(DETAILED_SVG, encoding="utf-8")
@@ -125,7 +181,7 @@ class ModernIconPipelineTests(unittest.TestCase):
 
     def test_simple_silhouette_is_rejected(self) -> None:
         simple = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><circle cx="16" cy="16" r="12" fill="#111"/></svg>'
-        with tempfile.TemporaryDirectory(prefix="comic-chat-icon-test-", dir="/var/tmp") as temporary:
+        with tempfile.TemporaryDirectory(prefix="comic-chat-icon-test-") as temporary:
             path = Path(temporary) / "simple.svg"
             path.write_text(simple, encoding="utf-8")
             with self.assertRaises(icons.IconBuildError):

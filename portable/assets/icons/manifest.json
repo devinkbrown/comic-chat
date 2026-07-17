@@ -12,9 +12,9 @@
   "app_id": "io.github.devinkbrown.ComicChatReinked",
   "expression_resource_base": 4200,
   "art_review": {
-    "revision": "source-reconstructed-face-v2-pending",
-    "status": "blocked",
-    "reason": "Face-bearing assets require a source-reconstructed revision and explicit visual approval before generation."
+    "revision": "source-reconstructed-armando-v2",
+    "status": "approved",
+    "reason": "The project owner explicitly approved the source-reconstructed Armando v2 face on 2026-07-17."
   },
   "icons": [
     {"name": "chat", "resource": "IDR_MAINFRAME"},
@@ -38,6 +38,14 @@
       "cells": [
         "connect", "disconnect", "enter-room", "leave-room", "create-room",
         "comic-view", "text-view", "room-list", "user-list", "favorites"
+      ],
+      "quality_exceptions": [
+        {
+          "cell": "room-list",
+          "size": 32,
+          "min_alpha_levels": 2,
+          "reason": "The approved 32px grid strokes are exactly pixel-aligned and intentionally resolve to binary alpha."
+        }
       ]
     },
     {
@@ -45,7 +53,15 @@
       "resource": "IDR_TEXTTOOLBAR",
       "generated_resource_base": 4040,
       "mask": "#c0c0c0",
-      "cells": ["font", "color", "bold", "italic", "underline", "fixed-pitch", "symbol"]
+      "cells": ["font", "color", "bold", "italic", "underline", "fixed-pitch", "symbol"],
+      "quality_exceptions": [
+        {
+          "cell": "font",
+          "size": 32,
+          "min_alpha_levels": 2,
+          "reason": "The approved 32px type card is exactly pixel-aligned and intentionally resolves to binary alpha."
+        }
+      ]
     },
     {
       "name": "usertool",

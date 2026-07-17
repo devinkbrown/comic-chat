@@ -348,6 +348,8 @@ install_data(
   install_dir: source_raster_install_dir,
 )
 
+subdir('assets/icons')
+
 if get_option('frontend')
   sdl_dep = dependency(
     'sdl3',
@@ -358,6 +360,10 @@ if get_option('frontend')
   executable(
     'comic-chat',
     'src/app.cpp',
+    cpp_args: [
+      '-DCOMICCHAT_INSTALL_MODERN_ICON_DIR="' + installed_modern_icon_dir + '"',
+      '-DCOMICCHAT_VERSION="' + meson.project_version() + '"',
+    ],
     dependencies: [core_dep, sdl_dep],
     install: true,
   )
@@ -393,6 +399,15 @@ if get_option('tests')
   headless_test_env = environment()
   headless_test_env.set('COMICCHAT_FONT_PATH', meson.project_source_root() / '../v1.0/shared/comic.ttf')
   test('comicchat-headless', unit_tests, timeout: 30, env: headless_test_env)
+
+  modern_icon_audit = find_program('../scripts/build-modern-icons.py')
+  test(
+    'comicchat-modern-icon-catalog',
+    modern_icon_audit,
+    args: ['verify'],
+    workdir: meson.project_source_root() / '..',
+    timeout: 30,
+  )
 
   ircv3_tests = executable(
     'comicchat-ircv3-tests',
