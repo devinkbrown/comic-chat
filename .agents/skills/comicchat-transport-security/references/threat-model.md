@@ -12,6 +12,7 @@
 | IRC/CTCP input | Oversized frames, command injection, event amplification | Strict framing, bounded state, monotonic flood suppression | IRCv3 framing/flood tests |
 | DCC peer | Forged address, unexpected connector, infinite file, ACK desync | Explicit peer acceptance, bounds, commit-gated ACK, prompt cancellation | portable/tests/dcc_transfer_test.cpp |
 | UI adapter | Use-after-free, stale event, socket serialization from UI | Generation-tagged immutable events and typed commands | transport adapter/API tests |
+| Legacy transport coexistence | MFC/direct socket remains reachable, TLS failure selects it, build omits shared engine | One `ConnectionEngine` IRC path per modern client; static ownership gate; no downgrade | transport-retirement gate, per-client adapter tests, native Windows loopback |
 
 ## Code map
 
@@ -21,7 +22,8 @@
 - IRC/SASL/STS/flood policy: portable/include/comicchat/net/ircv3.hpp, portable/include/comicchat/net/flood.hpp, and portable/src/net/ircv3.cpp
 - Secret storage and wiping: portable/include/comicchat/memory.hpp and portable/src/memory.cpp
 - Crypto runtime policy: portable/include/comicchat/crypto_runtime.hpp, portable/include/comicchat/mbedtls_user_config.h, and portable/src/crypto_runtime.cpp
-- Modern Windows consumers: v2.5-beta-1-modern/transportuibridge.h, ircv3eventbridge.h, ircsock.cpp, ircproto.cpp, and filesend.cpp
+- Modern Windows v2.5 consumer: v2.5-beta-1-modern/transportuibridge.h, ircv3eventbridge.h, ircsock.cpp, ircproto.cpp, and filesend.cpp
+- Retirement ledger and required v1/v2/portable integration gates: docs/TRANSPORT-RETIREMENT.md
 - Pinned implementations: third_party/libuv and third_party/mbedtls
 
 ## Primary sources

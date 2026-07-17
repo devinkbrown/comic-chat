@@ -12,10 +12,12 @@ description: Harden and verify Comic Chat's shared libuv and mbedTLS networking,
 3. State the attacker-controlled inputs, owned resources, secret material, cancellation points, hard limits, and fail-closed result.
 4. Add a causal regression that fails on the baseline before changing the implementation.
 5. Use comicchat-ircv3-compat alongside this skill when CAP, tags, batches, SASL wire state, STS, or server-profile semantics change.
+6. Read `docs/TRANSPORT-RETIREMENT.md` when changing a modern client connection path, adapter, build object, or network CI gate. Re-audit both legacy clients rather than assuming shared-library linkage proves runtime use.
 
 ## Preserve the connection engine
 
 - Keep one libuv loop and its handles owned by one joinable RAII worker. Marshal cross-thread work through the bounded command queue and uv_async_t wakeup.
+- Keep all modern IRC DNS, connect, reconnect, read, write, proxy, and TLS work behind `ConnectionEngine`. Forbid `CAsyncSocket`, `AfxSocketInit`, client-owned socket handles, direct socket calls, and an alternate SChannel transport in modern client trees. Direct BIO syscalls belong only inside the allowlisted shared engine implementation.
 - Keep every command and event generation-tagged. Reject stale work before it mutates live state or consumes bounded capacity.
 - Make stop, restart, callback re-entry, wakeup exceptions, and partial initialization converge on one idempotent teardown path.
 - Close libuv handles on the loop thread and join from an external owner. Treat a stop requested from the worker as request-only; never self-join or detach.
@@ -27,6 +29,7 @@ description: Harden and verify Comic Chat's shared libuv and mbedTLS networking,
 ## Preserve TLS and proxies
 
 - Default to Security::tls and port 6697. Permit plaintext only through an explicit caller option; never downgrade after DNS, proxy, handshake, certificate, or reconnect failure.
+- Persist transport security as an explicit setting. Never infer TLS solely from port 6697, and never treat another port as implicitly plaintext.
 - Configure trusted roots, required peer verification, SNI, and mbedtls_ssl_set_hostname for the original IRC hostname before exchanging application bytes.
 - Continue verifying the IRC endpoint after SOCKS5 or HTTP CONNECT. Do not authenticate the proxy hostname as the TLS peer.
 - Validate proxy lengths, methods, status lines, IPv6 authority brackets, credentials, and response bounds before use.
@@ -64,5 +67,7 @@ meson test -C <build-dir> comicchat-ircv3 --print-errorlogs
 Run ASan+UBSan for all parser, buffer, TLS, proxy, DCC, and secret-lifetime changes. Run TSan plus repeated stop/restart/cancel stress for worker, callback, queue, or generation changes. Keep frontend disabled in the TSan build.
 
 Require tests for the affected failure paths: hostname mismatch, handshake deadline, cancellation, queue saturation, secret wiping, proxy malformation, reconnect, resumption, idle no-spin, DCC arithmetic, commit-gated ACKs, peer rejection, and restart. Add a new targeted test when the existing names do not prove the changed contract.
+
+For adapter or build changes, also require the transport-retirement static gate, a focused adapter contract test, and a native Windows loopback. A successful MFC build, shared API compile, or window-launch smoke does not prove that a client retired its old socket path.
 
 Report the red test, green commands, sanitizer results, fixed non-secret diagnostics, residual platform limitations, and any upstream advisory reviewed.
