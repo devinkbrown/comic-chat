@@ -8,10 +8,11 @@ description: Implement, review, and test IRC/IRCv3 parsing, capability negotiati
 ## Establish the protocol oracle
 
 1. Read AGENTS.md and portable/README.md.
-2. Read references/spec-map.md and the exact specification sections governing the change.
-3. Trace the behavior from wire input through LineFramer and Engine, typed ProcessResult, the modern Windows bridge, and the legacy model/UI consumer.
-4. Compare the relevant historical behavior in v2.5-beta-1/ without editing that snapshot.
-5. Add a fixture or causal state-machine test before implementation.
+2. Read references/spec-map.md, docs/IRCv3-COVERAGE.md, and the exact specification sections governing the change.
+3. Recheck the live IRCv3 registry category and status. The registry omits `draft/` in its display, so preserve the normative wire identifier from the individual specification.
+4. Trace the behavior from wire input through LineFramer and Engine, typed ProcessResult, the modern Windows bridge, and the legacy model/UI consumer.
+5. Compare the relevant historical behavior in v2.5-beta-1/ without editing that snapshot.
+6. Add a fixture or causal state-machine test before implementation.
 
 Use comicchat-transport-security alongside this skill for TLS, proxy, secret lifetime, worker ownership, or DCC transport changes.
 
@@ -31,6 +32,7 @@ Use comicchat-transport-security alongside this skill for TLS, proxy, secret lif
 - Keep offered, requested, pending, acknowledged, and enabled states distinct.
 - Apply one CAP REQ atomically. Do not partially enable a multi-line ACK set or a partially rejected request.
 - Request a capability only when its normative dependencies are available. Do not invent dependencies from convenient implementation order.
+- Gate automatic requests on product readiness as well as parser recognition. A typed event without a legacy model/UI consumer is observe-only, not safe advertised support.
 - Remove dependent capabilities when CAP DEL invalidates their prerequisites.
 - Observe STS; never send it in CAP REQ. Apply an insecure upgrade or secure persistence only through the transport policy boundary.
 - Finish with CAP END only after capability and SASL terminal state permits it; retain bounded fallback for servers that reject or ignore CAP.
@@ -64,4 +66,9 @@ Then run the full headless suite and the MSVC consumer when shared headers, brid
 
 Require direct tests for the changed contract and its negative cases. A parser-only assertion does not prove legacy adaptation; include bridge/model evidence when user-visible state changes. A test source is not a gate unless portable/meson.build, chat.mak, or .github/workflows/build-modern.yml actually builds or runs it.
 
-Report the official spec URL and section, fixture identity, baseline failure, exact tests, pass counts, and any intentionally unsupported or draft behavior.
+Update docs/IRCv3-COVERAGE.md in the same change whenever capability selection,
+an identifier's status, a parser/state/event/adapter path, a server fixture, or an
+auto-request safety conclusion changes. Do not mark IRCv3 or an extension complete
+without the evidence required by that ledger.
+
+Report the official spec URL and section, fixture identity, baseline failure, exact tests, pass counts, ledger change, and any intentionally unsupported or draft behavior.
