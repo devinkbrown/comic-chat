@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <string>
 #include <utility>
 
 struct Ircv3AdapterEvent {
@@ -19,6 +20,35 @@ struct Ircv3AdapterEvent {
 };
 
 namespace comic_chat::legacy_ui {
+
+struct Ircv3LegacyMessageAdaptation {
+	std::optional<Ircv3AdapterEvent> typed_context;
+	std::optional<std::string> legacy_wire;
+};
+
+// Preserve the complete parsed message for typed consumers before flattening
+// ordinary IRC into the historical command parser. TAGMSG is tag-only protocol
+// metadata, including when a server has stripped every tag, and must never be
+// presented to the legacy unknown-command/history path.
+inline Ircv3LegacyMessageAdaptation AdaptProtocolMessage(
+	const comic_chat::ircv3::Message& message)
+{
+	Ircv3LegacyMessageAdaptation result;
+	const bool typed_only = message.command == "TAGMSG";
+	if (!message.tags.empty() || typed_only) {
+		comic_chat::ircv3::Event context;
+		context.type = comic_chat::ircv3::EventType::MessageContext;
+		context.source = message.prefix ? *message.prefix : std::string{};
+		context.target = message.params.empty() ? std::string{} : message.params.front();
+		context.key = message.command;
+		result.typed_context = Ircv3AdapterEvent{std::move(context), message};
+	}
+	if (!typed_only) {
+		auto wire = message.SerializeChecked(false);
+		if (wire) result.legacy_wire = std::move(*wire);
+	}
+	return result;
+}
 
 constexpr std::size_t kIrcv3UiDrainBatch = 128;
 constexpr std::size_t kIrcv3UiDrainMaximum = 512;

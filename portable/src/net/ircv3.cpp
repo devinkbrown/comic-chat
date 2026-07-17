@@ -697,11 +697,12 @@ bool Message::Parse(std::string_view wire, Message* out, std::string* error)
 		for (const auto& raw : Split(wire.substr(1, space - 1), ';')) {
 			const auto equal = raw.find('=');
 			const std::string name = raw.substr(0, equal);
-			if (!ValidTagKey(name)) return fail("invalid tag key");
 			std::optional<std::string> value;
 			if (equal != std::string::npos) value = UnescapeTag(std::string_view(raw).substr(equal + 1));
-			// Tag keys are case-sensitive opaque identifiers. If duplicated, the
-			// final occurrence is authoritative.
+			// Inbound tag keys are case-sensitive opaque identifiers. IRCv3
+			// explicitly forbids rejecting an otherwise valid message because a
+			// key does not match today's grammar. Outbound serialization still
+			// applies ValidTagKey(). If duplicated, the final occurrence wins.
 			result.SetTag(name, std::move(value));
 		}
 		cursor = space + 1;
@@ -2563,6 +2564,8 @@ std::expected<std::string, ParseFailure> Engine::PrepareOutgoingChecked(std::str
 	if (!parsed) return std::unexpected(parsed.error());
 	Message message = std::move(*parsed);
 	ScopedSensitiveMessageWipe wipe_message(&message);
+	if (!std::ranges::all_of(message.tags, [](const Tag& tag) { return ValidTagKey(tag.name); }))
+		return std::unexpected(ParseFailure{"invalid outbound tag key"});
 	if (isupport_.contains("UTF8ONLY")) {
 		const bool valid_params = std::ranges::all_of(message.params, ValidUtf8);
 		const bool valid_tags = std::ranges::all_of(message.tags, [](const Tag& tag) {

@@ -735,16 +735,13 @@ CIrcSocket::QueueProtocolLine(std::string_view wire)
 
 void CIrcSocket::DispatchProtocolMessage(const comic_chat::ircv3::Message& message)
 {
-	if (!message.tags.empty()) {
-		comic_chat::ircv3::Event context;
-		context.type = comic_chat::ircv3::EventType::MessageContext;
-		context.source = message.prefix ? *message.prefix : std::string{};
-		context.target = message.params.empty() ? std::string{} : message.params.front();
-		context.key = message.command;
-		DispatchProtocolEvent(std::move(context), message);
+	auto adapted = comic_chat::legacy_ui::AdaptProtocolMessage(message);
+	if (adapted.typed_context) {
+		auto context = std::move(*adapted.typed_context);
+		DispatchProtocolEvent(std::move(context.event), std::move(context.message));
 	}
-	std::string wire = message.Serialize(false);
-	std::vector<char> dispatchBuffer(wire.begin(), wire.end());
+	if (!adapted.legacy_wire) return;
+	std::vector<char> dispatchBuffer(adapted.legacy_wire->begin(), adapted.legacy_wire->end());
 	dispatchBuffer.push_back('\0');
 	ProcessMessage(dispatchBuffer.data());
 }

@@ -155,13 +155,30 @@ void TestMessageTags()
 	Check(message.FindTag("Case") && message.FindTag("Case")->value == "upper" &&
 		message.FindTag("case") && message.FindTag("case")->value == "lower", "tag keys are case-sensitive");
 	Check(message.FindTag("dup") && message.FindTag("dup")->value == "two", "final duplicate tag wins");
-	Check(!Message::Parse("@=odd PRIVMSG #room :invalid\r\n", &message), "empty tag key rejected");
-	Check(!Message::Parse("@vendor/ PRIVMSG #room :invalid\r\n", &message), "invalid vendor tag key rejected");
 	const auto serialized = message.Serialize();
 	Check(serialized.find("aaa=hello\\sworld") != std::string::npos, "tag serialization escapes space");
 	Message round_trip;
 	Check(Message::Parse(serialized, &round_trip), "serialized message parses");
 	Check(round_trip.params == message.params && round_trip.prefix == message.prefix, "message round trip");
+
+	Message opaque;
+	Check(Message::Parse("@future~key=value;vendor/=odd;bad/key/again=x;=empty;dup=old;dup=new "
+		":nick!u@h PRIVMSG #room :still valid\r\n", &opaque),
+		"opaque unfamiliar inbound tag keys do not discard an otherwise valid message");
+	Check(opaque.FindTag("future~key") && opaque.FindTag("future~key")->value == "value" &&
+		opaque.FindTag("vendor/") && opaque.FindTag("vendor/")->value == "odd" &&
+		opaque.FindTag("bad/key/again") && opaque.FindTag("bad/key/again")->value == "x" &&
+		opaque.FindTag("") && opaque.FindTag("")->value == "empty" &&
+		opaque.FindTag("dup") && opaque.FindTag("dup")->value == "new",
+		"opaque inbound tag names and final duplicate values are preserved exactly");
+	Check(!opaque.SerializeChecked(), "opaque invalid tag keys remain forbidden on outbound serialization");
+
+	Engine engine;
+	auto forwarded = engine.Process("@future~key=value :nick!u@h PRIVMSG #room :still valid\r\n");
+	Check(forwarded.events.empty() && forwarded.messages.size() == 1 &&
+		forwarded.messages[0].FindTag("future~key") &&
+		forwarded.messages[0].FindTag("future~key")->value == "value",
+		"engine forwards a bounded message while preserving an unfamiliar opaque tag");
 }
 
 void TestBoundedFramingAndPong()
@@ -615,9 +632,16 @@ void TestIndependentWireBounds()
 	Engine engine;
 	Check(!engine.PrepareOutgoingChecked(maximum_server_tags + "PING\r\n"),
 		"outgoing path enforces the smaller client tag limit");
-	Check(!Message::Parse("@bad/key/again=x PING\r\n"), "multi-slash tag key rejected");
-	Check(!Message::Parse("@bad..vendor/key=x PING\r\n"), "invalid vendor hostname tag key rejected");
-	Check(!Message::Parse("@+ PING\r\n"), "empty client-only tag key rejected");
+	Check(Message::Parse("@bad/key/again=x PING\r\n").has_value(),
+		"inbound multi-slash tag key is preserved opaquely");
+	Check(Message::Parse("@bad..vendor/key=x PING\r\n").has_value(),
+		"inbound unfamiliar vendor-shaped tag key is preserved opaquely");
+	Check(Message::Parse("@+ PING\r\n").has_value(),
+		"inbound unfamiliar client-prefixed tag key is preserved opaquely");
+	Check(!engine.PrepareOutgoingChecked("@bad/key/again=x PING\r\n") &&
+		!engine.PrepareOutgoingChecked("@bad..vendor/key=x PING\r\n") &&
+		!engine.PrepareOutgoingChecked("@+ PING\r\n"),
+		"outbound tag-key validation remains strict after tolerant inbound parsing");
 	Check(!Message::Parse("PRIV@MSG #room :invalid\r\n"), "invalid IRC command token rejected");
 	Check(Message::Parse("FUTURECOMMAND #room :preserved\r\n").has_value(),
 		"unknown syntactically valid IRC command preserved");
@@ -1211,6 +1235,33 @@ void TestLegacyUiEventBridge()
 		[&](Ircv3AdapterEvent) { ++observed; });
 	Check(second.drained == 40 && second.delivered == 40 && source.queued.empty(),
 		"next UI event-loop turn drains the remaining typed events");
+
+	auto tagmsg = Message::Parse("@+typing=active;future~key=opaque :Nick!u@h TAGMSG #room\r\n");
+	Check(tagmsg.has_value(), "legacy adapter TAGMSG fixture parses");
+	if (tagmsg) {
+		const auto adapted = comic_chat::legacy_ui::AdaptProtocolMessage(*tagmsg);
+		Check(adapted.typed_context && adapted.typed_context->message &&
+			adapted.typed_context->event.type == EventType::MessageContext &&
+			adapted.typed_context->event.key == "TAGMSG" &&
+			adapted.typed_context->message->FindTag("future~key") &&
+			!adapted.legacy_wire,
+			"TAGMSG remains a complete typed context and cannot reach legacy command dispatch");
+	}
+	auto bare_tagmsg = Message::Parse(":Nick!u@h TAGMSG #room\r\n");
+	Check(bare_tagmsg.has_value(), "legacy adapter bare TAGMSG fixture parses");
+	if (bare_tagmsg) {
+		const auto adapted = comic_chat::legacy_ui::AdaptProtocolMessage(*bare_tagmsg);
+		Check(adapted.typed_context && adapted.typed_context->message && !adapted.legacy_wire,
+			"server-stripped bare TAGMSG remains typed-only before legacy dispatch");
+	}
+	auto privmsg = Message::Parse("@future~key=opaque :Nick!u@h PRIVMSG #room :hello\r\n");
+	Check(privmsg.has_value(), "legacy adapter PRIVMSG control fixture parses");
+	if (privmsg) {
+		const auto adapted = comic_chat::legacy_ui::AdaptProtocolMessage(*privmsg);
+		Check(adapted.typed_context && adapted.legacy_wire &&
+			*adapted.legacy_wire == ":Nick!u@h PRIVMSG #room hello\r\n",
+			"ordinary tagged chat still reaches the legacy parser only after typed context capture");
+	}
 }
 
 } // namespace

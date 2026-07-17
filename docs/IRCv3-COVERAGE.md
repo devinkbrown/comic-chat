@@ -1,6 +1,6 @@
 # IRC and IRCv3 coverage
 
-Audit snapshot: 2026-07-16, source commit `1dc1020`.
+Audit snapshot: 2026-07-16, base source commit `0f42423`.
 
 This is the compatibility ledger for the legacy Microsoft Comic Chat client in
 `v2.5-beta-1-modern/` and the shared protocol engine in `portable/`. It measures
@@ -54,8 +54,10 @@ The intended path is:
 2. `Engine` negotiates capabilities and returns messages, outbound commands,
    and typed events (`portable/include/comicchat/net/ircv3.hpp:158-170,185-337`).
 3. The Windows adapter feeds transport bytes to the engine, sends engine output,
-   and strips tags only after queuing a complete `MessageContext`
-   (`v2.5-beta-1-modern/ircsock.cpp:703-840`).
+   and strips tags only after queuing a complete `MessageContext`; `TAGMSG`
+   becomes typed-only input and cannot enter the historical command table
+   (`v2.5-beta-1-modern/ircv3eventbridge.h:24-51`,
+   `v2.5-beta-1-modern/ircsock.cpp:736-747`).
 4. The main frame drains bounded events and broadcasts
    `WM_COMICCHAT_IRCV3_EVENT`
    (`v2.5-beta-1-modern/ircv3eventbridge.h:13-78`,
@@ -65,7 +67,7 @@ The intended path is:
 Step 5 is the principal gap. There is no message-map handler for
 `WM_COMICCHAT_IRCV3_EVENT`; repository-wide uses are only its declaration and
 the broadcast. The legacy command table also has no `ACCOUNT`, `CHGHOST`,
-`SETNAME`, `RENAME`, `TAGMSG`, `FAIL`, `WARN`, or `NOTE`
+`SETNAME`, `RENAME`, `FAIL`, `WARN`, or `NOTE`
 (`v2.5-beta-1-modern/ircsock.cpp:118-172`). Therefore a typed portable event is
 not, by itself, legacy-client support.
 
@@ -111,7 +113,7 @@ Official capability sources: [account notify](https://ircv3.net/specs/extensions
 
 | Wire identifier | Spec status | Product status | Current evidence | Auto-request assessment |
 | --- | --- | --- | --- | --- |
-| `message-tags` | stable | **partial** | Generic parse/serialize and preservation; typed subset in `portable/src/net/ircv3.cpp:660-832,1951-1987`; tests `portable/tests/ircv3_test.cpp:142-165,301-311,599-619` | **Block pending adapter.** `TAGMSG` reaches the old unknown-command path, and invalid tag keys currently reject the whole message contrary to the forward-compatibility rule. |
+| `message-tags` | stable | **partial** | Bounded input preserves opaque keys while checked output remains strict (`portable/src/net/ircv3.cpp:676-768,2561-2568`); `TAGMSG` is typed-only at the legacy boundary (`v2.5-beta-1-modern/ircv3eventbridge.h:24-51`); causal tests `portable/tests/ircv3_test.cpp:142-181,632-647,1239-1264` | Safe to request at the transport boundary. Product status remains partial because typed contexts, typing, and reactions still lack visible descendant consumers. |
 | `batch` | stable | **partial** | Bounded nesting and several batch families in `portable/src/net/ircv3.cpp:1989-2172`; tests `portable/tests/ircv3_test.cpp:313-348,744-787` | Allow only with audited member semantics; a generic batch can unwrap a command the legacy model cannot safely consume. |
 | `server-time` | stable | **observe-only** | `time` is preserved as an unknown/generic tag and stripped after `MessageContext`; Solanum/Unreal/Orochi/InspIRCd fixtures | Safe for ordinary chat, but the legacy history timestamp is not set from the tag. |
 | `standard-replies` | stable | **observe-only** | `FAIL`/`WARN`/`NOTE` become `StandardReply` events in `portable/src/net/ircv3.cpp:2193-2343`; state tests `portable/tests/ircv3_test.cpp:350-381` | **Block pending UI.** Consuming replies without a descendant event handler can hide errors from the user. |
@@ -159,10 +161,10 @@ feature unless a fixture and a profile-specific contract justify the exception.
 [Message tags](https://ircv3.net/specs/extensions/message-tags) require clients
 to treat keys as opaque, case-sensitive identifiers and not reject an otherwise
 valid message solely because a tag key does not match a locally known grammar.
-Current input parsing calls `ValidTagKey()` and rejects such messages
-(`portable/src/net/ircv3.cpp:67-91,660-719`); the tests currently lock in that
-non-conforming behavior (`portable/tests/ircv3_test.cpp:158-159`). This is a P0
-forward-compatibility bug. Outbound key validation can remain strict.
+Input parsing now preserves those names and final duplicate values exactly while
+retaining the 8,191-byte tag-frame and 510-byte payload bounds. The outbound
+engine and serializer still enforce the current tag-key grammar and the smaller
+client tag-frame bound (`portable/src/net/ircv3.cpp:676-768,2561-2568`).
 
 | Wire tag | Spec | Status | Parser/state/event and product evidence |
 | --- | --- | --- | --- |
@@ -178,12 +180,13 @@ forward-compatibility bug. Outbound key validation can remain strict.
 | `+typing` | [typing](https://ircv3.net/specs/client-tags/typing) | **observe-only** | `active`/`paused`/`done` emit `Typing`; no typing-indicator consumer. |
 | `+channel-context` | [channel context](https://ircv3.net/specs/client-tags/channel-context) | **observe-only** | Decoded as context; no routing/display consumer. |
 | `draft/oper` | [oper tag](https://ircv3.net/specs/extensions/oper-tag) | **observe-only** | Decoded alongside unprefixed `oper`; no UI consumer. |
-| Unknown well-formed tags | message-tags | **partial** | Preserved through `MessageContext`, then stripped before legacy parsing; no descendant receiver currently uses the complete message. |
+| Opaque unfamiliar tags | message-tags | **partial** | Preserved even when the name does not match today's grammar, copied into `MessageContext`, then stripped before ordinary legacy parsing; no descendant receiver currently uses the complete message. |
 
-`TAGMSG` is parsed as an ordinary message. It may generate typing/reaction
-events, but it is then serialized without tags and dispatched to a legacy command
-table that does not know `TAGMSG`. It must be consumed by a typed adapter and
-must never appear as a chat balloon merely because a server supplied a tag.
+`TAGMSG` generates typing/reaction events and a complete `MessageContext`, then
+the adapter deliberately omits legacy wire text. This applies even to a bare
+`TAGMSG` after a server strips every tag, so it cannot reach unknown-command or
+history handling. No descendant window currently turns those typed events into
+visible typing/reaction UI.
 
 ### Batch types
 
@@ -372,7 +375,7 @@ window handles the event.
 
 Current conspicuous gaps include direct causal tests for `invite-notify`,
 `multi-prefix`, `userhost-in-names`, `pre-away`, extended-JOIN normalization,
-TAGMSG consumption, labeled no-response ACKs, persistent STS, CHATHISTORY
+labeled no-response ACKs, persistent STS, CHATHISTORY
 recovery invocation, event-playback isolation, visible redaction, and UI/model
 application of every typed state event.
 
@@ -384,9 +387,9 @@ application of every typed state event.
    `multi-prefix`, `userhost-in-names`, `no-implicit-names`, `invite-notify`,
    `draft/event-playback`, `draft/channel-rename`,
    `draft/message-redaction`, and `draft/multiline` until their adapters pass.
-2. Make inbound message-tag keys forward-compatible: preserve opaque keys and
-   do not discard the entire message for a locally unfamiliar key. Consume
-   TAGMSG into typed behavior without passing an unknown bare command to legacy.
+2. **Complete at the parser/adapter boundary:** inbound message-tag keys are
+   preserved opaquely without weakening outbound validation, and `TAGMSG` is
+   typed-only before legacy dispatch. Visible consumers remain part of item 3.
 3. Implement actual legacy event consumers for account/away/host/realname,
    rename, standard replies, redaction, typing/reaction, read markers, metadata,
    and message context; add model-level tests.
