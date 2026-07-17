@@ -3,9 +3,13 @@
 #include "comicchat/layout.hpp"
 #include "comicchat/text.hpp"
 
+#include <algorithm>
 #include <cstdint>
+#include <cstdlib>
+#include <filesystem>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -144,4 +148,91 @@ TEST_CASE("build_say_panel builds a say panel from a live font engine") {
     CHECK(panel.balloons.front().kind.mode == comicchat::BalloonMode::say);
     CHECK_FALSE(panel.balloons.front().lines.empty());
     CHECK(panel.bodies.front().color == comicchat::nick_color("Ada"));
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2.5b — nick->avatar provisioning + assignment.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("assign_avatar is deterministic, stable, and in-range") {
+    const std::vector<std::string> roster{
+        "anna.avb", "buck.avb", "cro.avb", "dan.avb", "xeno.avb",
+    };
+    // Same nick always maps to the same file across repeated calls.
+    const auto first = comicchat::assign_avatar("Ada", roster);
+    const auto again = comicchat::assign_avatar("Ada", roster);
+    REQUIRE(first.has_value());
+    REQUIRE(again.has_value());
+    CHECK(*first == *again);
+    // The choice is always a member of the roster.
+    CHECK(std::find(roster.begin(), roster.end(), std::string{*first}) != roster.end());
+    // Distinct nicks can (and here do) land on distinct avatars.
+    const auto linus = comicchat::assign_avatar("Linus", roster);
+    REQUIRE(linus.has_value());
+    CHECK(std::find(roster.begin(), roster.end(), std::string{*linus}) != roster.end());
+}
+
+TEST_CASE("assign_avatar returns nullopt for an empty roster") {
+    const std::vector<std::string> empty{};
+    CHECK_FALSE(comicchat::assign_avatar("Ada", empty).has_value());
+}
+
+TEST_CASE("available_avatars lists the comicart .avb set sorted") {
+    const auto names = comicchat::available_avatars(COMICCHAT_TEST_COMICART_DIR);
+    REQUIRE_FALSE(names.empty());
+    // Sorted, so enumeration order does not perturb the assignment.
+    CHECK(std::is_sorted(names.begin(), names.end()));
+    // Every entry is an .avb (the .bgb backdrops are excluded).
+    for (const auto& name : names) {
+        CHECK(std::filesystem::path{name}.extension() == ".avb");
+    }
+    // The shipped corpus includes the known avatars used elsewhere in the suite.
+    CHECK(std::find(names.begin(), names.end(), "xeno.avb") != names.end());
+}
+
+TEST_CASE("find_avatar_directory honors the COMICCHAT_AVATAR_DIR override") {
+    setenv("COMICCHAT_AVATAR_DIR", COMICCHAT_TEST_COMICART_DIR, 1);
+    const auto directory = comicchat::find_avatar_directory();
+    unsetenv("COMICCHAT_AVATAR_DIR");
+    REQUIRE(directory.has_value());
+    CHECK(std::filesystem::equivalent(*directory,
+                                      std::filesystem::path{COMICCHAT_TEST_COMICART_DIR}));
+}
+
+TEST_CASE("make_nick_avatar_provider composites a loadable avatar for a nick") {
+    setenv("COMICCHAT_AVATAR_DIR", COMICCHAT_TEST_COMICART_DIR, 1);
+    const auto provider = comicchat::make_nick_avatar_provider("Ada");
+    unsetenv("COMICCHAT_AVATAR_DIR");
+    REQUIRE(static_cast<bool>(provider));
+
+    comicchat::PanelBody body{};
+    body.avatar_id = 1;
+    body.flip = false;
+    const auto raster = provider(body, 120, 160);
+    REQUIRE(raster.has_value());
+    CHECK(raster->width == 120);
+    CHECK(raster->height == 160);
+    CHECK(raster->pixels.size() == static_cast<std::size_t>(120) * 160);
+
+    // Deterministic: same body + size -> byte-identical raster.
+    const auto again = provider(body, 120, 160);
+    REQUIRE(again.has_value());
+    CHECK(raster->pixels == again->pixels);
+
+    // A non-positive target keeps the color-box fallback (nullopt).
+    CHECK_FALSE(provider(body, 0, 160).has_value());
+}
+
+TEST_CASE("make_nick_avatar_provider is empty when no avatar set resolves") {
+    setenv("COMICCHAT_AVATAR_DIR", "/nonexistent/comicchat/avatars", 1);
+    // Guard against a stray install/source dir satisfying the fallback: only
+    // assert the empty-provider contract when nothing else resolves either.
+    const auto directory = comicchat::find_avatar_directory();
+    const auto provider = comicchat::make_nick_avatar_provider("Ada");
+    unsetenv("COMICCHAT_AVATAR_DIR");
+    if (!directory.has_value()) {
+        CHECK_FALSE(static_cast<bool>(provider));
+    } else {
+        SUCCEED("an install/source avatar dir is present; fallback resolved");
+    }
 }

@@ -113,8 +113,15 @@ text_platform_deps = []
 installed_comic_font = get_option('prefix') / get_option('datadir') / 'comic-chat' / 'comic.ttf'
 source_raster_install_dir = get_option('datadir') / 'comic-chat' / 'source-res'
 installed_source_raster = get_option('prefix') / source_raster_install_dir
+avatar_install_dir = get_option('datadir') / 'comic-chat' / 'avatars'
+installed_avatars = get_option('prefix') / avatar_install_dir
+# The comicart source lives with the Windows UI (v2.5-beta-1-modern/comicart);
+# a dev build with no `meson install` can still resolve avatars from there.
+comicart_source_dir = meson.project_source_root() / '..' / 'v2.5-beta-1-modern' / 'comicart'
 core_cpp_args = ['-DCOMICCHAT_INSTALL_FONT_PATH="' + installed_comic_font + '"']
 core_cpp_args += ['-DCOMICCHAT_INSTALL_SOURCE_RASTER_DIR="' + installed_source_raster + '"']
+core_cpp_args += ['-DCOMICCHAT_INSTALL_AVATAR_DIR="' + installed_avatars + '"']
+core_cpp_args += ['-DCOMICCHAT_SOURCE_AVATAR_DIR="' + comicart_source_dir + '"']
 if fontconfig_dep.found()
   text_platform_deps += fontconfig_dep
   core_cpp_args += ['-DCOMICCHAT_HAS_FONTCONFIG=1']
@@ -381,6 +388,39 @@ install_data(
   'assets/source-raster/texttool.bmp',
   'assets/source-raster/usertool.bmp',
   install_dir: source_raster_install_dir,
+)
+
+# Provision the default avatar set for the portable runtime. The comicart .avb
+# files are the same assets the Windows UI ships (v2.5-beta-1-modern/comicart);
+# they are install-copied here (not moved) so the shipped Linux binary can load
+# a real per-speaker avatar. Mirrors the font/source-raster install precedent.
+install_data(
+  '../v2.5-beta-1-modern/comicart/anna.avb',
+  '../v2.5-beta-1-modern/comicart/armando.avb',
+  '../v2.5-beta-1-modern/comicart/bolo.avb',
+  '../v2.5-beta-1-modern/comicart/buck.avb',
+  '../v2.5-beta-1-modern/comicart/connor.avb',
+  '../v2.5-beta-1-modern/comicart/cro.avb',
+  '../v2.5-beta-1-modern/comicart/dan.avb',
+  '../v2.5-beta-1-modern/comicart/denise.avb',
+  '../v2.5-beta-1-modern/comicart/glenda.avb',
+  '../v2.5-beta-1-modern/comicart/hugh.avb',
+  '../v2.5-beta-1-modern/comicart/jordan.avb',
+  '../v2.5-beta-1-modern/comicart/kirby.avb',
+  '../v2.5-beta-1-modern/comicart/lance.avb',
+  '../v2.5-beta-1-modern/comicart/lynnea.avb',
+  '../v2.5-beta-1-modern/comicart/margaret.avb',
+  '../v2.5-beta-1-modern/comicart/mike.avb',
+  '../v2.5-beta-1-modern/comicart/pedagog.avb',
+  '../v2.5-beta-1-modern/comicart/rainbow.avb',
+  '../v2.5-beta-1-modern/comicart/susan.avb',
+  '../v2.5-beta-1-modern/comicart/tiki.avb',
+  '../v2.5-beta-1-modern/comicart/tongtyed.avb',
+  '../v2.5-beta-1-modern/comicart/tux.avb',
+  '../v2.5-beta-1-modern/comicart/veronica.avb',
+  '../v2.5-beta-1-modern/comicart/waf.avb',
+  '../v2.5-beta-1-modern/comicart/xeno.avb',
+  install_dir: avatar_install_dir,
 )
 
 subdir('assets/icons')

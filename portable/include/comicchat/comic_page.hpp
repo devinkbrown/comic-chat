@@ -3,11 +3,16 @@
 #include "comicchat/balloon.hpp"
 #include "comicchat/cpp26.hpp"
 #include "comicchat/layout.hpp"
+#include "comicchat/render.hpp"
 #include "comicchat/text.hpp"
 
 #include <cstdint>
+#include <filesystem>
+#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 // Phase 2.5a — the first live feed increment (ROADMAP Phase 2.5 "app wiring").
 //
@@ -99,5 +104,35 @@ struct MessagePanelRequest final {
 // only if the engine cannot be sized (never throws).
 [[nodiscard]] auto build_say_panel(TextEngine& engine, std::string_view nick, std::string_view text)
     -> Panel;
+
+// ------------------------------------------------------------------------
+// Phase 2.5b — provisioned avatar set + deterministic nick->avatar mapping.
+// ------------------------------------------------------------------------
+
+// Resolve the runtime directory holding the default `.avb` avatar set. Probes,
+// in order: the COMICCHAT_AVATAR_DIR environment override, the installed datadir
+// avatar dir (-DCOMICCHAT_INSTALL_AVATAR_DIR), then the in-tree comicart source
+// dir (-DCOMICCHAT_SOURCE_AVATAR_DIR) as a dev fallback. Returns nullopt when no
+// candidate holds at least one `.avb`. Never throws.
+[[nodiscard]] auto find_avatar_directory() -> std::optional<std::filesystem::path>;
+
+// The available avatar file names (e.g. "anna.avb") in `dir`, sorted
+// lexicographically so the nick->avatar assignment is independent of filesystem
+// enumeration order. Empty on a missing/unreadable directory. Never throws.
+[[nodiscard]] auto available_avatars(const std::filesystem::path& dir) -> std::vector<std::string>;
+
+// Deterministic per-nick avatar choice: fold the nick with the same FNV-1a used
+// by nick_color and index into the sorted `names`. Pure and testable without a
+// filesystem. Returns nullopt only when `names` is empty.
+[[nodiscard]] auto assign_avatar(std::string_view nick, std::span<const std::string> names)
+    -> std::optional<std::string_view>;
+
+// Build a PanelAvatarProvider that loads the nick's deterministically assigned
+// avatar from the resolved runtime directory and composites its neutral pose at
+// the exact device size render_panel requests (honoring PanelBody::flip). The
+// avatar asset is loaded once, here, and reused per body render. Returns an empty
+// provider (nullptr) when no avatar directory/asset resolves so render_panel
+// keeps the flat color-box fallback. Never throws.
+[[nodiscard]] auto make_nick_avatar_provider(std::string_view nick) -> PanelAvatarProvider;
 
 } // namespace comicchat

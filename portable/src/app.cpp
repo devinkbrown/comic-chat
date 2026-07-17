@@ -290,6 +290,10 @@ auto main(const int argc, char** argv) -> int {
         // The most recent chat line rendered as a comic panel. Empty until the
         // first message arrives, so the title card shows on an idle connection.
         std::optional<comicchat::Panel> current_panel;
+        // The speaker's deterministically-assigned avatar provider, rebuilt each
+        // time the panel changes. Empty until the first message (or when no
+        // avatar set resolves), in which case render_panel keeps the color box.
+        comicchat::PanelAvatarProvider current_avatar;
 
         const auto rebuild = [&] {
             int width{};
@@ -300,7 +304,7 @@ auto main(const int argc, char** argv) -> int {
             canvas = std::make_unique<comicchat::Canvas>(width, height);
             canvas->clear({1.0, 1.0, 1.0, 1.0});
             if (current_panel) {
-                canvas->render_panel(*current_panel, **text);
+                canvas->render_panel(*current_panel, **text, current_avatar);
             } else {
                 canvas->render_title_panel(model(), **text);
             }
@@ -315,6 +319,7 @@ auto main(const int argc, char** argv) -> int {
         // live feed uses, so a headless --png snapshot shows a real comic panel.
         if (arguments->say) {
             current_panel = comicchat::build_say_panel(**text, arguments->say->nick, arguments->say->text);
+            current_avatar = comicchat::make_nick_avatar_provider(arguments->say->nick);
         }
         rebuild();
         if (arguments->png && !arguments->png->empty() && !canvas->write_png(*arguments->png)) {
@@ -347,6 +352,7 @@ auto main(const int argc, char** argv) -> int {
                 for (const auto& message : network.messages) {
                     if (auto line = channel_line(message, arguments->connection->channel)) {
                         current_panel = comicchat::build_say_panel(**text, line->nick, line->text);
+                        current_avatar = comicchat::make_nick_avatar_provider(line->nick);
                         rebuild();
                         redraw = true;
                     }

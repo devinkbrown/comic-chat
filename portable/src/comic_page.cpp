@@ -1,9 +1,15 @@
 #include "comicchat/comic_page.hpp"
 
+#include "comicchat/avatar_assets.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <filesystem>
+#include <memory>
+#include <system_error>
 
 namespace comicchat {
 namespace {
@@ -28,6 +34,19 @@ namespace {
     left = std::max(left, message_edge_margin);
     if (max_left >= message_edge_margin) left = std::min(left, max_left);
     return left;
+}
+
+// True when `dir` is a readable directory holding at least one `.avb` asset.
+[[nodiscard]] auto has_avatar(const std::filesystem::path& dir) noexcept -> bool {
+    std::error_code error;
+    if (!std::filesystem::is_directory(dir, error)) return false;
+    std::filesystem::directory_iterator iterator{dir, error};
+    if (error) return false;
+    for (const auto& entry : iterator) {
+        std::error_code file_error;
+        if (entry.is_regular_file(file_error) && entry.path().extension() == ".avb") return true;
+    }
+    return false;
 }
 
 } // namespace
@@ -119,6 +138,73 @@ auto build_say_panel(TextEngine& engine, const std::string_view nick, const std:
 
     const auto measure = measure_text_width(engine, message_text_size);
     return build_message_panel(request, measure);
+}
+
+auto find_avatar_directory() -> std::optional<std::filesystem::path> {
+    try {
+        if (const char* override_path = std::getenv("COMICCHAT_AVATAR_DIR");
+            override_path != nullptr && *override_path != '\0') {
+            const std::filesystem::path candidate{override_path};
+            if (has_avatar(candidate)) return candidate;
+        }
+#ifdef COMICCHAT_INSTALL_AVATAR_DIR
+        if (const std::filesystem::path candidate{COMICCHAT_INSTALL_AVATAR_DIR};
+            has_avatar(candidate)) return candidate;
+#endif
+#ifdef COMICCHAT_SOURCE_AVATAR_DIR
+        if (const std::filesystem::path candidate{COMICCHAT_SOURCE_AVATAR_DIR};
+            has_avatar(candidate)) return candidate;
+#endif
+        return std::nullopt;
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+}
+
+auto available_avatars(const std::filesystem::path& dir) -> std::vector<std::string> {
+    std::vector<std::string> names;
+    std::error_code error;
+    std::filesystem::directory_iterator iterator{dir, error};
+    if (error) return names;
+    for (const auto& entry : iterator) {
+        std::error_code file_error;
+        if (entry.is_regular_file(file_error) && entry.path().extension() == ".avb") {
+            names.push_back(entry.path().filename().string());
+        }
+    }
+    std::ranges::sort(names);
+    return names;
+}
+
+auto assign_avatar(const std::string_view nick, const std::span<const std::string> names)
+    -> std::optional<std::string_view> {
+    if (names.empty()) return std::nullopt;
+    return std::string_view{names[fnv1a(nick) % names.size()]};
+}
+
+auto make_nick_avatar_provider(const std::string_view nick) -> PanelAvatarProvider {
+    const auto directory = find_avatar_directory();
+    if (!directory) return {};
+    const auto names = available_avatars(*directory);
+    const auto chosen = assign_avatar(nick, names);
+    if (!chosen) return {};
+
+    auto asset = load_avatar_asset(*directory / std::string{*chosen});
+    if (!asset.has_value()) return {};
+
+    // Load the asset once; composite its neutral pose per body render at the
+    // exact device size render_panel asks for. Shared so the returned provider
+    // stays copyable (PanelAvatarProvider is std::function).
+    auto shared_asset = std::make_shared<AvatarAsset>(std::move(*asset));
+    return [shared_asset](const PanelBody& body, std::int32_t target_width,
+                          std::int32_t target_height) -> std::optional<AvatarBitmap> {
+        if (target_width <= 0 || target_height <= 0) return std::nullopt;
+        const auto neutral = select_avatar_expression(*shared_asset, {0.0, 0.0});
+        if (!neutral.has_value()) return std::nullopt;
+        auto raster = render_avatar(*shared_asset, {*neutral, target_width, target_height, body.flip, false});
+        if (!raster.has_value()) return std::nullopt;
+        return std::move(*raster);
+    };
 }
 
 } // namespace comicchat
