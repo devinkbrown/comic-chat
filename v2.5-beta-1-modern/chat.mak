@@ -232,6 +232,18 @@ ALL : "$(OUTDIR)\CChat.exe"
 
 TESTS : "$(OUTDIR)\modernui_test.exe" "$(OUTDIR)\transport_ui_bridge_test.exe"
 
+# Keep cleanup restricted to the two configuration directories declared above.
+# NMAKE command-line macros override makefile assignments, so recursively
+# deleting $(OUTDIR) directly would let an accidental override select an unsafe
+# path.  Branch on CFG and use fixed paths instead; this removes the application,
+# both standalone tests, their objects, PDBs, and resource output together.
+CLEAN :
+!IF "$(CFG)" == "chat - Win32 Release"
+	@if exist ".\Release\." rmdir /s /q ".\Release"
+!ELSE
+	@if exist ".\Debug\." rmdir /s /q ".\Debug"
+!ENDIF
+
 "$(INTDIR)" :
 	if not exist "$(INTDIR)/$(NULL)" mkdir "$(INTDIR)"
 

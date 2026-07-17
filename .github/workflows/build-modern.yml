@@ -72,6 +72,7 @@ jobs:
           python3 v2.5-beta-1-modern/tests/original_artwork_runtime_test.py
           python3 v2.5-beta-1-modern/tests/source_strip_topology_test.py
           python3 v2.5-beta-1-modern/tests/windows_icon_integration_test.py
+          python3 v2.5-beta-1-modern/tests/windows_native_test_gate_test.py
           CC=clang-22 CXX=clang++-22 meson setup portable/build-ci portable \
             --buildtype=release \
             --force-fallback-for=sdl3,harfbuzz,icu,catch2
