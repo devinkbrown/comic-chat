@@ -228,6 +228,7 @@ jobs:
             -DBUILD_TESTING=OFF `
             -DLIBUV_BUILD_SHARED=OFF `
             -DLIBUV_BUILD_TESTS=OFF `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
             -DCMAKE_INSTALL_PREFIX="$prefix"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --build out/libuv --config Release --target install --parallel
@@ -241,6 +242,8 @@ jobs:
             -DUNSAFE_BUILD=OFF `
             -DUSE_STATIC_MBEDTLS_LIBRARY=ON `
             -DUSE_SHARED_MBEDTLS_LIBRARY=OFF `
+            -DCMAKE_POLICY_DEFAULT_CMP0091=NEW `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
             -DCMAKE_INSTALL_PREFIX="$prefix"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --build out/mbedtls --config Release --target install --parallel
