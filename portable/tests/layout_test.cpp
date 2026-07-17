@@ -121,3 +121,99 @@ TEST_CASE("logical twips/Y-up coordinates map to device pixels at the final scal
     CHECK_THROWS_AS(comicchat::fit_panel_transform(0, 10, 2300.0), std::invalid_argument);
     CHECK_THROWS_AS(comicchat::fit_panel_transform(10, 10, 0.0), std::invalid_argument);
 }
+
+// -------------------------------------------------------------------------
+// Item 2.3b — conversation-panel expert placement golden tests.
+//
+// Every expected value below is hand-derived from the Microsoft 2.5-beta source
+// (v2.5-beta-1-modern/panel.cpp: OrderAvatars/DoGreedyOrdering/EvalPlacement/
+// EvalPair/ComputeDisplacementPenalty/AddTalkTos/UpdateHistoresis, and the
+// AddLine split at panel.cpp:1067,1082), not read back from the port. Facing:
+// flip=false means facing right (toward a higher index), flip=true facing left.
+
+using comicchat::ArrowAnchor;
+using comicchat::AvatarHistoresis;
+using comicchat::BodySlot;
+using comicchat::ConversationAvatar;
+using comicchat::HistoresisMap;
+using comicchat::PanelSplitState;
+using comicchat::PlacedBody;
+
+TEST_CASE("Two mutually-addressing speakers are placed facing each other") {
+    // A(1) talks to B(2), B talks to A, both fresh. Greedy puts A left facing
+    // right and B right facing left so each faces the other (EvalPair rewards
+    // facing your talk-to, panel.cpp:304-305).
+    const std::vector<ConversationAvatar> avatars{{1, {2}}, {2, {1}}};
+    const auto result = comicchat::order_conversation({1, 2}, avatars, {});
+
+    CHECK(result.bodies == std::vector<PlacedBody>{{1, true, false}, {2, true, true}});
+    // UpdateHistoresis records each body's facing + neighbours for the next panel.
+    CHECK(result.historesis.at(1) == AvatarHistoresis{false, 2, 0});
+    CHECK(result.historesis.at(2) == AvatarHistoresis{true, 0, 1});
+}
+
+TEST_CASE("Historesis keeps the left/right arrangement stable across panels") {
+    // Re-running the same two speakers with the first panel's remembered state
+    // reproduces the identical order; the arrangement is a fixed point and the
+    // displacement penalty now rewards keeping A left of B (panel.cpp:266-274).
+    const std::vector<ConversationAvatar> avatars{{1, {2}}, {2, {1}}};
+    const auto first = comicchat::order_conversation({1, 2}, avatars, {});
+    const auto second = comicchat::order_conversation({1, 2}, avatars, first.historesis);
+
+    CHECK(second.bodies == first.bodies);
+    CHECK(second.historesis == first.historesis);
+}
+
+TEST_CASE("AddTalkTos pulls a partner into a sparse panel") {
+    // Only A(1) speaks, addressing B(2). With fewer than five speakers,
+    // AddTalkTos pulls B in as a non-requested body (panel.cpp:325,341-342), then
+    // A is placed left facing right toward B.
+    const std::vector<ConversationAvatar> avatars{{1, {2}}, {2, {}}};
+    const auto result = comicchat::order_conversation({1}, avatars, {});
+
+    CHECK(result.bodies == std::vector<PlacedBody>{{1, true, false}, {2, false, true}});
+    CHECK(result.historesis.at(1) == AvatarHistoresis{false, 2, 0});
+    CHECK(result.historesis.at(2) == AvatarHistoresis{true, 0, 1});
+}
+
+TEST_CASE("A three-speaker chain orders by the greedy rating") {
+    // A(1)->B(2), B(2)->C(3), C talks to the world. Greedy inserts C at the
+    // minimum-rating position (the far left, rating 10 vs 12/46) so the final
+    // order is C, A, B with C and A facing right and B facing left.
+    const std::vector<ConversationAvatar> avatars{{1, {2}}, {2, {3}}, {3, {}}};
+    const auto result = comicchat::order_conversation({1, 2, 3}, avatars, {});
+
+    CHECK(result.bodies ==
+          std::vector<PlacedBody>{{3, true, false}, {1, true, false}, {2, true, true}});
+    CHECK(result.historesis.at(1) == AvatarHistoresis{false, 2, 3});
+    CHECK(result.historesis.at(2) == AvatarHistoresis{true, 0, 1});
+    CHECK(result.historesis.at(3) == AvatarHistoresis{false, 1, 0});
+}
+
+TEST_CASE("The AddLine split predicate mirrors panel.cpp:1067,1082") {
+    // A fresh page opens a panel on the first line (m_newPanel true at start).
+    CHECK(comicchat::should_start_new_panel(PanelSplitState{0, 0, true}, false, false));
+    // A normal continuation into an existing multi-panel page does not split.
+    CHECK_FALSE(comicchat::should_start_new_panel(PanelSplitState{2, 2, false}, false, false));
+    // Five elements already in the tail panel forces a split.
+    CHECK(comicchat::should_start_new_panel(PanelSplitState{5, 2, false}, false, false));
+    // Fewer than two panels forces a split.
+    CHECK(comicchat::should_start_new_panel(PanelSplitState{2, 1, false}, false, false));
+    // The speaker already appearing in the tail panel forces a split.
+    CHECK(comicchat::should_start_new_panel(PanelSplitState{2, 2, false}, true, false));
+    // An action box always forces a new panel, regardless of the rest.
+    CHECK(comicchat::should_start_new_panel(PanelSplitState{2, 2, false}, false, true));
+}
+
+TEST_CASE("arrow_anchors lays bodies left-to-right and flips faceX") {
+    // Two bodies packed with a 100-twip gap. The first faces right so its tail
+    // anchor sits at faceX; the second is flipped so faceX mirrors to
+    // (1 - fraction) * width, matching GetDimInfo (avatar.cpp:74) and the
+    // m_arrowX = box.Left + ROUND(fraction * width) projection (panel.cpp:817).
+    const std::vector<BodySlot> slots{
+        {1, 400, 0.25, false},
+        {2, 600, 0.25, true},
+    };
+    const auto anchors = comicchat::arrow_anchors(slots, 0, 100);
+    CHECK(anchors == std::vector<ArrowAnchor>{{1, 100, 200}, {2, 600, 1050}});
+}
