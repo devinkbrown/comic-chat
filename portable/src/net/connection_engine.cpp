@@ -147,6 +147,19 @@ public:
     }
 
     auto start(ConnectionOptions options) -> std::expected<GenerationId, EngineError> {
+        bool already_running{};
+        {
+            std::scoped_lock lock{mutex_};
+            // Assigning a jthread over its own joinable worker terminates (or
+            // throws into a noexcept move assignment). A stopped worker may be
+            // joined and reused by an external caller, but never by itself.
+            already_running = !stopped_ ||
+                (thread_.joinable() && thread_.get_id() == std::this_thread::get_id());
+        }
+        if (already_running) {
+            if (options.proxy.password) secure_clear(*options.proxy.password);
+            return std::unexpected{EngineError::already_running};
+        }
         if (!crypto_ready_) return std::unexpected{EngineError::crypto_unavailable};
         if (options.security == Security::tls && options.server_name.empty()) options.server_name = options.endpoint.host;
         if (!valid_options(options)) return std::unexpected{EngineError::invalid_options};
@@ -241,8 +254,11 @@ public:
                 if (events_.front().generation == generation_) result.push_back(std::move(events_.front()));
                 events_.pop_front();
             }
+            // Keep the readiness check and signal serialized with teardown.
+            // libuv permits cross-thread sends, but not sends after uv_close.
+            if (resume && loop_ready_.load(std::memory_order_acquire))
+                (void)uv_async_send(&command_wakeup_);
         }
-        if (resume && loop_ready_.load(std::memory_order_acquire)) (void)uv_async_send(&command_wakeup_);
         return result;
     }
 
@@ -252,14 +268,16 @@ public:
     }
 
     void stop() noexcept {
+        bool self_stop{};
         {
             std::scoped_lock lock{mutex_};
             stopped_ = true;
+            if (!thread_.joinable()) return;
+            thread_.request_stop();
+            if (loop_ready_.load(std::memory_order_acquire)) (void)uv_async_send(&command_wakeup_);
+            self_stop = thread_.get_id() == std::this_thread::get_id();
         }
-        if (!thread_.joinable()) return;
-        thread_.request_stop();
-        if (loop_ready_.load(std::memory_order_acquire)) (void)uv_async_send(&command_wakeup_);
-        if (thread_.get_id() == std::this_thread::get_id()) return;
+        if (self_stop) return;
         try {
             thread_.join();
         } catch (...) {
@@ -679,12 +697,20 @@ private:
 
     void cleanup_network_loop() noexcept {
         if (!loop_initialized_) {
+            std::scoped_lock lock{mutex_};
             loop_ready_.store(false, std::memory_order_release);
             return;
         }
+        // Close the cross-thread signaling gate while holding the same mutex
+        // used by post(), poll(), and stop(). Once this releases, no caller can
+        // enter uv_async_send before command_wakeup_ is closed below.
+        {
+            std::scoped_lock lock{mutex_};
+            loop_ready_.store(false, std::memory_order_release);
+        }
         intentional_close_ = true;
         cancel_resolve();
-        if (loop_ready_.load(std::memory_order_acquire)) close_transport();
+        close_transport();
         if (happy_timer_initialized_) uv_timer_stop(&happy_timer_);
         if (reconnect_timer_initialized_) uv_timer_stop(&reconnect_timer_);
         if (deadline_timer_initialized_) uv_timer_stop(&deadline_timer_);
@@ -704,7 +730,6 @@ private:
         }, nullptr);
         while (uv_run(&loop_, UV_RUN_DEFAULT) != 0) {}
         (void)uv_loop_close(&loop_);
-        loop_ready_.store(false, std::memory_order_release);
         loop_initialized_ = false;
         command_wakeup_initialized_ = false;
         happy_timer_initialized_ = false;
@@ -1746,15 +1771,28 @@ ConnectionEngine::~ConnectionEngine() = default;
 ConnectionEngine::ConnectionEngine(ConnectionEngine&&) noexcept = default;
 auto ConnectionEngine::operator=(ConnectionEngine&&) noexcept -> ConnectionEngine& = default;
 auto ConnectionEngine::start(ConnectionOptions options) -> std::expected<GenerationId, EngineError> {
+    if (!impl_) impl_ = std::make_unique<Impl>();
     return impl_->start(std::move(options));
 }
 auto ConnectionEngine::post(Command command) -> std::expected<void, EngineError> {
+    if (!impl_) {
+        if (auto* send = std::get_if<Send>(&command); send != nullptr && send->sensitive && !send->bytes.empty()) {
+            mbedtls_platform_zeroize(send->bytes.data(), send->bytes.size());
+            send->bytes.clear();
+        }
+        return std::unexpected{EngineError::not_running};
+    }
     return impl_->post(std::move(command));
 }
-auto ConnectionEngine::poll_events(const std::size_t maximum) -> std::vector<Event> { return impl_->poll(maximum); }
-void ConnectionEngine::set_wakeup(std::function<void()> wakeup) { impl_->set_wakeup(std::move(wakeup)); }
-void ConnectionEngine::stop() noexcept { impl_->stop(); }
-auto ConnectionEngine::generation() const noexcept -> GenerationId { return impl_->generation(); }
-auto ConnectionEngine::stats() const noexcept -> EngineStats { return impl_->stats(); }
+auto ConnectionEngine::poll_events(const std::size_t maximum) -> std::vector<Event> {
+    return impl_ ? impl_->poll(maximum) : std::vector<Event>{};
+}
+void ConnectionEngine::set_wakeup(std::function<void()> wakeup) {
+    if (!impl_) impl_ = std::make_unique<Impl>();
+    impl_->set_wakeup(std::move(wakeup));
+}
+void ConnectionEngine::stop() noexcept { if (impl_) impl_->stop(); }
+auto ConnectionEngine::generation() const noexcept -> GenerationId { return impl_ ? impl_->generation() : 0; }
+auto ConnectionEngine::stats() const noexcept -> EngineStats { return impl_ ? impl_->stats() : EngineStats{}; }
 
 } // namespace comicchat::net

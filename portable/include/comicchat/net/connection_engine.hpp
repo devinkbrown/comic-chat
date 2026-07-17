@@ -123,15 +123,20 @@ public:
     ~ConnectionEngine();
     ConnectionEngine(const ConnectionEngine&) = delete;
     auto operator=(const ConnectionEngine&) -> ConnectionEngine& = delete;
+    // A moved-from wrapper remains a stopped object and may be started again.
     ConnectionEngine(ConnectionEngine&&) noexcept;
     auto operator=(ConnectionEngine&&) noexcept -> ConnectionEngine&;
 
+    // A running engine must be stopped before it can be started again. Calling
+    // start() from its network-thread notifier returns already_running even if
+    // that notifier just requested stop, because the worker is still joinable.
     [[nodiscard]] auto start(ConnectionOptions options) -> std::expected<GenerationId, EngineError>;
     [[nodiscard]] auto post(Command command) -> std::expected<void, EngineError>;
     [[nodiscard]] auto poll_events(std::size_t maximum = 128) -> std::vector<Event>;
     // Called synchronously on the network thread after an event is queued.
     // The notifier runs outside engine locks and may post/poll/reconfigure the
-    // notifier. stop() is request-only when re-entered from that thread. The
+    // notifier. stop() is request-only when re-entered from that thread; a
+    // subsequent start() must be made externally after the worker exits. The
     // callback must not destroy the ConnectionEngine that is invoking it.
     // Exceptions are contained and ignored so transport progress continues.
     void set_wakeup(std::function<void()> wakeup);

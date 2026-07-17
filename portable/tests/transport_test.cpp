@@ -955,6 +955,120 @@ TEST_CASE("throwing and reentrant wakeup callbacks do not terminate the worker")
     CHECK(std::chrono::steady_clock::now() - started < 500ms);
 }
 
+TEST_CASE("a network-thread stop cannot restart over its own joinable worker") {
+    LoopbackServer server{ServerMode::plaintext_sink};
+    auto options = options_for(server, comicchat::net::Security::plaintext);
+    comicchat::net::ConnectionEngine engine;
+    const auto generation = engine.start(options);
+    REQUIRE(generation);
+    REQUIRE(wait_for(engine, [](const auto& event) {
+        return std::holds_alternative<comicchat::net::Connected>(event.body);
+    }));
+
+    std::atomic_int restart_result{};
+    engine.set_wakeup([&] {
+        if (restart_result.load(std::memory_order_relaxed) != 0) return;
+        engine.stop();
+        const auto restarted = engine.start(options);
+        restart_result.store(
+            !restarted && restarted.error() == comicchat::net::EngineError::already_running ? 1 : -1,
+            std::memory_order_release);
+    });
+    REQUIRE(engine.post(comicchat::net::Send{*generation, 42, comicchat::net::Priority::control,
+                                             bytes("trigger"), false}));
+    const auto deadline = std::chrono::steady_clock::now() + 1s;
+    while (restart_result.load(std::memory_order_acquire) == 0 &&
+           std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(2ms);
+    CHECK(restart_result.load(std::memory_order_acquire) == 1);
+    engine.stop();
+
+    LoopbackServer replacement{ServerMode::plaintext_sink};
+    const auto restarted =
+        engine.start(options_for(replacement, comicchat::net::Security::plaintext));
+    REQUIRE(restarted);
+    CHECK(*restarted == *generation + 1);
+    REQUIRE(wait_for(engine, [](const auto& event) {
+        return std::holds_alternative<comicchat::net::Connected>(event.body);
+    }));
+    engine.stop();
+}
+
+TEST_CASE("start rejects an already running connection without changing generations") {
+    LoopbackServer server{ServerMode::plaintext_sink};
+    auto options = options_for(server, comicchat::net::Security::plaintext);
+    comicchat::net::ConnectionEngine engine;
+    const auto generation = engine.start(options);
+    REQUIRE(generation);
+    REQUIRE(wait_for(engine, [](const auto& event) {
+        return std::holds_alternative<comicchat::net::Connected>(event.body);
+    }));
+    CHECK(engine.start(options) ==
+          std::unexpected{comicchat::net::EngineError::already_running});
+    CHECK(engine.generation() == *generation);
+    engine.stop();
+}
+
+TEST_CASE("moved-from connection wrappers remain reusable stopped objects") {
+    LoopbackServer active_server{ServerMode::plaintext_sink};
+    comicchat::net::ConnectionEngine source;
+    const auto active_generation =
+        source.start(options_for(active_server, comicchat::net::Security::plaintext));
+    REQUIRE(active_generation);
+    REQUIRE(wait_for(source, [](const auto& event) {
+        return std::holds_alternative<comicchat::net::Connected>(event.body);
+    }));
+
+    comicchat::net::ConnectionEngine active{std::move(source)};
+    CHECK(active.generation() == *active_generation);
+    source.stop();
+    CHECK(source.generation() == 0);
+    CHECK(source.stats().queued_commands == 0);
+    CHECK(source.poll_events().empty());
+    CHECK(source.post(comicchat::net::Send{0, 1, comicchat::net::Priority::authentication,
+                                           bytes("discarded"), true}) ==
+          std::unexpected{comicchat::net::EngineError::not_running});
+
+    LoopbackServer replacement_server{ServerMode::plaintext_sink};
+    const auto replacement_generation =
+        source.start(options_for(replacement_server, comicchat::net::Security::plaintext));
+    REQUIRE(replacement_generation);
+    REQUIRE(wait_for(source, [](const auto& event) {
+        return std::holds_alternative<comicchat::net::Connected>(event.body);
+    }));
+    source.stop();
+    active.stop();
+}
+
+TEST_CASE("poll wakeups stay synchronized with async-handle teardown") {
+    comicchat::net::ConnectionOptions options;
+    options.endpoint = {"127.0.0.1", 1};
+    options.security = comicchat::net::Security::plaintext;
+    options.deadlines.connect = 100ms;
+    options.deadlines.handshake = 100ms;
+    options.deadlines.idle = 1s;
+    options.deadlines.ping = 500ms;
+
+    for (unsigned int iteration = 0; iteration < 64; ++iteration) {
+        comicchat::net::ConnectionEngine engine;
+        REQUIRE(engine.start(options));
+        std::atomic_bool poll{};
+        comicchat::threading::JThread poller{[&](const comicchat::threading::StopToken token) {
+            while (!token.stop_requested()) {
+                (void)engine.poll_events(1);
+                poll.store(true, std::memory_order_release);
+            }
+        }};
+        const auto deadline = std::chrono::steady_clock::now() + 250ms;
+        while (!poll.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline)
+            std::this_thread::yield();
+        REQUIRE(poll.load(std::memory_order_acquire));
+        engine.stop();
+        poller.request_stop();
+        poller.join();
+    }
+}
+
 TEST_CASE("SOCKS5 and HTTP CONNECT proxies establish real bounded tunnels") {
     for (const auto mode : {ProxyMode::socks5, ProxyMode::http_connect}) {
         ProxyServer proxy{mode, true};
