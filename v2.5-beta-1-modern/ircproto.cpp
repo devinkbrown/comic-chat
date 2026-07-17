@@ -1,5 +1,4 @@
 #include "stdafx.h"
-#include <afxsock.h>
 #include "resource.h"
 #include "userinfo.h"
 #include "chatprot.h"
@@ -50,11 +49,6 @@ BOOL CommunicationInits() {
 #endif CB32SUPPORT
 
 	cui.m_pvIrcProto = NewDefaultProto(NULL);
-
-	if (!AfxSocketInit()) {
-		AfxMessageBox(IDP_SOCKETS_INIT_FAILED);
-		return FALSE;
-	}
 
 	return SUCCEEDED(serverConn.HrInitAlloc(g_nDefaultIOBuff));
 }

@@ -293,6 +293,24 @@ the connection engine (`v2.5-beta-1-modern/tests/transport_adapter_api_compile.c
 Do not accept source deletion alone as retirement. Add these gates before or in
 the migration commits.
 
+### Implemented inventory gate
+
+`scripts/check-transport-ownership.py` implements the first static gate in the
+temporary-allowlist phase. It makes every v2.5 MFC/direct-network regression
+fatal, confines low-level socket/libuv/mbedTLS transport calls to the shared
+connection and DCC engine implementations, and verifies active NMAKE object
+lists, compile rules, include paths, and link libraries in both Release and
+Debug configurations. Comments and literal `!IF 0` branches cannot satisfy a
+build assertion.
+
+The still-active v1 stack is not hidden behind a directory exemption. All 28
+source findings are pinned by rule, file, line, and normalized active code line;
+all 17 missing makefile substrate checks are also counted. Any addition,
+removal, relocation, substitution, or partial makefile migration fails until
+the migration commit explicitly reduces the temporary inventory. The causal
+negative fixtures live in `scripts/tests/test_transport_ownership.py`, and all
+four modern CI lanes execute both the gate and its tests.
+
 ### 1. Source ownership gate
 
 Add a repository script and run it in every modern CI lane. It must:

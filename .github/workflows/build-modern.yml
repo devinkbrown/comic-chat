@@ -37,6 +37,13 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
+      - name: Enforce exclusive transport ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/check-transport-ownership.py
+          python3 -m unittest scripts/tests/test_transport_ownership.py
+
       - name: Install exact upstream Clang and native build dependencies
         shell: bash
         run: |
@@ -153,6 +160,8 @@ jobs:
             set -eu
             export CC=/usr/local/llvm22/bin/clang
             export CXX=/usr/local/llvm22/bin/clang++
+            python3 scripts/check-transport-ownership.py
+            python3 -m unittest scripts/tests/test_transport_ownership.py
             "$CXX" --version
             "$CXX" --version | grep -F 'clang version 22.'
             python3 scripts/build-modern-icons.py lint --complete
@@ -191,6 +200,8 @@ jobs:
             export CC=/usr/local/llvm21/bin/clang
             export CXX=/usr/local/llvm21/bin/clang++
             export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/X11R6/lib/pkgconfig
+            python3 scripts/check-transport-ownership.py
+            python3 -m unittest scripts/tests/test_transport_ownership.py
             "$CXX" --version
             "$CXX" --version | grep -F 'clang version 21.'
             python3 scripts/build-modern-icons.py lint --complete
@@ -217,6 +228,14 @@ jobs:
         with:
           submodules: recursive
           persist-credentials: false
+
+      - name: Enforce exclusive transport ownership
+        shell: pwsh
+        run: |
+          python scripts/check-transport-ownership.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest scripts/tests/test_transport_ownership.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Verify pinned native dependencies
         shell: pwsh
