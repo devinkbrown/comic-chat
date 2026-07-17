@@ -1,0 +1,4 @@
+interface:
+  display_name: "Comic Chat Render Fidelity"
+  short_description: "Port source-faithful comic layout and rendering"
+  default_prompt: "Use $comicchat-render-fidelity to trace a rendering behavior to Microsoft source and implement a visual-parity regression."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Comic Chat Transport Security"
+  short_description: "Harden libuv, mbedTLS, SASL, CTCP, and DCC"
+  default_prompt: "Use $comicchat-transport-security to harden a bounded network or authentication path and prove failure safety."

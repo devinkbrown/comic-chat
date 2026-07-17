@@ -1,0 +1,4 @@
+interface:
+  display_name: "Comic Chat Icon Assets"
+  short_description: "Author and verify deterministic native icon assets"
+  default_prompt: "Use $comicchat-icon-assets to change a native icon master and regenerate the complete verified catalog."

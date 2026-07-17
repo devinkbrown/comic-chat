@@ -1,0 +1,4 @@
+interface:
+  display_name: "Comic Chat C++26 Engineering"
+  short_description: "Engineer strict C++26 across Clang and MSVC"
+  default_prompt: "Use $comicchat-cpp26-engineering to implement a source-grounded C++26 change and run the affected gates."

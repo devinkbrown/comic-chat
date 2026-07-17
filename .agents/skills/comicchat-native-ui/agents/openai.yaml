@@ -1,0 +1,4 @@
+interface:
+  display_name: "Comic Chat Native UI"
+  short_description: "Modernize native dialogs, DPI, focus, and chrome"
+  default_prompt: "Use $comicchat-native-ui to modernize a native dialog with real platform chrome, DPI, keyboard, and accessibility evidence."
