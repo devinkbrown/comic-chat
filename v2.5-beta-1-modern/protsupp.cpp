@@ -970,7 +970,7 @@ BOOL ProcessComment(CChatDoc *doc, CUserInfo *pui, char *szMesg, BYTE msgType) {
 				if (pui->IsOperator())
 				{
 					char *strToEnd = szMesg+strlen(BACKGRNDPREFIX);
-					while (isspace(*strToEnd))
+					while (cc_isspace(*strToEnd))
 						strToEnd++;
 					if (*strToEnd && lstrcmpi (g_szLastBackdropName, strToEnd))
 						AddAndExecute(new ChangeBackDropEntry((const char*) strToEnd, NULL), doc);
@@ -1067,7 +1067,7 @@ void GetTalkTos(CChatDoc *doc, CUserInfo *talkerPui, char *str)
 	talkerPui->m_udi.m_talkTos.RemoveAll();
 	while (TRUE)
 	{
-		while (isspace(*str))
+		while (cc_isspace(*str))
 			str++;
 		if (*str == ')' || *str == '\0')
 			return;
@@ -1085,7 +1085,7 @@ void GetTalkTos(CChatDoc *doc, CDWordArray *talkTos, char *str)
 {
 	while (TRUE)
 	{
-		while (isspace(*str))
+		while (cc_isspace(*str))
 			str++;
 		if (*str == '\0')
 			return;
@@ -1266,7 +1266,7 @@ void ShowAway(CUserInfo *pui, CString strAwayMsg, CChatDoc *doc)
 
 
 void CRoomInfo::DoNetMeetingCX(CUserInfo *pui, CString strAddr) {
-	if (isalpha(strAddr[0])) {	// first, check if we're actually receiving a response!!!
+	if (cc_isalpha(strAddr[0])) {	// first, check if we're actually receiving a response!!!
 		if (pui->IsRequestInfo(RF_NETMEETING)) {
 			CString strMesg;
 			if (strnicmp(strAddr, "REFUSED", 7) == 0) strMesg.LoadString(IDS_NMCALL_REFUSED);
@@ -2381,7 +2381,7 @@ BOOL CIrcProto::SlashCreate(IRCPARSE *pParse)
 		{
 			const char *szTmp = pParse->args[3];
 
-			while (*szTmp && isdigit(*szTmp))
+			while (*szTmp && cc_isdigit(*szTmp))
 				szTmp++;
 
 			if (*szTmp)

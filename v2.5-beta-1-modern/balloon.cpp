@@ -743,12 +743,12 @@ int CLabel::WidestWord()
 	
 	while (TRUE)
 	{
-		while (*szStart && !isprint(*szStart))			// szStart points to next printable character
+		while (*szStart && !cc_isprint(*szStart))		// szStart points to next printable character
 			szStart = CharNext(szStart);
 		if (!*szStart)
 			break;
 		szEnd = szStart;
-		while(isprint(*szEnd))
+		while(cc_isprint(*szEnd))
 			szEnd = CharNext(szEnd);
 		// REGISB: original: sizeExtent = pdc->GetTextExtent(szStart, szEnd - szStart + 1);
 		prgdwPulledFormatting = PullFormattingOffsets(m_prgdwFormatting, szStart - m_str);

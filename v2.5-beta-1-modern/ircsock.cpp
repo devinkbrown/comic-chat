@@ -267,7 +267,7 @@ end:		char *szEnd = strpbrk(szBody, "\r\n");
 	{
 		CHAR	ch = pParse->args[0][0];
 		INT		i  = 0;
- 		if (isdigit(ch))
+		if (cc_isdigit(ch))
 		{
 			// Result or Error Code
 			do
@@ -276,7 +276,7 @@ end:		char *szEnd = strpbrk(szBody, "\r\n");
 				pParse->uCode += (ch - '0');
 				ch = pParse->args[0][++i];
 			}
-			while (isdigit(ch));
+			while (cc_isdigit(ch));
 		}
 	}
 }

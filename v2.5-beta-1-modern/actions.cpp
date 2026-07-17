@@ -41,7 +41,7 @@ BOOL bGetNextRange(LPTSTR *pszStr, UINT *puMin, UINT *puMax)
 	TCHAR	chTmp;
 
 	szTmp = GetNextStart(szTmp);	// read uMinLine
-	if (!isdigit(*szTmp))
+	if (!cc_isdigit(*szTmp))
 	{
 		#ifdef DEBUG
 			if (*szTmp)	TRACE("Bad file line interval in bGetNextRange\n");
@@ -49,7 +49,7 @@ BOOL bGetNextRange(LPTSTR *pszStr, UINT *puMin, UINT *puMax)
 		goto exit;
 	}
 	szStart = szTmp;
-	while (*szTmp && isdigit(*szTmp))
+	while (*szTmp && cc_isdigit(*szTmp))
 		szTmp++;
 	chTmp = *szTmp;
 	*szTmp = g_chEOS;
@@ -66,13 +66,13 @@ BOOL bGetNextRange(LPTSTR *pszStr, UINT *puMin, UINT *puMax)
 	case g_chDash:				// read uMaxLine
 		szTmp++;
 		szTmp = GetNextStart(szTmp);
-		if (!isdigit(*szTmp))
+		if (!cc_isdigit(*szTmp))
 		{
 			TRACE("Bad file line interval in bGetNextRange\n");
 			goto exit;
 		}
 		szStart = szTmp;
-		while (*szTmp && isdigit(*szTmp))
+		while (*szTmp && cc_isdigit(*szTmp))
 			szTmp++;
 		chTmp = *szTmp;
 		*szTmp = g_chEOS;
@@ -1179,4 +1179,3 @@ BOOL bReportRuleFailure(CCRuleSet* pRuleSet, CCRule* pRule, UINT uErrorCode)
 	
 	return TRUE;
 }
-

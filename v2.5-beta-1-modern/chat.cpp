@@ -1852,7 +1852,7 @@ CRoomInfo* CChatApp::GetRoomInfoFromName(CString strChannelName, PINT piIndex, B
 				{
 					INT iIndex = strUpperEnterRoom.GetLength();
 					INT iMax = strUpperChannelName.GetLength();
-					while (iIndex < iMax && isdigit(strUpperChannelName[iIndex]))
+					while (iIndex < iMax && cc_isdigit(strUpperChannelName[iIndex]))
 						iIndex++;
 					if (iIndex == iMax)
 						// found a clone

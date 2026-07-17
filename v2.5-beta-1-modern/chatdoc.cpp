@@ -390,7 +390,7 @@ void FindAttribution(const char *words, void *userInfo, const char **mesgPtr, UI
 	*id = 0;
 	const char *sptr = words;
 	while (sptr < angle) {
-		if (isdigit(*sptr))
+		if (cc_isdigit(*sptr))
 			*id = 10 * *id + (*sptr - '0');
 		else {
 			*id = userInfo ? ExtractAvatarID(userInfo) : MyAvatarID();
@@ -413,15 +413,15 @@ void FindPose(UINT speakerID, const char *words, const char **mesgPtr) {
 
 	// fill up addressee array
 	const char *sptr = words;
-	while (isspace(*sptr) && sptr < colon) sptr++;
+	while (cc_isspace(*sptr) && sptr < colon) sptr++;
 	while (sptr < colon) {
 		id = 0;
-		while (isdigit(*sptr)) {
+		while (cc_isdigit(*sptr)) {
 			id = 10 * id + (*sptr - '0');
 			sptr++;
 		}
-		while (isspace(*sptr) && sptr < colon) sptr++;
-		if (!isdigit(*sptr) && sptr != colon) {
+		while (cc_isspace(*sptr) && sptr < colon) sptr++;
+		if (!cc_isdigit(*sptr) && sptr != colon) {
 			// bogus entry -- don't change talkto, and return string as part of message
 			*mesgPtr = words;
 			return;
