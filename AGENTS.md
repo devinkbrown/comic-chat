@@ -11,9 +11,12 @@ work. Protocol and connection-path changes must also use the current
 
 ## Source of truth
 
-- Treat `v1.0-pre/`, `v1.0/`, `v2.1b/`, `v2.5-beta-1/`, and the historical
-  contents of `artifacts/` as reference snapshots. Do not modernize them in
-  place.
+- The original Microsoft source snapshots (`v1.0-pre`, `v1.0`, `v2.1b`,
+  `v2.5-beta-1`) live in `version/*` archival branches, not on `main`; treat
+  them and the historical contents of `artifacts/` as reference snapshots. The
+  source-fidelity reference bitmaps and font used by the portable build were
+  relocated onto `main` under `portable/assets/`. Do not modernize any snapshot
+  in place.
 - Derive rendering, layout, character, and interaction behavior from the
   original Microsoft source and artwork before changing a modern renderer.
   Record the source file or asset that establishes the behavior.

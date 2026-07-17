@@ -268,9 +268,13 @@ unaffected because `DpiScale(n) == n` there.
 
 ## 9. Related, non-DPI notes discovered alongside this work
 
-- **No TLS.** Comic Chat speaks plaintext IRC over `CSocket`; it cannot connect
-  to TLS-only ports such as `6697`. Use a local `stunnel`/ZNC bridge if a
-  network requires TLS, and point Comic Chat at the local plaintext endpoint.
+- **TLS (updated).** When this note was written the client spoke only plaintext
+  IRC and could not reach TLS-only ports such as `6697`. The modern client now
+  connects over TLS through the shared libuv/mbedTLS
+  `comicchat::net::ConnectionEngine` (`v1.0-pre-modern/chat.mak:114` links
+  mbedTLS), so an external `stunnel`/ZNC bridge is no longer required; see
+  [`TRANSPORT-RETIREMENT.md`](TRANSPORT-RETIREMENT.md). The plaintext port 6667
+  used in the verification steps above still works for DPI testing.
 - **Room-join assertion.** Joining a channel called `SetPathName(channel)`,
   which modern MFC pushes onto the MRU file list, asserting on the non-file
   name. Passing `FALSE` (`SetPathName(channel, FALSE)`) skips the MRU add.

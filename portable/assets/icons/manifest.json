@@ -8,7 +8,7 @@
   "expression_sizes": [[20, 26], [25, 33], [30, 39], [40, 52], [50, 65], [60, 78], [80, 104]],
   "required_expression_optical_sizes": [[20, 26]],
   "stage_root": "portable/assets/icons/generated",
-  "reference_root": "v2.5-beta-1/res",
+  "reference_root": "portable/assets/source-raster",
   "app_id": "io.github.devinkbrown.ComicChatReinked",
   "expression_resource_base": 4200,
   "art_review": {

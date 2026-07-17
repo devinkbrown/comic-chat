@@ -333,31 +333,31 @@ static_library(
   install: false,
 )
 
-install_data('../v1.0/shared/comic.ttf', install_dir: get_option('datadir') / 'comic-chat')
+install_data('assets/fonts/comic.ttf', install_dir: get_option('datadir') / 'comic-chat')
 install_data(
-  '../v2.5-beta-1/res/chat.ico',
-  '../v2.5-beta-1/res/chatdoc.ico',
-  '../v2.5-beta-1/res/room.ico',
-  '../v2.5-beta-1/res/ruleset.ico',
-  '../v2.5-beta-1/res/avatar.ico',
-  '../v2.5-beta-1/res/backgd.ico',
-  '../v2.5-beta-1/res/ratings.ico',
-  '../v2.5-beta-1/res/whisper.ico',
-  '../v2.5-beta-1/res/notif.ico',
-  '../v2.5-beta-1/res/tosrv.ico',
-  '../v2.5-beta-1/res/tonet.ico',
-  '../v2.5-beta-1/res/balloons.bmp',
-  '../v2.5-beta-1/res/tiki2.bmp',
-  '../v2.5-beta-1/res/toolbar.bmp',
-  '../v2.5-beta-1/res/tabbar.bmp',
-  '../v2.5-beta-1/res/member.bmp',
-  '../v2.5-beta-1/res/oldnew.bmp',
-  '../v2.5-beta-1/res/connect.bmp',
-  '../v2.5-beta-1/res/stopped.bmp',
-  '../v2.5-beta-1/res/inactive.bmp',
-  '../v2.5-beta-1/res/active.bmp',
-  '../v2.5-beta-1/res/texttool.bmp',
-  '../v2.5-beta-1/res/usertool.bmp',
+  'assets/source-raster/chat.ico',
+  'assets/source-raster/chatdoc.ico',
+  'assets/source-raster/room.ico',
+  'assets/source-raster/ruleset.ico',
+  'assets/source-raster/avatar.ico',
+  'assets/source-raster/backgd.ico',
+  'assets/source-raster/ratings.ico',
+  'assets/source-raster/whisper.ico',
+  'assets/source-raster/notif.ico',
+  'assets/source-raster/tosrv.ico',
+  'assets/source-raster/tonet.ico',
+  'assets/source-raster/balloons.bmp',
+  'assets/source-raster/tiki2.bmp',
+  'assets/source-raster/toolbar.bmp',
+  'assets/source-raster/tabbar.bmp',
+  'assets/source-raster/member.bmp',
+  'assets/source-raster/oldnew.bmp',
+  'assets/source-raster/connect.bmp',
+  'assets/source-raster/stopped.bmp',
+  'assets/source-raster/inactive.bmp',
+  'assets/source-raster/active.bmp',
+  'assets/source-raster/texttool.bmp',
+  'assets/source-raster/usertool.bmp',
   install_dir: source_raster_install_dir,
 )
 
@@ -407,11 +407,11 @@ if get_option('tests')
     dependencies: [core_dep, catch2, cairo_dep, freetype_dep, harfbuzz_dep, icu_uc_dep, icu_i18n_dep, zlib_dep],
     cpp_args: [
       '-DCOMICCHAT_TEST_COMICART_DIR="' + meson.project_source_root() + '/../v2.5-beta-1-modern/comicart"',
-      '-DCOMICCHAT_TEST_SOURCE_RASTER_DIR="' + meson.project_source_root() + '/../v2.5-beta-1/res"',
+      '-DCOMICCHAT_TEST_SOURCE_RASTER_DIR="' + meson.project_source_root() + '/assets/source-raster"',
     ],
   )
   headless_test_env = environment()
-  headless_test_env.set('COMICCHAT_FONT_PATH', meson.project_source_root() / '../v1.0/shared/comic.ttf')
+  headless_test_env.set('COMICCHAT_FONT_PATH', meson.project_source_root() / 'assets/fonts/comic.ttf')
   test('comicchat-headless', unit_tests, timeout: 30, env: headless_test_env)
 
   modern_icon_audit = find_program('../scripts/build-modern-icons.py')

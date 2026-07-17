@@ -13,7 +13,7 @@ description: Author, regenerate, review, and verify Comic Chat's deterministic m
 4. Run lint before generation, regenerate the complete catalog, then verify from a clean rebuild.
 5. Inspect the generated output at native sizes before accepting mechanical success.
 
-Never edit files under portable/assets/icons/generated/ by hand. Never use v2.5-beta-1/res as a build input for new artwork.
+Never edit files under portable/assets/icons/generated/ by hand. Never use portable/assets/source-raster as a build input for new artwork.
 
 ## Preserve authored sources
 

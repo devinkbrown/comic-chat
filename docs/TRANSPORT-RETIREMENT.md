@@ -3,6 +3,28 @@
 Audit date: 2026-07-16
 Audited revision: `1dc102030035d5cdf55e9f4d62b7cc5b2c77093b`
 
+> **Status update (2026-07-17): superseded on later revisions.** This is retained
+> as the 2026-07-16 snapshot of the pinned revision above. Two of its central
+> negative findings no longer hold at the current tree (`0f1f9f8`):
+>
+> - **v1 is migrated.** `v1.0-pre-modern` no longer runs the MFC/WinSock stack.
+>   `CIrcSocket` is now a plain `final` class that owns a
+>   `comicchat::net::ConnectionEngine` (`v1.0-pre-modern/ircsock.h:25,61`); there
+>   is no `CAsyncSocket`, `AfxSocketInit`, `m_hSocket`, or inherited `Receive`
+>   left in `v1.0-pre-modern/irc.cpp`, and its NMAKE build compiles
+>   `connection_engine`/`ircv3`/`crypto_runtime` and links libuv/mbedTLS
+>   (`v1.0-pre-modern/chat.mak:147-152`, `v1.0-pre-modern/chat.mak:114`). See
+>   commit `791f2c9` ("Migrate v1 IRC to shared connection engine") and its
+>   STS/membership follow-ups.
+> - **The portable frontend is integrated.** `portable/src/app.cpp` now creates a
+>   `NativeSession`/`ConnectionEngine` and parses
+>   `--connect HOST [PORT] NICK CHANNEL [--tls|--plaintext]`
+>   (`portable/src/app.cpp:82`, `portable/src/app.cpp:211-223`), so the "IRC
+>   runtime absent" finding for the SDL frontend is also out of date.
+>
+> Read the sections below as the historical migration plan and RED baseline, not
+> the present state; the completion checklist is now largely satisfied.
+
 ## Decision
 
 The old TCP stack is retired for IRC in `v2.5-beta-1-modern`, but it is still the

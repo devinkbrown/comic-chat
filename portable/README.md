@@ -144,9 +144,19 @@ renderer:
 still upgrades that request before the socket starts. The portable CLI does not
 accept a SASL password; credential-bearing frontends use `NativeSessionOptions`
 and its page-locked password path instead of command-line arguments.
-IRCv3 also owns CAP 302, SASL EXTERNAL/PLAIN/SCRAM-SHA-256, labels, batches,
-multiline, history recovery, read markers, metadata, redaction, and safe
-reconnect commands.
+
+The IRCv3 engine spans CAP 302, SASL EXTERNAL/PLAIN/SCRAM-SHA-256, message
+tags, labels, batches, and safe reconnect. Multiline is reassembled on receive
+and, via `PrepareMultiline`, built on send, bounded to the advertised
+`max-lines`/`max-bytes` and validated against a single normalized opening
+target. Capability requesting is a separate, executable policy from wire
+parsing: history recovery, read markers, metadata, and redaction parse into
+bounded typed state but default off until a frontend ships a consumer, and the
+NAMES/JOIN membership capabilities (`extended-join`, `multi-prefix`,
+`no-implicit-names`, `userhost-in-names`) normalize modern wire shapes down to
+what the legacy models accept while remaining off by default. `docs/IRCv3-COVERAGE.md`
+is the authoritative per-capability ledger, measured against observable product
+behavior rather than the identifiers the parser recognizes.
 
 ## Memory and concurrency limits
 

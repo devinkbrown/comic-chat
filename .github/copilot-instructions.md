@@ -7,14 +7,14 @@ unofficial **Comic Chat: Reinked** modernization. For modern work, also follow
 
 ## Repository Layout
 
-This is a historical source archive. Each top-level folder is a standalone snapshot — files are not shared between versions.
+`main` carries the actively-developed Comic Chat: Reinked modernization. The original Microsoft source snapshots live in `version/*` archival branches (each a standalone snapshot — files are not shared between versions); check one out to browse or build it.
 
 | Folder | Version | Toolchain |
 |---|---|---|
-| `v1.0-pre/` | 1.0 prerelease (internal) | Visual C++ 4.x |
-| `v1.0/client/` | Comic Chat 1.0 (Aug 1996, shipped with IE 3.0) | Visual C++ 4.x |
-| `v2.1b/cchat/` | Comic Chat 2.1 beta (Feb 1998) | Visual C++ 5.x |
-| `v2.5-beta-1/` | Comic Chat 2.5 beta 1 (Jun 1998) | Visual C++ 5.x |
+| `version/v1.0-pre` branch | 1.0 prerelease (internal) | Visual C++ 4.x |
+| `version/v1.0` branch | Comic Chat 1.0 (Aug 1996, shipped with IE 3.0) | Visual C++ 4.x |
+| `version/v2.1b` branch | Comic Chat 2.1 beta (Feb 1998) | Visual C++ 5.x |
+| `version/v2.5-beta-1` branch | Comic Chat 2.5 beta 1 (Jun 1998) | Visual C++ 5.x |
 | `artifacts/` | Companion tools: avatar editor, Java client, SDK | various |
 | `v1.0-pre-modern/` | Native modern Windows port | Current MSVC/MFC |
 | `v2.5-beta-1-modern/` | Native modern Windows port | Current MSVC/MFC, C++26 |
@@ -28,14 +28,14 @@ The historical snapshots use NMAKE and old Visual C++ projects. Do not edit
 those snapshots. The modern Windows trees use current MSVC/MFC NMAKE builds,
 and `portable/` uses Meson with strict C++26 and Clang 21 or newer.
 
-**v1.0** (from `v1.0/client/`):
+**v1.0** (`git checkout version/v1.0`, then from `client/`):
 ```bat
 NMAKE /f "chat.mak" CFG="chat - Win32 Release"
 NMAKE /f "chat.mak" CFG="chat - Win32 Debug"
 ```
 Open `chat.mdp` in Visual C++ 4.x for IDE use.
 
-**v2.5-beta-1** (from `v2.5-beta-1/`):
+**v2.5-beta-1** (`git checkout version/v2.5-beta-1`):
 Open `chat.dsp` in Visual C++ 5.x. The `.dsp`/`.dsw` project format replaced `.mdp` in VC5.
 
 **Portable native client** (from the repository root):

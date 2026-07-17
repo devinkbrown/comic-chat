@@ -1,7 +1,7 @@
 # Comic Chat: Reinked icon masters
 
 This directory is the editable source of truth for the replacement icon set.
-The Microsoft bitmaps in `v2.5-beta-1/res` are reference material, never build
+The Microsoft bitmaps in `portable/assets/source-raster` are reference material, never build
 inputs for the new artwork.
 
 ## Layout

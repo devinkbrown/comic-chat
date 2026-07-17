@@ -8,19 +8,20 @@ to the detailed write-ups and summarizes every change in one place.
 | Area | Detail doc |
 |------|-----------|
 | High-DPI rendering + UI scaling + UX polish | [`dpi-awareness.md`](dpi-awareness.md) |
-| Native TLS over IRC (SChannel) | [`tls.md`](tls.md) *(on the `tls-schannel` branch / PR)* |
+| Native TLS over IRC (shared libuv/mbedTLS engine) | [`TRANSPORT-RETIREMENT.md`](TRANSPORT-RETIREMENT.md); superseded SChannel spike in [`tls.md`](tls.md) |
 | Modern build of the 2.5 beta-1 client | [`../v2.5-beta-1-modern/README.md`](../v2.5-beta-1-modern/README.md) |
 
 ---
 
 ## 1. Building with the modern VC++ / MFC toolchain
 
-The project still uses its original `nmake` makefile (`src/chat.mak`), but it now
-compiles and links with a current Visual Studio C++/MFC toolchain:
+The project still uses its original `nmake` makefile
+(`v1.0-pre-modern/chat.mak`), but it now compiles and links with a current
+Visual Studio C++/MFC toolchain:
 
 ```bat
 call "<VS>\VC\Auxiliary\Build\vcvars32.bat"
-cd src
+cd v1.0-pre-modern
 nmake /f chat.mak CFG="chat - Win32 Debug"
 ```
 
@@ -75,15 +76,19 @@ in brief:
   narrow estimate (so "Test" no longer renders as "Tes" / "t"); the balloon grows
   to keep the word whole.
 
-## 4. Native TLS over IRC (separate branch)
+## 4. Native TLS over IRC (shared libuv/mbedTLS engine)
 
 Comic Chat (1996) predates TLS and speaks only plaintext IRC, so it can't reach
-TLS-only ports such as `irc.libera.chat:6697`. The `tls-schannel` branch adds
-**native TLS via the built-in Windows SChannel/SSPI provider** — no external
-tunnel (stunnel/ZNC), no third-party crypto library. A "Use SSL (TLS)" checkbox
-in the Connect dialog turns it on (and defaults the port to 6697). Full design,
-the client-certificate gotcha, and the permissive-validation caveat are in
-[`tls.md`](tls.md).
+TLS-only ports such as `irc.libera.chat:6697`. Both modern clients now obtain
+TLS from a **shared cross-platform `comicchat::net::ConnectionEngine` built on
+libuv + mbedTLS** — the same engine consumed by the portable Linux/BSD port — so
+there is no external tunnel (stunnel/ZNC) and no dependence on the Windows
+SChannel provider. Both NMAKE builds link the pinned mbedTLS/libuv libraries
+(`../v1.0-pre-modern/chat.mak:114`, `../v2.5-beta-1-modern/chat.mak:124`), and
+TLS-vs-plaintext is an explicit, never-downgraded selection. The earlier
+SChannel/SSPI spike (the unintegrated `tlssock.cpp`) survives only as a design
+note in [`tls.md`](tls.md); current transport ownership is audited in
+[`TRANSPORT-RETIREMENT.md`](TRANSPORT-RETIREMENT.md).
 
 ## 5. Verification
 
@@ -124,6 +129,7 @@ Highlights of the bring-up (full list in the folder's
 - Re-created the missing `chatver.h` / `chatver.rc` version stamp.
 - The DPI, mouse-wheel and panels-per-row work above, ported across.
 
-Not ported: native TLS transport (2.5's SSPI is for IRC *authentication*, not
-SChannel) and main-toolbar glyph scaling. 2.5's balloon wrapper is already
-international/word-aware, so the `src` word-wrap fix is unnecessary there.
+Not ported: main-toolbar glyph scaling. (Native TLS is now provided to 2.5 by
+the shared libuv/mbedTLS `ConnectionEngine` — see §4 — rather than left absent.)
+2.5's balloon wrapper is already international/word-aware, so the
+`v1.0-pre-modern` word-wrap fix is unnecessary there.

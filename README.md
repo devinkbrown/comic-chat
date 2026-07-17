@@ -1,13 +1,16 @@
-# Microsoft Comic Chat
+# Comic Chat: Reinked
+
+**Comic Chat: Reinked** is an unofficial, actively-developed modernization of Microsoft Comic Chat. It keeps Microsoft's original source and artwork (MIT-licensed) as the source of truth and builds three modern lanes on top of it: a current Windows/MFC build of the 2.5 beta-1 client, a modern build of the 1.0-pre client, and a native C++26 port for Linux and the BSDs. The builds here are **unofficial and unsupported**, and are not endorsed by Microsoft.
 
 Microsoft Comic Chat is a Microsoft-developed Internet Relay Chat (IRC) chat client released in 1996 that rendered conversations as automatically generated comic strips. Instead of plain text, users communicated through cartoon avatars with messages displayed in speech bubbles inside dynamically composed comic panels. The application used an expert system to determine character placement, gestures, facial expressions, balloon shape, and panel layout in real time. It shipped as part of Internet Explorer 3.0 and was later bundled with Windows 98 and MSN before being discontinued in the early 2000s.
 
-![Comic Chat](v1.0-pre/client/readme.gif)
+![Comic Chat](docs/img/readme.gif)
 
 ## Table of Contents
 
-- [Microsoft Comic Chat](#microsoft-comic-chat)
+- [Comic Chat: Reinked](#comic-chat-reinked)
   - [Table of Contents](#table-of-contents)
+  - [Status](#status)
   - [How It Works](#how-it-works)
   - [Download Comic Chat](#download-comic-chat)
   - [IRC servers](#irc-servers)
@@ -23,6 +26,27 @@ Microsoft Comic Chat is a Microsoft-developed Internet Relay Chat (IRC) chat cli
   - [License](#license)
   - [Contributing](#contributing)
   - [Trademarks](#trademarks)
+
+## Status
+
+Comic Chat: Reinked is under active development. It is an unofficial fork; its
+builds are not supported or endorsed by Microsoft.
+
+- **`v2.5-beta-1-modern/`** and **`v1.0-pre-modern/`** are the modern Windows
+  clients (native Win32/MFC, **MSVC-only**).
+- **`portable/`** is a native **C++26** port for Linux, FreeBSD, and OpenBSD
+  (SDL3 + Cairo, Meson build) carrying the shared libuv + mbedTLS IRC transport.
+  Its gate is `meson test -C portable/build` (11/11 at the current audit). The
+  renderer is a source-derived title-panel foundation, not a complete
+  visual-parity client yet.
+
+IRC / IRCv3 capability status is tracked in one authoritative ledger,
+[`docs/IRCv3-COVERAGE.md`](docs/IRCv3-COVERAGE.md). **Reinked does not implement
+all of IRCv3.** The portable engine has substantial, bounded protocol machinery,
+but many negotiated capabilities are observe-only (retained state or typed
+events not yet consumed by the legacy model/view), and most are default-off.
+Wire support and product readiness are separate, and both are tracked there
+rather than duplicated here.
 
 ## How It Works
 
@@ -50,14 +74,14 @@ Mermaid Elizabeth maintains a list of [IRC servers](https://mermeliz.com/srvr_rm
 
 ## Repository Structure
 
-This repository contains source snapshots spanning the full development history of Comic Chat, from a 1996 pre-release through the 2.5 beta. It also includes two **`*-modern`** folders — worked examples that get the original code building and running on a current Windows machine (see [the note on the modernized folders](#a-note-on-the-modernized-folders) for what they are and why they exist).
+The `main` branch carries the actively-developed **Comic Chat: Reinked** modernization across three lanes: the two Windows **`*-modern`** build folders and the native **`portable/`** C++26 port (see [the note on the modernized folders](#a-note-on-the-modernized-folders) for what they are and why they exist). The original Microsoft source snapshots — the integrity-preserved provenance import — are kept off `main` in dedicated `version/*` archival branches so the working tree stays focused on the modern lanes. Each snapshot retains its full history; check one out to browse or build it (`git checkout version/v2.5-beta-1`). The portable build's source-fidelity reference bitmaps and font were relocated onto `main` under [`portable/assets/`](portable/assets/) so the build no longer depends on the archived snapshots.
 
-| Folder | Date | Description |
-|--------|------|-------------|
-| [`v1.0-pre/`](v1.0-pre/) | August 1996 | Pre-release source snapshot (rup 206 "Beta 2") — [README](docs/v1.0-pre/README.md) |
-| [`v1.0/`](v1.0/) | August 1996 | Comic Chat 1.0 release source — [README](docs/v1.0/README.md) |
-| [`v2.1b/`](v2.1b/) | February 1998 | Comic Chat 2.1 beta source — [README](docs/v2.1b/README.md) |
-| [`v2.5-beta-1/`](v2.5-beta-1/) | June 1998 | Comic Chat 2.5 beta 1 source — [README](docs/v2.5-beta-1/README.md) |
+| Location | Date | Description |
+|----------|------|-------------|
+| `version/v1.0-pre` branch | August 1996 | Pre-release source snapshot (rup 206 "Beta 2") — [README](docs/v1.0-pre/README.md) |
+| `version/v1.0` branch | August 1996 | Comic Chat 1.0 release source — [README](docs/v1.0/README.md) |
+| `version/v2.1b` branch | February 1998 | Comic Chat 2.1 beta source — [README](docs/v2.1b/README.md) |
+| `version/v2.5-beta-1` branch | June 1998 | Comic Chat 2.5 beta 1 source — [README](docs/v2.5-beta-1/README.md) |
 | [`artifacts/`](artifacts/) | January 1998 | SDK, companion tools, JChat, documentation |
 | [`v1.0-pre-modern/`](v1.0-pre-modern/) | 2026 | Modernized v1.0-pre: builds with current Visual Studio, DPI-aware UI scaling, native TLS |
 | [`v2.5-beta-1-modern/`](v2.5-beta-1-modern/) | 2026 | Modernized v2.5-beta-1: builds with current Visual Studio (nmake replaces the NT DDK build), uniform display scaling, runs live on modern IRC |
@@ -76,21 +100,22 @@ See [`file dates.txt`](file%20dates.txt) for the original file modification time
 
 ### Original build (Visual C++ 4.x)
 
-All versions target Win32 (x86) using Visual C++ 4.x with MFC and NMAKE makefiles.
+All original versions target Win32 (x86) using Visual C++ 4.x with MFC and NMAKE makefiles. Their source lives in the `version/*` archival branches; check one out first.
 
 **v1.0-pre and v1.0:**
 ```batch
-cd v1.0/client
+git checkout version/v1.0
+cd client
 NMAKE /f "chat.mak" CFG="chat - Win32 Release"
 ```
 
 **v2.5-beta-1:**
 ```batch
-cd v2.5-beta-1
+git checkout version/v2.5-beta-1
 NMAKE /f "chat.mak" CFG="chat - Win32 Release"
 ```
 
-A `.mdp` (Visual C++ 4.x) project file is included in `v1.0-pre/client/` and `v1.0/client/` for IDE use.
+A `.mdp` (Visual C++ 4.x) project file is included in the `client/` directory of the `version/v1.0-pre` and `version/v1.0` branches for IDE use.
 
 ### Modernized build (Visual Studio 2022)
 
@@ -127,7 +152,7 @@ manual release process.
 
 ### A note on the modernized folders
 
-This repository is published primarily as a **historical artifact** — the source is here for reference, study, and preservation, not as a maintained product. The `*-modern` folders are **not** a polished re-release; they're **worked examples** of the kinds of changes it takes to get a 1996–1998 MFC application building and running on a current machine, such as:
+This repository preserves Microsoft's original Comic Chat source as a **historical artifact** — the versioned `v*/` snapshots and `artifacts*/` are here for reference, study, and preservation, and are not modernized in place. The `*-modern` folders and `portable/` are the actively-developed **Comic Chat: Reinked** modernization; they are **unofficial and unsupported**, not a polished Microsoft re-release. The Windows `*-modern` lanes in particular began as **worked examples** of the kinds of changes it takes to get a 1996–1998 MFC application building and running on a current machine, such as:
 
 - Getting it to **build with a current Visual Studio / MFC toolchain** on a normal developer machine (the original Visual C++ 4.x and NT DDK `BUILD.EXE` systems are long gone).
 - **Uniform display scaling** so the window and its controls are legible on today's high-DPI monitors.
@@ -145,6 +170,8 @@ These changes are intentionally **left as an exercise for the reader**: they dem
 ## History
 
 Comic Chat was originally a Microsoft Research project developed by DJ Kurlander. The 1.0 release shipped in June 1996 bundled with Internet Explorer 3.0 and could run standalone or embedded as an OLE server within the browser. Version 2.0 shipped with Internet Explorer 4.0 and Windows 98 in 1997–1998, adding multi-server support, OLE scripting, and the Comic Chat SDK for third-party bots and extensions. The application was discontinued in the early 2000s as graphical chat gave way to instant messaging.
+
+Microsoft open-sourced the original sources under the MIT License. **Comic Chat: Reinked** is the unofficial fork that preserves those sources and continues the client as a modern, cross-platform application — see the [Status](#status) section and [`docs/IRCv3-COVERAGE.md`](docs/IRCv3-COVERAGE.md) for its current state.
 
 ## License
 

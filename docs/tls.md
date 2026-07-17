@@ -1,5 +1,17 @@
 # Native TLS (SSL) support for Comic Chat over IRC
 
+> **Status (2026-07-17): superseded design spike — not the shipped TLS path.**
+> This documents an early Windows SChannel (SSPI) experiment
+> (`tlssock.cpp`/`tlssock.h`). The modern clients now obtain TLS from the shared
+> cross-platform **libuv + mbedTLS** `comicchat::net::ConnectionEngine`, not
+> SChannel: both Windows makefiles link libuv/mbedTLS
+> (`../v1.0-pre-modern/chat.mak:114`, `../v2.5-beta-1-modern/chat.mak:124`) and no
+> product build compiles `tlssock.obj`. The `tlssock.*` files remain in the tree
+> as an unintegrated reference. Keep this write-up for the SChannel handshake and
+> client-certificate notes; for the shipped design see
+> [`TRANSPORT-RETIREMENT.md`](TRANSPORT-RETIREMENT.md) and
+> [`../portable/README.md`](../portable/README.md).
+
 Comic Chat (1996) spoke plaintext IRC over an MFC `CAsyncSocket`. Modern IRC
 networks expose TLS-only ports (e.g. `irc.libera.chat:6697`). This change adds
 **native** TLS using Windows' built-in **SChannel** (SSPI) provider — no

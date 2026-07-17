@@ -9,7 +9,7 @@
 | Bodycam expressions | masters/expressions/*.svg and optical/20x26/expressions/*.svg | generated/windows/expressions/<name>-<size>.bmp |
 | Catalog identity and order | portable/assets/icons/manifest.json | catalog.lock.json, generated make/resource includes, Meson install data |
 
-The reference_root v2.5-beta-1/res contains immutable Microsoft artwork used for semantic comparison and distinctness checks. It is not the editable modern source.
+The reference_root portable/assets/source-raster contains immutable Microsoft artwork used for semantic comparison and distinctness checks. It is not the editable modern source.
 
 ## Required ladders
 
