@@ -78,6 +78,18 @@
       "isolation": "worktree",
       "writer": true
     },
+    "fuzz-test-engineer": {
+      "file": "fuzz-test-engineer.md",
+      "model": "sonnet",
+      "effort": "high",
+      "permission_mode": "acceptEdits",
+      "max_turns": 72,
+      "tools": ["Read", "Grep", "Glob", "Edit", "Write", "StructuredOutput"],
+      "disallowed_tools": ["Bash"],
+      "preload_skills": ["comicchat-cpp26-engineering", "comicchat-adversarial-testing"],
+      "isolation": "worktree",
+      "writer": true
+    },
     "cpp-correctness-security-reviewer": {
       "file": "cpp-correctness-security-reviewer.md",
       "model": "opus",
@@ -126,6 +138,18 @@
       "isolation": null,
       "writer": false
     },
+    "dependency-security-reviewer": {
+      "file": "dependency-security-reviewer.md",
+      "model": "opus",
+      "effort": "high",
+      "permission_mode": "plan",
+      "max_turns": 66,
+      "tools": ["Read", "Grep", "Glob", "WebFetch", "WebSearch", "StructuredOutput"],
+      "disallowed_tools": ["Bash", "Edit", "Write"],
+      "preload_skills": ["comicchat-supply-chain", "comicchat-native-platforms", "comicchat-verification-release"],
+      "isolation": null,
+      "writer": false
+    },
     "verification-reviewer": {
       "file": "verification-reviewer.md",
       "model": "opus",
@@ -166,6 +190,12 @@
     },
     "comicchat-visual-asset-engineer": {
       "file": "comicchat-visual-asset-engineer.toml",
+      "model": "gpt-5.6",
+      "effort": "high",
+      "sandbox_mode": "workspace-write"
+    },
+    "comicchat-fuzz-test-engineer": {
+      "file": "comicchat-fuzz-test-engineer.toml",
       "model": "gpt-5.6",
       "effort": "high",
       "sandbox_mode": "workspace-write"
@@ -211,6 +241,12 @@
       "model": "gpt-5.6",
       "effort": "medium",
       "sandbox_mode": "workspace-write"
+    },
+    "comicchat-dependency-security-reviewer": {
+      "file": "comicchat-dependency-security-reviewer.toml",
+      "model": "gpt-5.6",
+      "effort": "high",
+      "sandbox_mode": "read-only"
     }
   },
   "lanes": {
@@ -286,6 +322,12 @@
       "skills": ["comicchat-render-fidelity", "comicchat-character-assets"],
       "contract": "Remaster one bounded complete character or pose family while preserving original anatomy, expression, silhouette, palette, and composition."
     },
+    "implement-fuzz": {
+      "agent": "fuzz-test-engineer",
+      "role": "implementation",
+      "skills": ["comicchat-cpp26-engineering", "comicchat-adversarial-testing"],
+      "contract": "Draft one deterministic engine-independent hostile-input target with production bounds, corpus replay, sanitizer commands, and regression promotion."
+    },
     "optimize": {
       "agent": "cpp-engineer",
       "role": "implementation",
@@ -321,6 +363,12 @@
       "role": "review",
       "skills": ["comicchat-native-ui", "comicchat-render-fidelity"],
       "contract": "Review faithful native window, dialog, DPI, focus, keyboard, accessibility, and compositor behavior without replacing system chrome."
+    },
+    "supply-chain": {
+      "agent": "dependency-security-reviewer",
+      "role": "review",
+      "skills": ["comicchat-supply-chain", "comicchat-native-platforms", "comicchat-verification-release"],
+      "contract": "Audit one exact artifact or dependency decision for immutable provenance, advisories, licenses, ABI reach, resolved SBOM, and attestation expectations."
     },
     "review": {
       "agent": "verification-reviewer",

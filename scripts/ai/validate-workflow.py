@@ -38,6 +38,7 @@ CODEX_AGENT_KEYS = {
     "developer_instructions",
 }
 SKILL_NAMES = {
+    "comicchat-adversarial-testing",
     "comicchat-cpp26-engineering",
     "comicchat-transport-security",
     "comicchat-ircv3-compat",
@@ -47,6 +48,7 @@ SKILL_NAMES = {
     "comicchat-icon-assets",
     "comicchat-character-assets",
     "comicchat-performance",
+    "comicchat-supply-chain",
     "comicchat-verification-release",
 }
 

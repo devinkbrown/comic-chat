@@ -45,9 +45,11 @@ capped at `high`; do not use `xhigh` or `max` in this repository.
 | Primary-source or protocol research | `gpt-5.6`, medium/high | Sonnet, medium | Read-only, independent citations |
 | Bounded implementation | `gpt-5.6`, high | Sonnet, high | One writer in one isolated worktree |
 | Icon and character remaster | `gpt-5.6`, high | Sonnet, high | Source-oracle asset writer worktree |
+| Fuzz harness and hostile-input corpus | `gpt-5.6`, high | Sonnet, high | Deterministic bounded writer worktree |
 | Compiler/build repair | `gpt-5.6`, medium | Sonnet, medium | Diagnostic-scoped writer worktree |
 | Architecture, concurrency, crypto, security | `gpt-5.6`, high | Opus, high | Independent threat/correctness passes |
 | Native UI and platform behavior | `gpt-5.6`, high | Sonnet, high | Read-only, platform-specific oracle |
+| Dependency and artifact supply chain | `gpt-5.6`, high | Opus, high | Read-only, supplier and artifact evidence |
 | Reproducible verification/performance | `gpt-5.6`, medium | None | Artifact-only Codex worktree |
 | Final adversarial review | `gpt-5.6`, high | Opus, high | Fresh context, read-only |
 | Integration and release | `gpt-5.6`, high when risky | None | Codex only |
@@ -224,11 +226,13 @@ scripts/ai/claude-consult.sh implement-platform prompt.txt   # linked worktree o
 scripts/ai/claude-consult.sh implement-ui prompt.txt         # linked worktree only
 scripts/ai/claude-consult.sh implement-icons prompt.txt      # linked worktree only
 scripts/ai/claude-consult.sh implement-characters prompt.txt # linked worktree only
+scripts/ai/claude-consult.sh implement-fuzz prompt.txt       # linked worktree only
 scripts/ai/claude-consult.sh optimize prompt.txt              # linked worktree only
 scripts/ai/claude-consult.sh correctness prompt.txt
 scripts/ai/claude-consult.sh concurrency prompt.txt
 scripts/ai/claude-consult.sh platform prompt.txt
 scripts/ai/claude-consult.sh ui prompt.txt
+scripts/ai/claude-consult.sh supply-chain prompt.txt
 scripts/ai/claude-consult.sh review prompt.txt
 scripts/ai/claude-consult.sh security prompt.txt
 ```
