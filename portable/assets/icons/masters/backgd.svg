@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 256 256">
+  <title>Comic Chat background document</title>
+  <desc>Folded paper document containing a framed landscape illustration.</desc>
+  <defs>
+    <linearGradient id="p" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#fffdf7"/><stop offset=".65" stop-color="#f7f4ea"/><stop offset="1" stop-color="#ded7c9"/></linearGradient>
+    <linearGradient id="f" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f7f4ea"/><stop offset=".55" stop-color="#c1c5cc"/><stop offset="1" stop-color="#7b828c"/></linearGradient>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#76a9d8"/><stop offset="1" stop-color="#dceaf5"/></linearGradient>
+    <linearGradient id="hill" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#79b481"/><stop offset="1" stop-color="#4d9e67"/></linearGradient>
+    <filter id="s" x="-30%" y="-30%" width="170%" height="180%"><feGaussianBlur in="SourceAlpha" stdDeviation="4"/><feOffset dy="5"/><feComponentTransfer><feFuncA type="linear" slope=".3"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <clipPath id="frame"><rect x="45" y="91" width="166" height="113" rx="3"/></clipPath>
+  </defs>
+  <g filter="url(#s)" stroke="#20252c" stroke-linejoin="round">
+    <path d="M28 20H174l54 54v162H28Z" fill="url(#p)" stroke-width="9"/>
+    <path d="M174 20v54h54" fill="url(#f)" stroke-width="8"/>
+    <g stroke="#7b828c" stroke-width="6" stroke-linecap="round"><path d="M48 45h85"/><path d="M48 62h62"/></g>
+    <rect x="41" y="87" width="174" height="121" rx="5" fill="#fff" stroke-width="7"/>
+    <g clip-path="url(#frame)" stroke="none">
+      <rect x="45" y="91" width="166" height="113" fill="url(#sky)"/>
+      <circle cx="177" cy="116" r="19" fill="#f3c744"/>
+      <path d="M41 180 89 129l34 36 27-30 68 62v17H41Z" fill="#c1c5cc"/>
+      <path d="m88 129 14 15-12-4-11 8Z" fill="#f7f4ea"/>
+      <path d="M39 187c38-31 64-24 91-6 29-23 55-22 91 8v27H39Z" fill="url(#hill)"/>
+      <path d="M54 205c38-23 76-16 110 6 18-11 34-13 54-6v17H54Z" fill="#2f7650"/>
+      <path d="M74 115c8-6 15-6 23 0m-6-10c7-5 14-5 21 0" fill="none" stroke="#f7f4ea" stroke-width="4" stroke-linecap="round"/>
+    </g>
+    <path d="M45 95h162" stroke="#fff" stroke-width="4" opacity=".55"/>
+  </g>
+</svg>

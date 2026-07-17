@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><title>Comic Chat compact ratings globe with three stars</title><defs><radialGradient id="o"><stop stop-color="#79a9d3"/><stop offset="1" stop-color="#3d78b8"/></radialGradient></defs>
+  <circle cx="16" cy="16" r="11.5" fill="url(#o)" stroke="#20252c" stroke-width="1.25"/><path d="M8 9c2-2.5 4.5-3.5 7-3l1.5 2-2 1.5.5 2-2.5 1L11 15l-3-.5Zm8 8 2-1.5 3 .7 1 2.5-1.5 2 .3 4-2.3 3.2-2-3 .6-2.6-1.5-2Z" fill="#4d9e67" stroke="#20252c" stroke-width=".45"/>
+  <g fill="none" stroke="#f7f4ea" stroke-width=".45" opacity=".7"><ellipse cx="16" cy="16" rx="6" ry="11.3"/><path d="M4.7 16h22.6M6.5 11c6 2 13 2 19 0M6.5 21c6-2 13-2 19 0"/></g>
+  <path d="M1.5 13h29v7H1.5Z" fill="#f7f4ea" stroke="#20252c" stroke-width="1"/>
+  <!-- exactly three stars -->
+  <g fill="#f3c744" stroke="#20252c" stroke-width=".7"><path d="m8.5 12.5 1.1 2.3 2.6.3-2 1.7.6 2.5-2.3-1.3-2.3 1.3.6-2.5-2-1.7 2.6-.3Z"/><path d="m16 11.7 1.3 2.7 2.9.3-2.2 1.9.7 2.9-2.7-1.5-2.7 1.5.7-2.9-2.2-1.9 2.9-.3Z"/><path d="m23.5 12.5 1.1 2.3 2.6.3-2 1.7.6 2.5-2.3-1.3-2.3 1.3.6-2.5-2-1.7 2.6-.3Z"/></g>
+</svg>

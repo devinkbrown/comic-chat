@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>Microsoft Comic Chat application icon</title>
+  <desc>Modern source-faithful rendering of Armando in front of a ruled halftone speech balloon.</desc>
+  <defs>
+    <linearGradient id="paper" x1="0" y1="0" x2="0.88" y2="1">
+      <stop offset="0" stop-color="#fffdf7"/>
+      <stop offset="0.62" stop-color="#f7f4ea"/>
+      <stop offset="1" stop-color="#e7dfcf"/>
+    </linearGradient>
+    <linearGradient id="yellowWash" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f8d96d" stop-opacity="0.96"/>
+      <stop offset="0.78" stop-color="#f3c744" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#f3c744" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="inkSheen" x1="0.08" y1="0" x2="0.92" y2="1">
+      <stop offset="0" stop-color="#3a424c"/>
+      <stop offset="0.22" stop-color="#20252c"/>
+      <stop offset="0.72" stop-color="#101419"/>
+      <stop offset="1" stop-color="#2b323a"/>
+    </linearGradient>
+    <linearGradient id="silver" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e8e9eb"/>
+      <stop offset="0.5" stop-color="#c1c5cc"/>
+      <stop offset="1" stop-color="#7b828c"/>
+    </linearGradient>
+    <radialGradient id="lens" cx="0.34" cy="0.28" r="0.8">
+      <stop offset="0" stop-color="#f7f4ea"/>
+      <stop offset="0.27" stop-color="#a9bdd0"/>
+      <stop offset="0.72" stop-color="#3d78b8" stop-opacity="0.62"/>
+      <stop offset="1" stop-color="#20252c" stop-opacity="0.86"/>
+    </radialGradient>
+    <pattern id="dots" width="44" height="44" patternUnits="userSpaceOnUse" patternTransform="rotate(-5)">
+      <circle cx="12" cy="12" r="6.5" fill="#b79927" opacity="0.68"/>
+      <circle cx="34" cy="34" r="4" fill="#f3c744" opacity="0.72"/>
+    </pattern>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="170%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="14" result="blur"/>
+      <feOffset dx="0" dy="17" result="offset"/>
+      <feColorMatrix in="offset" values="0 0 0 0 0.08 0 0 0 0 0.1 0 0 0 0 0.12 0 0 0 .27 0"/>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="softInset" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="3.5"/>
+    </filter>
+    <clipPath id="balloonClip">
+      <path d="M241 109H817C868 109 909 150 909 201V653C909 704 868 745 817 745H764L704 842L714 745H241C190 745 149 704 149 653V201C149 150 190 109 241 109Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- Ruled yellow-halftone speech balloon, preserving the source composition. -->
+  <g filter="url(#shadow)">
+    <path d="M241 109H817C868 109 909 150 909 201V653C909 704 868 745 817 745H764L704 842L714 745H241C190 745 149 704 149 653V201C149 150 190 109 241 109Z"
+      fill="url(#paper)" stroke="#20252c" stroke-width="32" stroke-linejoin="round"/>
+    <path d="M241 128H817C857 128 890 161 890 201V647C890 687 857 720 817 720H752L726 762L731 720H241C201 720 168 687 168 647V201C168 161 201 128 241 128Z"
+      fill="none" stroke="#c1c5cc" stroke-width="12" opacity="0.9"/>
+    <g clip-path="url(#balloonClip)">
+      <rect x="164" y="124" width="730" height="390" fill="url(#yellowWash)"/>
+      <rect x="165" y="126" width="728" height="365" fill="url(#dots)" opacity="0.75"/>
+      <path d="M181 161C367 119 677 127 875 169" fill="none" stroke="#fffdf7" stroke-width="16" opacity="0.45"/>
+      <path d="M184 687C394 722 686 722 877 676" fill="none" stroke="#7b828c" stroke-width="18" opacity="0.12" filter="url(#softInset)"/>
+    </g>
+    <g fill="url(#silver)" stroke="#20252c" stroke-width="10" stroke-linejoin="round">
+      <rect x="596" y="424" width="241" height="31" rx="15.5"/>
+      <rect x="596" y="506" width="241" height="31" rx="15.5"/>
+      <rect x="596" y="588" width="192" height="31" rx="15.5"/>
+    </g>
+    <path d="M614 433H819" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" opacity="0.45"/>
+  </g>
+
+  <!-- Armando. Geometry follows his authored AVB icon pose and west face frame. -->
+  <g filter="url(#shadow)" stroke="#20252c" stroke-linecap="round" stroke-linejoin="round">
+    <!-- tiny shoulder wedge and long neck -->
+    <path d="M281 774L268 913C331 949 426 957 500 922L466 798Z" fill="url(#inkSheen)" stroke-width="27"/>
+    <path d="M348 674C343 730 337 786 329 836C362 857 403 861 434 846L446 684Z" fill="url(#paper)" stroke-width="24"/>
+    <path d="M356 690C356 744 352 789 346 816" fill="none" stroke="#c1c5cc" stroke-width="11" opacity="0.7"/>
+
+    <!-- rear curl and large soft beret/fringe mass -->
+    <path d="M249 533C180 568 175 646 229 681C266 705 310 683 325 647C294 673 253 660 253 628C253 597 285 580 314 593"
+      fill="url(#inkSheen)" stroke-width="25"/>
+    <path d="M218 467C157 370 198 261 290 199C351 158 433 146 506 174C541 187 564 212 561 245C604 259 646 288 674 327C634 312 594 308 556 318C603 345 630 372 648 407C604 386 570 375 529 379C552 399 562 420 565 444C528 414 493 397 451 395C413 431 374 468 329 508C287 544 242 522 218 467Z"
+      fill="url(#inkSheen)" stroke-width="28"/>
+    <path d="M244 392C272 266 398 184 520 206" fill="none" stroke="#59616b" stroke-width="13" opacity="0.5"/>
+    <path d="M238 260C208 236 179 242 164 266C194 258 216 270 235 291" fill="url(#inkSheen)" stroke-width="22"/>
+
+    <!-- long authored profile -->
+    <path d="M388 369C421 338 469 335 501 359C522 376 534 398 540 426C557 438 578 455 599 476L646 522C656 532 651 548 638 552L579 568C591 589 594 605 586 622C577 641 556 649 532 651C543 673 539 697 522 718C507 736 487 747 465 749C453 765 436 778 416 784C378 767 352 743 338 711C322 676 319 632 323 582C327 516 345 423 388 369Z"
+      fill="url(#paper)" stroke-width="27"/>
+    <path d="M608 511C619 520 629 529 639 539L579 554" fill="none" stroke="#c1c5cc" stroke-width="10" opacity="0.8"/>
+    <path d="M334 585C325 505 346 423 389 372" fill="none" stroke="#fff" stroke-width="9" opacity="0.62"/>
+
+    <!-- one visible lens, eye relationship and hooked nose bridge -->
+    <path d="M433 414C459 395 495 397 518 421" fill="none" stroke-width="15"/>
+    <circle cx="468" cy="449" r="45" fill="url(#lens)" stroke-width="17"/>
+    <path d="M424 448H383" fill="none" stroke-width="15"/>
+    <path d="M512 445C537 445 558 458 574 474" fill="none" stroke-width="15"/>
+    <path d="M447 428C459 417 475 416 486 425" fill="none" stroke="#fff" stroke-width="8" opacity="0.75"/>
+    <ellipse cx="475" cy="450" rx="8" ry="13" fill="#20252c" stroke="none"/>
+
+    <!-- compact open smile and source-like tooth rhythm -->
+    <path d="M491 572C515 579 539 580 566 573C557 590 544 603 526 611C509 606 498 593 491 572Z" fill="#20252c" stroke-width="12"/>
+    <path d="M503 577C521 581 538 581 553 578C544 587 534 593 524 597C515 593 508 586 503 577Z" fill="#f7f4ea" stroke="none"/>
+    <path d="M500 619C521 627 540 627 557 619" fill="none" stroke-width="12"/>
+
+    <!-- narrow chin and thin pointed goatee -->
+    <path d="M475 747C494 752 510 744 522 727C527 751 523 776 513 801C504 784 492 772 477 768Z" fill="url(#inkSheen)" stroke-width="16"/>
+    <path d="M515 786C526 807 526 831 516 853" fill="none" stroke-width="13"/>
+
+    <!-- authored fringe separates cap from forehead -->
+    <path d="M367 371C383 389 392 407 395 430L418 392L437 419L460 381L483 407L507 373L529 394" fill="url(#inkSheen)" stroke-width="18"/>
+    <path d="M223 546C250 527 279 527 303 541" fill="none" stroke="#59616b" stroke-width="9" opacity="0.55"/>
+  </g>
+</svg>

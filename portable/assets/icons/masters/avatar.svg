@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>Microsoft Comic Chat avatar document icon</title>
+  <desc>Modern source-faithful folded avatar document with Armando's unoccluded authored profile.</desc>
+  <defs>
+    <linearGradient id="paper" x1="0.08" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#fffdf7"/>
+      <stop offset="0.65" stop-color="#f7f4ea"/>
+      <stop offset="1" stop-color="#ded7c9"/>
+    </linearGradient>
+    <linearGradient id="fold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f7f4ea"/>
+      <stop offset="0.5" stop-color="#c1c5cc"/>
+      <stop offset="1" stop-color="#7b828c"/>
+    </linearGradient>
+    <linearGradient id="ink" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3a424c"/>
+      <stop offset="0.25" stop-color="#20252c"/>
+      <stop offset="0.8" stop-color="#0e1217"/>
+      <stop offset="1" stop-color="#333b45"/>
+    </linearGradient>
+    <radialGradient id="lens" cx="0.3" cy="0.25" r="0.82">
+      <stop offset="0" stop-color="#f7f4ea"/>
+      <stop offset="0.3" stop-color="#a9bdd0"/>
+      <stop offset="0.76" stop-color="#3d78b8" stop-opacity="0.63"/>
+      <stop offset="1" stop-color="#20252c" stop-opacity="0.9"/>
+    </radialGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="170%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="15" result="blur"/>
+      <feOffset dy="18" result="offset"/>
+      <feColorMatrix in="offset" values="0 0 0 0 .07 0 0 0 0 .09 0 0 0 0 .12 0 0 0 .28 0"/>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- Folded document is authoritative and remains visible around the portrait. -->
+  <g filter="url(#shadow)" stroke="#20252c" stroke-linejoin="round">
+    <path d="M196 88H712L855 231V916H196Z" fill="url(#paper)" stroke-width="33"/>
+    <path d="M712 88V231H855" fill="url(#fold)" stroke-width="28"/>
+    <path d="M727 113L829 216H727Z" fill="#fffdf7" opacity="0.54" stroke="none"/>
+    <path d="M225 122V881H821" fill="none" stroke="#c1c5cc" stroke-width="13" opacity="0.82"/>
+    <path d="M232 137L691 137" fill="none" stroke="#fff" stroke-width="9" opacity="0.72"/>
+  </g>
+
+  <!-- Armando: same source-authored profile as the app icon, unoccluded. -->
+  <g filter="url(#shadow)" stroke="#20252c" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M330 735L307 867C368 908 486 913 558 871L521 743Z" fill="url(#ink)" stroke-width="27"/>
+    <path d="M397 654C393 707 388 759 379 807C414 829 454 832 488 814L494 665Z" fill="url(#paper)" stroke-width="24"/>
+    <path d="M297 514C235 548 232 618 282 648C315 669 354 651 368 619C339 641 305 627 305 600C305 572 331 557 359 568" fill="url(#ink)" stroke-width="24"/>
+    <path d="M266 451C211 359 248 262 335 207C394 168 469 158 538 184C570 196 592 219 589 250C629 264 668 290 694 327C655 314 620 311 584 321C626 345 651 370 668 401C627 383 596 373 559 377C579 395 589 414 592 437C558 409 526 395 488 393C452 427 416 463 374 500C336 533 291 513 266 451Z" fill="url(#ink)" stroke-width="27"/>
+    <path d="M285 378C315 270 422 195 549 214" fill="none" stroke="#59616b" stroke-width="13" opacity="0.52"/>
+    <path d="M286 256C262 234 236 239 222 262C249 255 270 267 285 286" fill="url(#ink)" stroke-width="21"/>
+
+    <path d="M433 367C462 338 505 337 535 359C555 375 567 397 572 423C590 437 608 453 627 472L671 515C681 525 676 540 663 544L609 559C620 578 622 593 615 608C607 626 586 634 565 636C574 657 571 679 555 697C541 714 522 725 501 726C490 742 475 753 456 759C421 743 397 720 384 690C369 657 367 616 371 569C375 508 392 418 433 367Z" fill="url(#paper)" stroke-width="27"/>
+    <path d="M636 505C646 513 656 522 665 531L609 545" fill="none" stroke="#c1c5cc" stroke-width="10" opacity="0.82"/>
+    <path d="M379 570C372 500 393 416 434 369" fill="none" stroke="#fff" stroke-width="9" opacity="0.62"/>
+
+    <path d="M474 412C497 395 530 397 551 419" fill="none" stroke-width="15"/>
+    <circle cx="506" cy="446" r="43" fill="url(#lens)" stroke-width="17"/>
+    <path d="M464 445H425" fill="none" stroke-width="15"/>
+    <path d="M549 443C572 443 591 455 606 470" fill="none" stroke-width="15"/>
+    <path d="M487 426C498 416 513 415 523 423" fill="none" stroke="#fff" stroke-width="8" opacity="0.74"/>
+    <ellipse cx="512" cy="447" rx="8" ry="13" fill="#20252c" stroke="none"/>
+
+    <path d="M524 563C546 570 568 571 593 564C585 580 572 592 556 599C540 594 530 583 524 563Z" fill="#20252c" stroke-width="12"/>
+    <path d="M535 568C551 572 567 572 581 569C573 578 564 583 554 587C546 583 540 577 535 568Z" fill="#f7f4ea" stroke="none"/>
+    <path d="M533 607C552 615 570 615 585 607" fill="none" stroke-width="12"/>
+    <path d="M506 725C523 730 539 723 550 707C554 729 551 752 542 775C533 760 523 749 509 746Z" fill="url(#ink)" stroke-width="16"/>
+    <path d="M544 762C554 781 554 802 545 822" fill="none" stroke-width="13"/>
+
+    <path d="M410 369C425 386 433 404 436 425L457 390L475 416L496 380L518 405L539 373L560 393" fill="url(#ink)" stroke-width="18"/>
+    <path d="M275 526C299 509 327 509 348 522" fill="none" stroke="#59616b" stroke-width="9" opacity="0.54"/>
+  </g>
+</svg>
