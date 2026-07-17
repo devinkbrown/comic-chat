@@ -223,6 +223,7 @@ public:
 	~ScopedSaslConfigWipe() { SecureClear(value_); }
 	ScopedSaslConfigWipe(const ScopedSaslConfigWipe&) = delete;
 	ScopedSaslConfigWipe& operator=(const ScopedSaslConfigWipe&) = delete;
+	void Release() noexcept { value_ = nullptr; }
 
 private:
 	SaslConfig* value_;
@@ -1159,6 +1160,7 @@ std::vector<std::string> Engine::BeginRegistration(
 {
 	sasl_.reset();
 	SecureClear(&sasl_config_);
+	ScopedSaslConfigWipe wipe_destination_on_failure(&sasl_config_);
 	sasl_config_ = sasl;
 	if (sasl_config_.authentication_id.size() > kMaxIdentityBytes ||
 		sasl_config_.authorization_id.size() > kMaxIdentityBytes ||
@@ -1206,7 +1208,9 @@ std::vector<std::string> Engine::BeginRegistration(
 	sasl_succeeded_ = false;
 	cap_response_seen_ = false;
 	flood_->Reset();
-	return {"CAP LS 302\r\n"};
+	std::vector<std::string> outbound{"CAP LS 302\r\n"};
+	wipe_destination_on_failure.Release();
+	return outbound;
 }
 
 bool Engine::IsOffered(std::string_view capability) const
