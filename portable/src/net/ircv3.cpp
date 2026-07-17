@@ -488,7 +488,9 @@ const std::vector<CapabilityDefinition>& CapabilityCatalog()
 		// Enable after the Windows adapter normalizes extended JOIN and applies
 		// its account and realname fields before the legacy JOIN handler runs.
 		{"extended-join", {}, false},
-		{"invite-notify", {}},
+		// Enable after third-party invitations are distinguished from invitations
+		// for the local user before reaching the legacy INVITE handler.
+		{"invite-notify", {}, false},
 		{"labeled-response", {"batch"}},
 		// Enable after NAMES adaptation decomposes every advertised prefix into
 		// legacy user flags instead of treating trailing prefixes as nickname text.
@@ -501,17 +503,22 @@ const std::vector<CapabilityDefinition>& CapabilityCatalog()
 		// Enable after NAMES adaptation splits nick!user@host and supplies the
 		// hostmask separately to the legacy user model.
 		{"userhost-in-names", {}, false},
-		{"draft/channel-rename", {}},
+		// Enable after RENAME updates the legacy document, tab, and member model.
+		{"draft/channel-rename", {}, false},
 		{"draft/account-registration", {}},
 		// Chathistory has useful limited operation without batch/server-time/
 		// message-tags; its specification explicitly tells servers not to
 		// enforce those as prerequisites.
 		{"draft/chathistory", {}},
-		{"draft/event-playback", {"draft/chathistory"}},
+		// Enable after historical state changes are isolated from live legacy state.
+		{"draft/event-playback", {"draft/chathistory"}, false},
 		{"draft/extended-isupport", {}},
 		{"draft/metadata-2", {"batch"}},
-		{"draft/message-redaction", {"message-tags"}},
-		{"draft/multiline", {"batch"}},
+		// Enable after redactions update already-rendered legacy messages.
+		{"draft/message-redaction", {"message-tags"}, false},
+		// Enable after receive limits and send-side batching have complete product
+		// semantics, including legacy rendering of the reassembled message.
+		{"draft/multiline", {"batch"}, false},
 		{"draft/oper-tag", {}},
 		{"draft/pre-away", {}},
 		{"draft/read-marker", {}},

@@ -200,7 +200,9 @@ void TestCapabilityState()
 	const auto requested = RequestedNames(second.outbound);
 	Check(std::find(requested.begin(), requested.end(), "message-tags") != requested.end(), "message-tags requested");
 	Check(std::find(requested.begin(), requested.end(), "labeled-response") != requested.end(), "dependency chain requested");
-	Check(std::find(requested.begin(), requested.end(), "draft/multiline") != requested.end(), "multiline requested");
+	Check(std::find(requested.begin(), requested.end(), "draft/multiline") == requested.end() &&
+		engine.IsOffered("draft/multiline"),
+		"multiline advertisement is retained without requesting incomplete product behavior");
 	Check(std::find(requested.begin(), requested.end(), "sts") == requested.end(), "STS observed but never requested");
 	Check(engine.CurrentStsPolicy() && engine.CurrentStsPolicy()->port == 6697, "insecure STS upgrade port retained");
 	Check(!engine.CurrentStsPolicy()->duration && !engine.CurrentStsPolicy()->preload,
@@ -275,12 +277,17 @@ void TestCapabilityRegistryAndDependencies()
 
 	Engine legacy_wire;
 	legacy_wire.BeginRegistration(config, "Alice", true);
-	auto legacy_ls = legacy_wire.Process(":server CAP * LS :extended-join multi-prefix "
-		"userhost-in-names no-implicit-names\r\n");
-	Check(RequestedNames(legacy_ls.outbound).empty(),
-		"legacy wire-shape capabilities wait for their Windows adapters");
-	for (const auto* name : {"extended-join", "multi-prefix", "userhost-in-names", "no-implicit-names"})
+	auto legacy_ls = legacy_wire.Process(":server CAP * LS :message-tags batch draft/chathistory "
+		"extended-join invite-notify multi-prefix userhost-in-names no-implicit-names "
+		"draft/channel-rename draft/event-playback draft/message-redaction draft/multiline\r\n");
+	const auto legacy_names = RequestedNames(legacy_ls.outbound);
+	for (const auto* name : {"extended-join", "invite-notify", "multi-prefix", "userhost-in-names",
+		"no-implicit-names", "draft/channel-rename", "draft/event-playback",
+		"draft/message-redaction", "draft/multiline"}) {
+		Check(std::find(legacy_names.begin(), legacy_names.end(), name) == legacy_names.end(),
+			"capability without a complete legacy adapter is not auto-requested");
 		Check(legacy_wire.IsOffered(name), "gated legacy capability remains discoverable");
+	}
 	auto legacy_new = legacy_wire.Process(":server CAP Alice NEW :extended-join=account-realname\r\n");
 	Check(legacy_new.outbound.empty() &&
 		legacy_wire.CapabilityValue("extended-join") == "account-realname",
@@ -301,10 +308,12 @@ void TestCapabilityRegistryAndDependencies()
 	auto dependency_ls = dependencies.Process(":server CAP * LS :batch message-tags draft/chathistory "
 		"labeled-response draft/metadata-2 draft/message-redaction draft/multiline draft/event-playback\r\n");
 	const auto dependency_names = RequestedNames(dependency_ls.outbound);
-	for (const auto* name : {"labeled-response", "draft/metadata-2", "draft/message-redaction",
-		"draft/multiline", "draft/event-playback"})
+	for (const auto* name : {"labeled-response", "draft/metadata-2"})
 		Check(std::find(dependency_names.begin(), dependency_names.end(), name) != dependency_names.end(),
 			"normative capability prerequisite unlocks its dependent");
+	for (const auto* name : {"draft/message-redaction", "draft/multiline", "draft/event-playback"})
+		Check(std::find(dependency_names.begin(), dependency_names.end(), name) == dependency_names.end(),
+			"normative prerequisites do not override product-readiness gating");
 
 	Engine orochi;
 	orochi.BeginRegistration(config, "Alice", true);
