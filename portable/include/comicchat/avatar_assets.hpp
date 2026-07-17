@@ -79,6 +79,43 @@ struct AvatarSelection final {
     std::size_t torso{};
 };
 
+// Screen-space (Y-down) integer rectangle in the compositing target, matching
+// the Win32 RECT the source blits into. A flipped component rectangle encodes
+// its mirror as right < left (a StretchBlt negative width), exactly as
+// CBodySingle/CBodyDouble::FlipBodyBox produce (bodycam.cpp:595-599,507-524).
+struct AvatarRect final {
+    std::int32_t left{};
+    std::int32_t top{};
+    std::int32_t right{};
+    std::int32_t bottom{};
+};
+
+// The fitted compositing geometry the renderer draws into. For a simple
+// (CBodyUnary/CBodySingle) avatar `head` and `torso` equal `full` and
+// `composite` is false. For a complex (CBodyDouble) avatar the three rects are
+// the union `full` box plus the head/torso sub-rects derived in scaled space
+// (bodycam.cpp:632-671). This is the geometry `render_avatar` composites with
+// and that Item 2.1 (tail anchor) / Item 2.3 (placement) consume.
+struct AvatarBodyBox final {
+    AvatarRect full;
+    AvatarRect head;
+    AvatarRect torso;
+    bool composite{};
+};
+
+// Dimension feedback into layout, mirroring CBody::GetDimInfo
+// (avatar.cpp:55 single, avatar.cpp:77 double). `norm_height` is the shipped
+// source constant 100 (avatar.cpp:64,110); `face_x` is the tail-anchor column
+// LayoutAvatars turns into m_arrowX (panel.cpp:817) and flips under `flip`
+// (avatar.cpp:74,113).
+struct AvatarDimInfo final {
+    std::int16_t width{};
+    std::int16_t height{};
+    std::int16_t norm_height{};
+    std::int16_t head_height{};
+    std::int16_t face_x{};
+};
+
 // legacy_exact is the source-compatibility oracle: it deliberately follows
 // the Win32 StretchBlt sampling phase and raster operations. modern_remaster
 // keeps the same poses and component geometry, but reconstructs high-DPI
@@ -99,6 +136,11 @@ struct AvatarRenderRequest final {
 [[nodiscard]] auto select_avatar_expression(const AvatarAsset& asset, AvatarExpression expression,
     std::optional<AvatarSelection> previous = std::nullopt)
     -> std::expected<AvatarSelection, AvatarAssetError>;
+[[nodiscard]] auto avatar_body_box(const AvatarAsset& asset, const AvatarSelection& selection,
+    std::int32_t width, std::int32_t height, bool flip)
+    -> std::expected<AvatarBodyBox, AvatarAssetError>;
+[[nodiscard]] auto avatar_dim_info(const AvatarAsset& asset, const AvatarSelection& selection, bool flip)
+    -> std::expected<AvatarDimInfo, AvatarAssetError>;
 [[nodiscard]] auto render_avatar(const AvatarAsset& asset, const AvatarRenderRequest& request)
     -> std::expected<AvatarBitmap, AvatarAssetError>;
 [[nodiscard]] auto write_avatar_png(const AvatarBitmap& bitmap, const std::filesystem::path& path) -> bool;
