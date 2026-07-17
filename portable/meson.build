@@ -311,11 +311,18 @@ core_dep = declare_dependency(
   ],
 )
 
-# Compile the exact transport API surface consumed by the legacy MFC adapters.
-# The same source is an object in chat.mak, so both Clang and MSVC reject drift.
+# Compile the exact transport API surface consumed by each legacy MFC adapter.
+# The same client-local sources are objects in their chat.mak files, so both
+# Clang and MSVC reject drift.
 static_library(
   'comicchat-adapter-api-compile',
   '../v2.5-beta-1-modern/tests/transport_adapter_api_compile.cpp',
+  include_directories: inc,
+  install: false,
+)
+static_library(
+  'comicchat-v1-adapter-api-compile',
+  '../v1.0-pre-modern/tests/transport_adapter_api_compile.cpp',
   include_directories: inc,
   install: false,
 )

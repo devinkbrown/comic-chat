@@ -1,5 +1,10 @@
-# Microsoft Developer Studio Generated NMAKE File, Format Version 4.20
-# ** DO NOT EDIT **
+# Modern NMAKE build for the Microsoft Comic Chat 1.0 prerelease client.
+#
+# The source inventory and x86 MFC/resource shape come from the original
+# Developer Studio 4.2 project.  Current MSVC compiles every product C++
+# translation unit in its post-C++23 working-draft mode; generated or
+# third-party C remains C.  The shared libuv/mbedTLS transport is linked here
+# as a dormant substrate until the v1 adapter migration is complete.
 
 # TARGTYPE "Win32 (x86) Application" 0x0101
 
@@ -35,6 +40,25 @@ RSC=rc.exe
 MTL=mktyplib.exe
 CPP=cl.exe
 
+PORTABLE_LIB=..\artifacts\lib
+
+# There is no /std:c++26 spelling in current MSVC.  /std:c++latest is the
+# supported post-C++23 working-draft mode and cpp26mode.h makes that setting,
+# the current production toolset, and the conforming preprocessor hard build
+# invariants for every C++ compile recipe in this makefile.
+CPP26_FLAGS=/std:c++latest /permissive- /EHsc /Zc:__cplusplus /Zc:preprocessor \
+ /Zc:forScope /Zc:strictStrings /Zc:wchar_t /Zc:inline /Zc:externConstexpr \
+ /Zc:lambda /Zc:twoPhase /Zc:throwingNew /Zc:ternary /volatile:iso
+
+CPP26_COMMON=$(CPP26_FLAGS) /FI"cpp26mode.h" \
+ /D "WIN32" /D "_WINDOWS" /D "_MBCS" \
+ /D "MBEDTLS_USER_CONFIG_FILE=\"comicchat/mbedtls_user_config.h\""
+
+# C_PROJ deliberately omits the C++ language-mode and force-include flags.
+# It is reserved for generated/third-party .c translation units.
+C_COMMON=/D "WIN32" /D "_WINDOWS" /D "_MBCS" \
+ /D "MBEDTLS_USER_CONFIG_FILE=\"comicchat/mbedtls_user_config.h\""
+
 !IF  "$(CFG)" == "chat - Win32 Release"
 
 # PROP BASE Use_MFC 6
@@ -53,67 +77,23 @@ INTDIR=.\Release
 ALL : "$(OUTDIR)\chat.exe"
 
 CLEAN : 
-	-@erase "$(INTDIR)\admindlg.obj"
-	-@erase "$(INTDIR)\arc.obj"
-	-@erase "$(INTDIR)\avatar.obj"
-	-@erase "$(INTDIR)\avatardl.obj"
-	-@erase "$(INTDIR)\avatario.obj"
-	-@erase "$(INTDIR)\backdrop.obj"
-	-@erase "$(INTDIR)\balloon.obj"
-	-@erase "$(INTDIR)\bbox.obj"
-	-@erase "$(INTDIR)\binddcmt.obj"
-	-@erase "$(INTDIR)\binddoc.obj"
-	-@erase "$(INTDIR)\bindipfw.obj"
-	-@erase "$(INTDIR)\binditem.obj"
-	-@erase "$(INTDIR)\bindtarg.obj"
-	-@erase "$(INTDIR)\bindview.obj"
-	-@erase "$(INTDIR)\bodycam.obj"
-	-@erase "$(INTDIR)\chat.obj"
-	-@erase "$(INTDIR)\chat.pch"
-	-@erase "$(INTDIR)\chat.res"
-	-@erase "$(INTDIR)\chatDoc.obj"
-	-@erase "$(INTDIR)\ChatItem.obj"
-	-@erase "$(INTDIR)\chatprot.obj"
-	-@erase "$(INTDIR)\chatView.obj"
-	-@erase "$(INTDIR)\Dib.obj"
-	-@erase "$(INTDIR)\fonts.obj"
-	-@erase "$(INTDIR)\histent.obj"
-	-@erase "$(INTDIR)\IpFrame.obj"
-	-@erase "$(INTDIR)\irc.obj"
-	-@erase "$(INTDIR)\MainFrm.obj"
-	-@erase "$(INTDIR)\memblst.obj"
-	-@erase "$(INTDIR)\mfcbind.obj"
-	-@erase "$(INTDIR)\oleobjct.obj"
-	-@erase "$(INTDIR)\PageView.obj"
-	-@erase "$(INTDIR)\panel.obj"
-	-@erase "$(INTDIR)\print.obj"
-	-@erase "$(INTDIR)\profdlg.obj"
-	-@erase "$(INTDIR)\proppage.obj"
-	-@erase "$(INTDIR)\roomlist.obj"
-	-@erase "$(INTDIR)\saywnd.obj"
-	-@erase "$(INTDIR)\script.obj"
-	-@erase "$(INTDIR)\semantic.obj"
-	-@erase "$(INTDIR)\setupdlg.obj"
-	-@erase "$(INTDIR)\spline.obj"
-	-@erase "$(INTDIR)\splinutl.obj"
-	-@erase "$(INTDIR)\spltchat.obj"
-	-@erase "$(INTDIR)\StdAfx.obj"
-	-@erase "$(INTDIR)\textpose.obj"
-	-@erase "$(INTDIR)\textview.obj"
-	-@erase "$(INTDIR)\traj.obj"
-	-@erase "$(INTDIR)\ui.obj"
-	-@erase "$(INTDIR)\url.obj"
-	-@erase "$(INTDIR)\vector2d.obj"
-	-@erase "$(OUTDIR)\chat.exe"
+	@if exist ".\Release\." rmdir /s /q ".\Release"
+	-@erase ".\chat.exe"
+	-@erase ".\chat.pdb"
 
 "$(INTDIR)" :
     if not exist "$(INTDIR)/$(NULL)" mkdir "$(INTDIR)"
 
-# ADD BASE CPP /nologo /MD /W3 /GX /O2 /D "WIN32" /D "NDEBUG" /D "_WINDOWS" /D "_AFXDLL" /D "_MBCS" /Yu"stdafx.h" /c
-# ADD CPP /nologo /MT /W3 /GX /O2 /D "WIN32" /D "NDEBUG" /D "_WINDOWS" /D "_MBCS" /Yu"stdafx.h" /c
-# SUBTRACT CPP /Fr
-CPP_PROJ=/nologo /MT /W3 /GX /O2 /D "WIN32" /D "NDEBUG" /D "_WINDOWS" /D\
- "_MBCS" /Fp"$(INTDIR)/chat.pch" /Yu"stdafx.h" /Fo"$(INTDIR)/" /c 
+# PCH consumption is disabled; chat.pch remains a dependency stamp for the
+# generated per-source graph so cpp26mode.h changes invalidate every v1 object.
+CPP_PROJ=/nologo /MT /W4 /Zi /O2 $(CPP26_COMMON) /D "NDEBUG" \
+ /I "." /I "..\portable\include" /I "..\third_party\libuv\include" \
+ /I "..\third_party\mbedtls\include" \
+ /Fp"$(INTDIR)/chat.pch" /Fo"$(INTDIR)/" /Fd"$(INTDIR)/" /c
+C_PROJ=/nologo /MT /W3 /Zi /O2 $(C_COMMON) /D "NDEBUG" \
+ /I "." /I "..\portable\include" /I "..\third_party\libuv\include" \
+ /I "..\third_party\mbedtls\include" \
+ /Fo"$(INTDIR)/" /Fd"$(INTDIR)/" /c
 CPP_OBJS=.\Release/
 CPP_SBRS=.\.
 # ADD BASE MTL /nologo /D "NDEBUG" /win32
@@ -131,8 +111,11 @@ BSC32_SBRS= \
 LINK32=link.exe
 # ADD BASE LINK32 /nologo /subsystem:windows /machine:I386
 # ADD LINK32 uuid.lib winmm.lib /nologo /subsystem:windows /machine:I386 /nodefaultlib:"libc"
-LINK32_FLAGS=uuid.lib winmm.lib /nologo /subsystem:windows /incremental:no /FORCE:MULTIPLE\
+LINK32_FLAGS=uuid.lib winmm.lib ws2_32.lib libuv.lib mbedtls.lib mbedx509.lib \
+ mbedcrypto.lib bcrypt.lib crypt32.lib userenv.lib iphlpapi.lib psapi.lib advapi32.lib \
+ /nologo /subsystem:windows /incremental:no /FORCE:MULTIPLE\
  /LIBPATH:"$(VCTOOLSINSTALLDIR)ATLMFC\lib\spectre\x86"\
+ /LIBPATH:"$(PORTABLE_LIB)"\
  /pdb:"$(OUTDIR)/chat.pdb" /machine:I386 /nodefaultlib:"libc"\
  /out:"$(OUTDIR)/chat.exe" 
 LINK32_OBJS= \
@@ -162,6 +145,12 @@ LINK32_OBJS= \
 	"$(INTDIR)\histent.obj" \
 	"$(INTDIR)\IpFrame.obj" \
 	"$(INTDIR)\irc.obj" \
+	"$(INTDIR)\crypto_runtime.obj" \
+	"$(INTDIR)\memory.obj" \
+	"$(INTDIR)\connection_engine.obj" \
+	"$(INTDIR)\dcc_transfer_engine.obj" \
+	"$(INTDIR)\ircv3.obj" \
+	"$(INTDIR)\transport_adapter_api_compile.obj" \
 	"$(INTDIR)\MainFrm.obj" \
 	"$(INTDIR)\memblst.obj" \
 	"$(INTDIR)\mfcbind.obj" \
@@ -210,70 +199,22 @@ INTDIR=.\Debug
 ALL : "$(OUTDIR)\chat.exe"
 
 CLEAN : 
-	-@erase "$(INTDIR)\admindlg.obj"
-	-@erase "$(INTDIR)\arc.obj"
-	-@erase "$(INTDIR)\avatar.obj"
-	-@erase "$(INTDIR)\avatardl.obj"
-	-@erase "$(INTDIR)\avatario.obj"
-	-@erase "$(INTDIR)\backdrop.obj"
-	-@erase "$(INTDIR)\balloon.obj"
-	-@erase "$(INTDIR)\bbox.obj"
-	-@erase "$(INTDIR)\binddcmt.obj"
-	-@erase "$(INTDIR)\binddoc.obj"
-	-@erase "$(INTDIR)\bindipfw.obj"
-	-@erase "$(INTDIR)\binditem.obj"
-	-@erase "$(INTDIR)\bindtarg.obj"
-	-@erase "$(INTDIR)\bindview.obj"
-	-@erase "$(INTDIR)\bodycam.obj"
-	-@erase "$(INTDIR)\chat.obj"
-	-@erase "$(INTDIR)\chat.pch"
-	-@erase "$(INTDIR)\chat.res"
-	-@erase "$(INTDIR)\chatDoc.obj"
-	-@erase "$(INTDIR)\ChatItem.obj"
-	-@erase "$(INTDIR)\chatprot.obj"
-	-@erase "$(INTDIR)\chatView.obj"
-	-@erase "$(INTDIR)\Dib.obj"
-	-@erase "$(INTDIR)\fonts.obj"
-	-@erase "$(INTDIR)\histent.obj"
-	-@erase "$(INTDIR)\IpFrame.obj"
-	-@erase "$(INTDIR)\irc.obj"
-	-@erase "$(INTDIR)\MainFrm.obj"
-	-@erase "$(INTDIR)\memblst.obj"
-	-@erase "$(INTDIR)\mfcbind.obj"
-	-@erase "$(INTDIR)\oleobjct.obj"
-	-@erase "$(INTDIR)\PageView.obj"
-	-@erase "$(INTDIR)\panel.obj"
-	-@erase "$(INTDIR)\print.obj"
-	-@erase "$(INTDIR)\profdlg.obj"
-	-@erase "$(INTDIR)\proppage.obj"
-	-@erase "$(INTDIR)\roomlist.obj"
-	-@erase "$(INTDIR)\saywnd.obj"
-	-@erase "$(INTDIR)\script.obj"
-	-@erase "$(INTDIR)\semantic.obj"
-	-@erase "$(INTDIR)\setupdlg.obj"
-	-@erase "$(INTDIR)\spline.obj"
-	-@erase "$(INTDIR)\splinutl.obj"
-	-@erase "$(INTDIR)\spltchat.obj"
-	-@erase "$(INTDIR)\StdAfx.obj"
-	-@erase "$(INTDIR)\textpose.obj"
-	-@erase "$(INTDIR)\textview.obj"
-	-@erase "$(INTDIR)\traj.obj"
-	-@erase "$(INTDIR)\ui.obj"
-	-@erase "$(INTDIR)\url.obj"
-	-@erase "$(INTDIR)\vc40.idb"
-	-@erase "$(INTDIR)\vc40.pdb"
-	-@erase "$(INTDIR)\vector2d.obj"
-	-@erase "$(OUTDIR)\chat.exe"
-	-@erase "$(OUTDIR)\chat.pdb"
+	@if exist ".\Debug\." rmdir /s /q ".\Debug"
+	-@erase ".\chat.exe"
+	-@erase ".\chat.pdb"
 
 "$(INTDIR)" :
     if not exist "$(INTDIR)/$(NULL)" mkdir "$(INTDIR)"
 
-# ADD BASE CPP /nologo /MDd /W3 /Gm /GX /Zi /Od /D "WIN32" /D "_DEBUG" /D "_WINDOWS" /D "_AFXDLL" /D "_MBCS" /Yu"stdafx.h" /c
-# ADD CPP /nologo /MTd /W3 /Gm /GX /Zi /Od /D "WIN32" /D "_DEBUG" /D "_WINDOWS" /D "_MBCS" /Yu"stdafx.h" /c
-CPP_PROJ=/nologo /MTd /W3 /Gm /GX /Zi /Od /D "WIN32" /D "_DEBUG" /D "_WINDOWS"\
- /D "_MBCS" /Fp"$(INTDIR)/chat.pch" /Yu"stdafx.h" /Fo"$(INTDIR)/"\
- /Fd"$(INTDIR)/" /c 
+# Keep the same strict language/conformance surface in Debug and Release.
+CPP_PROJ=/nologo /MTd /W4 /Zi /Od $(CPP26_COMMON) /D "_DEBUG" \
+ /I "." /I "..\portable\include" /I "..\third_party\libuv\include" \
+ /I "..\third_party\mbedtls\include" \
+ /Fp"$(INTDIR)/chat.pch" /Fo"$(INTDIR)/" /Fd"$(INTDIR)/" /c
+C_PROJ=/nologo /MTd /W3 /Zi /Od $(C_COMMON) /D "_DEBUG" \
+ /I "." /I "..\portable\include" /I "..\third_party\libuv\include" \
+ /I "..\third_party\mbedtls\include" \
+ /Fo"$(INTDIR)/" /Fd"$(INTDIR)/" /c
 CPP_OBJS=.\Debug/
 CPP_SBRS=.\.
 # ADD BASE MTL /nologo /D "_DEBUG" /win32
@@ -291,8 +232,11 @@ BSC32_SBRS= \
 LINK32=link.exe
 # ADD BASE LINK32 /nologo /subsystem:windows /debug /machine:I386
 # ADD LINK32 uuid.lib winmm.lib /nologo /subsystem:windows /incremental:no /debug /machine:I386 /nodefaultlib:"libc"
-LINK32_FLAGS=uuid.lib winmm.lib /nologo /subsystem:windows /FORCE:MULTIPLE\
+LINK32_FLAGS=uuid.lib winmm.lib ws2_32.lib libuv.lib mbedtls.lib mbedx509.lib \
+ mbedcrypto.lib bcrypt.lib crypt32.lib userenv.lib iphlpapi.lib psapi.lib advapi32.lib \
+ /nologo /subsystem:windows /FORCE:MULTIPLE\
  /LIBPATH:"$(VCTOOLSINSTALLDIR)ATLMFC\lib\spectre\x86"\
+ /LIBPATH:"$(PORTABLE_LIB)"\
  /incremental:no /pdb:"$(OUTDIR)/chat.pdb" /debug /machine:I386\
  /nodefaultlib:"libc" /out:"$(OUTDIR)/chat.exe" 
 LINK32_OBJS= \
@@ -322,6 +266,12 @@ LINK32_OBJS= \
 	"$(INTDIR)\histent.obj" \
 	"$(INTDIR)\IpFrame.obj" \
 	"$(INTDIR)\irc.obj" \
+	"$(INTDIR)\crypto_runtime.obj" \
+	"$(INTDIR)\memory.obj" \
+	"$(INTDIR)\connection_engine.obj" \
+	"$(INTDIR)\dcc_transfer_engine.obj" \
+	"$(INTDIR)\ircv3.obj" \
+	"$(INTDIR)\transport_adapter_api_compile.obj" \
 	"$(INTDIR)\MainFrm.obj" \
 	"$(INTDIR)\memblst.obj" \
 	"$(INTDIR)\mfcbind.obj" \
@@ -355,7 +305,7 @@ LINK32_OBJS= \
 !ENDIF 
 
 .c{$(CPP_OBJS)}.obj:
-   $(CPP) $(CPP_PROJ) $<  
+   $(CPP) $(C_PROJ) $<
 
 .cpp{$(CPP_OBJS)}.obj:
    $(CPP) $(CPP_PROJ) $<  
@@ -364,13 +314,34 @@ LINK32_OBJS= \
    $(CPP) $(CPP_PROJ) $<  
 
 .c{$(CPP_SBRS)}.sbr:
-   $(CPP) $(CPP_PROJ) $<  
+   $(CPP) $(C_PROJ) $<
 
 .cpp{$(CPP_SBRS)}.sbr:
    $(CPP) $(CPP_PROJ) $<  
 
 .cxx{$(CPP_SBRS)}.sbr:
    $(CPP) $(CPP_PROJ) $<  
+
+# Shared transport substrate.  These objects are linked now so API, ABI, and
+# native dependency drift fail the v1 build before the runtime adapter starts
+# owning connections.  No v1 socket call site is redirected in this step.
+"$(INTDIR)\crypto_runtime.obj" : ..\portable\src\crypto_runtime.cpp cpp26mode.h "$(INTDIR)"
+	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\crypto_runtime.obj" ..\portable\src\crypto_runtime.cpp
+
+"$(INTDIR)\memory.obj" : ..\portable\src\memory.cpp cpp26mode.h "$(INTDIR)"
+	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\memory.obj" ..\portable\src\memory.cpp
+
+"$(INTDIR)\connection_engine.obj" : ..\portable\src\net\connection_engine.cpp cpp26mode.h "$(INTDIR)"
+	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\connection_engine.obj" ..\portable\src\net\connection_engine.cpp
+
+"$(INTDIR)\dcc_transfer_engine.obj" : ..\portable\src\net\dcc_transfer_engine.cpp cpp26mode.h "$(INTDIR)"
+	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\dcc_transfer_engine.obj" ..\portable\src\net\dcc_transfer_engine.cpp
+
+"$(INTDIR)\ircv3.obj" : ..\portable\src\net\ircv3.cpp cpp26mode.h "$(INTDIR)"
+	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\ircv3.obj" ..\portable\src\net\ircv3.cpp
+
+"$(INTDIR)\transport_adapter_api_compile.obj" : tests\transport_adapter_api_compile.cpp cpp26mode.h "$(INTDIR)"
+	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\transport_adapter_api_compile.obj" tests\transport_adapter_api_compile.cpp
 
 ################################################################################
 # Begin Target
@@ -434,14 +405,13 @@ DEP_CPP_STDAF=\
 # ADD CPP /Yc"stdafx.h"
 
 BuildCmds= \
-	$(CPP) /nologo /MT /W3 /GX /O2 /D "WIN32" /D "NDEBUG" /D "_WINDOWS" /D "_MBCS"\
- /Fp"$(INTDIR)/chat.pch" /Yc"stdafx.h" /Fo"$(INTDIR)/" /c $(SOURCE) \
+	$(CPP) $(CPP_PROJ) /Yc"stdafx.h" $(SOURCE) \
 	
 
-"$(INTDIR)\StdAfx.obj" : $(SOURCE) $(DEP_CPP_STDAF) "$(INTDIR)"
+"$(INTDIR)\StdAfx.obj" : $(SOURCE) $(DEP_CPP_STDAF) cpp26mode.h "$(INTDIR)"
    $(BuildCmds)
 
-"$(INTDIR)\chat.pch" : $(SOURCE) $(DEP_CPP_STDAF) "$(INTDIR)"
+"$(INTDIR)\chat.pch" : $(SOURCE) $(DEP_CPP_STDAF) cpp26mode.h "$(INTDIR)"
    $(BuildCmds)
 
 !ELSEIF  "$(CFG)" == "chat - Win32 Debug"
@@ -449,15 +419,13 @@ BuildCmds= \
 # ADD CPP /Yc"stdafx.h"
 
 BuildCmds= \
-	$(CPP) /nologo /MTd /W3 /Gm /GX /Zi /Od /D "WIN32" /D "_DEBUG" /D "_WINDOWS"\
- /D "_MBCS" /Fp"$(INTDIR)/chat.pch" /Yc"stdafx.h" /Fo"$(INTDIR)/"\
- /Fd"$(INTDIR)/" /c $(SOURCE) \
+	$(CPP) $(CPP_PROJ) /Yc"stdafx.h" $(SOURCE) \
 	
 
-"$(INTDIR)\StdAfx.obj" : $(SOURCE) $(DEP_CPP_STDAF) "$(INTDIR)"
+"$(INTDIR)\StdAfx.obj" : $(SOURCE) $(DEP_CPP_STDAF) cpp26mode.h "$(INTDIR)"
    $(BuildCmds)
 
-"$(INTDIR)\chat.pch" : $(SOURCE) $(DEP_CPP_STDAF) "$(INTDIR)"
+"$(INTDIR)\chat.pch" : $(SOURCE) $(DEP_CPP_STDAF) cpp26mode.h "$(INTDIR)"
    $(BuildCmds)
 
 !ENDIF 

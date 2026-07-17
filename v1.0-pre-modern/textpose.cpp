@@ -81,7 +81,7 @@ void CheckStarts(const char *sent, CEmotionOpts &emOpts) {
 
 #endif
 
-static char *sentenceTerminator = ".!?";
+static constexpr char sentenceTerminator[] = ".!?";
 
 #if 0
 void ForSentenceStarts(const char *buff, CEmotionOpts &emOpts, void func(const char *, CEmotionOpts &)) {
@@ -326,5 +326,4 @@ void DestroyEmotionRules() {
 	DestroyEmotionList(wordRules);
 	DestroyEmotionList(sentenceRules);
 }
-
 
