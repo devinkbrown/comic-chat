@@ -1,6 +1,6 @@
 # IRC transport retirement audit
 
-Audit date: 2026-07-17  
+Audit date: 2026-07-16
 Audited revision: `1dc102030035d5cdf55e9f4d62b7cc5b2c77093b`
 
 ## Decision

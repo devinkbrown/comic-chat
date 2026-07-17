@@ -401,13 +401,13 @@ def validate_settings_and_schema() -> None:
         "Claude model handoff schema is not the compact untrusted contract",
     )
     trusted_fields = {"role", "worktree", "base", "head", "commit", "git_status", "diffstat", "patch_sha256"}
-    execution_fields = {"red", "green", "sanitizers"}
+    local_fields = {"red", "green", "sanitizers", "model_report_trust"}
     require(
-        not ((trusted_fields | execution_fields) & set(model_schema.get("properties", {}))),
+        not ((trusted_fields | local_fields) & set(model_schema.get("properties", {}))),
         "Claude model schema exposes locally supplied fields",
     )
     require(
-        model_required | trusted_fields | execution_fields == final_required,
+        model_required | trusted_fields | local_fields == final_required,
         "Claude handoff schema omits fail-closed fields",
     )
     for field in model_required:
@@ -464,6 +464,14 @@ def validate_wrapper(roster: dict[str, object]) -> None:
     relative = run([os.fspath(wrapper), "inventory", "meson.build"], cwd=ROOT / "portable", env=base_env)
     require(relative.returncode == 0, f"relative prompt regression: {relative.stderr}")
 
+    unsafe_temp_env = base_env.copy()
+    unsafe_temp_env["COMICCHAT_AI_TMPDIR"] = os.fspath(ROOT)
+    unsafe_temp = run(
+        [os.fspath(wrapper), "inventory", os.fspath(ROOT / "AGENTS.md")],
+        env=unsafe_temp_env,
+    )
+    require(unsafe_temp.returncode == 73, "Claude control snapshot was allowed inside the repository")
+
     with tempfile.TemporaryDirectory(prefix="comicchat-wrong-repo-", dir=temporary_root()) as raw:
         wrong_repo = Path(raw)
         require(run(["git", "init", "-q"], cwd=wrong_repo).returncode == 0, "wrong-repo fixture failed")
@@ -491,6 +499,9 @@ def validate_wrapper(roster: dict[str, object]) -> None:
             "if [ \"${1:-}\" = \"--version\" ]; then\n"
             "  printf '2.1.212 (Claude Code)\\n'\n"
             "else\n"
+            "  if [ -n \"${COMICCHAT_FAKE_MUTATE:-}\" ]; then\n"
+            "    printf '\\n' >> \"$COMICCHAT_FAKE_MUTATE\"\n"
+            "  fi\n"
             "  cat \"$COMICCHAT_FAKE_CLAUDE_RESPONSE\"\n"
             "fi\n"
         )
@@ -515,6 +526,20 @@ def validate_wrapper(roster: dict[str, object]) -> None:
         require(emitted["worktree"] == os.fspath(ROOT), "wrapper did not replace worktree metadata")
         require(emitted["git_status"] != "not-run", "wrapper trusted Claude Git metadata")
         require(emitted["role"] == "research", "wrapper did not enforce lane role")
+        require(
+            emitted["model_report_trust"] == "untrusted-model-assertions",
+            "wrapper did not label model prose as untrusted",
+        )
+
+        control_path = ROOT / "scripts/ai/claude-handoff.schema.json"
+        original_control = control_path.read_bytes()
+        fake_env["COMICCHAT_FAKE_MUTATE"] = os.fspath(control_path)
+        try:
+            result = run([os.fspath(wrapper), "inventory", os.fspath(ROOT / "AGENTS.md")], env=fake_env)
+        finally:
+            control_path.write_bytes(original_control)
+            fake_env.pop("COMICCHAT_FAKE_MUTATE", None)
+        require(result.returncode == 75, "Claude control-plane mutation escaped the wrapper")
 
         model_drift = json.loads(json.dumps(envelope))
         model_drift["modelUsage"] = {"claude-sonnet-fixture": {}}
@@ -542,6 +567,8 @@ def validate_wrapper(roster: dict[str, object]) -> None:
                 "Read,Grep,Glob",
                 "--expected-fingerprint",
                 "0" * 64,
+                "--fingerprint-script",
+                os.fspath(ROOT / "scripts/ai/worktree-fingerprint.py"),
             ]
         )
         require(wrong_fingerprint.returncode == 65, "mismatched trusted fingerprint escaped validation")
@@ -598,7 +625,75 @@ def validate_wrapper(roster: dict[str, object]) -> None:
         summary_claim["structured_output"]["summary"] = "The build passed and all tests were green."
         response.write_text(json.dumps(summary_claim))
         result = run([os.fspath(wrapper), "inventory", os.fspath(ROOT / "AGENTS.md")], env=fake_env)
-        require(result.returncode == 65, "unsupported execution claim escaped through summary prose")
+        require(
+            result.returncode == 65,
+            f"unsupported execution claim escaped through summary prose: {result.returncode}: {result.stderr}",
+        )
+
+        for location, mutate in (
+            (
+                "oracle",
+                lambda output: output.update({"oracle": "The build passed and tests were green."}),
+            ),
+            (
+                "finding scenario",
+                lambda output: output.update(
+                    {
+                        "findings": [
+                            {
+                                "severity": "info",
+                                "location": "fixture.cpp:1",
+                                "scenario": "The build passed and tests were green.",
+                            }
+                        ]
+                    }
+                ),
+            ),
+            (
+                "check evidence",
+                lambda output: output.update(
+                    {
+                        "checks": [
+                            {
+                                "kind": "model-tool",
+                                "tool": "Read",
+                                "command": "Read fixture.cpp",
+                                "exit_code": 0,
+                                "result": "passed",
+                                "evidence": "The build passed and tests were green.",
+                            }
+                        ]
+                    }
+                ),
+            ),
+        ):
+            prose_claim = json.loads(json.dumps(envelope))
+            mutate(prose_claim["structured_output"])
+            response.write_text(json.dumps(prose_claim))
+            result = run([os.fspath(wrapper), "inventory", os.fspath(ROOT / "AGENTS.md")], env=fake_env)
+            require(result.returncode == 65, f"unsupported execution claim escaped through {location}")
+
+        for claim in (
+            "All unit tests pass; the compiler reports no errors.",
+            "The test suite completed with zero failures.",
+        ):
+            prose_claim = json.loads(json.dumps(envelope))
+            prose_claim["structured_output"]["oracle"] = claim
+            response.write_text(json.dumps(prose_claim))
+            result = run([os.fspath(wrapper), "inventory", os.fspath(ROOT / "AGENTS.md")], env=fake_env)
+            require(result.returncode == 65, f"execution-claim synonym escaped prose guard: {claim}")
+
+        blocking_finding = json.loads(json.dumps(envelope))
+        blocking_finding["structured_output"]["findings"] = [
+            {
+                "severity": "high",
+                "location": "fixture.cpp:1",
+                "scenario": "A hostile input can cross the documented boundary.",
+            }
+        ]
+        response.write_text(json.dumps(blocking_finding))
+        result = run([os.fspath(wrapper), "inventory", os.fspath(ROOT / "AGENTS.md")], env=fake_env)
+        require(result.returncode == 1, "high-severity finding did not block the wrapper gate")
 
 
 def validate_hook() -> None:
@@ -700,6 +795,8 @@ def validate_ci_and_diff() -> None:
         "CLAUDE.md",
         "docs/AI-DEVELOPMENT-WORKFLOW.md",
         "docs/CPP26-ENGINEERING.md",
+        "docs/IRCv3-COVERAGE.md",
+        "docs/TRANSPORT-RETIREMENT.md",
         "scripts/ai/**",
     ):
         require(path in workflow, f"agent workflow path filter omits {path}")

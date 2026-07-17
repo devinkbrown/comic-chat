@@ -1,6 +1,6 @@
 # IRC and IRCv3 coverage
 
-Audit snapshot: 2026-07-17, source commit `1dc1020`.
+Audit snapshot: 2026-07-16, source commit `1dc1020`.
 
 This is the compatibility ledger for the legacy Microsoft Comic Chat client in
 `v2.5-beta-1-modern/` and the shared protocol engine in `portable/`. It measures

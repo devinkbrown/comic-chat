@@ -89,9 +89,9 @@ def git(repo: Path, *arguments: str) -> str:
         raise ValidationError(f"could not capture trusted Git metadata: {detail}") from error
 
 
-def fingerprint(root: Path) -> str:
+def fingerprint(root: Path, fingerprint_script: Path) -> str:
     result = subprocess.run(
-        [sys.executable, os.fspath(root / "scripts/ai/worktree-fingerprint.py"), "--repo", os.fspath(root)],
+        [sys.executable, os.fspath(fingerprint_script), "--repo", os.fspath(root)],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -102,15 +102,21 @@ def fingerprint(root: Path) -> str:
     return result.stdout.strip()
 
 
-def trusted_metadata(repo: Path, base: str, role: str, expected_fingerprint: str) -> dict[str, str]:
+def trusted_metadata(
+    repo: Path,
+    base: str,
+    role: str,
+    expected_fingerprint: str,
+    fingerprint_script: Path,
+) -> dict[str, str]:
     root = Path(git(repo, "rev-parse", "--show-toplevel"))
-    before = fingerprint(root)
+    before = fingerprint(root, fingerprint_script)
     if before != expected_fingerprint:
         raise ValidationError("worktree fingerprint changed before trusted metadata capture")
     status = git(root, "status", "--short", "--untracked-files=all")
     diffstat = git(root, "diff", "--stat", "HEAD", "--", ".")
     head = git(root, "rev-parse", "HEAD")
-    after = fingerprint(root)
+    after = fingerprint(root, fingerprint_script)
     if after != before:
         raise ValidationError("worktree changed during trusted metadata capture")
     return {
@@ -158,18 +164,31 @@ def validate_check_semantics(handoff: dict[str, Any], allowed_tools: set[str] | 
 
 
 def validate_execution_prose(handoff: dict[str, Any]) -> None:
-    subject = r"(?:tests?|build|compile|link|meson|nmake|asan|ubsan|tsan|sanitizers?|benchmarks?|ci)"
-    outcome = r"(?:passed|succeeded|successful|green|clean|ran|executed|exit(?:\s+code)?\s*0)"
+    subject = (
+        r"(?:(?:unit\s+)?tests?(?:\s+suites?)?|builds?|compil(?:e|er|ers|ation|ations)|"
+        r"links?|meson|nmake|asan|ubsan|tsan|sanitizers?|benchmarks?|ci)"
+    )
+    outcome = (
+        r"(?:pass(?:es|ed|ing)?|succeed(?:s|ed|ing)?|successful|green|clean|ran|executed|"
+        r"zero\s+failures?|no\s+(?:errors?|failures?)|exit(?:\s+code)?\s*0)"
+    )
     patterns = (
         re.compile(rf"\b{subject}\b.{{0,48}}\b{outcome}\b", re.IGNORECASE | re.DOTALL),
         re.compile(rf"\b{outcome}\b.{{0,48}}\b{subject}\b", re.IGNORECASE | re.DOTALL),
     )
     fields: list[tuple[str, str]] = [
         ("summary", handoff["summary"]),
+        ("scope", handoff["scope"]),
+        ("oracle", handoff["oracle"]),
         ("artifacts", handoff["artifacts"]),
         ("next", handoff["next"]),
     ]
     fields.extend((f"risks[{index}]", value) for index, value in enumerate(handoff["risks"]))
+    for index, finding in enumerate(handoff["findings"]):
+        fields.append((f"findings[{index}].location", finding["location"]))
+        fields.append((f"findings[{index}].scenario", finding["scenario"]))
+    for index, check in enumerate(handoff["checks"]):
+        fields.append((f"checks[{index}].evidence", check["evidence"]))
     for location, value in fields:
         if any(pattern.search(value) for pattern in patterns):
             raise ValidationError(f"$.{location}: unsupported execution claim outside checks")
@@ -190,6 +209,7 @@ def main() -> int:
     parser.add_argument("--expected-model", choices=["haiku", "sonnet", "opus"], required=True)
     parser.add_argument("--allowed-tools")
     parser.add_argument("--expected-fingerprint", required=True)
+    parser.add_argument("--fingerprint-script", type=Path, required=True)
     arguments = parser.parse_args()
 
     try:
@@ -222,14 +242,27 @@ def main() -> int:
         if not isinstance(model_schema, dict) or not isinstance(final_schema, dict):
             raise ValidationError("Claude handoff schemas must be objects")
         validate(handoff, model_schema)
-        handoff.update({"red": "not-run", "green": "not-run", "sanitizers": "not-run"})
+        handoff.update(
+            {
+                "red": "not-run",
+                "green": "not-run",
+                "sanitizers": "not-run",
+                "model_report_trust": "untrusted-model-assertions",
+            }
+        )
         allowed_tools = None
         if arguments.allowed_tools is not None:
             allowed_tools = {tool for tool in arguments.allowed_tools.split(",") if tool}
         validate_check_semantics(handoff, allowed_tools)
         validate_execution_prose(handoff)
         handoff.update(
-            trusted_metadata(arguments.repo, arguments.base, arguments.role, arguments.expected_fingerprint)
+            trusted_metadata(
+                arguments.repo,
+                arguments.base,
+                arguments.role,
+                arguments.expected_fingerprint,
+                arguments.fingerprint_script,
+            )
         )
         validate(handoff, final_schema)
     except ValidationError as error:
@@ -238,7 +271,10 @@ def main() -> int:
 
     print(json.dumps(handoff, indent=2, sort_keys=True))
     failed_check = any(check["result"] == "failed" for check in handoff["checks"])
-    return 0 if handoff["status"] == "complete" and not failed_check else 1
+    blocking_finding = any(
+        finding["severity"] in {"critical", "high"} for finding in handoff["findings"]
+    )
+    return 0 if handoff["status"] == "complete" and not failed_check and not blocking_finding else 1
 
 
 if __name__ == "__main__":

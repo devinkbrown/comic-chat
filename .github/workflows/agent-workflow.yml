@@ -14,6 +14,8 @@ on:
       - "CLAUDE.md"
       - "docs/AI-DEVELOPMENT-WORKFLOW.md"
       - "docs/CPP26-ENGINEERING.md"
+      - "docs/IRCv3-COVERAGE.md"
+      - "docs/TRANSPORT-RETIREMENT.md"
       - "scripts/ai/**"
 
 concurrency:

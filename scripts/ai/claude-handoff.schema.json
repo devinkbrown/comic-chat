@@ -16,6 +16,9 @@
     "git_status": { "type": "string" },
     "diffstat": { "type": "string" },
     "patch_sha256": { "type": "string" },
+    "model_report_trust": {
+      "enum": ["untrusted-model-assertions"]
+    },
     "scope": { "type": "string" },
     "oracle": { "type": "string" },
     "red": { "type": "string" },
@@ -72,6 +75,7 @@
     "git_status",
     "diffstat",
     "patch_sha256",
+    "model_report_trust",
     "scope",
     "oracle",
     "red",

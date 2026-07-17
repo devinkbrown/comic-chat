@@ -167,6 +167,7 @@ commit: <full commit or none>
 git_status: <porcelain-v1 output or clean>
 diffstat: <git diff --stat summary or none>
 patch_sha256: <scripts/ai/worktree-fingerprint.py value or none>
+model_report_trust: untrusted-model-assertions # supplied by the wrapper
 scope: <files/components inspected or changed>
 oracle: <Microsoft source, official spec, or executable contract>
 red: <baseline command, exit code, and exact failure, or none with reason>
@@ -268,8 +269,12 @@ execution tokens and locally measured metadata, then validates the completed
 result against `scripts/ai/claude-handoff.schema.json`. It also validates the
 outer CLI success envelope and check/result consistency, fingerprints the
 worktree, and invalidates read-only evidence if the tree changes during the
-consultation. A blocked handoff or reported failed check makes the wrapper
-fail. This does not replace Codex's scope assignment or review.
+consultation. Equal worktree fingerprints bracket route, skill, schema, and
+contract capture. The wrapper then executes private, read-only snapshots of the
+fingerprint helper, validator, and both schemas; any change to the routed
+control-plane files rejects the handoff. A blocked handoff, failed check, or
+critical/high finding makes the wrapper fail. This does not replace Codex's
+scope assignment or review.
 
 Claude checks distinguish `model-tool` observations from `proposed-command`
 verification. A model-tool record names the exact available Read/Grep/Glob/Web
@@ -279,6 +284,20 @@ or benchmark command is only a proposed command with `result: not-run` and
 `not-applicable` as exact tokens without appended prose. Explanations belong in
 `risks` or proposed-command checks. Only Codex or CI execution may promote
 those commands to verification evidence.
+
+Unsupported execution claims are rejected in every model-controlled narrative
+field, including scope, oracle, findings, check evidence, artifacts, risks, and
+next action. A model-tool observation may report what a file contains; it may
+not turn the existence of a build script or test source into an assertion that
+the build or test executed successfully.
+
+Every emitted handoff carries
+`model_report_trust: untrusted-model-assertions`. This is the structural trust
+boundary: summaries, findings, checks, and their evidence remain model claims
+even when a lexical guard does not recognize a euphemism. Only the wrapper's
+Git identity/fingerprint and exact not-run execution fields are locally
+measured. A zero wrapper exit means the consultation completed without a
+blocking finding; it never proves that product code built or tests passed.
 
 Hooks are intentionally reserved for cheap deterministic invariants. Long test
 suites belong in explicit verification and CI, where failures are visible and

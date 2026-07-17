@@ -5,7 +5,9 @@ unofficial **Comic Chat: Reinked** modernization. Read
 [`docs/AI-DEVELOPMENT-WORKFLOW.md`](docs/AI-DEVELOPMENT-WORKFLOW.md) and the
 canonical [`docs/CPP26-ENGINEERING.md`](docs/CPP26-ENGINEERING.md) playbook
 before investigating, implementing, reviewing, or integrating non-trivial C++
-work.
+work. Protocol and connection-path changes must also use the current
+[`docs/IRCv3-COVERAGE.md`](docs/IRCv3-COVERAGE.md) and
+[`docs/TRANSPORT-RETIREMENT.md`](docs/TRANSPORT-RETIREMENT.md) ledgers.
 
 ## Source of truth
 
