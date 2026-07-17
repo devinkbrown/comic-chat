@@ -1,6 +1,6 @@
 # IRC and IRCv3 coverage
 
-Audit snapshot: 2026-07-16, base source commit `0f42423`.
+Audit snapshot: 2026-07-16, base source commit `398a831`.
 
 This is the compatibility ledger for the legacy Microsoft Comic Chat client in
 `v2.5-beta-1-modern/` and the shared protocol engine in `portable/`. It measures
@@ -62,26 +62,37 @@ The intended path is:
    `WM_COMICCHAT_IRCV3_EVENT`
    (`v2.5-beta-1-modern/ircv3eventbridge.h:13-78`,
    `v2.5-beta-1-modern/mainfrm.cpp:66-94`).
-5. Legacy command/model code applies visible behavior.
+5. `CChatView::OnIrcv3Event` resolves each receiving document's own user model
+   and applies bounded account, away, host, and realname mutations on the UI
+   thread. Away/back deliberately reuses Microsoft's original `DoUserAway`
+   remove/mutate/reinsert path so the member icon repaints
+   (`v2.5-beta-1-modern/ircv3eventbridge.h:25-110`,
+   `v2.5-beta-1-modern/chatview.cpp:85-131`).
 
-Step 5 is the principal gap. There is no message-map handler for
-`WM_COMICCHAT_IRCV3_EVENT`; repository-wide uses are only its declaration and
-the broadcast. The legacy command table also has no `ACCOUNT`, `CHGHOST`,
-`SETNAME`, `RENAME`, `FAIL`, `WARN`, or `NOTE`
-(`v2.5-beta-1-modern/ircsock.cpp:118-172`). Therefore a typed portable event is
-not, by itself, legacy-client support.
+Step 5 remains the principal completion gap, but it is no longer absent. The
+identity events above have causal MFC-independent model tests. `RENAME`,
+`FAIL`/`WARN`/`NOTE`, redaction, typing/reaction, read markers, metadata, and
+complete message contexts still lack legacy view/model consumers. A typed
+portable event is not, by itself, legacy-client support.
 
 ## Capability request safety
 
-`CapabilityCatalog()` currently requests every recognized offered capability,
-subject only to declared dependencies and the secure-SASL check
-(`portable/src/net/ircv3.cpp:465-520,1327-1449`). STS is correctly observed and
-never requested. `MONITOR`, client tags, batch types, and ISUPPORT tokens are
-also correctly excluded (`portable/tests/ircv3_test.cpp:189-285`).
+Wire support and product readiness are now separate executable policies.
+`CapabilityCatalog()` defaults incomplete or observe-only product features off;
+`Engine::SetCapabilityRequestEnabled()` permits a frontend with a completed
+adapter to opt a known capability in or out without allowing STS, implicit
+`cap-notify`, unknown identifiers, tags, commands, batch types, or ISUPPORT
+tokens to become `CAP REQ` entries (`portable/src/net/ircv3.cpp:472-535,
+1265-1271,1402-1418`). Normative dependencies and the verified-TLS SASL gate
+still apply after an opt-in. Gated offers remain discoverable through
+`IsOffered()`/`CapabilityValue()` and parsing stays liberal and bounded.
 
-The default request set is too broad for the legacy product. “Auto-request” in
-this table means what the current engine does, not what it should do after the
-release gate is fixed.
+The default request set is deliberately small: message tags, server time,
+account tag/notify, away notify, chghost, setname, secure usable SASL, and
+implicit CAP 302 state. Generic batch, standard replies, the non-standard bot
+CAP, echo/labeled response, history, metadata, read markers, monitoring, and all
+known wire-shape hazards default off. Tests prove both safe defaults and explicit
+dependency-respecting opt-in (`portable/tests/ircv3_test.cpp:207-388`).
 
 Official capability sources: [account notify](https://ircv3.net/specs/extensions/account-notify),
 [account registration](https://ircv3.net/specs/extensions/account-registration),
@@ -114,23 +125,23 @@ Official capability sources: [account notify](https://ircv3.net/specs/extensions
 | Wire identifier | Spec status | Product status | Current evidence | Auto-request assessment |
 | --- | --- | --- | --- | --- |
 | `message-tags` | stable | **partial** | Bounded input preserves opaque keys while checked output remains strict (`portable/src/net/ircv3.cpp:676-768,2561-2568`); `TAGMSG` is typed-only at the legacy boundary (`v2.5-beta-1-modern/ircv3eventbridge.h:24-51`); causal tests `portable/tests/ircv3_test.cpp:142-181,632-647,1239-1264` | Safe to request at the transport boundary. Product status remains partial because typed contexts, typing, and reactions still lack visible descendant consumers. |
-| `batch` | stable | **partial** | Bounded nesting and several batch families in `portable/src/net/ircv3.cpp:1989-2172`; tests `portable/tests/ircv3_test.cpp:313-348,744-787` | Allow only with audited member semantics; a generic batch can unwrap a command the legacy model cannot safely consume. |
+| `batch` | stable | **partial** | Bounded nesting and several batch families in `portable/src/net/ircv3.cpp:1989-2172`; tests `portable/tests/ircv3_test.cpp:313-348,744-787` | **Default off.** Opt in only with audited member semantics; a generic batch can unwrap a command the legacy model cannot safely consume. |
 | `server-time` | stable | **observe-only** | `time` is preserved as an unknown/generic tag and stripped after `MessageContext`; Solanum/Unreal/Orochi/InspIRCd fixtures | Safe for ordinary chat, but the legacy history timestamp is not set from the tag. |
-| `standard-replies` | stable | **observe-only** | `FAIL`/`WARN`/`NOTE` become `StandardReply` events in `portable/src/net/ircv3.cpp:2193-2343`; state tests `portable/tests/ircv3_test.cpp:350-381` | **Block pending UI.** Consuming replies without a descendant event handler can hide errors from the user. |
+| `standard-replies` | stable | **observe-only** | `FAIL`/`WARN`/`NOTE` become `StandardReply` events in `portable/src/net/ircv3.cpp:2193-2343`; state tests `portable/tests/ircv3_test.cpp:350-381` | **Default off pending UI.** Consuming replies without a descendant event handler can hide errors from the user. |
 | `cap-notify` | stable | **implemented** | Implicit under CAP 302; `NEW`/`DEL`, dependent removal, and request tracking in `portable/src/net/ircv3.cpp:1488-1615`; tests `portable/tests/ircv3_test.cpp:189-252` | Safe. Never remove the implicit state merely because a server sends `CAP DEL cap-notify`. |
-| `account-notify` | stable | **observe-only** | Bounded account state and `Account` event in `portable/src/net/ircv3.cpp:2193-2343`; tests `portable/tests/ircv3_test.cpp:350-381,789-837` | Block until member identity/model adaptation exists. |
-| `account-tag` | stable | **observe-only** | Tag is preserved in `MessageContext`; fixture coverage, but no typed field or legacy use | Safe to parse; do not claim account-aware display or moderation. Prefer request gating until a consumer exists. |
-| `away-notify` | stable | **observe-only** | Bounded away state and `Away` event; state/bound tests | Block until member state is applied. |
-| `bot` | non-standard vendor CAP | **observe-only** | Requested only when `message-tags` is also offered; `bot` typed flag; Orochi and Unreal fixtures | **Block or profile-gate.** The standard bot-mode contract is the `bot` tag plus `BOT` ISUPPORT, not a general `bot` capability. Current request is not actually restricted to Orochi. |
-| `chghost` | stable | **observe-only** | Bounded host state and `HostChanged` event; state/bound tests | Block until identity/model adaptation exists. |
-| `echo-message` | stable | **partial** | Outgoing labels/content retained and inbound echoes suppressed in `portable/src/net/ircv3.cpp:2174-2191,2539-2593`; tests `portable/tests/ircv3_test.cpp:383-396` | Usable, but content-only fallback can mistake an identical echo from another bouncer session for the local message. Prefer labels when available. |
+| `account-notify` | stable | **partial** | Bounded account state and `Account` event feed the document-owned `CUserInfo::SetAccount` path; parser/state and causal fake-model tests cover login/logout and unknown users | Safe to request. Account identity is retained separately, but account-aware display and moderation remain future work. |
+| `account-tag` | stable | **observe-only** | Tag is preserved in `MessageContext`; fixture coverage, but no typed field or legacy use | Safe to request because the ordinary legacy wire shape is preserved; do not claim account-aware display or moderation. |
+| `away-notify` | stable | **implemented** | Bounded away state reaches `DoUserAway` on the UI thread, preserving Microsoft's original member-list refresh behavior; state/bound and causal model tests | Safe to request. |
+| `bot` | non-standard vendor CAP | **observe-only** | Offer is retained and the `bot` tag decodes; Orochi and Unreal fixtures cover discovery | **Default off.** The standard bot-mode contract is the `bot` tag plus `BOT` ISUPPORT, not a general `bot` capability. |
+| `chghost` | stable | **partial** | Bounded host state and `HostChanged` update the document-owned historical `user@host` identity; state/bound and causal model tests | Safe to request; a dedicated identity display remains absent. |
+| `echo-message` | stable | **partial** | Outgoing labels/content are retained and inbound echoes can be suppressed; tests cover correlation | **Default off.** Content-only fallback can mistake an identical echo from another bouncer session for the local message; durable pending-message identity is required. |
 | `extended-join` | stable | **unsupported** | Catalog and fixture selection only; no normalization before legacy `JOIN` | **Block.** Extended JOIN adds account and realname. The legacy handler treats `lastString` as the channel (`v2.5-beta-1-modern/ircsock.cpp:1374-1434`), so a realname can become the channel key. |
 | `invite-notify` | stable | **unsupported** | Catalog presence; no causal extension test or adapter | **Block.** The legacy INVITE path assumes an invitation for the local user (`v2.5-beta-1-modern/ircsock.cpp:1361-1367`). |
-| `labeled-response` | stable | **partial** | Labels, request correlation, labeled-response batch event, and echo correlation; `portable/src/net/ircv3.cpp:1989-2111,2539-2593`; tests `portable/tests/ircv3_test.cpp:383-396,744-787` | Block until no-response `ACK` and all response shapes are consumed instead of reaching legacy unknown-command handling. |
+| `labeled-response` | stable | **partial** | Labels, batch correlation, echo correlation, and terminal no-parameter `ACK` handling; malformed/unlabeled ACK is contained as a typed protocol error (`portable/src/net/ircv3.cpp:2521-2545`) | **Default off.** ACK no longer reaches legacy unknown-command handling, but full response presentation and durable pending-message identity are unfinished. |
 | `multi-prefix` | stable | **unsupported** | Negotiated but not normalized; no direct test | **Block.** `CUserInfo` strips only one prefix (`v2.5-beta-1-modern/userinfo.cpp:121-144`), so `@+nick` becomes nickname `+nick`. |
 | `no-implicit-names` | stable | **unsupported** | Catalog selection; legacy self-JOIN creates only a response-tracking `CCQuery` (`v2.5-beta-1-modern/ircsock.cpp:1419-1434`, `v2.5-beta-1-modern/query.cpp:105-110`) | **Block.** It does not transmit `NAMES`; when the server suppresses the implicit reply, the member list can remain empty. |
 | `sasl` | stable | **partial** | PLAIN, explicit EXTERNAL, and SCRAM-SHA-256; see dedicated section | Safe only on verified TLS with a usable mechanism. Product has no client-certificate provisioning and no post-registration reauthentication. |
-| `setname` | stable | **observe-only** | `SETNAME` state and `RealnameChanged` event; state/bound tests | Block until the member model/view consumes it. |
+| `setname` | stable | **partial** | `SETNAME` state and `RealnameChanged` update a separate document-owned realname field; state/bound and causal model tests | Safe to request; a visible realname surface remains absent. |
 | `userhost-in-names` | stable | **unsupported** | Negotiated but no legacy NAMES normalization or direct test | **Block.** NAMES tokens flow into the single-prefix `CUserInfo` constructor; `nick!user@host` can become the nickname. |
 | `draft/channel-rename` | work in progress | **observe-only** | `RENAME` migrates portable channel-keyed state and emits `ChannelRenamed`; `portable/src/net/ircv3.cpp:2193-2343`; test `portable/tests/ircv3_test.cpp:873-883` | **Block.** No legacy document/tab/member-list rename occurs. |
 | `draft/account-registration` | work in progress | **partial** | Secret-consuming `REGISTER`/`VERIFY` builders and typed outcomes in `portable/src/net/ircv3.cpp:2595-2658`; tests `portable/tests/ircv3_test.cpp:1083-1112` | Block until an account UI consumes the API and replies. |
@@ -144,15 +155,15 @@ Official capability sources: [account notify](https://ircv3.net/specs/extensions
 | `draft/pre-away` | work in progress | **unsupported** | Catalog entry only; no pre-registration AWAY builder or causal test | **Block.** Negotiation without use supplies no product feature. |
 | `draft/read-marker` | work in progress | **observe-only** | Bounded `MARKREAD` state and `ReadMarker` event; state/bound tests | Block until read state is displayed and outbound advancement is implemented. |
 | `extended-monitor` | stable | **observe-only** | Presence numerics/state and typed events, generic outgoing path; `portable/src/net/ircv3.cpp:1755-1885`; tests `portable/tests/ircv3_test.cpp:621-667` | Block until the UI manages a MONITOR list. This CAP does not replace the base `MONITOR` ISUPPORT token. |
-| `sts` | stable, server-advertised | **partial** | Observed outside the request catalog and immediate plaintext upgrade exists; see dedicated section | Correctly never request. Do not claim persistent STS until a durable per-host policy store exists. |
+| `sts` | stable, server-advertised | **partial** | Observed outside the request catalog; immediate plaintext upgrade and a durable per-host policy substrate exist; see dedicated section | Correctly never request. Do not claim durable enforcement until every production session owns the store lifecycle. |
 
-### Required request-policy change
+### Request-policy gate
 
-Replace “request every recognized offered capability” with an explicit product-
-readiness policy. At minimum, the unsafe rows above must default off until their
-legacy adapters and causal tests land. Parsing must remain liberal and bounded
-even when requesting is disabled. Server profiles must not silently enable a
-feature unless a fixture and a profile-specific contract justify the exception.
+**Implemented.** The engine now has a safe default product-readiness policy and
+an explicit known-capability override. Parsing remains liberal and bounded when
+requesting is disabled, dependencies cannot be bypassed, and server profiles do
+not silently opt features in. A frontend must ship its consumer and causal tests
+before it enables a gated capability.
 
 ## Non-capability registry coverage
 
@@ -171,7 +182,7 @@ client tag-frame bound (`portable/src/net/ircv3.cpp:676-768,2561-2568`).
 | `account` | [account-tag](https://ircv3.net/specs/extensions/account-tag) | **observe-only** | Preserved generically; no typed field or member-account update. |
 | `batch` | [batch](https://ircv3.net/specs/extensions/batch) | **partial** | Drives bounded batch membership and is consumed by `HandleBatch`; batch tests cover nesting and limits. |
 | `bot` | [bot mode](https://ircv3.net/specs/extensions/bot-mode) | **observe-only** | Typed boolean exists; no renderer/member-model consumer. `BOT` is separately an ISUPPORT token. |
-| `label` | [labeled response](https://ircv3.net/specs/extensions/labeled-response) | **partial** | Correlated to requests and opening batches; no full legacy response adapter. |
+| `label` | [labeled response](https://ircv3.net/specs/extensions/labeled-response) | **partial** | Correlated to requests, opening batches, and terminal ACK; no full legacy response presentation. |
 | `msgid` | [message IDs](https://ircv3.net/specs/extensions/message-ids) | **observe-only** | Decoded into `TypedTags::message_id`; only attached to typing/reaction context or generic `MessageContext`. |
 | `time` | [server time](https://ircv3.net/specs/extensions/server-time) | **observe-only** | Preserved but not parsed or applied to a Comic Chat history entry. |
 | `draft/multiline-concat` | [multiline](https://ircv3.net/specs/extensions/multiline) | **partial** | Used during receive-side reassembly; normative blank/concat constraints remain incomplete. |
@@ -197,7 +208,7 @@ and total bytes (`portable/src/net/ircv3.cpp:1989-2172`; rejection/bounds tests 
 | Opening type | Status | Evidence and missing behavior |
 | --- | --- | --- |
 | `chathistory` | **partial** | Produces `ChatHistory` and unwraps messages; legacy history/time/backfill semantics are absent. |
-| `labeled-response` | **partial** | Label correlation/event exists; not every terminal response is adapted. |
+| `labeled-response` | **partial** | Label correlation/event and no-output ACK exist; not every response is presented by the legacy UI. |
 | `draft/multiline` | **partial** | Receive-side concatenation exists; advertised limits and all invalid combinations are not enforced, and send-side batching is absent. |
 | `netsplit`, `netjoin` | **observe-only** | Typed events exist for stable and accepted `draft/` aliases; no legacy member-list reconciliation. |
 | `draft/isupport` / `isupport` | **partial** | Applies 005 items and emits events; replacement semantics need spec-focused tests. |
@@ -385,30 +396,30 @@ file transfer; retain explicit consent and address-scope warnings.
 The standalone protocol test is strong on deterministic parsing, bounds, CAP
 state, SASL cryptography, batches, retained state, output policy, and its bounded
 event-drain helper. It does **not** instantiate the MFC channel/member/history
-model. `TestLegacyUiEventBridge` proves bounded delivery and context preservation
-only (`portable/tests/ircv3_test.cpp:1135-1189`); it does not prove any descendant
-window handles the event.
+model. The bridge tests prove bounded delivery, context preservation, and causal
+account/away/host/realname mutation against an MFC-independent fake model. The
+native handler is wired, but this Linux audit cannot instantiate MFC; its actual
+Windows compilation remains an MSVC CI gate.
 
 Current conspicuous gaps include direct causal tests for `invite-notify`,
 `multi-prefix`, `userhost-in-names`, `pre-away`, extended-JOIN normalization,
-labeled no-response ACKs, persistent STS, CHATHISTORY
+full labeled response presentation, production STS session wiring, CHATHISTORY
 recovery invocation, event-playback isolation, visible redaction, and UI/model
-application of every typed state event.
+application of the remaining typed state events.
 
 ## Prioritized completion plan
 
 ### P0 — stop negotiating behavior the product cannot safely consume
 
-1. Add a product-readiness request policy and default-disable `extended-join`,
-   `multi-prefix`, `userhost-in-names`, `no-implicit-names`, `invite-notify`,
-   `draft/event-playback`, `draft/channel-rename`,
-   `draft/message-redaction`, and `draft/multiline` until their adapters pass.
+1. **Complete:** product readiness is separate from wire support; incomplete
+   response, batch, history, metadata, monitoring, draft, and wire-shape
+   features default off and require explicit adapter-owned opt-in.
 2. **Complete at the parser/adapter boundary:** inbound message-tag keys are
    preserved opaquely without weakening outbound validation, and `TAGMSG` is
    typed-only before legacy dispatch. Visible consumers remain part of item 3.
-3. Implement actual legacy event consumers for account/away/host/realname,
-   rename, standard replies, redaction, typing/reaction, read markers, metadata,
-   and message context; add model-level tests.
+3. **Partially complete:** account/away/host/realname have document-owned UI-
+   thread consumers and model-level tests. Implement rename, standard replies,
+   redaction, typing/reaction, read markers, metadata, and message context.
 4. Wire the durable per-host STS store into each production session before
    transport start, use an OS-native private config location, commit secure
    updates/removals, retain only the current connection's persistence receipt
@@ -422,8 +433,8 @@ application of every typed state event.
    client-batch/multiline construction.
 3. Wire CHATHISTORY recovery/pagination into reconnect without replaying
    uncertain messages or treating event playback as live state.
-4. Complete labeled-response terminal handling, use labels as the primary echo
-   identity, and expose standard replies instead of silently consuming them.
+4. Terminal labeled ACK handling is complete. Use durable labels as the primary
+   echo identity and expose standard replies instead of silently consuming them.
 5. Add SASL reauthentication/credential callbacks and an explicit client-
    certificate configuration path before enabling EXTERNAL in the product.
 
