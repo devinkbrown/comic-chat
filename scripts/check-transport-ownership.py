@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Enforce exclusive ownership of modern Comic Chat network transport.
 
-The v2.5 client and portable frontend are zero-tolerance surfaces.  The v1
-runtime is intentionally held to an exact, temporary source inventory until
-its MFC socket adapter is migrated, while its shared build substrate is already
-mandatory in both configurations.  A source finding may neither be added nor
-silently removed without updating this gate in the migration commit.
+Every modern client is a zero-tolerance surface. Legacy-named Connect, Send,
+and Close methods may remain as UI/protocol compatibility facades, but MFC
+socket ownership, callbacks, handles, initialization, and receive operations
+must never return. The shared C++26 transport substrate is mandatory in both
+Windows configurations.
 """
 
 from __future__ import annotations
@@ -94,14 +94,6 @@ V1_RULES = (
         re.compile(r"\bserverConn\s*\.\s*Create\s*\("),
     ),
     SourceRule(
-        "inherited-connect",
-        re.compile(r"\bserverConn\s*\.\s*Connect\s*\("),
-    ),
-    SourceRule(
-        "inherited-close",
-        re.compile(r"\bserverConn\s*\.\s*Close\s*\("),
-    ),
-    SourceRule(
         "mfc-receive-callback",
         re.compile(r"\bOnReceive\s*\("),
     ),
@@ -111,140 +103,11 @@ V1_IRC_IMPLEMENTATION_RULES = (
         "inherited-receive",
         re.compile(r"(?<![A-Za-z0-9_:.>])Receive\s*\("),
     ),
-    SourceRule(
-        "inherited-send",
-        re.compile(r"(?<![A-Za-z0-9_:>])(?:serverConn\s*\.\s*)?Send\s*\("),
-    ),
 )
 
-# This is an exact temporary allowlist, not a directory exemption.  File, line,
-# and normalized active code line are all pinned so a count-preserving relocation
-# or substitution fails.  Migration commits remove entries as they remove code.
-V1_EXPECTED_OCCURRENCES = (
-    ("mfc-socket-header", Path("v1.0-pre-modern/irc.cpp"), 5, "#include <afxsock.h>"),
-    ("mfc-socket-header", Path("v1.0-pre-modern/stdafx.h"), 18, "#include <afxsock.h>"),
-    (
-        "mfc-socket-base",
-        Path("v1.0-pre-modern/ircsock.h"),
-        4,
-        "class CIrcSocket : public CAsyncSocket {",
-    ),
-    ("mfc-socket-init", Path("v1.0-pre-modern/irc.cpp"), 140, "if (!AfxSocketInit()) {"),
-    (
-        "socket-handle-access",
-        Path("v1.0-pre-modern/irc.cpp"),
-        152,
-        "if (serverConn.m_hSocket != INVALID_SOCKET) {",
-    ),
-    (
-        "socket-handle-access",
-        Path("v1.0-pre-modern/irc.cpp"),
-        488,
-        "if (serverConn.m_hSocket != INVALID_SOCKET) {",
-    ),
-    ("inherited-create", Path("v1.0-pre-modern/irc.cpp"), 175, "VERIFY(serverConn.Create());"),
-    (
-        "inherited-connect",
-        Path("v1.0-pre-modern/irc.cpp"),
-        176,
-        "if (serverConn.Connect(GetMyServer(), GetMyPort()) || GetLastError() == WSAEWOULDBLOCK) {",
-    ),
-    ("inherited-close", Path("v1.0-pre-modern/irc.cpp"), 153, "serverConn.Close();"),
-    ("inherited-close", Path("v1.0-pre-modern/irc.cpp"), 489, "serverConn.Close();"),
-    (
-        "inherited-receive",
-        Path("v1.0-pre-modern/irc.cpp"),
-        967,
-        "int nRead = Receive(startPtr, space);",
-    ),
-    (
-        "inherited-send",
-        Path("v1.0-pre-modern/irc.cpp"),
-        483,
-        "serverConn.Send(outBuff, strlen(outBuff));",
-    ),
-    (
-        "inherited-send",
-        Path("v1.0-pre-modern/irc.cpp"),
-        513,
-        "serverConn.Send(outBuff, strlen(outBuff));",
-    ),
-    (
-        "inherited-send",
-        Path("v1.0-pre-modern/irc.cpp"),
-        539,
-        "serverConn.Send(outBuff, strlen(outBuff));",
-    ),
-    (
-        "inherited-send",
-        Path("v1.0-pre-modern/irc.cpp"),
-        733,
-        "serverConn.Send(command, command.GetLength());",
-    ),
-    ("inherited-send", Path("v1.0-pre-modern/irc.cpp"), 828, "Send(outBuff, strlen(outBuff));"),
-    ("inherited-send", Path("v1.0-pre-modern/irc.cpp"), 1010, "Send(buff, strlen(buff));"),
-    ("inherited-send", Path("v1.0-pre-modern/irc.cpp"), 1019, "Send(buff, strlen(buff));"),
-    (
-        "inherited-send",
-        Path("v1.0-pre-modern/irc.cpp"),
-        1112,
-        "serverConn.Send(outBuff, strlen(outBuff));",
-    ),
-    (
-        "inherited-send",
-        Path("v1.0-pre-modern/irc.cpp"),
-        1123,
-        "serverConn.Send(outBuff, strlen(outBuff));",
-    ),
-    (
-        "inherited-send",
-        Path("v1.0-pre-modern/irc.cpp"),
-        1185,
-        "serverConn.Send(command, command.GetLength());",
-    ),
-    (
-        "inherited-send",
-        Path("v1.0-pre-modern/irc.cpp"),
-        1238,
-        "serverConn.Send(command, command.GetLength());",
-    ),
-    (
-        "inherited-send",
-        Path("v1.0-pre-modern/irc.cpp"),
-        1247,
-        "serverConn.Send(command, command.GetLength());",
-    ),
-    (
-        "inherited-send",
-        Path("v1.0-pre-modern/irc.cpp"),
-        1294,
-        "serverConn.Send(outBuff, strlen(outBuff));",
-    ),
-    (
-        "inherited-send",
-        Path("v1.0-pre-modern/irc.cpp"),
-        1303,
-        "serverConn.Send(outBuff, strlen(outBuff));",
-    ),
-    (
-        "inherited-send",
-        Path("v1.0-pre-modern/irc.cpp"),
-        1349,
-        "serverConn.Send(outBuff, strlen(outBuff));",
-    ),
-    (
-        "mfc-receive-callback",
-        Path("v1.0-pre-modern/irc.cpp"),
-        960,
-        "void CIrcSocket::OnReceive(int nErrorCode) {",
-    ),
-    (
-        "mfc-receive-callback",
-        Path("v1.0-pre-modern/ircsock.h"),
-        8,
-        "virtual void OnReceive(int nErrorCode);",
-    ),
-)
+# The migration is complete: any finding is a regression. Keep this tuple so
+# compare_v1_inventory remains useful to external gate consumers.
+V1_EXPECTED_OCCURRENCES: tuple[tuple[str, Path, int, str], ...] = ()
 
 V2_FORBIDDEN_RULES = (
     (
@@ -562,17 +425,17 @@ def compare_v1_inventory(findings: Sequence[Finding]) -> list[str]:
     for occurrence, count in sorted((expected - actual).items(), key=lambda item: str(item[0])):
         rule, path, line, signature = occurrence
         errors.append(
-            f"v1 temporary allowlist occurrence missing ({count}): "
+            f"v1 expected ownership occurrence missing ({count}): "
             f"{path.as_posix()}:{line} [{rule}] {signature}"
         )
     for occurrence, count in sorted((actual - expected).items(), key=lambda item: str(item[0])):
         rule, path, line, signature = occurrence
         errors.append(
-            f"v1 unallowlisted occurrence ({count}): "
+            f"v1 legacy transport regression ({count}): "
             f"{path.as_posix()}:{line} [{rule}] {signature}"
         )
     errors.append(
-        f"v1 exact temporary inventory mismatch: expected {sum(expected.values())}, "
+        f"v1 zero-tolerance ownership mismatch: expected {sum(expected.values())}, "
         f"found {sum(actual.values())}"
     )
     return errors
@@ -878,19 +741,19 @@ def _print_result(result: AuditResult) -> None:
         for error in result.errors:
             print(f"  - {error}", file=sys.stderr)
         if result.v1_findings:
-            print("  current v1 temporary findings:", file=sys.stderr)
+            print("  current v1 legacy ownership findings:", file=sys.stderr)
             for finding in result.v1_findings:
                 print(f"    {finding.render()}", file=sys.stderr)
 
     counts = Counter(finding.rule for finding in result.v1_findings)
     print(
-        f"v1 temporary source allowlist: {len(result.v1_findings)}/"
+        f"v1 legacy ownership findings: {len(result.v1_findings)}/"
         f"{len(V1_EXPECTED_OCCURRENCES)} findings"
     )
     for rule, count in sorted(counts.items()):
         print(f"  {rule}: {count}")
     print(
-        f"v1 temporary makefile deficits: {len(result.v1_makefile_deficits)}/"
+        f"v1 shared-substrate makefile deficits: {len(result.v1_makefile_deficits)}/"
         f"{len(MAKEFILE_SUBSTRATE_CHECKS)} checks"
     )
     allowed_counts = Counter(finding.path for finding in result.allowed_network_findings)
