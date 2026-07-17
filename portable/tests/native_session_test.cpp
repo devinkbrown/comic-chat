@@ -384,4 +384,66 @@ TEST_CASE("an excessive IRC line burst closes before parsing any line") {
     CHECK(std::holds_alternative<comicchat::net::Disconnect>(observed->posts.front()));
 }
 
+TEST_CASE("IRC bytes are rejected before connected and after closed transport phases") {
+    TemporaryDirectory temporary;
+    auto fake = std::make_unique<FakeTransport>();
+    auto* observed = fake.get();
+    NativeSession session{temporary.path / "sts-policies", std::move(fake), [] { return at(100); }};
+    REQUIRE(session.start(options(Security::plaintext)));
+
+    observed->push(Event{1, BytesReceived{bytes("PING :premature\r\n")}});
+    const auto premature = session.poll();
+    REQUIRE(premature.diagnostics.size() == 1);
+    CHECK(premature.diagnostics.front().code == "transport-phase-violation");
+    CHECK(premature.messages.empty());
+    REQUIRE(observed->posts.size() == 1);
+    CHECK(std::holds_alternative<comicchat::net::Disconnect>(observed->posts.back()));
+
+    observed->posts.clear();
+    observed->push(Event{1, Connected{"irc.example", "127.0.0.1", false, false}});
+    (void)session.poll();
+    observed->posts.clear();
+    observed->push(Event{1, Closed{"transport failure", 500ms}});
+    observed->push(Event{1, BytesReceived{bytes("PING :late\r\n")}});
+    const auto late = session.poll();
+    REQUIRE(late.diagnostics.size() == 1);
+    CHECK(late.diagnostics.front().code == "transport-phase-violation");
+    CHECK(late.messages.empty());
+    REQUIRE(observed->posts.size() == 1);
+    CHECK(std::holds_alternative<comicchat::net::Disconnect>(observed->posts.back()));
+}
+
+TEST_CASE("native poll line-work budget spans all receive events") {
+    TemporaryDirectory temporary;
+    auto fake = std::make_unique<FakeTransport>();
+    auto* observed = fake.get();
+    NativeSession session{temporary.path / "sts-policies", std::move(fake), [] { return at(100); }};
+    REQUIRE(session.start(options(Security::plaintext)));
+    observed->push(Event{1, Connected{"irc.example", "127.0.0.1", false, false}});
+    (void)session.poll();
+    observed->posts.clear();
+
+    std::string first_burst;
+    std::string second_burst;
+    for (std::size_t index = 0; index < 256; ++index) {
+        first_burst += ":server NOTICE Alice :first\r\n";
+        second_burst += ":server NOTICE Alice :second\r\n";
+    }
+    second_burst += ":server NOTICE Alice :over-budget\r\n";
+    observed->push(Event{1, BytesReceived{bytes(first_burst)}});
+    observed->push(Event{1, BytesReceived{bytes(second_burst)}});
+    const auto result = session.poll();
+
+    REQUIRE(result.diagnostics.size() == 1);
+    CHECK(result.diagnostics.front().code == "protocol-work-limit");
+    CHECK_FALSE(result.messages.empty());
+    CHECK(result.messages.size() <= 256);
+    for (const auto& message : result.messages) {
+        REQUIRE_FALSE(message.params.empty());
+        CHECK(message.params.back() == "first");
+    }
+    REQUIRE(observed->posts.size() == 1);
+    CHECK(std::holds_alternative<comicchat::net::Disconnect>(observed->posts.back()));
+}
+
 } // namespace

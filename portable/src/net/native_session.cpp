@@ -32,6 +32,7 @@ constexpr std::string_view sts_policy_filename = "sts-policies-v1";
 constexpr std::size_t maximum_transport_events_per_poll = 128;
 constexpr std::size_t maximum_protocol_items_per_poll = 1024;
 constexpr std::size_t maximum_lines_per_receive_event = 512;
+constexpr std::size_t maximum_lines_per_poll = 512;
 constexpr std::size_t maximum_protocol_wire_bytes = 8191U + 512U;
 
 void secure_clear(std::string& value) noexcept {
@@ -350,12 +351,15 @@ class NativeSession::Impl final {
         -> NativeSessionPoll {
         NativeSessionPoll output;
         std::size_t remaining = std::min(maximum_protocol_items, maximum_protocol_items_per_poll);
+        std::size_t remaining_lines = maximum_lines_per_poll;
         const auto maximum = std::min(maximum_transport_events, maximum_transport_events_per_poll);
         if (running_ && maximum != 0) {
             auto events = transport_->poll_events(maximum);
             for (auto& event : events) {
                 if (event.generation != generation_) continue;
-                std::visit([&](auto&& body) { handle_body(std::forward<decltype(body)>(body), output, remaining); },
+                std::visit([&](auto&& body) {
+                    handle_body(std::forward<decltype(body)>(body), output, remaining, remaining_lines);
+                },
                            std::move(event.body));
             }
         }
@@ -578,11 +582,17 @@ class NativeSession::Impl final {
         return LineResult::complete;
     }
 
-    void handle_body(StateChanged body, NativeSessionPoll& output, std::size_t& remaining) {
+    void handle_body(StateChanged body, NativeSessionPoll& output, std::size_t& remaining, std::size_t&) {
         append_state(output, remaining, body.state);
     }
 
-    void handle_body(Connected body, NativeSessionPoll& output, std::size_t& remaining) {
+    void handle_body(Connected body, NativeSessionPoll& output, std::size_t& remaining, std::size_t&) {
+        if (connected_) {
+            append_diagnostic(output, remaining, "transport-phase-violation",
+                              "transport reported a duplicate connected event");
+            disconnect_protocol_failure();
+            return;
+        }
         if (current_connection_.security == Security::tls && !body.tls) {
             append_diagnostic(output, remaining, "tls-downgrade-blocked",
                               "transport reported plaintext for a TLS-only generation");
@@ -601,23 +611,38 @@ class NativeSession::Impl final {
         }
     }
 
-    void handle_body(BytesReceived body, NativeSessionPoll& output, std::size_t& remaining) {
+    void handle_body(BytesReceived body, NativeSessionPoll& output, std::size_t& remaining,
+                     std::size_t& remaining_lines) {
         if (!body.bytes) return;
+        if (!connected_) {
+            append_diagnostic(output, remaining, "transport-phase-violation",
+                              "transport delivered IRC bytes outside a connected phase");
+            disconnect_protocol_failure();
+            return;
+        }
         auto lines = framer_.Push(std::span<const std::byte>{*body.bytes});
         if (!lines || lines->size() > maximum_lines_per_receive_event) {
             append_diagnostic(output, remaining, "invalid-frame", "IRC framing limit was exceeded");
             disconnect_protocol_failure();
             return;
         }
+        if (lines->size() > remaining_lines) {
+            append_diagnostic(output, remaining, "protocol-work-limit",
+                              "IRC line work exceeded the bounded poll budget");
+            disconnect_protocol_failure();
+            return;
+        }
+        remaining_lines -= lines->size();
         for (const auto& line : *lines) {
             const auto result = process_line(line, output, remaining);
             if (result != LineResult::complete) return;
         }
     }
 
-    void handle_body(SendComplete, NativeSessionPoll&, std::size_t&) {}
+    void handle_body(SendComplete, NativeSessionPoll&, std::size_t&, std::size_t&) {}
 
-    void handle_body(PingDue, NativeSessionPoll& output, std::size_t& remaining) {
+    void handle_body(PingDue, NativeSessionPoll& output, std::size_t& remaining, std::size_t&) {
+        if (!connected_) return;
         auto ping = protocol_->PrepareKeepalivePing();
         if (!ping || !queue_protocol_line(std::move(*ping))) {
             append_diagnostic(output, remaining, "keepalive-failed", "IRC keepalive could not be queued");
@@ -625,7 +650,7 @@ class NativeSession::Impl final {
         }
     }
 
-    void handle_body(Closed body, NativeSessionPoll& output, std::size_t& remaining) {
+    void handle_body(Closed body, NativeSessionPoll& output, std::size_t& remaining, std::size_t&) {
         bool reschedule_failed{};
         if (connected_ && tls_verified_) {
             const auto rescheduled = store_.reschedule_on_verified_disconnect(
@@ -648,7 +673,7 @@ class NativeSession::Impl final {
         if (body.retry_after <= std::chrono::milliseconds::zero()) running_ = false;
     }
 
-    void handle_body(Diagnostic body, NativeSessionPoll& output, std::size_t& remaining) {
+    void handle_body(Diagnostic body, NativeSessionPoll& output, std::size_t& remaining, std::size_t&) {
         append_diagnostic(output, remaining, std::move(body.code), std::move(body.message));
     }
 
