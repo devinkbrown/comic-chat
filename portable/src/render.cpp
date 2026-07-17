@@ -379,7 +379,17 @@ void Canvas::render_panel(const Panel& panel, TextEngine& text, const PanelAvata
         }
     }
 
-    for (const auto& balloon : panel.balloons) {
+    // CUnitPanel::Draw walks the element list tail->head (panel.cpp:697-704):
+    // pePos starts at GetTailPosition() and each GetPrev(pePos) steps toward the
+    // head, so the newest-added element (list tail) draws first and the
+    // oldest-added element (list head) draws last, on top. page.cpp and
+    // comic_page.cpp push_back each balloon in chronological (oldest-first) order
+    // -- the same order CUnitPanel::AddBalloon's m_elements.AddTail (panel.cpp:585,
+    // 1103) builds the source list in -- so panel.balloons.front() is the source's
+    // list head and panel.balloons.back() is the source's list tail. Iterate in
+    // reverse to reproduce that draw order for overlapping balloons.
+    for (auto it = panel.balloons.rbegin(); it != panel.balloons.rend(); ++it) {
+        const auto& balloon = *it;
         // Tail first so the cloud fill overlaps the tail's top edge.
         if (balloon.has_tail) {
             draw_tail(context, transform, balloon.tail, stroke_width, balloon.kind.dashed);
@@ -394,7 +404,20 @@ void Canvas::render_panel(const Panel& panel, TextEngine& text, const PanelAvata
         cairo_set_source_rgba(context, 1.0, 1.0, 1.0, 1.0);
         cairo_fill_preserve(context);
         if (balloon.kind.dashed) {
-            const double dashes[2] = {stroke_width * 3.0, stroke_width * 2.0};
+            // CBWoodringNormal::Draw selects m_nimbusPen (PS_SOLID, 100,
+            // RGB(255,255,255)) over the filled path whenever m_byteDashed is set
+            // (balloon.cpp:114, 1921), THEN re-selects the black m_pen and dashes
+            // the trajectory on top (balloon.cpp:1934-1939). Reproduce the white
+            // 100-twip nimbus stroke first so it grows the visible cloud outward
+            // before the black dashed outline goes on top of it. The source is
+            // still white from the fill_preserve above.
+            cairo_set_line_width(context, std::max(1.0, 100.0 * transform.scale));
+            cairo_stroke_preserve(context);
+
+            // The dashed pen uses a FIXED 100/100-twip on/off pattern
+            // (traj.cpp:6, int dashArray[] = {100, 100}) independent of pen width,
+            // not the previous pen-relative {3x, 2x} ratio.
+            const double dashes[2] = {100.0 * transform.scale, 100.0 * transform.scale};
             cairo_set_dash(context, dashes, 2, 0.0);
         }
         cairo_set_source_rgba(context, 0.0, 0.0, 0.0, 1.0);
@@ -402,12 +425,26 @@ void Canvas::render_panel(const Panel& panel, TextEngine& text, const PanelAvata
         cairo_stroke(context);
         cairo_set_dash(context, nullptr, 0, 0.0);
 
-        // Think trail: shrinking ellipses toward the speaker.
+        // Think trail: shrinking ellipses toward the speaker. CBWoodringThink::Draw
+        // (balloon.cpp:1997-2001) grows the pad on WIDTH ONLY -- circRect starts as
+        // a BUBBLEHEIGHT-square, then `left -= widthAdjustment; right +=
+        // widthAdjustment;` before Ellipse(&circRect) -- so each bubble is a
+        // width-stretched ellipse, not a circle. Build the ellipse path with a
+        // save/translate/scale/arc/restore so the path itself lands in device
+        // space pre-distorted; restoring the CTM before the stroke keeps the pen
+        // width undistorted (a plain scale+stroke would thin/fatten the outline
+        // anisotropically).
         for (const auto& bubble : balloon.bubbles) {
             const auto center = to_device(transform, bubble.center);
-            const auto radius = (static_cast<double>(bubble.radius) + bubble.width_pad) * transform.scale;
+            const auto x_radius =
+                std::max(1.0, (static_cast<double>(bubble.radius) + bubble.width_pad) * transform.scale);
+            const auto y_radius = std::max(1.0, static_cast<double>(bubble.radius) * transform.scale);
             cairo_new_path(context);
-            cairo_arc(context, center.x, center.y, std::max(1.0, radius), 0.0, 2.0 * std::acos(-1.0));
+            cairo_save(context);
+            cairo_translate(context, center.x, center.y);
+            cairo_scale(context, x_radius, y_radius);
+            cairo_arc(context, 0.0, 0.0, 1.0, 0.0, 2.0 * std::acos(-1.0));
+            cairo_restore(context);
             cairo_set_source_rgba(context, 1.0, 1.0, 1.0, 1.0);
             cairo_fill_preserve(context);
             cairo_set_source_rgba(context, 0.0, 0.0, 0.0, 1.0);

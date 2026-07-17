@@ -450,6 +450,62 @@ TEST_CASE("render_panel emits a deterministic byte-identical balloon frame") {
     CHECK(a.write_png("balloon_panel_golden.png"));
 }
 
+TEST_CASE("render_panel draws think bubbles as width-stretched ellipses, not circles (balloon.cpp:1997-2001)") {
+    // CBWoodringThink::Draw grows the bubble's circRect on WIDTH ONLY
+    // (widthAdjustment applied to left/right, never top/bottom), so a bubble with
+    // a non-zero width_pad must render wider than it is tall. Isolate a single
+    // bubble (no cloud outline, no tail, no text) and measure the device-pixel
+    // bounding box of the drawn (stroked) shape directly, rather than trusting
+    // the geometry math alone.
+    const auto font = comicchat::find_portable_comic_font();
+    REQUIRE(font.has_value());
+    auto text = comicchat::TextEngine::create(*font);
+    REQUIRE(text.has_value());
+
+    using namespace comicchat;
+    Panel panel;
+    Balloon balloon{};
+    balloon.bubbles.push_back(ThinkBubble{BalloonPoint{1150, -1150}, 100, 100});
+    panel.balloons.push_back(std::move(balloon));
+
+    constexpr auto width = 460;
+    Canvas canvas{width, width};
+    canvas.clear({1.0, 1.0, 1.0, 1.0});
+    canvas.render_panel(panel, **text);
+
+    constexpr auto white = std::uint32_t{0xffffffffU};
+    // Scan a window strictly inside the panel border (the border pen, kept
+    // as-is by this fix, would otherwise dominate the bbox with its own square
+    // footprint). The bubble center (1150,-1150) at scale 0.2 lands at device
+    // (230,230); a 160x160 window around it comfortably contains the drawn
+    // ellipse (x-radius/y-radius <= 40/20 device px) with margin to spare.
+    constexpr auto scan_lo = 150;
+    constexpr auto scan_hi = 310;
+    int min_x = std::numeric_limits<int>::max();
+    int max_x = std::numeric_limits<int>::min();
+    int min_y = std::numeric_limits<int>::max();
+    int max_y = std::numeric_limits<int>::min();
+    const auto pixels = canvas.pixels();
+    for (int y = scan_lo; y < scan_hi; ++y) {
+        for (int x = scan_lo; x < scan_hi; ++x) {
+            if (pixels[static_cast<std::size_t>(y) * width + static_cast<std::size_t>(x)] == white) continue;
+            min_x = std::min(min_x, x);
+            max_x = std::max(max_x, x);
+            min_y = std::min(min_y, y);
+            max_y = std::max(max_y, y);
+        }
+    }
+    REQUIRE(max_x >= min_x);  // something was drawn
+    REQUIRE(max_y >= min_y);
+    const auto bbox_width = max_x - min_x;
+    const auto bbox_height = max_y - min_y;
+    CHECK(bbox_width > bbox_height);
+    // radius=100, width_pad=100 -> x-radius twips is double the y-radius twips,
+    // so the drawn bbox should be roughly twice as wide as it is tall (loosened
+    // for AA/stroke-width slop).
+    CHECK(static_cast<double>(bbox_width) > static_cast<double>(bbox_height) * 1.5);
+}
+
 // ===================================================================
 // Item 2.5b#4 — render_panel blits the REAL Item 2.2 composited avatar raster
 // into each placed PanelBody, replacing the flat color-box placeholder. The
