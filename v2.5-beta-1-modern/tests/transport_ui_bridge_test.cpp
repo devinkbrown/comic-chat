@@ -26,6 +26,8 @@ using comic_chat::ircv3::Event;
 using comic_chat::ircv3::EventType;
 using comic_chat::legacy_ui::ClassifyUserMutation;
 using comic_chat::legacy_ui::ClassifyStandardReply;
+using comic_chat::legacy_ui::ClassifyReactionStatus;
+using comic_chat::legacy_ui::IsWhitelistedMetadataKey;
 using comic_chat::legacy_ui::ClassifyChannelRename;
 using comic_chat::legacy_ui::ConsumeChannelRename;
 using comic_chat::legacy_ui::FormatChannelRenameStatus;
@@ -52,6 +54,14 @@ struct FakeUser {
 	std::string identity;
 	std::string realname;
 	bool away{};
+	// New model fields exercised by items 1.4/1.6. Appended after the original
+	// four so the existing positional/designated inits stay valid.
+	std::string profile_url;
+	std::string status;
+	// UF_TYPING-style member-list state. In comic view the real client must drive
+	// this through the STATE overlay ladder, not the flag ladder (memblst.cpp
+	// bypasses flags there); the bridge only reports the boolean.
+	bool typing{};
 };
 
 int failures{};
@@ -131,7 +141,7 @@ void TestTypedUserMutationClassification()
 void TestTypedUserMutationsReachOwnedModels()
 {
 	std::map<std::string, FakeUser, std::less<>> users;
-	users.emplace("Bob", FakeUser{"old-account", "old@host", "Old Name", false});
+	users.emplace("Bob", FakeUser{"old-account", "old@host", "Old Name", false, {}, {}, false});
 	users.emplace("LocalNick", FakeUser{});
 	const auto find = [&users](std::string_view nickname) -> FakeUser* {
 		const auto found = users.find(nickname);
@@ -150,6 +160,17 @@ void TestTypedUserMutationsReachOwnedModels()
 			break;
 		case Ircv3UserMutationKind::realname:
 			user.realname = mutation.value;
+			break;
+		case Ircv3UserMutationKind::typing:
+			user.typing = mutation.active;
+			break;
+		case Ircv3UserMutationKind::metadata:
+			// mutation.secondary names the whitelisted key; route it to the owned
+			// field exactly as SetAccount/SetRealName would.
+			if (mutation.secondary == "url")
+				user.profile_url = mutation.value;
+			else if (mutation.secondary == "status")
+				user.status = mutation.value;
 			break;
 		case Ircv3UserMutationKind::none:
 			break;
@@ -606,6 +627,203 @@ void TestTransportIngressPhaseAndWorkGates()
 	Check(!budget.Consume(1));
 }
 
+// 1.4 -- a draft/typing typed event becomes a per-nick UF_TYPING-style mutation.
+void TestTypingTypedEventBecomesMemberState()
+{
+	Event typing;
+	typing.type = EventType::Typing;
+	typing.source = "Bob";
+	typing.key = "active";
+	auto mutation = ClassifyUserMutation(typing);
+	Check(mutation.kind == Ircv3UserMutationKind::typing && mutation.nickname == "Bob" &&
+		mutation.value == "active" && mutation.active);
+
+	typing.key = "paused";
+	mutation = ClassifyUserMutation(typing);
+	Check(mutation.kind == Ircv3UserMutationKind::typing && !mutation.active);
+	typing.key = "done";
+	mutation = ClassifyUserMutation(typing);
+	Check(mutation.kind == Ircv3UserMutationKind::typing && !mutation.active);
+
+	// A Typing event with no/garbage state token is malformed and yields none, so
+	// the historical "unrelated Typing event" path keeps classifying to none.
+	typing.key.clear();
+	Check(ClassifyUserMutation(typing).kind == Ircv3UserMutationKind::none);
+	typing.key = "typing";
+	Check(ClassifyUserMutation(typing).kind == Ircv3UserMutationKind::none);
+	// A prefixed or null-poisoned source is rejected like every other mutation.
+	typing.key = "active";
+	typing.source = "@Bob";
+	Check(ClassifyUserMutation(typing).kind == Ircv3UserMutationKind::none);
+	typing.source = std::string("Bob\0spoof", 9);
+	Check(ClassifyUserMutation(typing).kind == Ircv3UserMutationKind::none);
+
+	// Reaches the owned model through the same find/apply pair as chghost.
+	std::map<std::string, FakeUser, std::less<>> users;
+	users.emplace("Bob", FakeUser{});
+	const auto find = [&users](std::string_view nickname) -> FakeUser* {
+		const auto found = users.find(nickname);
+		return found == users.end() ? nullptr : &found->second;
+	};
+	const auto apply = [](FakeUser& user, const Ircv3UserMutation& m) {
+		if (m.kind == Ircv3UserMutationKind::typing) user.typing = m.active;
+	};
+	Event event;
+	event.type = EventType::Typing;
+	event.source = "Bob";
+	event.key = "active";
+	Check(ConsumeUserMutation(event, find, apply) == Ircv3UserMutationResult::applied);
+	Check(users.at("Bob").typing);
+	event.key = "done";
+	Check(ConsumeUserMutation(event, find, apply) == Ircv3UserMutationResult::applied);
+	Check(!users.at("Bob").typing);
+	event.source = "Ghost";
+	Check(ConsumeUserMutation(event, find, apply) == Ircv3UserMutationResult::unknown_user);
+}
+
+// 1.5 -- a message-scoped reaction cannot be a user mutation; the cheapest honest
+// consumer is a bounded status-line presentation on the AddToStatus path.
+void TestReactionClassifiesToStatusLine()
+{
+	Event reaction;
+	reaction.type = EventType::Reaction;
+	reaction.source = "Bob";
+	reaction.target = "#ink";
+	reaction.key = "react";
+	reaction.value = ":tada:";
+	reaction.context = {"msgid=abc123"};
+	auto status = ClassifyReactionStatus(reaction);
+	Check(status && status->severity == Ircv3StatusSeverity::information &&
+		status->text == "[REACT] Bob: :tada: (msgid abc123)");
+
+	reaction.key = "unreact";
+	status = ClassifyReactionStatus(reaction);
+	Check(status && status->text == "[UNREACT] Bob: :tada: (msgid abc123)");
+
+	// Without a msgid the line still presents, just message-anonymous.
+	reaction.key = "react";
+	reaction.context.clear();
+	status = ClassifyReactionStatus(reaction);
+	Check(status && status->text == "[REACT] Bob: :tada:");
+
+	// Other context entries are ignored; only msgid is lifted.
+	reaction.context = {"reply=xyz", "bot", "msgid=id42"};
+	status = ClassifyReactionStatus(reaction);
+	Check(status && status->text == "[REACT] Bob: :tada: (msgid id42)");
+
+	// Control characters in the reaction value are scrubbed, never emitted raw.
+	reaction.context.clear();
+	reaction.value = std::string("ta\001da", 5);
+	status = ClassifyReactionStatus(reaction);
+	Check(status && status->text == "[REACT] Bob: ta da");
+
+	// A reaction is never a user mutation and never appears on the mutation path.
+	reaction.value = ":tada:";
+	Check(ClassifyUserMutation(reaction).kind == Ircv3UserMutationKind::none);
+
+	// Malformed reactions classify to nothing (fail-closed).
+	reaction.key = "typing";
+	Check(!ClassifyReactionStatus(reaction));
+	reaction.key = "react";
+	reaction.value.clear();
+	Check(!ClassifyReactionStatus(reaction));
+	reaction.value = ":tada:";
+	reaction.source = "@Bob";
+	Check(!ClassifyReactionStatus(reaction));
+	reaction.source = "Bob";
+	reaction.value = std::string(513, 'x');
+	Check(!ClassifyReactionStatus(reaction));
+	reaction.value = ":tada:";
+	reaction.type = EventType::StandardReply;
+	Check(!ClassifyReactionStatus(reaction));
+}
+
+// 1.6 -- only the whitelisted user-profile key/value SET (one of six METADATA
+// producer shapes) is a user mutation; every other shape is ignored.
+void TestMetadataWhitelistBecomesOwnedField()
+{
+	// The SET names its subject in target, not source, exactly like a SASL numeric.
+	Event set;
+	set.type = EventType::Metadata;
+	set.target = "Bob";
+	set.key = "url";
+	set.value = "https://bob.example";
+	set.context = {"visibility=*"};
+	auto mutation = ClassifyUserMutation(set);
+	Check(mutation.kind == Ircv3UserMutationKind::metadata && mutation.nickname == "Bob" &&
+		mutation.secondary == "url" && mutation.value == "https://bob.example" &&
+		mutation.active);
+
+	set.key = "status";
+	set.value = "away from keyboard";
+	mutation = ClassifyUserMutation(set);
+	Check(mutation.kind == Ircv3UserMutationKind::metadata && mutation.secondary == "status" &&
+		mutation.value == "away from keyboard");
+
+	// Clearing a whitelisted key (empty value) still classifies, but as inactive.
+	set.value.clear();
+	mutation = ClassifyUserMutation(set);
+	Check(mutation.kind == Ircv3UserMutationKind::metadata && !mutation.active);
+
+	Check(IsWhitelistedMetadataKey("url") && IsWhitelistedMetadataKey("status"));
+	Check(!IsWhitelistedMetadataKey("avatar") && !IsWhitelistedMetadataKey("sync-later"));
+
+	// The other five shapes are ignored: non-whitelisted keys (subscribed/
+	// unsubscribed/subscriptions/sync-later summaries plus arbitrary profile keys)
+	// never classify as a set.
+	set.value = "https://bob.example";
+	for (const std::string_view ignored_key : {
+		"subscribed", "unsubscribed", "subscriptions", "sync-later",
+		"metadata", "metadata-subs", "avatar", "display-name"}) {
+		set.key = ignored_key;
+		Check(ClassifyUserMutation(set).kind == Ircv3UserMutationKind::none);
+	}
+
+	// The 766 delete reuses a real key but carries detail="deleted"; it is not a set.
+	set.key = "url";
+	set.detail = "deleted";
+	set.value.clear();
+	Check(ClassifyUserMutation(set).kind == Ircv3UserMutationKind::none);
+	set.detail.clear();
+
+	// Oversize values are rejected rather than truncated into the model.
+	set.value = std::string(513, 'x');
+	Check(ClassifyUserMutation(set).kind == Ircv3UserMutationKind::none);
+
+	// Reaches the owned CUserInfo field through the shared find/apply pair.
+	std::map<std::string, FakeUser, std::less<>> users;
+	users.emplace("Bob", FakeUser{});
+	const auto find = [&users](std::string_view nickname) -> FakeUser* {
+		const auto found = users.find(nickname);
+		return found == users.end() ? nullptr : &found->second;
+	};
+	const auto apply = [](FakeUser& user, const Ircv3UserMutation& m) {
+		if (m.kind != Ircv3UserMutationKind::metadata) return;
+		if (m.secondary == "url") user.profile_url = m.value;
+		else if (m.secondary == "status") user.status = m.value;
+	};
+	Event event;
+	event.type = EventType::Metadata;
+	event.target = "Bob";
+	event.key = "url";
+	event.value = "https://bob.example";
+	Check(ConsumeUserMutation(event, find, apply) == Ircv3UserMutationResult::applied);
+	Check(users.at("Bob").profile_url == "https://bob.example");
+	event.key = "status";
+	event.value = "brb";
+	Check(ConsumeUserMutation(event, find, apply) == Ircv3UserMutationResult::applied);
+	Check(users.at("Bob").status == "brb" &&
+		users.at("Bob").profile_url == "https://bob.example");
+
+	// A set for a user the room does not hold is counted, never created.
+	event.target = "Ghost";
+	Check(ConsumeUserMutation(event, find, apply) == Ircv3UserMutationResult::unknown_user);
+	// An ignored shape never reaches the model.
+	event.target = "Bob";
+	event.key = "subscribed";
+	Check(ConsumeUserMutation(event, find, apply) == Ircv3UserMutationResult::ignored);
+}
+
 } // namespace
 
 int main()
@@ -620,5 +838,8 @@ int main()
 	TestUserhostInNamesSuppliesHostmaskToLegacyModel();
 	TestNoImplicitNamesBuildsExplicitBoundedQuery();
 	TestTransportIngressPhaseAndWorkGates();
+	TestTypingTypedEventBecomesMemberState();
+	TestReactionClassifiesToStatusLine();
+	TestMetadataWhitelistBecomesOwnedField();
 	return failures == 0 ? 0 : 1;
 }

@@ -126,6 +126,11 @@ enum class Ircv3UserMutationKind {
 	away,
 	host,
 	realname,
+	// draft/typing lights the member-list typing state; a whitelisted METADATA
+	// key/value set writes an owned CUserInfo profile field. Both classify as a
+	// per-nick mutation exactly like account/away/host/realname above.
+	typing,
+	metadata,
 };
 
 // A non-owning, MFC-independent description of the only typed identity
@@ -286,13 +291,73 @@ inline std::optional<Ircv3StatusPresentation> ClassifyStandardReply(
 	return result;
 }
 
+// A reaction is scoped to a message id, not to a user, so it never becomes an
+// Ircv3UserMutation. Present it on the same bounded, tag-free status path the
+// original numeric-error renderer used; carry the msgid so the line stays
+// message-scoped even though the legacy view holds no per-message balloon index.
+// (In-comic surfacing would need that index -- a separate MFC/renderer item.)
+inline std::optional<Ircv3StatusPresentation> ClassifyReactionStatus(
+	const comic_chat::ircv3::Event& event)
+{
+	if (event.type != comic_chat::ircv3::EventType::Reaction ||
+		(event.key != "react" && event.key != "unreact") ||
+		event.source.empty() ||
+		!ValidUserMutationText(event.source, kIrcv3LegacyNicknameMaximum) ||
+		event.source.front() == '@' || event.source.front() == '>' ||
+		event.source.front() == '+' || event.value.empty() ||
+		!ValidUserMutationText(event.value, kIrcv3LegacyUserValueMaximum))
+		return std::nullopt;
+
+	// AppendTagEvents carries the message id as a "msgid=<id>" context entry.
+	// Lift it so the line stays message-scoped; ignore every other context tag.
+	std::string_view message_id;
+	constexpr std::string_view kMsgidPrefix = "msgid=";
+	for (const auto& item : event.context) {
+		const std::string_view view{item};
+		if (view.starts_with(kMsgidPrefix)) {
+			message_id = view.substr(kMsgidPrefix.size());
+			break;
+		}
+	}
+	if (!ValidUserMutationText(message_id, kIrcv3LegacyIdentityPartMaximum))
+		message_id = {};
+
+	const auto append_scrubbed = [](std::string& out, std::string_view text) {
+		for (const unsigned char ch : text)
+			out.push_back(ch < 0x20 || ch == 0x7f ? ' ' : static_cast<char>(ch));
+	};
+	Ircv3StatusPresentation result;
+	result.severity = Ircv3StatusSeverity::information;
+	result.text.reserve(event.source.size() + event.value.size() + message_id.size() + 24);
+	result.text = event.key == "react" ? "[REACT] " : "[UNREACT] ";
+	append_scrubbed(result.text, event.source);
+	result.text += ": ";
+	append_scrubbed(result.text, event.value);
+	if (!message_id.empty()) {
+		result.text += " (msgid ";
+		append_scrubbed(result.text, message_id);
+		result.text += ')';
+	}
+	return result;
+}
+
+// Only a small, fixed set of user-profile METADATA keys map onto the legacy
+// member model. Whitelisting bounds the otherwise network-defined key space to a
+// single owned CUserInfo field per representable property.
+inline bool IsWhitelistedMetadataKey(std::string_view key) noexcept
+{
+	return key == "url" || key == "status";
+}
+
 inline Ircv3UserMutation ClassifyUserMutation(
 	const comic_chat::ircv3::Event& event) noexcept
 {
 	std::string_view nickname = event.source;
 	// ACCOUNT notifications use source. The SASL 900/901 numerics instead put
-	// the affected local nickname in target.
-	if (event.type == comic_chat::ircv3::EventType::Account && nickname.empty())
+	// the affected local nickname in target. METADATA state events name their
+	// subject only in target as well (the state message carries no prefix).
+	if ((event.type == comic_chat::ircv3::EventType::Account ||
+		 event.type == comic_chat::ircv3::EventType::Metadata) && nickname.empty())
 		nickname = event.target;
 	if (nickname.empty() || !ValidUserMutationText(nickname, kIrcv3LegacyNicknameMaximum) ||
 		nickname.front() == '@' || nickname.front() == '>' || nickname.front() == '+')
@@ -316,6 +381,25 @@ inline Ircv3UserMutation ClassifyUserMutation(
 	case comic_chat::ircv3::EventType::RealnameChanged:
 		if (!ValidUserMutationText(event.value, kIrcv3LegacyUserValueMaximum)) return {};
 		return {Ircv3UserMutationKind::realname, nickname, event.value, {}, !event.value.empty()};
+	case comic_chat::ircv3::EventType::Typing:
+		// draft/typing carries active/paused/done; only "active" lights the
+		// member-list typing state. Any other token is a malformed event, which
+		// keeps a tag-stripped Typing event classifying to none as before.
+		if (event.key != "active" && event.key != "paused" && event.key != "done")
+			return {};
+		return {Ircv3UserMutationKind::typing, nickname, event.key, {}, event.key == "active"};
+	case comic_chat::ircv3::EventType::Metadata:
+		// Six METADATA producer shapes reach this bridge; only a whitelisted
+		// user-profile key/value SET is a user mutation. The 766 delete reuses a
+		// real key but carries detail="deleted"; reject it and every non-set shape
+		// (subscribed/unsubscribed/subscriptions/sync-later/batch summary) whose
+		// key is not whitelisted. secondary names the whitelisted key so the
+		// consumer routes it to the right owned field, as SetAccount/SetRealName do.
+		if (!IsWhitelistedMetadataKey(event.key) || !event.detail.empty() ||
+			!ValidUserMutationText(event.value, kIrcv3LegacyUserValueMaximum))
+			return {};
+		return {Ircv3UserMutationKind::metadata, nickname, event.value, event.key,
+			!event.value.empty()};
 	default:
 		return {};
 	}
