@@ -894,6 +894,7 @@ public:
 		SecureClear(&incoming_);
 		SecureClear(&nonce_);
 		SecureClear(&client_first_bare_);
+		SecureClear(&gs2_header_);
 		SecureClear(&server_first_);
 		SecureClear(&expected_server_signature_);
 	}
@@ -942,6 +943,8 @@ public:
 		return !failed_ && (mechanism_ != "SCRAM-SHA-256" || server_verified_);
 	}
 
+	bool RequiresScramSignatureVerification() const { return mechanism_ == "SCRAM-SHA-256"; }
+
 private:
 	bool Fail() { failed_ = true; return false; }
 
@@ -984,11 +987,12 @@ private:
 				return ch >= 0x21U && ch <= 0x7eU && ch != ',';
 			})) return Fail();
 		client_first_bare_ = "n=" + ScramName(config_.authentication_id) + ",r=" + nonce_;
-		std::string gs2 = config_.authorization_id.empty()
+		// Persisted verbatim so the client-final c= attribute can bind to the
+		// exact gs2-header sent here, per RFC 5802 channel-binding rules.
+		gs2_header_ = config_.authorization_id.empty()
 			? "n,,"
 			: "n,a=" + ScramName(config_.authorization_id) + ',';
-		ScopedStringWipe wipe_gs2(&gs2);
-		std::string first_message = gs2 + client_first_bare_;
+		std::string first_message = gs2_header_ + client_first_bare_;
 		ScopedStringWipe wipe_first_message(&first_message);
 		std::string encoded = Base64Encode(first_message);
 		ScopedStringWipe wipe_encoded(&encoded);
@@ -1053,7 +1057,9 @@ private:
 		if (!HmacSha256(secrets.salted.data(), secrets.salted.size(), "Client Key", &secrets.client_key)) return Fail();
 		if (!Sha256(std::string_view(reinterpret_cast<const char*>(secrets.client_key.data()),
 			secrets.client_key.size()), &secrets.stored_key)) return Fail();
-		std::string final_without_proof = "c=biws,r=" + fields["r"];
+		std::string channel_binding = Base64Encode(gs2_header_);
+		ScopedStringWipe wipe_channel_binding(&channel_binding);
+		std::string final_without_proof = "c=" + channel_binding + ",r=" + fields["r"];
 		ScopedStringWipe wipe_final_without_proof(&final_without_proof);
 		std::string auth_message = client_first_bare_ + ',' + server_first_ + ',' + final_without_proof;
 		ScopedStringWipe wipe_auth_message(&auth_message);
@@ -1097,6 +1103,7 @@ private:
 	std::string incoming_;
 	std::string nonce_;
 	std::string client_first_bare_;
+	std::string gs2_header_;
 	std::string server_first_;
 	std::string expected_server_signature_;
 	unsigned int stage_ = 0;
@@ -1633,6 +1640,10 @@ ProcessResult Engine::HandleSaslNumeric(const Message& message, unsigned int num
 		result.events.push_back(std::move(event));
 		return result;
 	}
+	if (numeric == 903 && sasl_ && sasl_->RequiresScramSignatureVerification() &&
+		!sasl_->VerifyTerminalSuccess())
+		result.events.push_back(
+			{EventType::ProtocolError, {}, {}, "sasl-scram-signature-unverified", {}, {}, {}});
 	sasl_succeeded_ = numeric == 903 && sasl_ && sasl_->VerifyTerminalSuccess();
 	sasl_terminal_ = true;
 	sasl_.reset();

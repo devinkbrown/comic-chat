@@ -466,6 +466,58 @@ void TestScramSha256Rfc7677()
 	Check(terminal.outbound == std::vector<std::string>{"CAP END\r\n"}, "SCRAM gates CAP END");
 }
 
+void TestScramAuthzidChannelBindingAndFailClosedSignature()
+{
+	Engine engine;
+	SaslConfig config;
+	config.authentication_id = "user";
+	config.password = "pencil";
+	config.authorization_id = "ad,min=root";
+	config.allow_external = false;
+	config.nonce = "clientNonce";
+	engine.BeginRegistration(config, "Alice", true);
+	engine.Process(":server CAP * LS :sasl=SCRAM-SHA-256\r\n");
+	engine.Process(":server CAP Alice ACK :sasl\r\n");
+	const std::string expected_gs2_header = "n,a=ad=2Cmin=3Droot,";
+	auto first = engine.Process("AUTHENTICATE +\r\n");
+	const std::string client_first = Decode(AuthenticatePayload(first.outbound[0]));
+	Check(client_first == expected_gs2_header + "n=user,r=clientNonce",
+		"authzid client-first escapes comma and equals in the exact GS2 header");
+
+	const std::string server_first = "r=clientNonceServerExtra,s=c2FsdA==,i=4096";
+	auto proof = engine.Process("AUTHENTICATE " + Encode(server_first) + "\r\n");
+	const std::string client_final = Decode(AuthenticatePayload(proof.outbound[0]));
+	Check(client_final ==
+		"c=bixhPWFkPTJDbWluPTNEcm9vdCw=,r=clientNonceServerExtra,"
+		"p=yWWp4bUN1Ttc25GQTzpjwSXD+tL2lHg0z9HUPtNttc0=",
+		"authzid GS2 header is bound into the exact client proof");
+	const std::string server_final = "v=JSkgQiC3n4EdbfUYiMEuWlXkwy+dO2Diu+4iofWkqRc=";
+	auto verified = engine.Process("AUTHENTICATE " + Encode(server_final) + "\r\n");
+	Check(verified.outbound.empty(), "authzid-bound server signature is accepted");
+	auto terminal = engine.Process(":server 903 Alice :SASL authentication successful\r\n");
+	Check(engine.SaslSucceeded() && engine.SecretsCleared(),
+		"authzid-bound SCRAM succeeds and zeroizes secrets");
+	Check(terminal.outbound == std::vector<std::string>{"CAP END\r\n"},
+		"verified authzid-bound SCRAM gates CAP END");
+
+	// Simulate a server that jumps straight to 903 without ever sending the
+	// server-final v= challenge: the client never verified the server
+	// signature, so success must be rejected fail-closed.
+	Engine unverified;
+	unverified.BeginRegistration(config, "Alice", true);
+	unverified.Process(":server CAP * LS :sasl=SCRAM-SHA-256\r\n");
+	unverified.Process(":server CAP Alice ACK :sasl\r\n");
+	unverified.Process("AUTHENTICATE +\r\n");
+	unverified.Process("AUTHENTICATE " + Encode(server_first) + "\r\n");
+	auto premature = unverified.Process(":server 903 Alice :SASL authentication successful\r\n");
+	Check(!unverified.SaslSucceeded(),
+		"903 without a verified SCRAM server signature is not treated as success");
+	Check(std::ranges::any_of(premature.events, [](const auto& event) {
+		return event.type == EventType::ProtocolError && event.key == "sasl-scram-signature-unverified";
+	}), "premature 903 emits an explicit protocol error for the missing SCRAM server signature");
+	Check(unverified.SecretsCleared(), "fail-closed terminal SASL result still zeroizes secrets");
+}
+
 void TestIndependentWireBounds()
 {
 	Message payload;
@@ -1111,6 +1163,7 @@ int main()
 	TestSafeRecovery();
 	TestPlainAndExternal();
 	TestScramSha256Rfc7677();
+	TestScramAuthzidChannelBindingAndFailClosedSignature();
 	TestIndependentWireBounds();
 	TestTypedTagSemantics();
 	TestIsupportCaseMappingAndMonitor();
