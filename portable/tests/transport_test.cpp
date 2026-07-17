@@ -817,6 +817,32 @@ TEST_CASE("receive backpressure pauses without dropping wire bytes") {
     engine.stop();
 }
 
+TEST_CASE("receive backpressure remains byte-bounded while consumer polling stalls") {
+    LoopbackServer server{ServerMode::plaintext_burst};
+    auto options = options_for(server, comicchat::net::Security::plaintext);
+    options.limits.receive_bytes = 8;
+    options.limits.queued_commands = 8;
+    comicchat::net::ConnectionEngine engine;
+    REQUIRE(engine.start(options));
+    REQUIRE(wait_for(engine, [](const auto& event) {
+        return std::holds_alternative<comicchat::net::Connected>(event.body);
+    }));
+
+    // Leave the application side deliberately idle after the connection is
+    // established. The worker may queue at most the advertised byte credit,
+    // even though the peer has already made a larger burst readable.
+    std::this_thread::sleep_for(100ms);
+    std::size_t queued_bytes{};
+    for (const auto& event : engine.poll_events(128)) {
+        if (const auto* received = std::get_if<comicchat::net::BytesReceived>(&event.body);
+            received != nullptr && received->bytes) {
+            queued_bytes += received->bytes->size();
+        }
+    }
+    CHECK(queued_bytes == options.limits.receive_bytes);
+    engine.stop();
+}
+
 TEST_CASE("mbedTLS loopback verifies localhost and carries encrypted bytes") {
     LoopbackServer server{ServerMode::tls_echo};
     comicchat::net::ConnectionEngine engine;

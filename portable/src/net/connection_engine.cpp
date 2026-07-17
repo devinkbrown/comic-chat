@@ -483,6 +483,8 @@ private:
             std::scoped_lock lock{mutex_};
             const bool completion = std::holds_alternative<SendComplete>(body);
             const auto* received = std::get_if<BytesReceived>(&body);
+            const auto received_byte_count = received != nullptr && received->bytes
+                ? received->bytes->size() : std::size_t{};
             const auto consume_reservation = [this, completion, received]() noexcept {
                 if (completion) {
                     if (reserved_send_completions_ != 0) --reserved_send_completions_;
@@ -526,8 +528,7 @@ private:
                 consume_reservation();
                 throw;
             }
-            if (received != nullptr && received->bytes)
-                queued_receive_bytes_ += received->bytes->size();
+            queued_receive_bytes_ += received_byte_count;
             consume_reservation();
             auto peak = peak_queued_events_.load(std::memory_order_relaxed);
             while (peak < events_.size() &&
