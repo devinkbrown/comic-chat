@@ -1063,6 +1063,161 @@ auto select_avatar_expression(const AvatarAsset& asset, const AvatarExpression e
     return std::unexpected{AvatarAssetError::invalid_record};
 }
 
+namespace {
+
+// Shared avatar flag bits (avatar.h:184-186): identical values in the AVB
+// usage-flags byte and in the source CAvatarX::m_flags.
+constexpr auto avatar_flag_head_mask = std::uint8_t{1};
+constexpr auto avatar_flag_torso_mask = std::uint8_t{2};
+constexpr auto avatar_flag_torso_first = std::uint8_t{4};
+
+[[nodiscard]] auto to_rect(const AvatarRect& rect) noexcept -> Rect {
+    return Rect{rect.left, rect.top, rect.right, rect.bottom};
+}
+
+// CBodySingle::GetBodyBox (bodycam.cpp:673-696): fit the pose bitmap into the
+// client rect preserving aspect, centred horizontally and bottom-aligned.
+[[nodiscard]] auto single_body_box(const AvatarBitmap& drawing, const std::int32_t width,
+    const std::int32_t height, const bool flip) -> AvatarBodyBox {
+    const auto width_scale = static_cast<double>(width) / drawing.width;
+    const auto height_scale = static_cast<double>(height) / drawing.height;
+    std::int32_t full_width{};
+    std::int32_t full_height{};
+    if (width_scale <= height_scale) {
+        full_width = width;
+        full_height = static_cast<std::int32_t>(width_scale * drawing.height);
+    } else {
+        full_height = height;
+        full_width = static_cast<std::int32_t>(height_scale * drawing.width);
+    }
+    AvatarRect full{(width - full_width) / 2, height - full_height,
+        (width - full_width) / 2 + full_width, height};
+    // CBodySingle::FlipBodyBox (bodycam.cpp:595-599) swaps left/right so
+    // StretchBlt receives a negative width; paint_scaled normalises the extent
+    // and mirrors the sampled column, reproducing the same pixels.
+    if (flip) std::swap(full.left, full.right);
+    return AvatarBodyBox{full, full, full, false};
+}
+
+} // namespace
+
+auto avatar_body_box(const AvatarAsset& asset, const AvatarSelection& selection,
+    const std::int32_t width, const std::int32_t height, const bool flip)
+    -> std::expected<AvatarBodyBox, AvatarAssetError> {
+    if (width <= 0 || height <= 0) return std::unexpected{AvatarAssetError::invalid_bitmap};
+
+    if (asset.kind == AvatarKind::simple) {
+        if (selection.body >= asset.bodies.size())
+            return std::unexpected{AvatarAssetError::invalid_record};
+        auto pose_result = checked_pose(asset, asset.bodies[selection.body]);
+        if (!pose_result) return std::unexpected{pose_result.error()};
+        return single_body_box(*(*pose_result)->drawing, width, height, flip);
+    }
+
+    if (asset.kind != AvatarKind::complex || selection.face >= asset.faces.size() ||
+        selection.torso >= asset.torsos.size())
+        return std::unexpected{AvatarAssetError::invalid_record};
+    const auto& face_component = asset.faces[selection.face];
+    const auto& torso_component = asset.torsos[selection.torso];
+    auto head_result = checked_pose(asset, face_component);
+    auto torso_result = checked_pose(asset, torso_component);
+    if (!head_result) return std::unexpected{head_result.error()};
+    if (!torso_result) return std::unexpected{torso_result.error()};
+    const auto& head = *(*head_result)->drawing;
+    const auto& torso = *(*torso_result)->drawing;
+
+    // CBodyDouble::GetBodyBox (bodycam.cpp:632-671): the head offset stacks the
+    // torso centre, the face's delta and the face's own centre.
+    const auto x_offset = static_cast<std::int32_t>(torso_component.center_x) +
+        face_component.center_delta_x - face_component.center_x;
+    const auto y_offset = static_cast<std::int32_t>(torso_component.center_y) +
+        face_component.center_delta_y - face_component.center_y;
+    const auto bit_left = std::min(0, x_offset);
+    const auto bit_top = std::min(0, y_offset);
+    const auto bit_right = std::max(torso.width, x_offset + head.width);
+    const auto bit_bottom = std::max(torso.height, y_offset + head.height);
+    const auto bit_width = bit_right - bit_left;
+    const auto bit_height = bit_bottom - bit_top;
+    if (bit_width <= 0 || bit_height <= 0) return std::unexpected{AvatarAssetError::invalid_bitmap};
+    const auto scale = std::min(static_cast<double>(width) / bit_width,
+        static_cast<double>(height) / bit_height);
+    const auto full_width = legacy_round(scale * bit_width);
+    const auto full_height = legacy_round(scale * bit_height);
+    const AvatarRect full{(width - full_width) / 2, height - full_height,
+        (width - full_width) / 2 + full_width, height};
+    const auto make_rect = [&](const std::int32_t offset_x, const std::int32_t offset_y,
+        const AvatarBitmap& bitmap) {
+        const auto left = legacy_round((offset_x - bit_left) * scale) + full.left;
+        const auto top = legacy_round((offset_y - bit_top) * scale) + full.top;
+        return AvatarRect{left, top, left + legacy_round(bitmap.width * scale) + 1,
+            top + legacy_round(bitmap.height * scale) + 1};
+    };
+    auto head_rect = make_rect(x_offset, y_offset, head);
+    auto torso_rect = make_rect(0, 0, torso);
+    if (flip) {
+        // CBodyDouble::FlipBodyBox mirrors the component placements around
+        // fullRect before StretchBlt receives a negative width. Mirroring
+        // pixels in the old rectangles leaves an offset head on the wrong side
+        // of an asymmetrical torso.
+        const auto flip_rect = [&full](AvatarRect& rect) {
+            const auto rect_width = rect.right - rect.left;
+            rect.left = full.right - (rect.left - full.left);
+            rect.right = rect.left - rect_width;
+        };
+        flip_rect(head_rect);
+        flip_rect(torso_rect);
+    }
+    return AvatarBodyBox{full, head_rect, torso_rect, true};
+}
+
+auto avatar_dim_info(const AvatarAsset& asset, const AvatarSelection& selection, const bool flip)
+    -> std::expected<AvatarDimInfo, AvatarAssetError> {
+    if (asset.kind == AvatarKind::simple) {
+        // CBodySingle::GetDimInfo (avatar.cpp:55-75).
+        if (selection.body >= asset.bodies.size())
+            return std::unexpected{AvatarAssetError::invalid_record};
+        const auto& body = asset.bodies[selection.body];
+        auto pose_result = checked_pose(asset, body);
+        if (!pose_result) return std::unexpected{pose_result.error()};
+        const auto& drawing = *(*pose_result)->drawing;
+        const auto width = static_cast<std::int16_t>(drawing.width);
+        const auto height = static_cast<std::int16_t>(drawing.height);
+        auto face_x = body.face_x;
+        if (flip) face_x = static_cast<std::int16_t>(width - face_x);
+        return AvatarDimInfo{width, height, 100,
+            static_cast<std::int16_t>(height / 2), face_x};
+    }
+
+    // CBodyDouble::GetDimInfo (avatar.cpp:77-114): the same union box as
+    // GetBodyBox, but head_height carries the composed face bottom.
+    if (asset.kind != AvatarKind::complex || selection.face >= asset.faces.size() ||
+        selection.torso >= asset.torsos.size())
+        return std::unexpected{AvatarAssetError::invalid_record};
+    const auto& face_component = asset.faces[selection.face];
+    const auto& torso_component = asset.torsos[selection.torso];
+    auto head_result = checked_pose(asset, face_component);
+    auto torso_result = checked_pose(asset, torso_component);
+    if (!head_result) return std::unexpected{head_result.error()};
+    if (!torso_result) return std::unexpected{torso_result.error()};
+    const auto& head = *(*head_result)->drawing;
+    const auto& torso = *(*torso_result)->drawing;
+    const auto x_offset = static_cast<std::int32_t>(torso_component.center_x) +
+        face_component.center_delta_x - face_component.center_x;
+    const auto y_offset = static_cast<std::int32_t>(torso_component.center_y) +
+        face_component.center_delta_y - face_component.center_y;
+    const auto bit_left = std::min(0, x_offset);
+    const auto bit_top = std::min(0, y_offset);
+    const auto bit_right = std::max(torso.width, x_offset + head.width);
+    const auto composed_head_bottom = y_offset + head.height;
+    const auto bit_bottom = std::max(torso.height, composed_head_bottom);
+    const auto width = static_cast<std::int16_t>(bit_right - bit_left);
+    const auto height = static_cast<std::int16_t>(bit_bottom - bit_top);
+    const auto head_height = static_cast<std::int16_t>(composed_head_bottom - bit_top);
+    auto face_x = static_cast<std::int16_t>(face_component.face_x + x_offset - bit_left);
+    if (flip) face_x = static_cast<std::int16_t>(width - face_x);
+    return AvatarDimInfo{width, height, 100, head_height, face_x};
+}
+
 auto render_avatar(const AvatarAsset& asset, const AvatarRenderRequest& request)
     -> std::expected<AvatarBitmap, AvatarAssetError> {
     try {
@@ -1070,86 +1225,26 @@ auto render_avatar(const AvatarAsset& asset, const AvatarRenderRequest& request)
             request.height > maximum_dimension ||
             static_cast<std::uint64_t>(request.width) * request.height > maximum_image_bytes / sizeof(std::uint32_t))
             return std::unexpected{AvatarAssetError::invalid_bitmap};
+        auto box_result = avatar_body_box(asset, request.selection, request.width, request.height, request.flip);
+        if (!box_result) return std::unexpected{box_result.error()};
+        const auto& box = *box_result;
         AvatarBitmap output{request.width, request.height,
             std::vector<std::uint32_t>(static_cast<std::size_t>(request.width) *
                 static_cast<std::size_t>(request.height), 0xffffffffU)};
 
-        if (asset.kind == AvatarKind::simple) {
-            if (request.selection.body >= asset.bodies.size())
-                return std::unexpected{AvatarAssetError::invalid_record};
-            auto pose_result = checked_pose(asset, asset.bodies[request.selection.body]);
-            if (!pose_result) return std::unexpected{pose_result.error()};
-            const auto& pose = **pose_result;
-            const auto& drawing = *pose.drawing;
-            const auto width_scale = static_cast<double>(request.width) / drawing.width;
-            const auto height_scale = static_cast<double>(request.height) / drawing.height;
-            std::int32_t full_width{};
-            std::int32_t full_height{};
-            if (width_scale <= height_scale) {
-                full_width = request.width;
-                full_height = static_cast<std::int32_t>(width_scale * drawing.height);
-            } else {
-                full_height = request.height;
-                full_width = static_cast<std::int32_t>(height_scale * drawing.width);
-            }
-            const Rect full{(request.width - full_width) / 2, request.height - full_height,
-                (request.width - full_width) / 2 + full_width, request.height};
+        if (!box.composite) {
+            const auto& pose = **checked_pose(asset, asset.bodies[request.selection.body]);
+            const auto full = to_rect(box.full);
             if (request.draw_nimbus && pose.aura)
                 paint_scaled(output, *pose.aura, full, request.flip, RasterOperation::merge_paint, request.mode);
-            paint_scaled(output, drawing, full, request.flip, RasterOperation::source_and, request.mode);
+            paint_scaled(output, *pose.drawing, full, request.flip, RasterOperation::source_and, request.mode);
             return output;
         }
 
-        if (asset.kind != AvatarKind::complex || request.selection.face >= asset.faces.size() ||
-            request.selection.torso >= asset.torsos.size())
-            return std::unexpected{AvatarAssetError::invalid_record};
-        const auto& face_component = asset.faces[request.selection.face];
-        const auto& torso_component = asset.torsos[request.selection.torso];
-        auto head_result = checked_pose(asset, face_component);
-        auto torso_result = checked_pose(asset, torso_component);
-        if (!head_result) return std::unexpected{head_result.error()};
-        if (!torso_result) return std::unexpected{torso_result.error()};
-        const auto& head = **head_result;
-        const auto& torso = **torso_result;
-        const auto x_offset = static_cast<std::int32_t>(torso_component.center_x) +
-            face_component.center_delta_x - face_component.center_x;
-        const auto y_offset = static_cast<std::int32_t>(torso_component.center_y) +
-            face_component.center_delta_y - face_component.center_y;
-        const auto bit_left = std::min(0, x_offset);
-        const auto bit_top = std::min(0, y_offset);
-        const auto bit_right = std::max(torso.drawing->width, x_offset + head.drawing->width);
-        const auto bit_bottom = std::max(torso.drawing->height, y_offset + head.drawing->height);
-        const auto bit_width = bit_right - bit_left;
-        const auto bit_height = bit_bottom - bit_top;
-        if (bit_width <= 0 || bit_height <= 0) return std::unexpected{AvatarAssetError::invalid_bitmap};
-        const auto scale = std::min(static_cast<double>(request.width) / bit_width,
-            static_cast<double>(request.height) / bit_height);
-        const auto full_width = legacy_round(scale * bit_width);
-        const auto full_height = legacy_round(scale * bit_height);
-        const Rect full{(request.width - full_width) / 2, request.height - full_height,
-            (request.width - full_width) / 2 + full_width, request.height};
-        auto make_rect = [&](const std::int32_t offset_x, const std::int32_t offset_y,
-            const AvatarBitmap& bitmap) {
-            const auto left = legacy_round((offset_x - bit_left) * scale) + full.left;
-            const auto top = legacy_round((offset_y - bit_top) * scale) + full.top;
-            return Rect{left, top, left + legacy_round(bitmap.width * scale) + 1,
-                top + legacy_round(bitmap.height * scale) + 1};
-        };
-        auto head_rect = make_rect(x_offset, y_offset, *head.drawing);
-        auto torso_rect = make_rect(0, 0, *torso.drawing);
-        if (request.flip) {
-            // CBodyDouble::FlipBodyBox mirrors the component placements around
-            // fullRect before StretchBlt receives a negative width. Mirroring
-            // pixels in the old rectangles leaves an offset head on the wrong
-            // side of an asymmetrical torso.
-            const auto flip_rect = [&full](Rect& rect) {
-                const auto width = rect.right - rect.left;
-                rect.left = full.right - (rect.left - full.left);
-                rect.right = rect.left - width;
-            };
-            flip_rect(head_rect);
-            flip_rect(torso_rect);
-        }
+        const auto& head = **checked_pose(asset, asset.faces[request.selection.face]);
+        const auto& torso = **checked_pose(asset, asset.torsos[request.selection.torso]);
+        const auto head_rect = to_rect(box.head);
+        const auto torso_rect = to_rect(box.torso);
         if (request.draw_nimbus) {
             if (torso.aura)
                 paint_scaled(output, *torso.aura, torso_rect, request.flip, RasterOperation::merge_paint, request.mode);
@@ -1161,14 +1256,11 @@ auto render_avatar(const AvatarAsset& asset, const AvatarRenderRequest& request)
                 paint_scaled(output, *pose.mask, rect, request.flip, RasterOperation::merge_paint, request.mode);
             paint_scaled(output, *pose.drawing, rect, request.flip, RasterOperation::source_and, request.mode);
         };
-        constexpr auto head_mask = std::uint8_t{1};
-        constexpr auto torso_mask = std::uint8_t{2};
-        constexpr auto torso_first = std::uint8_t{4};
-        if ((asset.flags & torso_first) != 0)
-            paint_part(torso, torso_rect, (asset.flags & torso_mask) != 0);
-        paint_part(head, head_rect, (asset.flags & head_mask) != 0);
-        if ((asset.flags & torso_first) == 0)
-            paint_part(torso, torso_rect, (asset.flags & torso_mask) != 0);
+        if ((asset.flags & avatar_flag_torso_first) != 0)
+            paint_part(torso, torso_rect, (asset.flags & avatar_flag_torso_mask) != 0);
+        paint_part(head, head_rect, (asset.flags & avatar_flag_head_mask) != 0);
+        if ((asset.flags & avatar_flag_torso_first) == 0)
+            paint_part(torso, torso_rect, (asset.flags & avatar_flag_torso_mask) != 0);
         return output;
     } catch (const std::bad_alloc&) {
         return std::unexpected{AvatarAssetError::allocation};

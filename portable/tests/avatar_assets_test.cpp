@@ -244,3 +244,382 @@ TEST_CASE("AVB reader rejects truncated and non-AVB input") {
     REQUIRE_FALSE(missing.has_value());
     CHECK(missing.error() == comicchat::AvatarAssetError::io);
 }
+
+// ---------------------------------------------------------------------------
+// Phase 2.2 — CBodyUnary / CBodyDouble compositing (render-port-spec §2.2).
+//
+// These gate compositing correctness the way source_raster_test.cpp gates the
+// decoder: on deterministic geometry and opaque-pixel counts against
+// Microsoft's own AVB bytes, NOT on GDI-vs-Cairo pixel parity (which is only
+// checkable under MSVC / visually, per §2.2.b and the honesty note).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Independent re-transcription of CBodyDouble::GetBodyBox (bodycam.cpp:632-671)
+// so the assertion is an *oracle* over the source math, not a mirror of the
+// production formula. Kept in the test so a bug that changes both would still
+// have to change two independent transcriptions to hide.
+struct ReferenceRect final {
+    std::int32_t left{};
+    std::int32_t top{};
+    std::int32_t right{};
+    std::int32_t bottom{};
+};
+
+auto reference_round(const double value) -> std::int32_t {
+    return static_cast<std::int32_t>(value > 0.0 ? value + 0.5 : value - 0.5);
+}
+
+struct ReferenceComposite final {
+    ReferenceRect full;
+    ReferenceRect head;
+    ReferenceRect torso;
+    std::int32_t union_width{};
+    std::int32_t union_height{};
+    std::int32_t head_height{};
+    std::int32_t face_x{};
+};
+
+// Resolve the drawing bitmap for a complex component exactly as checked_pose /
+// GetPoseFromID does for a valid selection (no substitution needed — the
+// selection came from select_avatar_expression).
+auto component_drawing(const comicchat::AvatarAsset& asset, const comicchat::AvatarComponent& component)
+    -> const comicchat::AvatarBitmap* {
+    if (component.pose_id == 0 || component.pose_id > asset.poses.size()) return nullptr;
+    const auto& pose = asset.poses[component.pose_id - 1U];
+    return pose.drawing ? &*pose.drawing : nullptr;
+}
+
+auto reference_composite(const comicchat::AvatarAsset& asset, const comicchat::AvatarSelection& selection,
+    const std::int32_t width, const std::int32_t height) -> std::optional<ReferenceComposite> {
+    const auto& face = asset.faces[selection.face];
+    const auto& torso = asset.torsos[selection.torso];
+    const auto* head_bitmap = component_drawing(asset, face);
+    const auto* torso_bitmap = component_drawing(asset, torso);
+    if (head_bitmap == nullptr || torso_bitmap == nullptr) return std::nullopt;
+    const auto head_w = head_bitmap->width;
+    const auto head_h = head_bitmap->height;
+    const auto torso_w = torso_bitmap->width;
+    const auto torso_h = torso_bitmap->height;
+
+    const auto x_offset = static_cast<std::int32_t>(torso.center_x) + face.center_delta_x - face.center_x;
+    const auto y_offset = static_cast<std::int32_t>(torso.center_y) + face.center_delta_y - face.center_y;
+    const auto bit_left = std::min(0, x_offset);
+    const auto bit_top = std::min(0, y_offset);
+    const auto bit_right = std::max(torso_w, x_offset + head_w);
+    const auto composed_head_bottom = y_offset + head_h;
+    const auto bit_bottom = std::max(torso_h, composed_head_bottom);
+    const auto bit_width = bit_right - bit_left;
+    const auto bit_height = bit_bottom - bit_top;
+
+    const auto scale = std::min(static_cast<double>(width) / bit_width,
+        static_cast<double>(height) / bit_height);
+    const auto full_width = reference_round(scale * bit_width);
+    const auto full_height = reference_round(scale * bit_height);
+    ReferenceComposite result{};
+    result.full = {(width - full_width) / 2, height - full_height,
+        (width - full_width) / 2 + full_width, height};
+    const auto place = [&](const std::int32_t offset_x, const std::int32_t offset_y,
+        const std::int32_t bitmap_width, const std::int32_t bitmap_height) {
+        const auto left = reference_round((offset_x - bit_left) * scale) + result.full.left;
+        const auto top = reference_round((offset_y - bit_top) * scale) + result.full.top;
+        return ReferenceRect{left, top, left + reference_round(bitmap_width * scale) + 1,
+            top + reference_round(bitmap_height * scale) + 1};
+    };
+    result.head = place(x_offset, y_offset, head_w, head_h);
+    result.torso = place(0, 0, torso_w, torso_h);
+    result.union_width = bit_width;
+    result.union_height = bit_height;
+    result.head_height = composed_head_bottom - bit_top;   // avatar.cpp:104,109
+    result.face_x = face.face_x + x_offset - bit_left;      // avatar.cpp:112
+    return result;
+}
+
+auto dark_pixel_count(const comicchat::AvatarBitmap& bitmap) -> std::size_t {
+    return static_cast<std::size_t>(std::count_if(bitmap.pixels.begin(), bitmap.pixels.end(),
+        [](const std::uint32_t pixel) {
+            const auto red = (pixel >> 16U) & 0xffU;
+            const auto green = (pixel >> 8U) & 0xffU;
+            const auto blue = pixel & 0xffU;
+            return red * 2126U + green * 7152U + blue * 722U < 128U * 10'000U;
+        }));
+}
+
+// Dark-pixel count restricted to a vertical band [top, bottom) of the frame —
+// the head footprint of a composite, used for head-over-torso layering counts.
+auto dark_pixel_count_band(const comicchat::AvatarBitmap& bitmap, const std::int32_t top,
+    const std::int32_t bottom) -> std::size_t {
+    std::size_t count{};
+    for (std::int32_t y = std::max(0, top); y < std::min(bitmap.height, bottom); ++y)
+        for (std::int32_t x = 0; x < bitmap.width; ++x) {
+            const auto pixel = bitmap.pixels[static_cast<std::size_t>(y) * bitmap.width + x];
+            const auto red = (pixel >> 16U) & 0xffU;
+            const auto green = (pixel >> 8U) & 0xffU;
+            const auto blue = pixel & 0xffU;
+            if (red * 2126U + green * 7152U + blue * 722U < 128U * 10'000U) ++count;
+        }
+    return count;
+}
+
+constexpr std::uint8_t flag_head_mask = 1;
+constexpr std::uint8_t flag_torso_first = 4;
+
+} // namespace
+
+TEST_CASE("CBodyDouble union box matches an independent GetBodyBox transcription across the corpus") {
+    const auto root = std::filesystem::path{COMICCHAT_TEST_COMICART_DIR};
+    for (const auto filename : avatars) {
+        CAPTURE(filename);
+        const auto asset = comicchat::load_avatar_asset(root / filename);
+        REQUIRE(asset.has_value());
+        if (asset->kind != comicchat::AvatarKind::complex) continue;
+        const auto neutral = comicchat::select_avatar_expression(*asset, {0.0, 0.0});
+        REQUIRE(neutral.has_value());
+
+        const auto box = comicchat::avatar_body_box(*asset, *neutral, 150, 133, false);
+        const auto dim = comicchat::avatar_dim_info(*asset, *neutral, false);
+        const auto reference = reference_composite(*asset, *neutral, 150, 133);
+        REQUIRE(box.has_value());
+        REQUIRE(dim.has_value());
+        REQUIRE(reference.has_value());
+
+        CHECK(box->composite);
+        CHECK(box->full.left == reference->full.left);
+        CHECK(box->full.top == reference->full.top);
+        CHECK(box->full.right == reference->full.right);
+        CHECK(box->full.bottom == reference->full.bottom);
+        CHECK(box->head.left == reference->head.left);
+        CHECK(box->head.top == reference->head.top);
+        CHECK(box->head.right == reference->head.right);
+        CHECK(box->head.bottom == reference->head.bottom);
+        CHECK(box->torso.left == reference->torso.left);
+        CHECK(box->torso.top == reference->torso.top);
+        CHECK(box->torso.right == reference->torso.right);
+        CHECK(box->torso.bottom == reference->torso.bottom);
+
+        // GetDimInfo (avatar.cpp:77-114) is the same union, exposed to layout.
+        CHECK(dim->width == reference->union_width);
+        CHECK(dim->height == reference->union_height);
+        CHECK(dim->norm_height == 100);                    // constant (avatar.cpp:110)
+        CHECK(dim->head_height == reference->head_height);
+        CHECK(dim->face_x == reference->face_x);
+
+        // Head sits above the torso in the union box (§2.2.c head+torso stack).
+        CHECK(box->head.top <= box->torso.top);
+        CHECK(dim->head_height < dim->height);
+    }
+}
+
+TEST_CASE("Composite geometry matches Microsoft-captured golden rectangles") {
+    const auto root = std::filesystem::path{COMICCHAT_TEST_COMICART_DIR};
+
+    // xeno: complex, HEADMASK|TORSOFIRST. Golden values hand-derived from the
+    // raw FACEREC/BODYREC bytes: xOffset=31, yOffset=-96, union 152x445.
+    const auto xeno = comicchat::load_avatar_asset(root / "xeno.avb");
+    REQUIRE(xeno.has_value());
+    const auto xeno_neutral = comicchat::select_avatar_expression(*xeno, {0.0, 0.0});
+    REQUIRE(xeno_neutral.has_value());
+    const auto xeno_box = comicchat::avatar_body_box(*xeno, *xeno_neutral, 150, 133, false);
+    const auto xeno_dim = comicchat::avatar_dim_info(*xeno, *xeno_neutral, false);
+    REQUIRE(xeno_box.has_value());
+    REQUIRE(xeno_dim.has_value());
+    CHECK(xeno_box->full.left == 52);
+    CHECK(xeno_box->full.top == 0);
+    CHECK(xeno_box->full.right == 97);
+    CHECK(xeno_box->full.bottom == 133);
+    CHECK(xeno_box->head.left == 61);
+    CHECK(xeno_box->head.top == 0);
+    CHECK(xeno_box->head.right == 98);
+    CHECK(xeno_box->head.bottom == 48);
+    CHECK(xeno_box->torso.left == 52);
+    CHECK(xeno_box->torso.top == 29);
+    CHECK(xeno_box->torso.right == 98);
+    CHECK(xeno_box->torso.bottom == 134);
+    CHECK(xeno_dim->width == 152);
+    CHECK(xeno_dim->height == 445);
+    CHECK(xeno_dim->head_height == 156);
+    CHECK(xeno_dim->face_x == 93);
+
+    // tux: simple (CBodyUnary). Aspect-preserving fit, centred + bottom-aligned.
+    const auto tux = comicchat::load_avatar_asset(root / "tux.avb");
+    REQUIRE(tux.has_value());
+    const auto tux_neutral = comicchat::select_avatar_expression(*tux, {0.0, 0.0});
+    REQUIRE(tux_neutral.has_value());
+    const auto tux_box = comicchat::avatar_body_box(*tux, *tux_neutral, 150, 133, false);
+    const auto tux_dim = comicchat::avatar_dim_info(*tux, *tux_neutral, false);
+    REQUIRE(tux_box.has_value());
+    REQUIRE(tux_dim.has_value());
+    CHECK_FALSE(tux_box->composite);
+    CHECK(tux_box->full.left == 47);
+    CHECK(tux_box->full.top == 0);
+    CHECK(tux_box->full.right == 103);
+    CHECK(tux_box->full.bottom == 133);
+    // Simple avatar: head == torso == full.
+    CHECK(tux_box->head.left == tux_box->full.left);
+    CHECK(tux_box->torso.right == tux_box->full.right);
+    CHECK(tux_dim->width == 167);
+    CHECK(tux_dim->height == 393);
+    CHECK(tux_dim->head_height == 196);   // ydim/2 (avatar.cpp:63)
+    CHECK(tux_dim->face_x == 104);
+    CHECK(tux_dim->norm_height == 100);
+}
+
+TEST_CASE("FlipBodyBox mirrors component rectangles and the tail anchor") {
+    const auto root = std::filesystem::path{COMICCHAT_TEST_COMICART_DIR};
+
+    // Complex: full is unchanged, head/torso mirror around it as negative-width
+    // rects (right < left), and faceX flips to width - faceX (avatar.cpp:113).
+    const auto xeno = comicchat::load_avatar_asset(root / "xeno.avb");
+    REQUIRE(xeno.has_value());
+    const auto neutral = comicchat::select_avatar_expression(*xeno, {0.0, 0.0});
+    REQUIRE(neutral.has_value());
+    const auto normal = comicchat::avatar_body_box(*xeno, *neutral, 150, 133, false);
+    const auto flipped = comicchat::avatar_body_box(*xeno, *neutral, 150, 133, true);
+    REQUIRE(normal.has_value());
+    REQUIRE(flipped.has_value());
+    // Full box position is invariant under flip.
+    CHECK(flipped->full.left == normal->full.left);
+    CHECK(flipped->full.right == normal->full.right);
+    // Head mirrors around full: new left = full.right - (old left - full.left).
+    CHECK(flipped->head.left == normal->full.right - (normal->head.left - normal->full.left));
+    CHECK(flipped->head.right == flipped->head.left - (normal->head.right - normal->head.left));
+    // Width magnitude preserved.
+    CHECK(std::abs(flipped->head.right - flipped->head.left) ==
+        std::abs(normal->head.right - normal->head.left));
+
+    const auto dim = comicchat::avatar_dim_info(*xeno, *neutral, false);
+    const auto dim_flip = comicchat::avatar_dim_info(*xeno, *neutral, true);
+    REQUIRE(dim.has_value());
+    REQUIRE(dim_flip.has_value());
+    CHECK(dim_flip->face_x == dim->width - dim->face_x);
+    CHECK(dim_flip->width == dim->width);
+    CHECK(dim_flip->head_height == dim->head_height);
+
+    // Simple: FlipBodyBox swaps full left/right (bodycam.cpp:595-599).
+    const auto tux = comicchat::load_avatar_asset(root / "tux.avb");
+    REQUIRE(tux.has_value());
+    const auto tux_neutral = comicchat::select_avatar_expression(*tux, {0.0, 0.0});
+    REQUIRE(tux_neutral.has_value());
+    const auto tux_normal = comicchat::avatar_body_box(*tux, *tux_neutral, 150, 133, false);
+    const auto tux_flip = comicchat::avatar_body_box(*tux, *tux_neutral, 150, 133, true);
+    REQUIRE(tux_normal.has_value());
+    REQUIRE(tux_flip.has_value());
+    CHECK(tux_flip->full.left == tux_normal->full.right);
+    CHECK(tux_flip->full.right == tux_normal->full.left);
+    const auto tux_dim = comicchat::avatar_dim_info(*tux, *tux_neutral, true);
+    REQUIRE(tux_dim.has_value());
+    CHECK(tux_dim->face_x == 167 - 104);
+}
+
+TEST_CASE("Avatar compositing is deterministic for identical requests") {
+    const auto root = std::filesystem::path{COMICCHAT_TEST_COMICART_DIR};
+    // Cover a complex (head+torso) and a simple (single-layer) avatar, flipped
+    // and unflipped, with and without the nimbus aura.
+    for (const auto filename : {"xeno.avb", "tux.avb", "susan.avb"}) {
+        CAPTURE(filename);
+        const auto asset = comicchat::load_avatar_asset(root / filename);
+        REQUIRE(asset.has_value());
+        const auto neutral = comicchat::select_avatar_expression(*asset, {0.0, 0.0});
+        REQUIRE(neutral.has_value());
+        for (const bool flip : {false, true}) {
+            for (const bool nimbus : {false, true}) {
+                const comicchat::AvatarRenderRequest request{*neutral, 150, 133, flip, nimbus};
+                const auto first = comicchat::render_avatar(*asset, request);
+                const auto second = comicchat::render_avatar(*asset, request);
+                REQUIRE(first.has_value());
+                REQUIRE(second.has_value());
+                CHECK(first->pixels == second->pixels);
+                CHECK(dark_pixel_count(*first) == dark_pixel_count(*second));
+            }
+        }
+    }
+}
+
+TEST_CASE("SRCAND drawings commute but a MERGEPAINT mask makes draw order load-bearing") {
+    // §2.2.b: SRCAND is a bitwise AND (commutative/associative), so two masked-
+    // off drawings composite to the same bytes regardless of TORSOFIRST. A
+    // MERGEPAINT mask (D | ~S) does NOT commute with SRCAND, so once a mask is
+    // interleaved the head-vs-torso order changes the result — this is exactly
+    // the distinction the port must preserve.
+    const auto asset = comicchat::load_avatar_asset(
+        std::filesystem::path{COMICCHAT_TEST_COMICART_DIR} / "xeno.avb");
+    REQUIRE(asset.has_value());
+    REQUIRE(asset->kind == comicchat::AvatarKind::complex);
+    const auto neutral = comicchat::select_avatar_expression(*asset, {0.0, 0.0});
+    REQUIRE(neutral.has_value());
+
+    const auto render_with_flags = [&](const std::uint8_t flags) {
+        auto variant = *asset;
+        variant.flags = flags;
+        return comicchat::render_avatar(variant, {*neutral, 150, 133, false, false});
+    };
+
+    // No masks: torso-first vs head-first are byte-identical (AND commutes).
+    const auto torso_first_nomask = render_with_flags(flag_torso_first);
+    const auto head_first_nomask = render_with_flags(0);
+    REQUIRE(torso_first_nomask.has_value());
+    REQUIRE(head_first_nomask.has_value());
+    CHECK(torso_first_nomask->pixels == head_first_nomask->pixels);
+
+    // With HEADMASK present, the order is load-bearing: the same layers in the
+    // two orders now differ (MERGEPAINT does not commute with SRCAND).
+    const auto torso_first_masked = render_with_flags(flag_head_mask | flag_torso_first);
+    const auto head_first_masked = render_with_flags(flag_head_mask);
+    REQUIRE(torso_first_masked.has_value());
+    REQUIRE(head_first_masked.has_value());
+    CHECK(torso_first_masked->pixels != head_first_masked->pixels);
+}
+
+TEST_CASE("Head mask changes the composite opaque count where it cuts the torso") {
+    // A MERGEPAINT head mask whitens the head footprint before the head is
+    // ANDed in (§2.2.b: "the mask ANDs a hole"). Toggling HEADMASK must change
+    // the opaque-pixel count inside the head band — proving the mask phase is
+    // actually applied, not skipped.
+    const auto asset = comicchat::load_avatar_asset(
+        std::filesystem::path{COMICCHAT_TEST_COMICART_DIR} / "xeno.avb");
+    REQUIRE(asset.has_value());
+    const auto neutral = comicchat::select_avatar_expression(*asset, {0.0, 0.0});
+    REQUIRE(neutral.has_value());
+    const auto box = comicchat::avatar_body_box(*asset, *neutral, 150, 133, false);
+    REQUIRE(box.has_value());
+
+    const auto render_with_flags = [&](const std::uint8_t flags) {
+        auto variant = *asset;
+        variant.flags = flags;
+        return comicchat::render_avatar(variant, {*neutral, 150, 133, false, false});
+    };
+    const auto masked = render_with_flags(flag_head_mask | flag_torso_first);
+    const auto unmasked = render_with_flags(flag_torso_first);
+    REQUIRE(masked.has_value());
+    REQUIRE(unmasked.has_value());
+
+    // The whole frame differs, and the mask cuts the torso specifically in the
+    // head-over-torso overlap band, where the whitened head footprint removes
+    // torso ink the head does not itself cover.
+    CHECK(masked->pixels != unmasked->pixels);
+    const auto overlap_top = std::max(box->head.top, box->torso.top);
+    const auto overlap_bottom = std::min(box->head.bottom, box->torso.bottom);
+    REQUIRE(overlap_top < overlap_bottom);
+    const auto masked_overlap = dark_pixel_count_band(*masked, overlap_top, overlap_bottom);
+    const auto unmasked_overlap = dark_pixel_count_band(*unmasked, overlap_top, overlap_bottom);
+    CHECK(masked_overlap != unmasked_overlap);
+    // MERGEPAINT whitens torso ink under the head footprint, so the masked
+    // composite is never darker than the unmasked one in the overlap band.
+    CHECK(masked_overlap <= unmasked_overlap);
+}
+
+TEST_CASE("Simple and complex avatars both composite visible ink within the fitted box") {
+    const auto root = std::filesystem::path{COMICCHAT_TEST_COMICART_DIR};
+    for (const auto filename : avatars) {
+        CAPTURE(filename);
+        const auto asset = comicchat::load_avatar_asset(root / filename);
+        REQUIRE(asset.has_value());
+        const auto neutral = comicchat::select_avatar_expression(*asset, {0.0, 0.0});
+        REQUIRE(neutral.has_value());
+        const auto rendered = comicchat::render_avatar(*asset, {*neutral, 150, 133, false, false});
+        REQUIRE(rendered.has_value());
+        // Every corpus avatar composites at least some ink (no blank frame).
+        CHECK(dark_pixel_count(*rendered) > 0);
+    }
+}
