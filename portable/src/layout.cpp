@@ -28,6 +28,21 @@ auto page_bounds(const std::size_t panel_count, const std::int32_t left, const s
     };
 }
 
+auto fit_panel_transform(const std::int32_t canvas_width, const std::int32_t canvas_height,
+                         const double source_units) -> PanelTransform {
+    if (canvas_width <= 0 || canvas_height <= 0) {
+        throw std::invalid_argument{"canvas dimensions must be positive"};
+    }
+    if (!(source_units > 0.0)) {
+        throw std::invalid_argument{"source_units must be positive"};
+    }
+    const auto panel_size = static_cast<double>(std::min(canvas_width, canvas_height));
+    const auto scale = panel_size / source_units;
+    const auto origin_x = (static_cast<double>(canvas_width) - panel_size) / 2.0;
+    const auto origin_y = (static_cast<double>(canvas_height) - panel_size) / 2.0;
+    return {origin_x, origin_y, scale};
+}
+
 auto order_stars(const std::vector<Participant>& participants, const std::size_t max_stars)
     -> std::vector<std::size_t> {
     std::vector<std::size_t> ordered;

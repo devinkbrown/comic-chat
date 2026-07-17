@@ -155,10 +155,14 @@ void Canvas::clear(const Rgba color) {
 
 void Canvas::render_title_panel(const TitlePanel& model, TextEngine& text) {
     auto* context = impl_->context.get();
+    // Share the one panel-fitting transform with the logical drawing pass
+    // (layout.cpp fit_panel_transform) so the title panel and the balloon/body
+    // passes never drift apart.
+    const auto transform = fit_panel_transform(impl_->width, impl_->height, source_panel_units);
+    const auto scale = transform.scale;
+    const auto origin_x = transform.origin_x;
+    const auto origin_y = transform.origin_y;
     const auto panel_size = static_cast<double>(std::min(impl_->width, impl_->height));
-    const auto scale = panel_size / source_panel_units;
-    const auto origin_x = (static_cast<double>(impl_->width) - panel_size) / 2.0;
-    const auto origin_y = (static_cast<double>(impl_->height) - panel_size) / 2.0;
     cairo_save(context);
     cairo_rectangle(context, origin_x, origin_y, panel_size, panel_size);
     cairo_clip(context);
@@ -206,6 +210,29 @@ void Canvas::render_title_panel(const TitlePanel& model, TextEngine& text) {
                     center_y + shout_size * 0.35, false);
         row_top += row_height;
     }
+    cairo_restore(context);
+    cairo_surface_flush(impl_->surface.get());
+}
+
+auto Canvas::panel_transform(const double source_units) const -> PanelTransform {
+    return fit_panel_transform(impl_->width, impl_->height, source_units);
+}
+
+void Canvas::fill_logical_rect(const Rect& logical, const Rgba color, const double source_units) {
+    auto* context = impl_->context.get();
+    const auto transform = fit_panel_transform(impl_->width, impl_->height, source_units);
+    cairo_save(context);
+    // The single device transform of render-port-spec.md §0: translate to the
+    // panel origin, then scale by (scale, -scale) so twips map to pixels and the
+    // Y-up logical axis flips to Cairo's Y-down device axis. Drawing below stays
+    // entirely in logical (twips, Y-up) coordinates.
+    cairo_translate(context, transform.origin_x, transform.origin_y);
+    cairo_scale(context, transform.scale, -transform.scale);
+    set_color(context, color);
+    cairo_rectangle(context, static_cast<double>(logical.left), static_cast<double>(logical.bottom),
+                    static_cast<double>(logical.right - logical.left),
+                    static_cast<double>(logical.top - logical.bottom));
+    cairo_fill(context);
     cairo_restore(context);
     cairo_surface_flush(impl_->surface.get());
 }
