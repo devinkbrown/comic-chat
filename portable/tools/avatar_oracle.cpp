@@ -9,14 +9,21 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <locale>
+#include <sstream>
 #include <string_view>
 
 namespace {
 
 auto parse_double(const std::string_view value) -> std::optional<double> {
+    // FreeBSD's current libc++ deliberately omits floating-point from_chars.
+    // A classic-locale stream keeps this diagnostic tool portable and avoids
+    // accepting locale-specific decimal separators or trailing bytes.
+    std::istringstream input{std::string{value}};
+    input.imbue(std::locale::classic());
     double result{};
-    const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), result);
-    if (error != std::errc{} || end != value.data() + value.size()) return std::nullopt;
+    input >> result;
+    if (!input || !input.eof() || !std::isfinite(result)) return std::nullopt;
     return result;
 }
 

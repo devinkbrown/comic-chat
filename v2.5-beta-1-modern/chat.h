@@ -264,6 +264,7 @@ public:
 	BOOL		ProcessShellCommand(CCommandLineInfo &cmdLine);
 	void		InitializeFonts();
 	void		InitializeComicsFonts();
+	void		InitStatusIcons(UINT dpi = 0, HWND themedWindow = NULL);
 	CString		GetDesktopOrFavorites(BOOL bDesktop);
 	HRESULT		HrAllocBuffer(SHORT nMaxMsgLength);
 	BOOL		SaveToReg(BOOL bShort);
@@ -284,7 +285,6 @@ public:
 
 private:
 	void		SetBaseDir(const char *fullpath);
-	void		InitStatusIcons(UINT dpi = 0, HWND themedWindow = NULL);
 	void		ParseCommandLine(CCommandLineInfo& rCmdInfo);  // use our own  -- old sometimes gets corrupted (which used?)
 	BOOL		LoadFromReg();
 	void		InitVals();

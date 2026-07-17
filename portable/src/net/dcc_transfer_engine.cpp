@@ -1,3 +1,7 @@
+#if defined(_WIN32) && !defined(NOMINMAX)
+#define NOMINMAX
+#endif
+
 #include "comicchat/net/dcc_transfer_engine.hpp"
 #include "comicchat/thread_compat.hpp"
 

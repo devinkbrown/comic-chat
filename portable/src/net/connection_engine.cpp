@@ -1,3 +1,7 @@
+#if defined(_WIN32) && !defined(NOMINMAX)
+#define NOMINMAX
+#endif
+
 #include "comicchat/net/connection_engine.hpp"
 #include "comicchat/crypto_runtime.hpp"
 #include "comicchat/memory.hpp"

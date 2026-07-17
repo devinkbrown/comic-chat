@@ -179,7 +179,7 @@ std::optional<std::string> SanitizeRemoteFileName(std::string value)
 		return std::nullopt;
 
 	std::string sanitized;
-	sanitized.reserve(std::min(value.size(), static_cast<std::size_t>(MAX_PATH - 1)));
+	sanitized.reserve((std::min)(value.size(), static_cast<std::size_t>(MAX_PATH - 1)));
 	cursor = value.c_str();
 	while (*cursor && sanitized.size() < MAX_PATH - 1) {
 		const char* next = CharNext(cursor);
@@ -235,7 +235,8 @@ std::optional<DccOffer> ParseDccOffer(const char* message)
 	if (!fileName)
 		return std::nullopt;
 
-	const auto address = ParseUnsigned<std::uint32_t>(tokens[2], std::numeric_limits<std::uint32_t>::max());
+	const auto address = ParseUnsigned<std::uint32_t>(
+		tokens[2], (std::numeric_limits<std::uint32_t>::max)());
 	const auto port = ParseUnsigned<std::uint32_t>(tokens[3], 65535U);
 	const auto fileSize = ParseUnsigned<std::uint64_t>(tokens[4], kMaximumDccFileBytes);
 	if (!address || !port || *port == 0 || !fileSize || *fileSize == 0)
@@ -866,7 +867,8 @@ void CFileProgress::UpdateProgress(std::uint64_t bytes)
 		GetDlgItem(IDC_BYTES_SENT)->SetWindowText(m_bytesSent);
 	if (!m_iBytesTotal)
 		return;
-	const double percent = std::min(1.0, static_cast<double>(bytes) / static_cast<double>(m_iBytesTotal));
+	const double percent = (std::min)(
+		1.0, static_cast<double>(bytes) / static_cast<double>(m_iBytesTotal));
 	auto* control = static_cast<CProgressCtrl*>(GetDlgItem(IDC_FILEPROGRESS));
 	if (control)
 		control->SetPos(static_cast<int>(percent * MAXPOS));
@@ -997,8 +999,8 @@ void CFileProgress::PumpTransferEvents()
 						return;
 					std::size_t credit = body.bytes;
 					while (credit && m_fileTX->fileOffset < m_fileTX->fileSize) {
-						const std::size_t amount = static_cast<std::size_t>(std::min<std::uint64_t>(
-							std::min(credit, kFileChunkBytes), m_fileTX->fileSize - m_fileTX->fileOffset));
+						const std::size_t amount = static_cast<std::size_t>((std::min<std::uint64_t>)(
+							(std::min)(credit, kFileChunkBytes), m_fileTX->fileSize - m_fileTX->fileOffset));
 						std::vector<std::byte> bytes(amount);
 						DWORD read = 0;
 						if (!ReadFile(m_fileTX->hFile, bytes.data(), static_cast<DWORD>(bytes.size()), &read, NULL) ||

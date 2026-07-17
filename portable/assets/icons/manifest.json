@@ -1,0 +1,135 @@
+{
+  "schema": 1,
+  "ico_sizes": [16, 20, 24, 32, 48, 64, 128, 256],
+  "strip_sizes": [16, 20, 24, 32, 40, 48],
+  "required_optical_sizes": [16, 20, 24, 32],
+  "required_icon_optical_sizes": [16, 32],
+  "required_intermediate_icon_optical": ["chat", "avatar"],
+  "expression_sizes": [[20, 26], [25, 33], [30, 39], [40, 52], [50, 65], [60, 78], [80, 104]],
+  "required_expression_optical_sizes": [[20, 26]],
+  "stage_root": "portable/assets/icons/generated",
+  "reference_root": "v2.5-beta-1/res",
+  "app_id": "io.github.devinkbrown.ComicChatReinked",
+  "expression_resource_base": 4200,
+  "art_review": {
+    "revision": "source-reconstructed-face-v2-pending",
+    "status": "blocked",
+    "reason": "Face-bearing assets require a source-reconstructed revision and explicit visual approval before generation."
+  },
+  "icons": [
+    {"name": "chat", "resource": "IDR_MAINFRAME"},
+    {"name": "chatdoc", "resource": "IDI_CHAT_DOC"},
+    {"name": "room", "resource": "IDI_CHAT_ROOM"},
+    {"name": "ruleset", "resource": "IDI_RULESET"},
+    {"name": "avatar", "resource": "IDI_AVATAR"},
+    {"name": "backgd", "resource": "IDI_BACKGROUND"},
+    {"name": "ratings", "resource": "IDI_RATINGS"},
+    {"name": "whisper", "resource": "IDI_WHISPER"},
+    {"name": "notif", "resource": "IDI_NOTIF"},
+    {"name": "tosrv", "resource": "IDI_CONNECT_SRV"},
+    {"name": "tonet", "resource": "IDI_CONNECT_NET"}
+  ],
+  "strips": [
+    {
+      "name": "toolbar",
+      "resource": "IDR_MAINFRAME",
+      "generated_resource_base": 4000,
+      "mask": "#c0c0c0",
+      "cells": [
+        "connect", "disconnect", "enter-room", "leave-room", "create-room",
+        "comic-view", "text-view", "room-list", "user-list", "favorites"
+      ]
+    },
+    {
+      "name": "texttool",
+      "resource": "IDR_TEXTTOOLBAR",
+      "generated_resource_base": 4040,
+      "mask": "#c0c0c0",
+      "cells": ["font", "color", "bold", "italic", "underline", "fixed-pitch", "symbol"]
+    },
+    {
+      "name": "usertool",
+      "resource": "IDR_USERTOOLBAR",
+      "generated_resource_base": 4050,
+      "mask": "#c0c0c0",
+      "cells": ["away", "identity", "ignore", "whisper", "email", "homepage", "netmeeting"]
+    },
+    {
+      "name": "tabbar",
+      "resource": "IDB_TABS",
+      "generated_resource_base": 4010,
+      "mask": "#00ff00",
+      "cells": ["room", "new-content", "status", "alert"]
+    },
+    {
+      "name": "member",
+      "resource": "IDB_MEMBER",
+      "generated_resource_base": 4030,
+      "mask": "#0000ff",
+      "cells": ["normal", "host", "spectator", "ignored", "away"]
+    },
+    {
+      "name": "balloons",
+      "resource": "IDB_SAY_BAR",
+      "generated_resource_base": 4020,
+      "mask": "#c0c0c0",
+      "cells": ["say", "think", "whisper", "action", "whisper-action", "sound", "whisper-sound"]
+    },
+    {
+      "name": "oldnew",
+      "resource": "IDB_OLDNEW",
+      "generated_resource_base": 4070,
+      "mask": "#0000ff",
+      "cells": ["new-indicator"]
+    },
+    {
+      "name": "connect",
+      "resource": "IDB_CONNECT",
+      "generated_resource_base": 4060,
+      "mask": "#0000ff",
+      "cells": ["connected", "disconnected"]
+    },
+    {
+      "name": "stopped",
+      "resource": "IDB_STOPPED",
+      "generated_resource_base": 4100,
+      "mask": "#000080",
+      "cells": ["stopped"]
+    },
+    {
+      "name": "inactive",
+      "resource": "IDB_INACTIVE",
+      "generated_resource_base": 4080,
+      "mask": "#0000ff",
+      "cells": ["inactive"]
+    },
+    {
+      "name": "active",
+      "resource": "IDB_ACTIVE",
+      "generated_resource_base": 4090,
+      "mask": "#0000ff",
+      "cells": ["active"]
+    }
+  ],
+  "expressions": [
+    {"name": "happy", "resource": "IDR_HAPPY", "reference": "fc_hap_l.bmp", "generated_resource_offset": 0},
+    {"name": "coy", "resource": "IDR_COY", "reference": "fc_coy_l.bmp", "generated_resource_offset": 1},
+    {"name": "bored", "resource": "IDR_BORED", "reference": "fc_bor_l.bmp", "generated_resource_offset": 2},
+    {"name": "scared", "resource": "IDR_SCARED", "reference": "fc_sca_l.bmp", "generated_resource_offset": 3},
+    {"name": "sad", "resource": "IDR_SAD", "reference": "fc_sad_l.bmp", "generated_resource_offset": 4},
+    {"name": "angry", "resource": "IDR_ANGRY", "reference": "fc_ang_l.bmp", "generated_resource_offset": 5},
+    {"name": "shout", "resource": "IDR_SHOUT", "reference": "fc_sho_l.bmp", "generated_resource_offset": 6},
+    {"name": "laugh", "resource": "IDR_LAUGH", "reference": "fc_laf_l.bmp", "generated_resource_offset": 7}
+  ],
+  "quality": {
+    "icon_min_drawables": 6,
+    "icon_min_paints": 3,
+    "strip_min_drawables": 3,
+    "strip_min_paints": 2,
+    "min_visible_fraction": 0.04,
+    "max_visible_fraction": 0.96,
+    "min_chromatic_fraction": 0.01,
+    "min_unique_visible_colors": 12,
+    "min_alpha_levels": 3
+  }
+}

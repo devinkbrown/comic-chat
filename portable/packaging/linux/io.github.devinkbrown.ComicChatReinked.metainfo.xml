@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.devinkbrown.ComicChatReinked</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Comic Chat: Reinked</name>
+  <summary>Turn IRC conversations into live comic panels</summary>
+  <description>
+    <p>
+      Comic Chat: Reinked is a native modernization of Microsoft Comic Chat.
+      It connects to IRC networks and lays conversations out as comic panels
+      with expressive characters and speech balloons.
+    </p>
+    <p>
+      Reinked is a community project and is not affiliated with or endorsed by
+      Microsoft.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.devinkbrown.ComicChatReinked.desktop</launchable>
+  <provides>
+    <binary>comic-chat</binary>
+  </provides>
+  <url type="homepage">https://github.com/devinkbrown/comic-chat</url>
+  <url type="bugtracker">https://github.com/devinkbrown/comic-chat/issues</url>
+  <developer id="io.github.devinkbrown">
+    <name>Comic Chat: Reinked contributors</name>
+  </developer>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.1.0" date="2026-07-17">
+      <description>
+        <p>First community modernization preview.</p>
+      </description>
+    </release>
+  </releases>
+</component>

@@ -886,7 +886,7 @@ BOOL bSaveInSettings)
 		const int length = dlg.m_strPassword.GetLength();
 		LPSTR password = dlg.m_strPassword.GetBuffer(length);
 		const BOOL stored = StorePassword(std::string_view(
-			password ? password : "", static_cast<std::size_t>(std::max(length, 0))));
+			password ? password : "", static_cast<std::size_t>((std::max)(length, 0))));
 		if (password && length > 0)
 			SecureZeroMemory(password, static_cast<std::size_t>(length));
 		dlg.m_strPassword.ReleaseBuffer(0);
@@ -974,7 +974,7 @@ BOOL bPromptForPassword)
 	if (!m_bRegistered)
 	{
 		// RFC 2812 registration does not need to expose the local host name.
-		const std::size_t capacity = std::min(
+		const std::size_t capacity = (std::min)(
 			static_cast<std::size_t>(GetOutBuffLen()),
 			static_cast<std::size_t>(m_nMaxMsgLength) + 1);
 		if (!TryFormatBuffer(GetOutBuff(), capacity, "USER %s 0 * :%s\r\n",
@@ -1020,7 +1020,7 @@ HRESULT CIrcSocket::HrIrcSetOper(LPCSTR szUserName, LPCSTR szPassword)
 		const int length = dlg.m_strPassword.GetLength();
 		LPSTR password = dlg.m_strPassword.GetBuffer(length);
 		auto locked = comicchat::LockedSecret::copy(std::string_view(
-			password ? password : "", static_cast<std::size_t>(std::max(length, 0))));
+			password ? password : "", static_cast<std::size_t>((std::max)(length, 0))));
 		if (password && length > 0)
 			SecureZeroMemory(password, static_cast<std::size_t>(length));
 		dlg.m_strPassword.ReleaseBuffer(0);
@@ -1040,7 +1040,7 @@ HRESULT CIrcSocket::HrIrcSetOper(LPCSTR szUserName, LPCSTR szPassword)
 	if (!szPassword || !*szPassword)
 		return E_INVALIDARG;
 
-	const std::size_t capacity = std::min(
+	const std::size_t capacity = (std::min)(
 		static_cast<std::size_t>(GetOutBuffLen()),
 		static_cast<std::size_t>(m_nMaxMsgLength) + 1);
 	if (!TryFormatBuffer(GetOutBuff(), capacity, "OPER %s %s\r\n", szUserName, szPassword)) {

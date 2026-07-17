@@ -1,16 +1,21 @@
 #include "comicchat/render.hpp"
-#include "comicchat/source_raster.hpp"
 #include "comicchat/text.hpp"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cstdint>
+#include <cstdlib>
 #include <exception>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <utility>
+#include <vector>
 
 #include <SDL3/SDL.h>
 
@@ -35,6 +40,16 @@ struct Arguments final {
     std::optional<std::string> png;
     std::uint64_t frames{};
 };
+
+constexpr std::string_view app_name = "Comic Chat: Reinked";
+constexpr std::string_view app_id = "io.github.devinkbrown.ComicChatReinked";
+constexpr std::array modern_icon_sizes{32, 64, 128, 256};
+
+#if defined(COMICCHAT_VERSION)
+constexpr std::string_view app_version = COMICCHAT_VERSION;
+#else
+constexpr std::string_view app_version = "0.1.0-dev";
+#endif
 
 auto parse_arguments(const int argc, char** argv) -> std::optional<Arguments> {
     Arguments result;
@@ -71,24 +86,79 @@ auto model() -> comicchat::TitlePanel {
     };
 }
 
-void apply_source_window_icon(SDL_Window* window) {
-    const auto source_directory = comicchat::find_source_raster_directory();
-    if (!source_directory) {
-        std::cerr << "Comic Chat could not locate the released Microsoft icon resources\n";
-        return;
+auto complete_icon_ladder(const std::filesystem::path& root) -> bool {
+    std::error_code error;
+    for (const int size : modern_icon_sizes) {
+        const auto candidate = root / "chat" / (std::to_string(size) + ".png");
+        if (!std::filesystem::is_regular_file(candidate, error)) return false;
+        error.clear();
     }
-    auto icon = comicchat::load_source_icon(
-        *source_directory, comicchat::SourceIcon::application, 32);
-    if (!icon) {
-        std::cerr << "Comic Chat could not decode the released Microsoft application icon\n";
-        return;
+    return true;
+}
+
+auto modern_icon_directories() -> std::vector<std::filesystem::path> {
+    std::vector<std::filesystem::path> result;
+    const auto append = [&](std::filesystem::path candidate) {
+        if (candidate.empty()) return;
+        candidate = candidate.lexically_normal();
+        if (std::find(result.begin(), result.end(), candidate) == result.end()) {
+            result.push_back(std::move(candidate));
+        }
+    };
+    if (const char* configured = std::getenv("COMICCHAT_MODERN_ICON_DIR")) append(configured);
+#if defined(COMICCHAT_INSTALL_MODERN_ICON_DIR)
+    append(COMICCHAT_INSTALL_MODERN_ICON_DIR);
+#endif
+    if (const char* base = SDL_GetBasePath()) {
+        append(std::filesystem::path{base} / ".." / "share" / "comic-chat-reinked" / "icons");
     }
-    std::unique_ptr<SDL_Surface, SurfaceDeleter> surface{SDL_CreateSurfaceFrom(
-        static_cast<int>(icon->width), static_cast<int>(icon->height),
-        SDL_PIXELFORMAT_ARGB8888, icon->argb.data(), static_cast<int>(icon->width * 4U))};
-    if (!surface || !SDL_SetWindowIcon(window, surface.get())) {
-        std::cerr << "Comic Chat could not set the source application icon: " << SDL_GetError() << '\n';
+    std::error_code error;
+    const auto current = std::filesystem::current_path(error);
+    if (!error) {
+        append(current / "portable" / "assets" / "icons" / "generated" / "png");
+        append(current / "assets" / "icons" / "generated" / "png");
+        append(current / ".." / "portable" / "assets" / "icons" / "generated" / "png");
     }
+    return result;
+}
+
+auto load_modern_icon_ladder(const std::filesystem::path& root) -> std::unique_ptr<SDL_Surface, SurfaceDeleter> {
+    const auto base_path = root / "chat" / "32.png";
+    std::unique_ptr<SDL_Surface, SurfaceDeleter> base{SDL_LoadPNG(base_path.string().c_str())};
+    if (!base || base->w != 32 || base->h != 32) return {};
+    for (std::size_t index = 1; index < modern_icon_sizes.size(); ++index) {
+        const int size = modern_icon_sizes[index];
+        const auto path = root / "chat" / (std::to_string(size) + ".png");
+        std::unique_ptr<SDL_Surface, SurfaceDeleter> alternate{SDL_LoadPNG(path.string().c_str())};
+        if (!alternate || alternate->w != size || alternate->h != size ||
+            !SDL_AddSurfaceAlternateImage(base.get(), alternate.get())) {
+            return {};
+        }
+    }
+    return base;
+}
+
+void apply_modern_window_icon(SDL_Window* window) {
+    for (const auto& root : modern_icon_directories()) {
+        if (!complete_icon_ladder(root)) continue;
+        auto icon = load_modern_icon_ladder(root);
+        if (icon && SDL_SetWindowIcon(window, icon.get())) return;
+    }
+    std::cerr << "Comic Chat could not load its 32/64/128/256 modern icon ladder: "
+              << SDL_GetError() << '\n';
+}
+
+void configure_app_metadata() {
+    if (!SDL_SetAppMetadata(app_name.data(), app_version.data(), app_id.data())) {
+        std::cerr << "Comic Chat could not set SDL application metadata: " << SDL_GetError() << '\n';
+    }
+    (void)SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_CREATOR_STRING,
+                                     "Comic Chat: Reinked contributors");
+    (void)SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_COPYRIGHT_STRING,
+                                     "Microsoft Corporation and Comic Chat: Reinked contributors");
+    (void)SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_URL_STRING,
+                                     "https://github.com/devinkbrown/comic-chat");
+    (void)SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_TYPE_STRING, "application");
 }
 
 } // namespace
@@ -113,17 +183,18 @@ auto main(const int argc, char** argv) -> int {
             return 1;
         }
 
+        configure_app_metadata();
         Sdl sdl;
         SDL_Window* raw_window{};
         SDL_Renderer* raw_renderer{};
-        if (!SDL_CreateWindowAndRenderer("Microsoft Comic Chat — Native Port", 760, 760,
+        if (!SDL_CreateWindowAndRenderer(app_name.data(), 760, 760,
                                         SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY,
                                         &raw_window, &raw_renderer)) {
             throw std::runtime_error{SDL_GetError()};
         }
         std::unique_ptr<SDL_Window, WindowDeleter> window{raw_window};
         std::unique_ptr<SDL_Renderer, RendererDeleter> renderer{raw_renderer};
-        apply_source_window_icon(window.get());
+        apply_modern_window_icon(window.get());
         std::unique_ptr<SDL_Texture, TextureDeleter> texture;
         std::unique_ptr<comicchat::Canvas> canvas;
 

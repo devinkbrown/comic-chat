@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Comic Chat: Reinked
+GenericName=Comic IRC Client
+Comment=Turn IRC conversations into live comic panels
+Exec=comic-chat
+Icon=io.github.devinkbrown.ComicChatReinked
+Terminal=false
+Categories=Network;Chat;InstantMessaging;
+Keywords=IRC;chat;comic;messaging;
+StartupWMClass=io.github.devinkbrown.ComicChatReinked
