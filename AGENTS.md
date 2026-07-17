@@ -2,8 +2,10 @@
 
 This repository contains Microsoft's historical Comic Chat sources and the
 unofficial **Comic Chat: Reinked** modernization. Read
-[`docs/AI-DEVELOPMENT-WORKFLOW.md`](docs/AI-DEVELOPMENT-WORKFLOW.md) before
-delegating or integrating non-trivial work.
+[`docs/AI-DEVELOPMENT-WORKFLOW.md`](docs/AI-DEVELOPMENT-WORKFLOW.md) and the
+canonical [`docs/CPP26-ENGINEERING.md`](docs/CPP26-ENGINEERING.md) playbook
+before investigating, implementing, reviewing, or integrating non-trivial C++
+work.
 
 ## Source of truth
 

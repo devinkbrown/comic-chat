@@ -2,6 +2,7 @@
 
 @AGENTS.md
 @docs/AI-DEVELOPMENT-WORKFLOW.md
+@docs/CPP26-ENGINEERING.md
 
 Honor the role named in the task. Research and review roles are read-only.
 Implementation is allowed only in an explicitly assigned linked worktree with a
