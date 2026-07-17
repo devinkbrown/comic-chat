@@ -38,6 +38,7 @@ using comic_chat::legacy_ui::Ircv3UserMutationResult;
 using comic_chat::legacy_ui::AdaptProtocolMessage;
 using comic_chat::legacy_ui::HasSafeLegacyDispatchShape;
 using comic_chat::legacy_ui::PrepareLegacyProtocolWire;
+using comic_chat::legacy_ui::PrepareExplicitNamesRequest;
 using comic_chat::legacy_ui::IrcProtocolLineBudget;
 using comic_chat::legacy_ui::IrcTransportIngressAction;
 using comic_chat::legacy_ui::IrcTransportIngressGate;
@@ -391,6 +392,17 @@ void TestNamesExtensionsNormalizeBeforeLegacyMembership()
 	Check(AdaptProtocolMessage(malformed).rejected_legacy_shape);
 }
 
+void TestNoImplicitNamesBuildsExplicitBoundedQuery()
+{
+	Check(!PrepareExplicitNamesRequest(false, "#ink"));
+	Check(PrepareExplicitNamesRequest(true, "#ink") ==
+		std::optional<std::string>{"NAMES #ink\r\n"});
+	for (const auto& invalid : {
+		std::string{}, std::string("#bad room"), std::string("#bad,room"),
+		std::string("#bad\0room", 9), std::string(256, 'x')})
+		Check(!PrepareExplicitNamesRequest(true, invalid));
+}
+
 void TestTransportIngressPhaseAndWorkGates()
 {
 	IrcTransportIngressGate gate;
@@ -442,6 +454,7 @@ int main()
 	TestLegacyDispatchShapeGate();
 	TestExtendedJoinPreservesTypedIdentityAndLegacyChannel();
 	TestNamesExtensionsNormalizeBeforeLegacyMembership();
+	TestNoImplicitNamesBuildsExplicitBoundedQuery();
 	TestTransportIngressPhaseAndWorkGates();
 	return failures == 0 ? 0 : 1;
 }

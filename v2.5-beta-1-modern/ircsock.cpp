@@ -1375,6 +1375,14 @@ void CIrcSocket::HandleCommand(CString& strLine, char *szLine, PIRCPARSE pParse,
 
 					if (pQuery)
 						m_queries.bAddQuery(pQuery);
+					if (m_ircEngine.IsEnabled("no-implicit-names")) {
+						auto names = comic_chat::legacy_ui::PrepareExplicitNamesRequest(
+							true, pParse->args[1]);
+						if (!names || !QueueProtocolLine(*names)) {
+							OnClose(WSAENOBUFS);
+							return;
+						}
+					}
 
 					pQuery = new CCQuery(qpInitialTopic, ctTopic, dtMax, NULL, strCurrentChannel, "", FALSE /*bCreatePrUserMatch*/);
 
@@ -1525,6 +1533,14 @@ void CIrcSocket::HandleCommand(CString& strLine, char *szLine, PIRCPARSE pParse,
 
 					if (pQuery)
 						m_queries.bAddQuery(pQuery);
+					if (m_ircEngine.IsEnabled("no-implicit-names")) {
+						auto names = comic_chat::legacy_ui::PrepareExplicitNamesRequest(
+							true, pParse->lastString);
+						if (!names || !QueueProtocolLine(*names)) {
+							OnClose(WSAENOBUFS);
+							return;
+						}
+					}
 
 					pQuery = new CCQuery(qpInitialTopic, ctTopic, dtMax, NULL, strCurrentChannel, "", FALSE /*bCreatePrUserMatch*/);
 

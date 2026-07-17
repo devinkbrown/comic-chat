@@ -191,6 +191,20 @@ inline bool ValidLegacyChannelName(std::string_view value) noexcept
 		value.find_first_of(" ,\a\r\n") == std::string_view::npos;
 }
 
+inline std::optional<std::string> PrepareExplicitNamesRequest(
+	bool no_implicit_names_enabled,
+	std::string_view channel)
+{
+	if (!no_implicit_names_enabled) return std::nullopt;
+	if (!ValidLegacyChannelName(channel)) return std::nullopt;
+	comic_chat::ircv3::Message request;
+	request.command = "NAMES";
+	request.params.emplace_back(channel);
+	auto wire = request.SerializeChecked(false);
+	if (!wire || wire->size() > 512) return std::nullopt;
+	return std::move(*wire);
+}
+
 inline std::optional<Ircv3ChannelRename> ClassifyChannelRename(
 	const comic_chat::ircv3::Event& event) noexcept
 {
