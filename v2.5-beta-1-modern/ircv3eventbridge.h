@@ -8,11 +8,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 struct Ircv3AdapterEvent {
 	comic_chat::ircv3::Event event;
@@ -141,6 +143,15 @@ enum class Ircv3UserMutationResult {
 	ignored,
 	unknown_user,
 	applied,
+};
+
+// A 353 names one member per token, so its identities resolve against many
+// users at once. Report the counts instead of a single verdict: a room legibly
+// holds only some of the named members.
+struct Ircv3NamesIdentityResult {
+	std::size_t applied{};
+	std::size_t unknown_user{};
+	bool ignored{};
 };
 
 enum class Ircv3StatusSeverity {
@@ -329,6 +340,63 @@ Ircv3UserMutationResult ConsumeUserMutation(
 	return Ircv3UserMutationResult::applied;
 }
 
+// userhost-in-names makes each 353 token arrive as nick!user@host, but the
+// legacy member model must keep receiving a bare nickname. The names normalizer
+// splits the token and AdaptProtocolMessage carries the otherwise discarded
+// halves in the typed context as flat nickname/user/host triples; recover them
+// here as the same host mutation chghost already applies. Any corrupt triple
+// rejects the whole reply rather than half-populating identities. Views alias
+// the event and stay valid for the synchronous WM_COMICCHAT_IRCV3_EVENT
+// broadcast.
+inline std::vector<Ircv3UserMutation> ClassifyNamesIdentities(
+	const comic_chat::ircv3::Event& event)
+{
+	if (event.type != comic_chat::ircv3::EventType::MessageContext ||
+		event.key != "353" || event.context.empty() || event.context.size() % 3 != 0)
+		return {};
+	std::vector<Ircv3UserMutation> mutations;
+	mutations.reserve(event.context.size() / 3);
+	for (std::size_t index = 0; index + 2 < event.context.size(); index += 3) {
+		const std::string_view nickname = event.context[index];
+		const std::string_view user = event.context[index + 1];
+		const std::string_view host = event.context[index + 2];
+		if (nickname.empty() || user.empty() || host.empty() ||
+			!ValidUserMutationText(nickname, kIrcv3LegacyNicknameMaximum) ||
+			nickname.front() == '@' || nickname.front() == '>' || nickname.front() == '+' ||
+			!ValidUserMutationText(user, kIrcv3LegacyIdentityPartMaximum) ||
+			!ValidUserMutationText(host, kIrcv3LegacyIdentityPartMaximum) ||
+			user.find('@') != std::string_view::npos ||
+			host.find('@') != std::string_view::npos)
+			return {};
+		mutations.push_back({Ircv3UserMutationKind::host, nickname, user, host, true});
+	}
+	return mutations;
+}
+
+// Resolve every named member through the receiving document, exactly as
+// ConsumeUserMutation does for chghost. A member the document does not hold is
+// counted, never created: the 353 legacy wire alone decides room membership.
+template <typename FindUser, typename ApplyMutation>
+Ircv3NamesIdentityResult ConsumeNamesIdentities(
+	const comic_chat::ircv3::Event& event,
+	FindUser&& find_user,
+	ApplyMutation&& apply_mutation)
+{
+	const auto mutations = ClassifyNamesIdentities(event);
+	if (mutations.empty()) return {0, 0, true};
+	Ircv3NamesIdentityResult result;
+	for (const auto& mutation : mutations) {
+		auto* user = std::invoke(find_user, mutation.nickname);
+		if (!user) {
+			++result.unknown_user;
+			continue;
+		}
+		std::invoke(apply_mutation, *user, mutation);
+		++result.applied;
+	}
+	return result;
+}
+
 struct Ircv3LegacyMessageAdaptation {
 	std::optional<Ircv3AdapterEvent> typed_context;
 	std::optional<std::string> legacy_wire;
@@ -373,9 +441,15 @@ inline bool LegacyHandlerNeedsTrailingParameter(const comic_chat::ircv3::Message
 	return false;
 }
 
+// When identities is non-null, the user@host halves that the legacy nickname
+// column cannot carry are appended as flat nickname/user/host triples, but only
+// once the whole reply normalizes. A rejected reply leaves identities untouched
+// rather than half-written, and a token whose hostmask is absent, incomplete, or
+// oversize still keeps its member: the identity is dropped, never truncated.
 inline std::optional<comic_chat::ircv3::Message> NormalizeLegacyNamesReply(
 	const comic_chat::ircv3::Message& message,
-	std::string_view prefix_token)
+	std::string_view prefix_token,
+	std::vector<std::string>* identities = nullptr)
 {
 	if (message.command != "353") return message;
 	if (!HasSafeLegacyDispatchShape(message) || prefix_token.size() > 66 ||
@@ -409,6 +483,7 @@ inline std::optional<comic_chat::ircv3::Message> NormalizeLegacyNamesReply(
 	};
 
 	std::string names;
+	std::vector<std::string> collected;
 	const std::string_view source = message.params.back();
 	names.reserve(source.size());
 	for (std::size_t cursor = 0; cursor < source.size();) {
@@ -434,6 +509,25 @@ inline std::optional<comic_chat::ircv3::Message> NormalizeLegacyNamesReply(
 			nickname.find_first_of(" ,\a\r\n\0") != std::string_view::npos)
 			return std::nullopt;
 
+		// The '!' already located the nickname boundary; keep the remainder
+		// instead of discarding it, applying the same bounds chghost enforces.
+		if (identities && hostmask != std::string_view::npos) {
+			const auto mask = token.substr(hostmask + 1);
+			const auto separator = mask.find('@');
+			if (separator != std::string_view::npos) {
+				const auto user = mask.substr(0, separator);
+				const auto host = mask.substr(separator + 1);
+				if (!user.empty() && !host.empty() &&
+					ValidUserMutationText(user, kIrcv3LegacyIdentityPartMaximum) &&
+					ValidUserMutationText(host, kIrcv3LegacyIdentityPartMaximum) &&
+					host.find('@') == std::string_view::npos) {
+					collected.emplace_back(nickname);
+					collected.emplace_back(user);
+					collected.emplace_back(host);
+				}
+			}
+		}
+
 		if (!names.empty()) names.push_back(' ');
 		if (selected_status != '\0') names.push_back(selected_status);
 		names.append(nickname);
@@ -442,6 +536,10 @@ inline std::optional<comic_chat::ircv3::Message> NormalizeLegacyNamesReply(
 	}
 	if (names.empty()) return std::nullopt;
 
+	if (identities)
+		identities->insert(identities->end(),
+			std::make_move_iterator(collected.begin()),
+			std::make_move_iterator(collected.end()));
 	auto normalized = message;
 	normalized.params.back() = std::move(names);
 	return normalized;
@@ -491,12 +589,20 @@ inline Ircv3LegacyMessageAdaptation AdaptProtocolMessage(
 	Ircv3LegacyMessageAdaptation result;
 	const bool typed_only = message.command == "TAGMSG";
 	const bool extended_join = message.command == "JOIN" && message.params.size() == 3;
-	if (!message.tags.empty() || typed_only || extended_join) {
+	// userhost-in-names: the hostmask is stripped before the legacy parser sees
+	// the reply, so split it out here and let the typed context carry it. This
+	// normalizes a second time inside PrepareLegacyProtocolWire, which 353's
+	// join-time-only arrival makes cheaper than widening that helper's contract.
+	std::vector<std::string> names_identities;
+	if (message.command == "353")
+		(void)NormalizeLegacyNamesReply(message, prefix_token, &names_identities);
+	if (!message.tags.empty() || typed_only || extended_join || !names_identities.empty()) {
 		comic_chat::ircv3::Event context;
 		context.type = comic_chat::ircv3::EventType::MessageContext;
 		context.source = message.prefix ? *message.prefix : std::string{};
 		context.target = message.params.empty() ? std::string{} : message.params.front();
 		context.key = message.command;
+		context.context = std::move(names_identities);
 		result.typed_context = Ircv3AdapterEvent{std::move(context), message};
 	}
 	if (!typed_only) {

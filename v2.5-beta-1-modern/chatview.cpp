@@ -97,39 +97,51 @@ LRESULT CChatView::OnIrcv3Event(WPARAM wParam, LPARAM lParam)
 	// WM_COMICCHAT_IRCV3_EVENT is synchronously broadcast by CMainFrame only
 	// after its UI-thread network drain. Resolve against this view's document so
 	// rooms never share CUserInfo pointers or mutate MFC state on the worker.
+	const auto findUser = [doc](std::string_view nickname) -> CUserInfo* {
+		const std::string ownedNickname(nickname);
+		return LookupPui(ownedNickname.c_str(), doc);
+	};
+	const auto applyMutation = [doc](CUserInfo& user,
+		const comic_chat::legacy_ui::Ircv3UserMutation& mutation) {
+		switch (mutation.kind) {
+		case comic_chat::legacy_ui::Ircv3UserMutationKind::account:
+			user.SetAccount(CString(mutation.value.data(),
+				static_cast<int>(mutation.value.size())));
+			break;
+		case comic_chat::legacy_ui::Ircv3UserMutationKind::away:
+			// Preserve Microsoft's remove/mutate/reinsert path so the member
+			// list immediately repaints its away/back icon.
+			DoUserAway(doc, &user, mutation.active ? TRUE : FALSE);
+			break;
+		case comic_chat::legacy_ui::Ircv3UserMutationKind::host: {
+			CString identity(mutation.value.data(), static_cast<int>(mutation.value.size()));
+			identity += '@';
+			identity += CString(mutation.secondary.data(),
+				static_cast<int>(mutation.secondary.size()));
+			user.SetFullName(identity);
+			break;
+		}
+		case comic_chat::legacy_ui::Ircv3UserMutationKind::realname:
+			user.SetRealName(CString(mutation.value.data(),
+				static_cast<int>(mutation.value.size())));
+			break;
+		case comic_chat::legacy_ui::Ircv3UserMutationKind::none:
+			break;
+		}
+	};
+
 	const auto result = comic_chat::legacy_ui::ConsumeUserMutation(adapter->event,
-		[doc](std::string_view nickname) -> CUserInfo* {
-			const std::string ownedNickname(nickname);
-			return LookupPui(ownedNickname.c_str(), doc);
-		},
-		[doc](CUserInfo& user, const comic_chat::legacy_ui::Ircv3UserMutation& mutation) {
-			switch (mutation.kind) {
-			case comic_chat::legacy_ui::Ircv3UserMutationKind::account:
-				user.SetAccount(CString(mutation.value.data(),
-					static_cast<int>(mutation.value.size())));
-				break;
-			case comic_chat::legacy_ui::Ircv3UserMutationKind::away:
-				// Preserve Microsoft's remove/mutate/reinsert path so the member
-				// list immediately repaints its away/back icon.
-				DoUserAway(doc, &user, mutation.active ? TRUE : FALSE);
-				break;
-			case comic_chat::legacy_ui::Ircv3UserMutationKind::host: {
-				CString identity(mutation.value.data(), static_cast<int>(mutation.value.size()));
-				identity += '@';
-				identity += CString(mutation.secondary.data(),
-					static_cast<int>(mutation.secondary.size()));
-				user.SetFullName(identity);
-				break;
-			}
-			case comic_chat::legacy_ui::Ircv3UserMutationKind::realname:
-				user.SetRealName(CString(mutation.value.data(),
-					static_cast<int>(mutation.value.size())));
-				break;
-			case comic_chat::legacy_ui::Ircv3UserMutationKind::none:
-				break;
-			}
-		});
+		findUser, applyMutation);
 	if (result == comic_chat::legacy_ui::Ircv3UserMutationResult::applied)
+		return 1;
+
+	// userhost-in-names splits nick!user@host out of 353 before the legacy parser
+	// reads the reply, so the hostmask arrives here instead. CMainFrame drains
+	// this event only after that reply's legacy wire already created the members,
+	// so the users resolve. Each identity is the same host mutation as chghost.
+	const auto names = comic_chat::legacy_ui::ConsumeNamesIdentities(adapter->event,
+		findUser, applyMutation);
+	if (names.applied != 0)
 		return 1;
 
 	const auto rename = comic_chat::legacy_ui::ClassifyChannelRename(adapter->event);

@@ -44,6 +44,8 @@ using comic_chat::legacy_ui::IrcTransportIngressAction;
 using comic_chat::legacy_ui::IrcTransportIngressGate;
 using comic_chat::legacy_ui::IrcTransportIngressPhase;
 using comic_chat::legacy_ui::NormalizeLegacyNamesReply;
+using comic_chat::legacy_ui::ClassifyNamesIdentities;
+using comic_chat::legacy_ui::ConsumeNamesIdentities;
 
 struct FakeUser {
 	std::string account;
@@ -392,6 +394,148 @@ void TestNamesExtensionsNormalizeBeforeLegacyMembership()
 	Check(AdaptProtocolMessage(malformed).rejected_legacy_shape);
 }
 
+// userhost-in-names makes the server send nick!user@host inside 353. The legacy
+// member model must keep receiving bare nicknames, and the hostmask must reach
+// CUserInfo::SetFullName through the same typed host mutation chghost uses.
+void TestUserhostInNamesSuppliesHostmaskToLegacyModel()
+{
+	const auto parsed = comic_chat::ircv3::Message::Parse(
+		":server 353 me = #ink :@+Op!opuser@op.example.test "
+		"Plain!plainuser@plain.example.test NoMask\r\n");
+	Check(parsed.has_value());
+	if (!parsed) return;
+
+	// Safety property: multi-prefix and the hostmask are both stripped, so the
+	// nickname column can never be polluted by user@host text.
+	std::vector<std::string> identities;
+	const auto normalized = NormalizeLegacyNamesReply(*parsed, "(ov)@+", &identities);
+	Check(normalized.has_value());
+	if (normalized)
+		Check(normalized->params.back() == "@Op Plain NoMask");
+	Check(identities == std::vector<std::string>{
+		"Op", "opuser", "op.example.test",
+		"Plain", "plainuser", "plain.example.test"});
+
+	const auto adapted = AdaptProtocolMessage(*parsed, "(ov)@+");
+	Check(!adapted.rejected_legacy_shape);
+	Check(adapted.legacy_wire ==
+		std::optional<std::string>{":server 353 me = #ink :@Op Plain NoMask\r\n"});
+	Check(adapted.typed_context.has_value());
+	if (!adapted.typed_context) return;
+
+	const auto mutations = ClassifyNamesIdentities(adapted.typed_context->event);
+	Check(mutations.size() == 2);
+	if (mutations.size() == 2) {
+		Check(mutations[0].kind == Ircv3UserMutationKind::host &&
+			mutations[0].nickname == "Op" && mutations[0].value == "opuser" &&
+			mutations[0].secondary == "op.example.test" && mutations[0].active);
+		Check(mutations[1].kind == Ircv3UserMutationKind::host &&
+			mutations[1].nickname == "Plain" && mutations[1].value == "plainuser" &&
+			mutations[1].secondary == "plain.example.test");
+	}
+
+	// Legacy consumer: identical find/apply pair to the chghost host mutation.
+	std::map<std::string, FakeUser, std::less<>> users;
+	users.emplace("Op", FakeUser{});
+	users.emplace("Plain", FakeUser{});
+	users.emplace("NoMask", FakeUser{});
+	const auto find = [&users](std::string_view nickname) -> FakeUser* {
+		const auto found = users.find(nickname);
+		return found == users.end() ? nullptr : &found->second;
+	};
+	const auto apply = [](FakeUser& user, const Ircv3UserMutation& mutation) {
+		if (mutation.kind == Ircv3UserMutationKind::host)
+			user.identity = std::string(mutation.value) + '@' + std::string(mutation.secondary);
+	};
+	auto result = ConsumeNamesIdentities(adapted.typed_context->event, find, apply);
+	Check(!result.ignored && result.applied == 2 && result.unknown_user == 0);
+	Check(users.at("Op").identity == "opuser@op.example.test");
+	Check(users.at("Plain").identity == "plainuser@plain.example.test");
+	// A token without a hostmask still joins the room; it just gains no identity.
+	Check(users.at("NoMask").identity.empty());
+
+	// Rooms that do not hold the user must report it rather than invent members.
+	users.erase("Plain");
+	result = ConsumeNamesIdentities(adapted.typed_context->event, find, apply);
+	Check(result.applied == 1 && result.unknown_user == 1 && users.size() == 2);
+
+	// chatview.cpp hands one find/apply pair to both consumers, so a NAMES
+	// identity and a later chghost stay interchangeable. The MFC view itself
+	// builds only under MSVC; keep that shape compiling here.
+	Event chghost;
+	chghost.type = EventType::HostChanged;
+	chghost.source = "Op";
+	chghost.key = "opuser";
+	chghost.value = "cloak.example.test";
+	Check(ConsumeUserMutation(chghost, find, apply) == Ircv3UserMutationResult::applied);
+	Check(users.at("Op").identity == "opuser@cloak.example.test");
+
+	// A 353 with no hostmask at all keeps working and emits no typed context.
+	comic_chat::ircv3::Message bare = *parsed;
+	bare.params.back() = "@Op Plain";
+	std::vector<std::string> none;
+	const auto bare_normalized = NormalizeLegacyNamesReply(bare, "(ov)@+", &none);
+	Check(bare_normalized && bare_normalized->params.back() == "@Op Plain" && none.empty());
+	const auto bare_adapted = AdaptProtocolMessage(bare, "(ov)@+");
+	Check(bare_adapted.legacy_wire ==
+		std::optional<std::string>{":server 353 me = #ink :@Op Plain\r\n"});
+	Check(!bare_adapted.typed_context.has_value());
+
+	// A '!' without a complete user@host keeps the nickname and drops the identity.
+	comic_chat::ircv3::Message half = *parsed;
+	half.params.back() = "Half!useronly Empty!";
+	std::vector<std::string> half_out;
+	const auto half_normalized = NormalizeLegacyNamesReply(half, "(ov)@+", &half_out);
+	Check(half_normalized && half_normalized->params.back() == "Half Empty" && half_out.empty());
+
+	// Oversize identity parts are dropped, never truncated into the model, and
+	// never cost the member their place in the room.
+	comic_chat::ircv3::Message oversize_host = *parsed;
+	oversize_host.params.back() = "Big!user@" + std::string(256, 'h');
+	std::vector<std::string> big_out;
+	const auto big_normalized = NormalizeLegacyNamesReply(oversize_host, "(ov)@+", &big_out);
+	Check(big_normalized && big_normalized->params.back() == "Big" && big_out.empty());
+
+	// Fail-closed: rejected input yields nullopt and never partially writes out.
+	for (const std::string_view invalid : {
+		"", "ov)@+", "(ov@+", "(ov)@", "(oo)@+", "(ov)@@"}) {
+		std::vector<std::string> untouched{"stale"};
+		Check(!NormalizeLegacyNamesReply(*parsed, invalid, &untouched));
+		Check(untouched == std::vector<std::string>{"stale"});
+	}
+	// A good token ahead of a rejected one must not leave its identity behind:
+	// the reply commits every identity or none.
+	comic_chat::ircv3::Message oversize_nick = *parsed;
+	oversize_nick.params.back() = "Good!gooduser@good.example.test " +
+		std::string(256, 'n') + "!user@host.example.test";
+	std::vector<std::string> oversize_out{"stale"};
+	Check(!NormalizeLegacyNamesReply(oversize_nick, "(ov)@+", &oversize_out));
+	Check(oversize_out == std::vector<std::string>{"stale"});
+	Check(!AdaptProtocolMessage(oversize_nick, "(ov)@+").legacy_wire);
+	Check(!AdaptProtocolMessage(oversize_nick, "(ov)@+").typed_context.has_value());
+
+	// A corrupt or foreign event must not reach the model.
+	Event corrupt;
+	corrupt.type = EventType::MessageContext;
+	corrupt.key = "353";
+	corrupt.context = {"Op", "opuser"};
+	Check(ClassifyNamesIdentities(corrupt).empty());
+	corrupt.context = {"Op", "op@user", "op.example.test"};
+	Check(ClassifyNamesIdentities(corrupt).empty());
+	corrupt.context = {"@Op", "opuser", "op.example.test"};
+	Check(ClassifyNamesIdentities(corrupt).empty());
+	corrupt.context = {"Op", "opuser", std::string("host\0spoof", 10)};
+	Check(ClassifyNamesIdentities(corrupt).empty());
+	corrupt.context = {"Op", "opuser", "op.example.test"};
+	Check(ClassifyNamesIdentities(corrupt).size() == 1);
+	corrupt.key = "352";
+	Check(ClassifyNamesIdentities(corrupt).empty());
+	corrupt.key = "353";
+	corrupt.type = EventType::Typing;
+	Check(ClassifyNamesIdentities(corrupt).empty());
+	Check(ConsumeNamesIdentities(corrupt, find, apply).ignored);
+}
+
 void TestNoImplicitNamesBuildsExplicitBoundedQuery()
 {
 	Check(!PrepareExplicitNamesRequest(false, "#ink"));
@@ -454,6 +598,7 @@ int main()
 	TestLegacyDispatchShapeGate();
 	TestExtendedJoinPreservesTypedIdentityAndLegacyChannel();
 	TestNamesExtensionsNormalizeBeforeLegacyMembership();
+	TestUserhostInNamesSuppliesHostmaskToLegacyModel();
 	TestNoImplicitNamesBuildsExplicitBoundedQuery();
 	TestTransportIngressPhaseAndWorkGates();
 	return failures == 0 ? 0 : 1;
