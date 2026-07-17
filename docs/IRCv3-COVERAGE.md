@@ -1,6 +1,6 @@
 # IRC and IRCv3 coverage
 
-Audit snapshot: 2026-07-16, base source commit `398a831`.
+Audit snapshot: 2026-07-16, base source commit `43282a7`.
 
 This is the compatibility ledger for the legacy Microsoft Comic Chat client in
 `v2.5-beta-1-modern/` and the shared protocol engine in `portable/`. It measures
@@ -70,10 +70,11 @@ The intended path is:
    `v2.5-beta-1-modern/chatview.cpp:85-131`).
 
 Step 5 remains the principal completion gap, but it is no longer absent. The
-identity events above have causal MFC-independent model tests. `RENAME`,
-`FAIL`/`WARN`/`NOTE`, redaction, typing/reaction, read markers, metadata, and
-complete message contexts still lack legacy view/model consumers. A typed
-portable event is not, by itself, legacy-client support.
+identity events above have causal MFC-independent model tests. Standard
+`FAIL`/`WARN`/`NOTE` descriptions also reach Microsoft's existing status view
+once, through the focused document. `RENAME`, redaction, typing/reaction, read
+markers, metadata, and complete message contexts still lack legacy view/model
+consumers. A typed portable event is not, by itself, legacy-client support.
 
 ## Capability request safety
 
@@ -88,9 +89,9 @@ still apply after an opt-in. Gated offers remain discoverable through
 `IsOffered()`/`CapabilityValue()` and parsing stays liberal and bounded.
 
 The default request set is deliberately small: message tags, server time,
-account tag/notify, away notify, chghost, setname, secure usable SASL, and
-implicit CAP 302 state. Generic batch, standard replies, the non-standard bot
-CAP, echo/labeled response, history, metadata, read markers, monitoring, and all
+account tag/notify, away notify, chghost, setname, standard replies, secure
+usable SASL, and implicit CAP 302 state. Generic batch, the non-standard bot CAP,
+echo/labeled response, history, metadata, read markers, monitoring, and all
 known wire-shape hazards default off. Tests prove both safe defaults and explicit
 dependency-respecting opt-in (`portable/tests/ircv3_test.cpp:207-388`).
 
@@ -127,7 +128,7 @@ Official capability sources: [account notify](https://ircv3.net/specs/extensions
 | `message-tags` | stable | **partial** | Bounded input preserves opaque keys while checked output remains strict (`portable/src/net/ircv3.cpp:676-768,2561-2568`); `TAGMSG` is typed-only at the legacy boundary (`v2.5-beta-1-modern/ircv3eventbridge.h:24-51`); causal tests `portable/tests/ircv3_test.cpp:142-181,632-647,1239-1264` | Safe to request at the transport boundary. Product status remains partial because typed contexts, typing, and reactions still lack visible descendant consumers. |
 | `batch` | stable | **partial** | Bounded nesting and several batch families in `portable/src/net/ircv3.cpp:1989-2172`; tests `portable/tests/ircv3_test.cpp:313-348,744-787` | **Default off.** Opt in only with audited member semantics; a generic batch can unwrap a command the legacy model cannot safely consume. |
 | `server-time` | stable | **observe-only** | `time` is preserved as an unknown/generic tag and stripped after `MessageContext`; Solanum/Unreal/Orochi/InspIRCd fixtures | Safe for ordinary chat, but the legacy history timestamp is not set from the tag. |
-| `standard-replies` | stable | **observe-only** | `FAIL`/`WARN`/`NOTE` become `StandardReply` events in `portable/src/net/ircv3.cpp:2193-2343`; state tests `portable/tests/ircv3_test.cpp:350-381` | **Default off pending UI.** Consuming replies without a descendant event handler can hide errors from the user. |
+| `standard-replies` | stable | **implemented** | `FAIL`/`WARN`/`NOTE` become bounded typed events; the focused document formats their required descriptions into Microsoft's status view with severity color, while malformed tokens/NUL/oversize input no-op (`v2.5-beta-1-modern/ircv3eventbridge.h`, `chatview.cpp`) | Safe to request; every well-formed reply remains visible without exposing raw tags or duplicating it across rooms. |
 | `cap-notify` | stable | **implemented** | Implicit under CAP 302; `NEW`/`DEL`, dependent removal, and request tracking in `portable/src/net/ircv3.cpp:1488-1615`; tests `portable/tests/ircv3_test.cpp:189-252` | Safe. Never remove the implicit state merely because a server sends `CAP DEL cap-notify`. |
 | `account-notify` | stable | **partial** | Bounded account state and `Account` event feed the document-owned `CUserInfo::SetAccount` path; parser/state and causal fake-model tests cover login/logout and unknown users | Safe to request. Account identity is retained separately, but account-aware display and moderation remain future work. |
 | `account-tag` | stable | **observe-only** | Tag is preserved in `MessageContext`; fixture coverage, but no typed field or legacy use | Safe to request because the ordinary legacy wire shape is preserved; do not claim account-aware display or moderation. |
@@ -418,8 +419,9 @@ application of the remaining typed state events.
    preserved opaquely without weakening outbound validation, and `TAGMSG` is
    typed-only before legacy dispatch. Visible consumers remain part of item 3.
 3. **Partially complete:** account/away/host/realname have document-owned UI-
-   thread consumers and model-level tests. Implement rename, standard replies,
-   redaction, typing/reaction, read markers, metadata, and message context.
+   thread consumers and model-level tests, and standard replies reach the
+   existing status view. Implement rename, redaction, typing/reaction, read
+   markers, metadata, and message context.
 4. Wire the durable per-host STS store into each production session before
    transport start, use an OS-native private config location, commit secure
    updates/removals, retain only the current connection's persistence receipt
@@ -433,8 +435,8 @@ application of the remaining typed state events.
    client-batch/multiline construction.
 3. Wire CHATHISTORY recovery/pagination into reconnect without replaying
    uncertain messages or treating event playback as live state.
-4. Terminal labeled ACK handling is complete. Use durable labels as the primary
-   echo identity and expose standard replies instead of silently consuming them.
+4. Terminal labeled ACK handling and standard-reply presentation are complete.
+   Use durable labels as the primary echo identity for multi-session bouncers.
 5. Add SASL reauthentication/credential callbacks and an explicit client-
    certificate configuration path before enabling EXTERNAL in the product.
 
