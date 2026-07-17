@@ -12,6 +12,13 @@ project(
     'warning_level=3',
     'werror=true',
     'b_ndebug=if-release',
+    # Link-time optimization. ThinLTO keeps the Clang link parallel and fast
+    # while recovering most of full LTO's cross-TU inlining and dead-code
+    # elimination. Overridable at setup (e.g. -Db_lto=false for a fast debug
+    # cycle); the deterministic goldens and sanitizer suites are unaffected
+    # because LTO changes codegen, not program semantics.
+    'b_lto=true',
+    'b_lto_mode=thin',
   ],
 )
 
@@ -27,6 +34,26 @@ add_project_arguments(
   '-DMBEDTLS_USER_CONFIG_FILE="comicchat/mbedtls_user_config.h"',
   language: ['c', 'cpp'],
 )
+
+# Aggressive-but-safe optimization for our own translation units (subprojects
+# keep their pinned flags). Deliberately excludes anything that breaks IEEE
+# semantics (no -ffast-math, load-bearing near the renderer and crypto) or
+# reproducibility/portability (no -march=native; the deterministic goldens must
+# stay host-independent). Section-splitting plus --gc-sections strips dead code;
+# hidden visibility, no-semantic-interposition, and no-plt widen inlining and
+# tighten calls in the final executable.
+if get_option('optimization') in ['2', '3', 's']
+  add_project_arguments(
+    '-ffunction-sections',
+    '-fdata-sections',
+    '-fvisibility=hidden',
+    '-fvisibility-inlines-hidden',
+    '-fno-semantic-interposition',
+    '-fno-plt',
+    language: ['c', 'cpp'],
+  )
+  add_project_link_arguments('-Wl,--gc-sections', language: ['c', 'cpp'])
+endif
 if get_option('deterministic')
   add_project_arguments('-DCOMICCHAT_DETERMINISTIC_DEFAULT=1', language: 'cpp')
 endif

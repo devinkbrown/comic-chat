@@ -86,11 +86,11 @@ CLEAN :
 
 # PCH consumption is disabled; chat.pch remains a dependency stamp for the
 # generated per-source graph so cpp26mode.h changes invalidate every v1 object.
-CPP_PROJ=/nologo /MT /W4 /Zi /O2 $(CPP26_COMMON) /D "NDEBUG" \
+CPP_PROJ=/nologo /MT /W4 /Zi /O2 /GL /Gy /Gw $(CPP26_COMMON) /D "NDEBUG" \
  /I "." /I "..\portable\include" /I "..\third_party\libuv\include" \
  /I "..\third_party\mbedtls\include" \
  /Fp"$(INTDIR)/chat.pch" /Fo"$(INTDIR)/" /Fd"$(INTDIR)/" /c
-C_PROJ=/nologo /MT /W3 /Zi /O2 $(C_COMMON) /D "NDEBUG" \
+C_PROJ=/nologo /MT /W3 /Zi /O2 /GL /Gy /Gw $(C_COMMON) /D "NDEBUG" \
  /I "." /I "..\portable\include" /I "..\third_party\libuv\include" \
  /I "..\third_party\mbedtls\include" \
  /Fo"$(INTDIR)/" /Fd"$(INTDIR)/" /c
@@ -113,7 +113,7 @@ LINK32=link.exe
 # ADD LINK32 uuid.lib winmm.lib /nologo /subsystem:windows /machine:I386 /nodefaultlib:"libc"
 LINK32_FLAGS=uuid.lib ole32.lib shell32.lib winmm.lib ws2_32.lib libuv.lib mbedtls.lib mbedx509.lib \
  mbedcrypto.lib bcrypt.lib crypt32.lib userenv.lib iphlpapi.lib psapi.lib advapi32.lib \
- /nologo /subsystem:windows /incremental:no /FORCE:MULTIPLE\
+ /nologo /subsystem:windows /incremental:no /FORCE:MULTIPLE /LTCG /OPT:REF /OPT:ICF\
  /LIBPATH:"$(VCTOOLSINSTALLDIR)ATLMFC\lib\spectre\x86"\
  /LIBPATH:"$(PORTABLE_LIB)"\
  /pdb:"$(OUTDIR)/chat.pdb" /machine:I386 /nodefaultlib:"libc"\

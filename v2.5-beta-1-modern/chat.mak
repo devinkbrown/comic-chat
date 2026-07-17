@@ -20,7 +20,7 @@ CFG=chat - Win32 Debug
 !IF "$(CFG)" == "chat - Win32 Release"
 OUTDIR=.\Release
 INTDIR=.\Release
-CPP_CFG=/MT /O2 /D "NDEBUG"
+CPP_CFG=/MT /O2 /GL /Gy /Gw /D "NDEBUG"
 RSC_CFG=/d "NDEBUG"
 !ELSE
 OUTDIR=.\Debug
@@ -117,6 +117,7 @@ RESOURCE_INPUTS= \
 	$(MODERN_ICON_RESOURCE_INPUTS)
 
 LINK32_FLAGS=/nologo /subsystem:windows /FORCE:MULTIPLE /incremental:no /debug \
+ /LTCG /OPT:REF /OPT:ICF \
  /machine:I386 /nodefaultlib:"libc" \
  /LIBPATH:"$(VCTOOLSINSTALLDIR)ATLMFC\lib\spectre\x86" /LIBPATH:"$(ARTLIB)" \
  /LIBPATH:"$(PORTABLELIB)" \
