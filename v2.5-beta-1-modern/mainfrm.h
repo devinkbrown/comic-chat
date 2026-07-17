@@ -4,6 +4,10 @@
 
 
 #include "chatbars.h"
+#include "ircv3eventbridge.h"
+
+#include <cstdint>
+#include <optional>
 
 class CMainFrame : public CMDIFrameWnd
 {
@@ -28,6 +32,8 @@ public:
 	void ApplyModernMetrics(UINT dpi);
 	void RefreshModernAppearance();
 	void RefreshConnectionIndicators();
+	void DrainIrcv3UiEvents();
+	const std::optional<Ircv3AdapterEvent>& LastIrcv3UiEvent() const { return m_lastIrcv3UiEvent; }
 
 // Overrides
 	// ClassWizard generated virtual function overrides
@@ -83,5 +89,7 @@ private:
 	BOOL m_bOleShuttingDown;
 	UINT m_uCurrentDpi;
 	CString m_modernStatusText[3];
+	std::optional<Ircv3AdapterEvent> m_lastIrcv3UiEvent;
+	std::uint64_t m_reportedDroppedIrcv3Events = 0;
 
 };

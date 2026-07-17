@@ -68,8 +68,29 @@ LRESULT CMainFrame::OnComicChatNetworkEvent(WPARAM, LPARAM lParam)
 	// The transport thread posts only a wakeup. Immutable, generation-tagged
 	// events are drained and converted into MFC state here on the UI thread.
 	serverConn.PollNetworkEvents(lParam);
+	DrainIrcv3UiEvents();
 	RefreshConnectionIndicators();
 	return 0;
+}
+
+void CMainFrame::DrainIrcv3UiEvents()
+{
+	const auto result = comic_chat::legacy_ui::DrainIrcv3EventsForUi(serverConn,
+		[this](Ircv3AdapterEvent event) {
+			m_lastIrcv3UiEvent = std::move(event);
+			// Descendant handlers must copy any state they retain. Delivery is
+			// synchronous, so the complete tagged MessageContext remains valid.
+			SendMessageToAllChildWindows(WM_COMICCHAT_IRCV3_EVENT,
+				static_cast<WPARAM>(m_lastIrcv3UiEvent->event.type),
+				reinterpret_cast<LPARAM>(&*m_lastIrcv3UiEvent));
+		});
+	if (result.rejected != 0)
+		TRACE("IRCv3 UI bridge rejected %zu event(s).\n", result.rejected);
+	if (result.dropped_before_delivery != m_reportedDroppedIrcv3Events) {
+		TRACE("IRCv3 adapter dropped %llu event(s) before UI delivery.\n",
+			static_cast<unsigned long long>(result.dropped_before_delivery));
+		m_reportedDroppedIrcv3Events = result.dropped_before_delivery;
+	}
 }
 
 static UINT indicators[] =
@@ -358,6 +379,7 @@ void CMainFrame::OnTimer(UINT nIDEvent)
 	}
 
 	CMDIFrameWnd::OnTimer(nIDEvent);
+	DrainIrcv3UiEvents();
 	RefreshConnectionIndicators();
 }
 

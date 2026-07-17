@@ -1,14 +1,17 @@
 #include <comicchat/net/ircv3.hpp>
+#include "../../v2.5-beta-1-modern/ircv3eventbridge.h"
 
 #include <algorithm>
 #include <array>
 #include <cstdlib>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
 #include <string_view>
 #include <sstream>
+#include <stdexcept>
 #include <vector>
 
 #include <mbedtls/base64.h>
@@ -1039,6 +1042,60 @@ void TestAccountRegistrationAndOutputPolicy()
 		"draft/ICON is exposed as metadata without fetching remote media");
 }
 
+void TestLegacyUiEventBridge()
+{
+	struct Source {
+		std::deque<Ircv3AdapterEvent> queued;
+		std::uint64_t dropped = 7;
+
+		std::vector<Ircv3AdapterEvent> PollIrcv3Events(std::size_t maximum)
+		{
+			std::vector<Ircv3AdapterEvent> result;
+			while (!queued.empty() && result.size() < maximum) {
+				result.push_back(std::move(queued.front()));
+				queued.pop_front();
+			}
+			return result;
+		}
+
+		std::uint64_t DroppedIrcv3Events() const { return dropped; }
+	} source;
+
+	auto tagged = Message::Parse("@msgid=42;+reply=17 :Nick!u@h PRIVMSG #room :hello\r\n");
+	Check(tagged.has_value(), "typed-event bridge fixture parses tagged context");
+	for (std::size_t index = 0; index < 300; ++index) {
+		comic_chat::ircv3::Event event;
+		event.type = index == 0 ? EventType::MessageContext : EventType::Typing;
+		event.key = index == 1 ? "reject" : std::to_string(index);
+		std::optional<Message> context;
+		if (index == 0 && tagged) context = *tagged;
+		source.queued.push_back({std::move(event), std::move(context)});
+	}
+
+	bool preserved_context{};
+	std::size_t observed{};
+	const auto first = comic_chat::legacy_ui::DrainIrcv3EventsForUi(source,
+		[&](Ircv3AdapterEvent event) {
+			if (event.event.key == "reject") throw std::runtime_error{"view rejected event"};
+			++observed;
+			if (event.event.type == EventType::MessageContext && event.message) {
+				const auto* msgid = event.message->FindTag("msgid");
+				const auto* reply = event.message->FindTag("+reply");
+				preserved_context = msgid && msgid->value == "42" &&
+					reply && reply->value == "17" && event.message->params.back() == "hello";
+			}
+		}, 260);
+	Check(first.drained == 260 && first.delivered == 259 && first.rejected == 1 &&
+		first.dropped_before_delivery == 7 && observed == 259,
+		"typed-event bridge bounds batches and isolates a rejecting UI sink");
+	Check(preserved_context, "typed-event bridge preserves complete MessageContext tags and payload");
+	Check(source.queued.size() == 40, "typed-event bridge leaves work beyond the caller bound queued");
+	const auto second = comic_chat::legacy_ui::DrainIrcv3EventsForUi(source,
+		[&](Ircv3AdapterEvent) { ++observed; });
+	Check(second.drained == 40 && second.delivered == 40 && source.queued.empty(),
+		"next UI event-loop turn drains the remaining typed events");
+}
+
 } // namespace
 
 int main()
@@ -1066,6 +1123,7 @@ int main()
 	TestServerTranscriptFixtures();
 	TestMetadata2StateMachine();
 	TestAccountRegistrationAndOutputPolicy();
+	TestLegacyUiEventBridge();
 	if (failures) {
 		std::cerr << failures << " IRCv3 test(s) failed\n";
 		return EXIT_FAILURE;

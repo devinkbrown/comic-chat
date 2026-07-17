@@ -8,6 +8,7 @@
 #include "comicchat/memory.hpp"
 #include "comicchat/net/connection_engine.hpp"
 #include "comicchat/net/ircv3.hpp"
+#include "ircv3eventbridge.h"
 
 #include <atomic>
 #include <deque>
@@ -446,11 +447,9 @@ public:
 
 
 constexpr UINT WM_COMICCHAT_NETWORK_EVENT = WM_APP + 0x17C;
-
-struct Ircv3AdapterEvent {
-	comic_chat::ircv3::Event event;
-	std::optional<comic_chat::ircv3::Message> message;
-};
+// Synchronous UI-thread broadcast. LPARAM points to an Ircv3AdapterEvent and
+// is valid only for the duration of the message handler.
+constexpr UINT WM_COMICCHAT_IRCV3_EVENT = WM_APP + 0x17D;
 
 class CIrcSocket {
 public:
@@ -478,7 +477,7 @@ public:
 	void			PollNetworkEvents(LPARAM wakeupCookie);
 	// UI-thread-only bounded handoff of typed IRCv3 state and tag context.
 	std::vector<Ircv3AdapterEvent> PollIrcv3Events(std::size_t maximum = 128);
-	std::uint64_t DroppedIrcv3Events() const { return m_droppedIrcv3Events; }
+	std::uint64_t DroppedIrcv3Events() const noexcept { return m_droppedIrcv3Events; }
 	const comic_chat::ircv3::ServerIdentity& GetServerIdentity() const { return m_ircEngine.Identity(); }
 	std::optional<std::size_t> GetTargetLimit(std::string_view command) const {
 		return m_ircEngine.TargetLimit(command);
