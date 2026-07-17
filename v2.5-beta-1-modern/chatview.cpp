@@ -23,6 +23,7 @@
 #include "memblst.h"
 #include "protsupp.h"
 #include "ircsock.h"
+#include "ircproto.h"
 #include <imm.h>
 
 #ifdef _DEBUG
@@ -130,6 +131,49 @@ LRESULT CChatView::OnIrcv3Event(WPARAM wParam, LPARAM lParam)
 		});
 	if (result == comic_chat::legacy_ui::Ircv3UserMutationResult::applied)
 		return 1;
+
+	const auto rename = comic_chat::legacy_ui::ClassifyChannelRename(adapter->event);
+	if (rename) {
+		const std::string previousBytes(rename->previous);
+		const std::string currentBytes(rename->current);
+		// A conforming server prevents collisions, but do not create two local
+		// live documents with the same target if a stale or malicious event does.
+		CChatDoc* collision = LookupDoc(currentBytes.c_str());
+		if (!collision || collision == doc) {
+			const auto renamed = comic_chat::legacy_ui::ConsumeChannelRename(adapter->event,
+				[doc](std::string_view previous) {
+					if (!doc->m_proto) return false;
+					const CString owned(previous.data(), static_cast<int>(previous.size()));
+					return doc->m_proto->m_strChannel.CompareNoCase(owned) == 0;
+				},
+				[doc, &previousBytes, &currentBytes](const comic_chat::legacy_ui::Ircv3ChannelRename&) {
+					const CString previous(previousBytes.c_str());
+					const CString current(currentBytes.c_str());
+					const CString pretty(DecodeChan(currentBytes.c_str()));
+					serverConn.m_queries.RenameChannelReferences(previous, current);
+					INT roomIndex = -1;
+					CRoomInfo* pending = theApp.GetRoomInfoFromName(previous, &roomIndex,
+						FALSE, TRUE);
+					if (pending && pending != doc->m_proto) {
+						pending->m_strChannel = current;
+						pending->m_strPrettyChannel = pretty;
+					}
+					doc->m_proto->m_strChannel = current;
+					doc->m_proto->m_strPrettyChannel = pretty;
+					doc->SetLegalPath(pretty, FALSE);
+					doc->m_proto->SetConnectionStatus(CX_INCHANNEL);
+				});
+			if (renamed == comic_chat::legacy_ui::Ircv3ChannelRenameResult::applied) {
+				if (GetFocusedDoc() == doc) {
+					const auto line = comic_chat::legacy_ui::FormatChannelRenameStatus(*rename);
+					CIrcPrint print;
+					print.SetFormat(PT_WHOLESTRING, line.c_str(), RGB(0, 92, 184), 0, TRUE);
+					AddToStatus(print, line.c_str());
+				}
+				return 1;
+			}
+		}
+	}
 
 	// Microsoft's numeric-error path wrote human-readable failures into the
 	// shared status view. Keep that behavior for IRCv3 FAIL/WARN/NOTE, but only

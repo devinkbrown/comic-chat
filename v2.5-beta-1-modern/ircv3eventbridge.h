@@ -58,6 +58,18 @@ struct Ircv3StatusPresentation {
 	std::string text;
 };
 
+struct Ircv3ChannelRename {
+	std::string_view previous;
+	std::string_view current;
+	std::string_view reason;
+};
+
+enum class Ircv3ChannelRenameResult {
+	ignored,
+	not_target,
+	applied,
+};
+
 constexpr std::size_t kIrcv3LegacyNicknameMaximum = 255;
 constexpr std::size_t kIrcv3LegacyIdentityPartMaximum = 255;
 constexpr std::size_t kIrcv3LegacyUserValueMaximum = 512;
@@ -74,6 +86,53 @@ inline bool ValidStandardReplyToken(std::string_view value) noexcept
 		return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
 			(ch >= '0' && ch <= '9') || ch == '-' || ch == '_' || ch == '*';
 	});
+}
+
+inline bool ValidLegacyChannelName(std::string_view value) noexcept
+{
+	return !value.empty() && value.size() <= kIrcv3LegacyIdentityPartMaximum &&
+		value.front() != ':' && value.find('\0') == std::string_view::npos &&
+		value.find_first_of(" ,\a\r\n") == std::string_view::npos;
+}
+
+inline std::optional<Ircv3ChannelRename> ClassifyChannelRename(
+	const comic_chat::ircv3::Event& event) noexcept
+{
+	if (event.type != comic_chat::ircv3::EventType::ChannelRenamed ||
+		!ValidLegacyChannelName(event.target) || !ValidLegacyChannelName(event.value) ||
+		!ValidUserMutationText(event.detail, kIrcv3LegacyUserValueMaximum))
+		return std::nullopt;
+	return Ircv3ChannelRename{event.target, event.value, event.detail};
+}
+
+inline std::string FormatChannelRenameStatus(const Ircv3ChannelRename& rename)
+{
+	std::string result;
+	result.reserve(rename.previous.size() + rename.current.size() + rename.reason.size() + 20);
+	result = "[RENAME] ";
+	result += rename.previous;
+	result += " -> ";
+	result += rename.current;
+	if (!rename.reason.empty()) {
+		result += ": ";
+		for (const unsigned char ch : rename.reason)
+			result.push_back(ch < 0x20 || ch == 0x7f ? ' ' : static_cast<char>(ch));
+	}
+	return result;
+}
+
+template <typename MatchesChannel, typename ApplyRename>
+Ircv3ChannelRenameResult ConsumeChannelRename(
+	const comic_chat::ircv3::Event& event,
+	MatchesChannel&& matches_channel,
+	ApplyRename&& apply_rename)
+{
+	const auto rename = ClassifyChannelRename(event);
+	if (!rename) return Ircv3ChannelRenameResult::ignored;
+	if (!std::invoke(std::forward<MatchesChannel>(matches_channel), rename->previous))
+		return Ircv3ChannelRenameResult::not_target;
+	std::invoke(std::forward<ApplyRename>(apply_rename), *rename);
+	return Ircv3ChannelRenameResult::applied;
 }
 
 // Standard replies replace ad-hoc server notices only when their required

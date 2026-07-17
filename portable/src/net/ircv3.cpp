@@ -118,6 +118,12 @@ bool ValidMiddleParameter(std::string_view value)
 		value.find(' ') == std::string_view::npos && !HasLineControl(value);
 }
 
+bool ValidChannelName(std::string_view value)
+{
+	return ValidMiddleParameter(value) && value.find(',') == std::string_view::npos &&
+		value.find('\a') == std::string_view::npos;
+}
+
 bool ValidUtf8(std::string_view value)
 {
 	for (std::size_t offset = 0; offset < value.size();) {
@@ -2342,7 +2348,16 @@ ProcessResult Engine::HandleStateMessage(const Message& message)
 		}
 		auto& event = emit(EventType::RealnameChanged);
 		event.value = message.params.back();
-	} else if (message.command == "RENAME" && message.params.size() >= 2) {
+	} else if (message.command == "RENAME") {
+		// The server-to-client draft command always carries old channel, new
+		// channel, and a (possibly empty) reason. Reject malformed input before it
+		// can become a legacy unknown command or mutate channel-keyed state.
+		if (message.params.size() != 3 || !ValidChannelName(message.params[0]) ||
+			!ValidChannelName(message.params[1]) ||
+			message.params[2].size() > kMaxMessageBytes || HasLineControl(message.params[2])) {
+			reject("channel-rename-invalid");
+			return result;
+		}
 		const auto old_name = Casefold(message.params[0]);
 		const auto new_name = Casefold(message.params[1]);
 		if (old_name != new_name && joined_channels_.contains(old_name) &&

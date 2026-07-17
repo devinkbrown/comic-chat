@@ -465,6 +465,17 @@ void TestStateEvents()
 	Check(engine.ReadMarkers().at("#new").find("timestamp=") == 0, "read marker retained");
 	Check(engine.Metadata().at("bob").at("key") == "value", "metadata retained");
 	Check(engine.RedactedMessageIds().count("abc123") == 1, "redaction retained");
+	for (const auto& malformed : {
+		std::string(":server RENAME #old #new\r\n"),
+		std::string(":server RENAME #old,bad #new :reason\r\n"),
+		std::string(":server RENAME #old #new extra :reason\r\n"),
+	}) {
+		auto rejected = engine.Process(malformed);
+		Check(rejected.consumed && rejected.messages.empty() && rejected.events.size() == 1 &&
+			rejected.events[0].type == EventType::ProtocolError &&
+			rejected.events[0].key == "channel-rename-invalid",
+			"malformed channel rename is contained before legacy dispatch");
+	}
 	auto logged_in = engine.Process(":server 900 Bob Bob!u@h bob-account :You are now logged in\r\n");
 	Check(logged_in.events.size() == 1 && logged_in.events[0].type == EventType::Account &&
 		engine.Accounts().at("bob") == "bob-account", "SASL login numeric updates typed account state");

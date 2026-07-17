@@ -128,9 +128,9 @@ public:
 	void		FreeRemoveAll();
 	void		FreeRemoveAt(POSITION pos);
 	CCQuery*	FindQuery(enumCommandType ct, POSITION *pPos = NULL, LONG *plRank = NULL);
+	UINT		RenameChannelReferences(const CString& previous, const CString& current);
 };
 
 
 #define __QUERY_H__
 #endif __QUERY_H__
-

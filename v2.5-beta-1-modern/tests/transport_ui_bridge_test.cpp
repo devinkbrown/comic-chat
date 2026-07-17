@@ -22,6 +22,10 @@ using comic_chat::ircv3::Event;
 using comic_chat::ircv3::EventType;
 using comic_chat::legacy_ui::ClassifyUserMutation;
 using comic_chat::legacy_ui::ClassifyStandardReply;
+using comic_chat::legacy_ui::ClassifyChannelRename;
+using comic_chat::legacy_ui::ConsumeChannelRename;
+using comic_chat::legacy_ui::FormatChannelRenameStatus;
+using comic_chat::legacy_ui::Ircv3ChannelRenameResult;
 using comic_chat::legacy_ui::ConsumeUserMutation;
 using comic_chat::legacy_ui::Ircv3StatusSeverity;
 using comic_chat::legacy_ui::Ircv3UserMutation;
@@ -218,7 +222,7 @@ void TestStandardReplyPresentation()
 	reply.value = "REJECTED";
 	reply.detail = std::string(513, 'x');
 	Check(!ClassifyStandardReply(reply));
-	reply.detail = std::string("format\x01control", 14);
+	reply.detail = std::string("format\001control", 14);
 	presentation = ClassifyStandardReply(reply);
 	Check(presentation && presentation->text == "[FAIL] PRIVMSG/REJECTED: format control");
 	reply.detail = std::string("unsafe\0description", 18);
@@ -228,6 +232,49 @@ void TestStandardReplyPresentation()
 	Check(!ClassifyStandardReply(reply));
 }
 
+void TestChannelRenameConsumer()
+{
+	Event event;
+	event.type = EventType::ChannelRenamed;
+	event.target = "#OldRoom";
+	event.value = "#NewRoom";
+	event.detail = "Clearer name";
+	auto rename = ClassifyChannelRename(event);
+	Check(rename && rename->previous == "#OldRoom" && rename->current == "#NewRoom" &&
+		FormatChannelRenameStatus(*rename) ==
+			"[RENAME] #OldRoom -> #NewRoom: Clearer name");
+
+	std::string channel = "#OldRoom";
+	const auto matches = [&channel](std::string_view candidate) {
+		return candidate == channel;
+	};
+	const auto apply = [&channel](const auto& change) {
+		channel = change.current;
+	};
+	Check(ConsumeChannelRename(event, matches, apply) == Ircv3ChannelRenameResult::applied &&
+		channel == "#NewRoom");
+	channel = "#Different";
+	Check(ConsumeChannelRename(event, matches, apply) == Ircv3ChannelRenameResult::not_target &&
+		channel == "#Different");
+
+	event.detail = std::string("control\x01reason", 14);
+	rename = ClassifyChannelRename(event);
+	Check(rename && FormatChannelRenameStatus(*rename) ==
+		"[RENAME] #OldRoom -> #NewRoom: control reason");
+	for (const auto& invalid : {
+		std::string{}, std::string("#bad room"), std::string("#bad,room"),
+		std::string("#bad\0room", 9), std::string(256, 'x')}) {
+		event.value = invalid;
+		Check(!ClassifyChannelRename(event));
+	}
+	event.value = "#NewRoom";
+	event.detail = std::string(513, 'x');
+	Check(!ClassifyChannelRename(event));
+	event.type = EventType::Typing;
+	event.detail.clear();
+	Check(!ClassifyChannelRename(event));
+}
+
 } // namespace
 
 int main()
@@ -235,5 +282,6 @@ int main()
 	TestTypedUserMutationClassification();
 	TestTypedUserMutationsReachOwnedModels();
 	TestStandardReplyPresentation();
+	TestChannelRenameConsumer();
 	return failures == 0 ? 0 : 1;
 }

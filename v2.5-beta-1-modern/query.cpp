@@ -169,3 +169,19 @@ CCQuery* CQueryPtrList::FindQuery(enumCommandType ct, POSITION *pPos, LONG *plRa
 	return NULL;
 }
 
+
+UINT CQueryPtrList::RenameChannelReferences(const CString& previous, const CString& current)
+{
+	UINT renamed = 0;
+	for (POSITION pos = GetHeadPosition(); pos != NULL; )
+	{
+		CCQuery* query = (CCQuery*) GetNext(pos);
+		if (query && query->GetChannelName().CompareNoCase(previous) == 0)
+		{
+			CString replacement(current);
+			query->SetChannelName(replacement);
+			++renamed;
+		}
+	}
+	return renamed;
+}
