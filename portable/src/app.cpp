@@ -1,3 +1,5 @@
+#include "comicchat/config.hpp"
+#include "comicchat/net/native_session.hpp"
 #include "comicchat/render.hpp"
 #include "comicchat/text.hpp"
 
@@ -38,6 +40,7 @@ struct SurfaceDeleter final { void operator()(SDL_Surface* value) const noexcept
 struct Arguments final {
     std::optional<std::string> font;
     std::optional<std::string> png;
+    std::optional<comicchat::ConnectionConfig> connection;
     std::uint64_t frames{};
 };
 
@@ -53,6 +56,8 @@ constexpr std::string_view app_version = "0.1.0-dev";
 
 auto parse_arguments(const int argc, char** argv) -> std::optional<Arguments> {
     Arguments result;
+    std::vector<std::string_view> connection_arguments;
+    bool connection_marker{};
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument{argv[index]};
         if ((argument == "--font" || argument == "--png" || argument == "--frames") && index + 1 >= argc) {
@@ -65,11 +70,27 @@ auto parse_arguments(const int argc, char** argv) -> std::optional<Arguments> {
             const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), result.frames);
             if (error != std::errc{} || end != value.data() + value.size()) return std::nullopt;
         } else if (argument == "--help") {
-            std::cout << "comic-chat [--font FILE] [--png FILE] [--frames COUNT]\n";
-            return Arguments{std::string{}, std::string{}, 0};
+            std::cout << "comic-chat [--font FILE] [--png FILE] [--frames COUNT] "
+                         "[--connect HOST [PORT] NICK CHANNEL [--tls|--plaintext] "
+                         "[--ca-file FILE]]\n";
+            return Arguments{
+                .font = std::string{},
+                .png = std::string{},
+                .connection = std::nullopt,
+                .frames = 0,
+            };
+        } else if (argument == "--connect") {
+            if (connection_marker) return std::nullopt;
+            connection_marker = true;
+        } else if (connection_marker) {
+            connection_arguments.push_back(argument);
         } else {
             return std::nullopt;
         }
+    }
+    if (connection_marker) {
+        result.connection = comicchat::parse_connection_args(connection_arguments);
+        if (!result.connection) return std::nullopt;
     }
     return result;
 }
@@ -167,7 +188,9 @@ auto main(const int argc, char** argv) -> int {
     try {
         const auto arguments = parse_arguments(argc, argv);
         if (!arguments) {
-            std::cerr << "usage: comic-chat [--font FILE] [--png FILE] [--frames COUNT]\n";
+            std::cerr << "usage: comic-chat [--font FILE] [--png FILE] [--frames COUNT] "
+                         "[--connect HOST [PORT] NICK CHANNEL [--tls|--plaintext] "
+                         "[--ca-file FILE]]\n";
             return 2;
         }
         if (arguments->font && arguments->font->empty() && arguments->png && arguments->png->empty()) return 0;
@@ -185,6 +208,30 @@ auto main(const int argc, char** argv) -> int {
 
         configure_app_metadata();
         Sdl sdl;
+        std::unique_ptr<comicchat::net::NativeSession> session;
+        if (arguments->connection) {
+            const auto paths = comicchat::net::prepare_native_user_paths();
+            if (!paths) throw std::runtime_error{"could not create private per-user state directories"};
+            session = std::make_unique<comicchat::net::NativeSession>(paths->sts_policy_file);
+            const auto wakeup_event = SDL_RegisterEvents(1);
+            if (wakeup_event == 0) throw std::runtime_error{SDL_GetError()};
+            session->set_wakeup([wakeup_event] {
+                SDL_Event event{};
+                event.type = wakeup_event;
+                (void)SDL_PushEvent(&event);
+            });
+            comicchat::net::NativeSessionOptions session_options;
+            session_options.connection.endpoint = {arguments->connection->host, arguments->connection->port};
+            session_options.connection.server_name = arguments->connection->host;
+            session_options.connection.security = arguments->connection->security == comicchat::Security::tls
+                                                      ? comicchat::net::Security::tls
+                                                      : comicchat::net::Security::plaintext;
+            session_options.connection.ca_file = arguments->connection->ca_file;
+            session_options.nickname = arguments->connection->nickname;
+            session_options.channel = arguments->connection->channel;
+            if (!session->start(std::move(session_options)))
+                throw std::runtime_error{"could not start the native IRC session"};
+        }
         SDL_Window* raw_window{};
         SDL_Renderer* raw_renderer{};
         if (!SDL_CreateWindowAndRenderer(app_name.data(), 760, 760,
@@ -233,6 +280,12 @@ auto main(const int argc, char** argv) -> int {
                 } else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_C &&
                            (event.key.mod & SDL_KMOD_CTRL) != 0) {
                     (void)SDL_SetClipboardText("A Chat to Remember — Microsoft Comic Chat");
+                }
+            }
+            if (session) {
+                const auto network = session->poll(64, 512);
+                for (const auto& diagnostic : network.diagnostics) {
+                    std::cerr << "IRC session [" << diagnostic.code << "]: " << diagnostic.message << '\n';
                 }
             }
             if (redraw || arguments->frames != 0) {

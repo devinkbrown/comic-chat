@@ -120,12 +120,30 @@ The connection path provides:
 - diagnostics containing fixed non-secret descriptions only.
 
 Plaintext is never selected implicitly: callers must set
-`Security::plaintext`. STS parsing and persistence belong to the IRCv3 policy
-engine. The shared `StsPolicyStore` provides bounded atomic persistence and a
-pre-start `ConnectionOptions` plan; frontends must supply a native private
-configuration path and apply that plan before creating a transport generation.
-Production frontend wiring is still incomplete, so this substrate is not yet a
-claim of end-to-end persistent STS.
+`Security::plaintext`. The Linux/FreeBSD/OpenBSD `NativeSession` now owns the
+real SDL frontend's transport lifecycle. It creates `0700` XDG config/cache
+directories through descriptor-relative native filesystem calls without
+following symlinks, loads the bounded atomic `StsPolicyStore`, and applies its
+plan before the first transport generation starts. A plaintext STS upgrade
+restarts directly into certificate-verified TLS before any response from that
+IRC line can be sent. Only verified TLS persistence/removal updates reach the
+durable store, and the receipt retained by that exact generation is used to
+reschedule duration on disconnect. The SDL thread drains at most 64 transport
+events and 512 protocol items per loop iteration; the libuv worker only posts a
+thread-safe SDL wakeup event. Automatic reconnects retain their TLS options, so
+there is no failure path that silently falls back to plaintext.
+
+The optional live session can be started without changing the source-derived
+renderer:
+
+```sh
+./build/comic-chat --connect irc.example 6697 Alice '#comic-chat' --tls
+```
+
+`--plaintext` remains an explicit compatibility request. A cached STS policy
+still upgrades that request before the socket starts. The portable CLI does not
+accept a SASL password; credential-bearing frontends use `NativeSessionOptions`
+and its page-locked password path instead of command-line arguments.
 IRCv3 also owns CAP 302, SASL EXTERNAL/PLAIN/SCRAM-SHA-256, labels, batches,
 multiline, history recovery, read markers, metadata, redaction, and safe
 reconnect commands.
