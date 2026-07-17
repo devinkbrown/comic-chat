@@ -440,29 +440,37 @@ production STS session wiring across all three frontends. Normalization is not
 negotiation — all five NAMES/JOIN-adjacent capabilities below remain default-off
 in the catalog.
 
-Three unresolved defects block the gated NAMES/JOIN capabilities, found by
-audit rather than by test failure, since the current tests assert the defective
-behavior is correct:
+Three defects that formerly blocked the gated NAMES/JOIN capabilities -- found
+by audit rather than by test failure, since the tests then asserted the
+defective behavior was correct -- are now fixed, each with a causal test that
+fails against the old behavior:
 
-- `extended-join` rejection discards the JOIN entirely rather than only its
-  identity fields (`portable/src/net/ircv3.cpp:2422-2429`), and identity state
-  is pruned only on QUIT, never on PART (`:2864`), so `accounts_`/`realnames_`
-  grow to `kMaxStateEntries` and then silently drop members permanently. The
-  test at `portable/tests/ircv3_test.cpp:612-617` asserts that drop is intended.
-- `no-implicit-names` in `v1.0-pre-modern` requests NAMES for `GetMyChannel()`
-  rather than the channel named by the JOIN it never parses
-  (`v1.0-pre-modern/irc.cpp:933-946`), so a channel forward queries the wrong
-  room and an empty value drops the connection.
-- An empty but legitimate `PREFIX=` ISUPPORT token makes
-  `NormalizeLegacyNamesReply` return `nullopt`, discarding the whole `353` and
-  leaving the member list permanently empty
-  (`v2.5-beta-1-modern/ircv3eventbridge.h:381-383`).
+- `extended-join` at the identity-state bound now delivers the member and drops
+  only the account/realname annotation, instead of swallowing the whole JOIN
+  (`portable/src/net/ircv3.cpp` `HandleJoinMessage`; tests
+  `portable/tests/ircv3_test.cpp`, "extended JOIN at the state bound still
+  delivers the member"). PART pruning was deliberately *not* added: the engine
+  tracks only its own channels, so pruning a PART would drop identity for a user
+  still visible in another shared channel. The maps remain bounded at
+  `kMaxStateEntries`, so growth is capped and the former silent member-drop is
+  gone; a fuller fix would refcount per-user membership.
+- `no-implicit-names` in `v1.0-pre-modern` now recovers the channel from the
+  JOIN's own parameters via the testable `LegacyJoinChannel`
+  (`v1.0-pre-modern/transportadapter.h`; test
+  `TestNoImplicitNamesQueriesTheJoinedChannel`), so a server forward queries the
+  room we actually landed in. The one-line call-site wiring in
+  `v1.0-pre-modern/irc.cpp` is MFC and compiles only under MSVC CI.
+- An empty but legitimate `PREFIX=` ISUPPORT token now normalizes with an empty
+  prefix set -- stripping nothing, still splitting hostmasks -- instead of
+  discarding the whole `353` (`v2.5-beta-1-modern/ircv3eventbridge.h`
+  `NormalizeLegacyNamesReply`; test in
+  `TestNamesExtensionsNormalizeBeforeLegacyMembership`).
 
-The catalog default is also global across two frontends with different adapters
-and different coverage. `Engine::SetCapabilityRequestEnabled`
+The catalog default remains global across two frontends with different adapters
+and coverage. `Engine::SetCapabilityRequestEnabled`
 (`portable/src/net/ircv3.cpp:1382`) is the per-frontend lever this ledger's
 request-policy gate describes, and no production frontend calls it. Wire it
-before any default flips.
+before any default flips. All five NAMES/JOIN capabilities remain default-off.
 
 ## Prioritized completion plan
 
