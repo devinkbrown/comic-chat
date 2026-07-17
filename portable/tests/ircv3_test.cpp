@@ -849,10 +849,14 @@ void TestExtendedJoinStateAndShape()
 		"extended JOIN may update an existing key at the state bound");
 	auto account_limit = account_full.Process(
 		":fresh!u@h JOIN #ink fresh-account :Fresh User\r\n");
-	Check(account_limit.consumed && account_limit.messages.empty() && account_limit.events.size() == 1 &&
-		account_limit.events[0].key == "extended-join-state-limit" &&
+	// Identity state is full, but the JOIN is well-formed. Deliver the member and
+	// drop only the annotation -- swallowing the JOIN would lose the member to
+	// protect an optional field, fail-closed in the wrong direction. No partial
+	// commit: neither map gains "fresh".
+	Check(!account_limit.consumed && account_limit.messages.size() == 1 &&
+		account_limit.messages[0].command == "JOIN" &&
 		!account_full.Accounts().contains("fresh") && !account_full.Realnames().contains("fresh"),
-		"account-map exhaustion cannot partially commit an extended JOIN realname");
+		"extended JOIN at the state bound still delivers the member, dropping only identity");
 
 	Engine realname_full;
 	realname_full.Process(":held!u@h ACCOUNT old-account\r\n");
@@ -860,11 +864,14 @@ void TestExtendedJoinStateAndShape()
 		realname_full.Process(":real" + std::to_string(index) + " SETNAME :Real Name\r\n");
 	auto realname_limit = realname_full.Process(
 		":held!u@h JOIN #ink * :Held User\r\n");
-	Check(realname_limit.consumed && realname_limit.messages.empty() && realname_limit.events.size() == 1 &&
-		realname_limit.events[0].key == "extended-join-state-limit" &&
+	// Same rule with the maps reversed: the realname map is full, so deliver the
+	// member and leave the pre-existing account untouched rather than half-applying
+	// the star account-clear without the realname it was paired with.
+	Check(!realname_limit.consumed && realname_limit.messages.size() == 1 &&
+		realname_limit.messages[0].command == "JOIN" &&
 		realname_full.Accounts().at("held") == "old-account" &&
 		!realname_full.Realnames().contains("held"),
-		"realname-map exhaustion cannot partially erase an extended JOIN account");
+		"extended JOIN at the realname bound still delivers the member, leaving account intact");
 }
 
 void TestLabelsAndEchoes()

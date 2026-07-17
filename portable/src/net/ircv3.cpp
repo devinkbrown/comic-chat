@@ -2470,7 +2470,12 @@ ProcessResult Engine::HandleJoinMessage(const Message& message)
 	const bool account_removal = account_parameter == "*";
 	if ((!account_removal && !CanBoundedAssign(accounts_, key, account, kMaxStateEntries)) ||
 		!CanBoundedAssign(realnames_, key, realname, kMaxStateEntries)) {
-		reject("extended-join-state-limit");
+		// Identity state is full. The JOIN itself is well-formed, so return an
+		// unconsumed result: the legacy adapter flattens the extended parameters
+		// and delivers the member. Only the account/realname annotation is
+		// dropped -- swallowing the JOIN to protect an optional field would lose
+		// the member, which is the one outcome a chat client can least afford.
+		// Both maps are left untouched, so there is still no partial commit.
 		return result;
 	}
 
