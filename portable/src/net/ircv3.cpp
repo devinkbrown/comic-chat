@@ -11,6 +11,7 @@
 #include <limits>
 #include <sstream>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 
 #include <mbedtls/base64.h>
@@ -705,16 +706,34 @@ bool Message::Parse(std::string_view wire, Message* out, std::string* error)
 		const auto space = wire.find(' ');
 		if (space == std::string_view::npos || space + 1 > kMaxTagFrameBytes ||
 			wire.size() - space - 1 > kMaxMessageBytes) return fail("invalid tag section");
-		for (const auto& raw : Split(wire.substr(1, space - 1), ';')) {
+		const auto tag_frame = wire.substr(1, space - 1);
+		const auto tag_count = 1U + static_cast<std::size_t>(std::ranges::count(tag_frame, ';'));
+		result.tags.reserve(tag_count);
+		// Keys are opaque and case-sensitive on input. Index them by views into
+		// the bounded wire frame so a unique-tag fanout is O(n), while avoiding
+		// a second allocation and copy of every key. The views do not escape.
+		std::unordered_map<std::string_view, std::size_t> tag_positions;
+		tag_positions.reserve(tag_count);
+		std::size_t tag_cursor = 0;
+		while (tag_cursor <= tag_frame.size()) {
+			const auto tag_end = tag_frame.find(';', tag_cursor);
+			const auto raw = tag_frame.substr(tag_cursor, tag_end - tag_cursor);
 			const auto equal = raw.find('=');
-			const std::string name = raw.substr(0, equal);
+			const auto name = raw.substr(0, equal);
 			std::optional<std::string> value;
-			if (equal != std::string::npos) value = UnescapeTag(std::string_view(raw).substr(equal + 1));
+			if (equal != std::string_view::npos) value = UnescapeTag(raw.substr(equal + 1));
 			// Inbound tag keys are case-sensitive opaque identifiers. IRCv3
 			// explicitly forbids rejecting an otherwise valid message because a
 			// key does not match today's grammar. Outbound serialization still
 			// applies ValidTagKey(). If duplicated, the final occurrence wins.
-			result.SetTag(name, std::move(value));
+			if (const auto found = tag_positions.find(name); found != tag_positions.end()) {
+				result.tags[found->second].value = std::move(value);
+			} else {
+				tag_positions.emplace(name, result.tags.size());
+				result.tags.push_back({std::string(name), std::move(value)});
+			}
+			if (tag_end == std::string_view::npos) break;
+			tag_cursor = tag_end + 1;
 		}
 		cursor = space + 1;
 	} else if (wire.size() > kMaxMessageBytes) return fail("IRC message exceeds 512-byte frame");

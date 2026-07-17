@@ -174,6 +174,19 @@ void TestMessageTags()
 		"opaque inbound tag names and final duplicate values are preserved exactly");
 	Check(!opaque.SerializeChecked(), "opaque invalid tag keys remain forbidden on outbound serialization");
 
+	std::string fanout = "@";
+	constexpr std::size_t fanout_count = 1024;
+	for (std::size_t i = 0; i < fanout_count; ++i) {
+		if (i != 0) fanout += ';';
+		fanout += "t" + std::to_string(i);
+	}
+	fanout += " PRIVMSG #room :bounded fanout\r\n";
+	Message many_tags;
+	Check(Message::Parse(fanout, &many_tags) && many_tags.tags.size() == fanout_count,
+		"large unique tag fanout is processed within the IRCv3 tag-frame byte bound");
+	Check(many_tags.FindTag("t0") && many_tags.FindTag("t1023"),
+		"linear tag index preserves the first and final unique keys");
+
 	Engine engine;
 	auto forwarded = engine.Process("@future~key=value :nick!u@h PRIVMSG #room :still valid\r\n");
 	Check(forwarded.events.empty() && forwarded.messages.size() == 1 &&
