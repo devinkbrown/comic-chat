@@ -155,6 +155,12 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def source_sha256(path: Path) -> str:
+    """Hash SVG text independently of checkout newline conversion."""
+    data = path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    return hashlib.sha256(data).hexdigest()
+
+
 def canonical_json(value: Any) -> bytes:
     return (json.dumps(value, indent=2, sort_keys=True, ensure_ascii=True) + "\n").encode("utf-8")
 
@@ -825,7 +831,7 @@ def tool_version(name: str) -> str:
 
 def source_fingerprint(catalog: Catalog) -> tuple[str, dict[str, str]]:
     sources = {
-        canonical_relative(path.relative_to(REPOSITORY)): sha256(path)
+        canonical_relative(path.relative_to(REPOSITORY)): source_sha256(path)
         for path in selected_sources(catalog)
     }
     payload = {"manifest": catalog.raw, "sources": sources}

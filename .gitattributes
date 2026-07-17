@@ -1,0 +1,6 @@
+# SVG source fingerprints and generated catalog hashes must be identical on
+# Windows, Linux, and BSD checkouts.  Generated files are byte-for-byte build
+# artifacts; never rewrite their line endings.
+portable/assets/icons/**/*.svg text eol=lf
+portable/assets/icons/manifest.json text eol=lf
+portable/assets/icons/generated/** -text

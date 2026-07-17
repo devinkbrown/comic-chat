@@ -71,6 +71,14 @@ class ModernIconPipelineTests(unittest.TestCase):
         ):
             self.assertEqual(icons.tool("magick"), "/usr/bin/convert")
 
+        with tempfile.TemporaryDirectory(prefix="comic-chat-newline-test-") as temporary:
+            root = Path(temporary)
+            windows = root / "windows.svg"
+            unix = root / "unix.svg"
+            windows.write_bytes(b"<svg>\r\n<path/>\r\n</svg>\r\n")
+            unix.write_bytes(b"<svg>\n<path/>\n</svg>\n")
+            self.assertEqual(icons.source_sha256(windows), icons.source_sha256(unix))
+
     def test_reserved_windows_blocks_match_all_six_sizes(self) -> None:
         resource_header = (ROOT / "v2.5-beta-1-modern" / "resource.h").read_text(encoding="cp1252")
         for strip, base in icons.EXPECTED_STRIP_RESOURCE_IDS.items():
