@@ -1004,17 +1004,37 @@ void TestReconnectRecovery()
 	Check(duplicate_welcome.outbound.empty(),
 		"a repeated RPL_WELCOME does not re-emit recovery from a consumed snapshot");
 
-	// Gated on chathistory: a reconnect without draft/chathistory negotiated
-	// emits no recovery commands (there is no history to recover, and rejoining
-	// is the frontend's policy in that mode).
+	// Rejoin is unconditional; only the CHATHISTORY request is gated on
+	// negotiated chathistory. A reconnect without chathistory must still rejoin
+	// every remembered channel -- otherwise the session silently loses all its
+	// channels across a reconnect to a server that does not offer chathistory.
 	Engine ungated;
 	Enable(&ungated, "batch message-tags server-time");
 	ungated.PrepareOutgoing("JOIN #room\r\n");
 	ungated.Process(":server 001 Alice :Welcome\r\n");
 	Enable(&ungated, "batch message-tags server-time");
 	auto ungated_welcome = ungated.Process(":server 001 Alice :Welcome back\r\n");
-	Check(ungated_welcome.outbound.empty(),
-		"a reconnect without negotiated chathistory emits no recovery commands");
+	Check(ungated_welcome.outbound == std::vector<std::string>{"JOIN #room\r\n"},
+		"a reconnect without chathistory still rejoins, but requests no history");
+
+	// Multiple channels: every remembered channel is rejoined (and, with
+	// chathistory, gets its own bounded request), in the engine's set order.
+	Engine multi;
+	Check(multi.SetCapabilityRequestEnabled("batch", true) &&
+		multi.SetCapabilityRequestEnabled("draft/chathistory", true),
+		"multi-channel recovery test opts complete product path in");
+	Enable(&multi, "batch message-tags server-time draft/chathistory");
+	multi.PrepareOutgoing("JOIN #alpha\r\n");
+	multi.PrepareOutgoing("JOIN #bravo\r\n");
+	multi.Process(":server 001 Alice :Welcome\r\n");
+	Enable(&multi, "batch message-tags server-time draft/chathistory");
+	auto multi_welcome = multi.Process(":server 001 Alice :Welcome back\r\n");
+	Check(multi_welcome.outbound == std::vector<std::string>{
+		"JOIN #alpha\r\n",
+		"CHATHISTORY LATEST #alpha * 100\r\n",
+		"JOIN #bravo\r\n",
+		"CHATHISTORY LATEST #bravo * 100\r\n",
+	}, "reconnect recovery rejoins and requests history for every remembered channel");
 }
 
 void TestPlainAndExternal()

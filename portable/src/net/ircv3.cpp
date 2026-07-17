@@ -2827,12 +2827,14 @@ ProcessResult Engine::Process(std::string_view wire)
 	// RPL_WELCOME (001) marks a completed (re)registration. When we reconnected
 	// while holding prior channel memberships, emit bounded recovery so the
 	// session is restored without the frontend re-deriving it: rejoin each
-	// remembered channel and request a bounded CHATHISTORY LATEST window. This
-	// is gated on negotiated chathistory — recovery exists to recover missed
-	// history, and it only *requests* history (into a chathistory batch), never
-	// replaying uncertain history as live state. The snapshot is single-shot.
+	// remembered channel and, only when chathistory is negotiated, request a
+	// bounded CHATHISTORY LATEST window. Rejoin is unconditional — otherwise a
+	// reconnect to a server without chathistory would silently drop every
+	// channel — while BuildRecoveryCommands gates the history request itself, so
+	// it only *requests* history (into a chathistory batch), never replaying
+	// uncertain history as live state. The snapshot is single-shot.
 	if (message.command == "001") {
-		if (!recovery_channels_.empty() && IsEnabled("draft/chathistory")) {
+		if (!recovery_channels_.empty()) {
 			auto recovery = BuildRecoveryCommands(recovery_channels_, kReconnectHistoryLimit);
 			result.outbound.insert(result.outbound.end(),
 				std::make_move_iterator(recovery.begin()), std::make_move_iterator(recovery.end()));
