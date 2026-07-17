@@ -769,6 +769,21 @@ TEST_CASE("flood windows use monotonic time without counter rollover") {
     CHECK(window.record_at(start + 2s, 2, 4s, FloodThreshold::over_limit));
 }
 
+TEST_CASE("transport thread creation failure rolls back to a reusable stopped engine") {
+    comicchat::net::ConnectionEngine engine;
+    auto options = lifecycle_options();
+    comicchat::testing::fail_next_transport_thread_start();
+    const auto failed = engine.start(options);
+    REQUIRE_FALSE(failed);
+    CHECK(failed.error() == comicchat::net::EngineError::thread_start_failed);
+    CHECK(engine.post(comicchat::net::Disconnect{engine.generation(), "not running"}) ==
+          std::unexpected{comicchat::net::EngineError::not_running});
+
+    const auto retried = engine.start(options);
+    REQUIRE(retried);
+    engine.stop();
+}
+
 TEST_CASE("libuv plaintext loopback carries bounded bytes") {
     LoopbackServer server{ServerMode::plaintext_echo};
     comicchat::net::ConnectionEngine engine;

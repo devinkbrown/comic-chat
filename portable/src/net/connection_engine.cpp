@@ -21,6 +21,7 @@
 #include <mutex>
 #include <optional>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <utility>
 
@@ -56,6 +57,7 @@ constexpr std::size_t proxy_reply_limit = 16U * 1024U;
 constexpr std::size_t event_control_headroom = 2;
 constexpr std::array<std::size_t, 5> scheduling_order{2, 1, 0, 3, 4};
 constexpr std::array<unsigned int, 5> scheduling_quanta{4, 4, 4, 2, 1};
+std::atomic_bool fail_next_worker_start{};
 
 auto command_generation(const Command& command) -> GenerationId {
     return std::visit([](const auto& value) { return value.generation; }, command);
@@ -103,11 +105,11 @@ auto safe_network_name(const std::string_view value) noexcept -> bool {
     });
 }
 
-auto safe_endpoint_host(const std::string_view value) noexcept -> bool {
+auto safe_endpoint_host(const std::string& value) noexcept -> bool {
     if (!safe_network_name(value) || value.contains('[') || value.contains(']')) return false;
     if (!value.contains(':')) return true;
     sockaddr_in6 address{};
-    return uv_inet_pton(AF_INET6, value.data(), &address.sin6_addr) == 0;
+    return uv_inet_pton(AF_INET6, value.c_str(), &address.sin6_addr) == 0;
 }
 
 auto http_authority(const Endpoint& endpoint) -> std::string {
@@ -194,7 +196,22 @@ public:
             target_serial_ = 0;
             stopped_ = false;
         }
-        thread_ = threading::JThread{[this](const threading::StopToken token) noexcept { network_thread_entry(token); }};
+        try {
+            if (fail_next_worker_start.exchange(false, std::memory_order_relaxed))
+                throw std::system_error{std::make_error_code(std::errc::resource_unavailable_try_again)};
+            thread_ = threading::JThread{
+                [this](const threading::StopToken token) noexcept { network_thread_entry(token); }};
+        } catch (...) {
+            std::scoped_lock lock{mutex_};
+            stopped_ = true;
+            proxy_password_.reset();
+            clear_command_queues_locked();
+            queued_bytes_ = 0;
+            queued_receive_bytes_ = 0;
+            reserved_send_completions_ = 0;
+            reserved_receive_events_ = 0;
+            return std::unexpected{EngineError::thread_start_failed};
+        }
         const auto posted = post(Connect{generation(), options_});
         if (!posted) {
             stop_external();
@@ -1821,3 +1838,11 @@ auto ConnectionEngine::generation() const noexcept -> GenerationId { return impl
 auto ConnectionEngine::stats() const noexcept -> EngineStats { return impl_ ? impl_->stats() : EngineStats{}; }
 
 } // namespace comicchat::net
+
+namespace comicchat::testing {
+
+void fail_next_transport_thread_start() noexcept {
+    net::fail_next_worker_start.store(true, std::memory_order_relaxed);
+}
+
+} // namespace comicchat::testing

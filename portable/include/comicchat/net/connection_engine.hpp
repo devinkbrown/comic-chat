@@ -115,6 +115,7 @@ enum class EngineError {
     invalid_options,
     crypto_unavailable,
     credential_lock_failed,
+    thread_start_failed,
 };
 
 class ConnectionEngine final {
@@ -151,3 +152,11 @@ private:
 };
 
 } // namespace comicchat::net
+
+namespace comicchat::testing {
+
+// One-shot fault injection used to verify that transport thread creation
+// rolls back to a reusable stopped engine.
+void fail_next_transport_thread_start() noexcept;
+
+} // namespace comicchat::testing
