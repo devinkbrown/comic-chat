@@ -35,6 +35,33 @@ Treat portable/README.md as the current claim ledger. The title-panel foundation
 - Avoid a second heuristic path. Extend the source-derived pipeline rather than adding a screenshot-tuned special case.
 - Preserve immutable snapshots and original resource bytes.
 
+## Remaster complete characters, not fragments
+
+Treat a character remaster as a source-topology preservation task. The
+character's body, face, hair, costume, limbs, pose, expression, prop, shadow,
+and authored occlusion order form one design; never replace that composition
+with a generic face, face-with-legs, silhouette, or unrelated mascot.
+
+1. Use `portable/tools/avatar_oracle.cpp` and the historical AVB/source path to
+   render `legacy_exact` at its native dimensions.
+2. Record stable landmarks and layer relationships: head and eye centers,
+   torso/hip/hand/foot anchors, body-to-face scale, gesture attachment,
+   silhouette extrema, palette, mask, and transparent bounds.
+3. Render `modern_remaster` from the same records, pose/expression indices,
+   anchors, crop, and destination rectangle. Limit automatic remastering to
+   source-derived reconstruction, sampling, edge cleanup, and high-resolution
+   ink treatment unless the owner explicitly approves new authored artwork.
+4. Compare the complete character at native size and representative 150%,
+   200%, and 400% outputs. A smooth face does not pass when the body, pose,
+   proportions, costume, or silhouette changed or disappeared.
+5. Keep `legacy_exact` as the immutable behavioral oracle and add a focused
+   geometry/topology assertion plus before/after visual sheet for every
+   remastered character or pose family.
+
+Do not infer missing anatomy from a cropped screenshot. Resolve it from the
+original body/pose records and artwork; if the required source is absent, mark
+the remaster blocked rather than inventing a body.
+
 ## Produce reviewable evidence
 
 Use headless deterministic output for causal review:

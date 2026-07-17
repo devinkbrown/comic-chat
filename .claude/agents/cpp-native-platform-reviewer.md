@@ -1,8 +1,9 @@
 ---
 name: cpp-native-platform-reviewer
 description: Reviews C++ compiler, ABI, build-system, and native Windows, Linux, Wayland, and BSD parity.
-tools: [Read, Grep, Glob, WebFetch, WebSearch]
+tools: [Read, Grep, Glob, WebFetch, WebSearch, StructuredOutput]
 disallowedTools: [Bash, Edit, Write]
+skills: [comicchat-native-platforms, comicchat-cpp26-engineering]
 model: sonnet
 effort: high
 permissionMode: plan
@@ -52,5 +53,6 @@ package/runtime command Codex should execute.
 
 Use only Read/Grep/Glob/Web tools. Never run or claim shell, compiler, linker,
 Meson, NMAKE, test, package, CI, or runtime execution. Never edit, commit,
-merge, push, publish, or alter PR state. End with a block/pass verdict and the
-exact repository `HANDOFF` block using mandated not-run/not-applicable tokens.
+merge, push, publish, or alter PR state. End with a block/pass verdict by
+calling StructuredOutput with the supplied compact `HANDOFF` schema. The
+trusted wrapper adds role, Git, fingerprint, and not-run execution fields.

@@ -43,8 +43,12 @@ capped at `high`; do not use `xhigh` or `max` in this repository.
 |---|---|---|---|
 | Fast inventory, file ownership, log distillation | `gpt-5.6-terra`, low | Haiku, low | Read-only, parallel |
 | Primary-source or protocol research | `gpt-5.6`, medium/high | Sonnet, medium | Read-only, independent citations |
-| Bounded implementation | `gpt-5.6`, medium/high | Sonnet, medium | One writer in one isolated worktree |
+| Bounded implementation | `gpt-5.6`, high | Sonnet, high | One writer in one isolated worktree |
+| Icon and character remaster | `gpt-5.6`, high | Sonnet, high | Source-oracle asset writer worktree |
+| Compiler/build repair | `gpt-5.6`, medium | Sonnet, medium | Diagnostic-scoped writer worktree |
 | Architecture, concurrency, crypto, security | `gpt-5.6`, high | Opus, high | Independent threat/correctness passes |
+| Native UI and platform behavior | `gpt-5.6`, high | Sonnet, high | Read-only, platform-specific oracle |
+| Reproducible verification/performance | `gpt-5.6`, medium | None | Artifact-only Codex worktree |
 | Final adversarial review | `gpt-5.6`, high | Opus, high | Fresh context, read-only |
 | Integration and release | `gpt-5.6`, high when risky | None | Codex only |
 
@@ -52,6 +56,14 @@ Raise effort for uncertainty, state machines, ownership, concurrency, crypto,
 parser ambiguity, or platform-specific behavior. Lower it for deterministic
 inventory and log classification. Do not spend high effort on mechanical work
 that a script or compiler answers exactly.
+
+The Haiku inventory agent uses `permissionMode: default`, with only
+Read/Grep/Glob and StructuredOutput exposed and Bash/Edit/Write denied. Claude
+Code's documented SonnetPlan behavior transparently upgrades Haiku to Sonnet in
+`plan` mode; a live 2.1.212 envelope confirmed that upgrade. Default mode keeps
+this lane on Haiku while the explicit tool boundary remains read-only. The
+handoff validator also checks `modelUsage` against the routed model family, so
+future alias, plan-mode, or fallback drift cannot silently change the reviewer.
 
 ## End-to-end loop
 
@@ -183,31 +195,81 @@ as a coverage gap and add the gate.
 
 ## Repository tooling
 
-Project-specific agents live in `.codex/agents/` and `.claude/agents/`. The
-Claude command wrapper provides consistent non-interactive lanes:
+Project-specific agents live in `.codex/agents/` and `.claude/agents/`.
+Reusable task procedures live canonically in `.agents/skills/`; matching
+`.claude/skills/` entries are deliberately thin adapters to the same
+instructions. Agents answer *who owns this oracle?* Skills answer *which
+procedure must that agent follow?* Do not duplicate a complete procedure in an
+agent prompt or Claude adapter.
+
+`scripts/ai/agent-roster.json` is the routing source of truth. It pins each
+Claude agent's model, effort, permission mode, tools, isolation, turn cap, and
+lane-to-skill mapping, and pins the supported Codex roster. Validation fails on
+stale aliases, unsupported keys, permission drift, unreachable agents, or
+lanes that name unknown skills.
+
+The Claude command wrapper provides consistent non-interactive lanes:
 
 ```sh
 scripts/ai/claude-consult.sh inventory prompt.txt
 scripts/ai/claude-consult.sh research prompt.txt
-scripts/ai/claude-consult.sh draft prompt.txt       # linked worktree only
+scripts/ai/claude-consult.sh render prompt.txt
+scripts/ai/claude-consult.sh build-fix prompt.txt   # linked worktree only
+scripts/ai/claude-consult.sh implement prompt.txt   # linked worktree only
+scripts/ai/claude-consult.sh implement-protocol prompt.txt   # linked worktree only
+scripts/ai/claude-consult.sh implement-transport prompt.txt  # linked worktree only
+scripts/ai/claude-consult.sh implement-render prompt.txt     # linked worktree only
+scripts/ai/claude-consult.sh implement-platform prompt.txt   # linked worktree only
+scripts/ai/claude-consult.sh implement-ui prompt.txt         # linked worktree only
+scripts/ai/claude-consult.sh implement-icons prompt.txt      # linked worktree only
+scripts/ai/claude-consult.sh implement-characters prompt.txt # linked worktree only
+scripts/ai/claude-consult.sh optimize prompt.txt              # linked worktree only
+scripts/ai/claude-consult.sh correctness prompt.txt
+scripts/ai/claude-consult.sh concurrency prompt.txt
+scripts/ai/claude-consult.sh platform prompt.txt
+scripts/ai/claude-consult.sh ui prompt.txt
 scripts/ai/claude-consult.sh review prompt.txt
 scripts/ai/claude-consult.sh security prompt.txt
 ```
 
-The wrapper uses Claude safe mode to exclude auto-memory and unrelated local
-customizations, injects this repository contract explicitly, disables session
-persistence, caps effort, removes Bash from every lane, and refuses a draft in
-the primary worktree. Project settings and a deterministic hook also deny Bash,
-so Claude proposes commands and Codex executes them. Project worktrees branch
-from the current local `HEAD`, so unpushed integration commits are present.
+The wrapper loads only project settings, selects the exact custom agent, and
+routes the relevant project skills. Each Claude agent declares a deliberately
+narrow startup `skills` set in frontmatter. The wrapper additionally injects
+the canonical skill text for the selected lane, so composable writer lanes such
+as `implement-protocol` and `implement-ui` receive their exact domain procedure
+without globally preloading every skill into the general C++ agent. It excludes
+user/local settings, unrelated
+MCP servers, browser integration, and session persistence. It never uses
+Claude safe mode because safe mode disables the project agents and skills this
+workflow is designed to exercise. Every lane has an explicit tool allowlist
+and Bash denylist; project settings and a deterministic hook also deny Bash.
+Project settings disable skill shell preprocessing as well, closing the
+`!`-injection path that otherwise runs before normal Bash tool checks. Claude
+therefore proposes commands and Codex executes them. Writer lanes are refused
+in the primary worktree. Project worktrees branch from the current local
+`HEAD`, so unpushed integration commits are present.
 
-Output is validated locally against `scripts/ai/claude-handoff.schema.json`,
-including the outer CLI success envelope and check/result consistency. The
-wrapper replaces model-supplied role and Git fields with locally measured
-metadata, fingerprints the worktree, and invalidates read-only evidence if the
-tree changes during the consultation. A blocked handoff or reported failed
-check makes the wrapper fail. This does not replace Codex's scope assignment or
-review.
+`StructuredOutput` is explicitly included in every custom-agent tool
+allowlist. A custom-agent `tools` field is restrictive: without that internal
+tool, Claude Code can return a successful free-form result with no
+`structured_output` envelope even when `--json-schema` is present. The
+workflow validator rejects that configuration drift. The manifest records
+Claude Code 2.1.212 as both the tested version and minimum supported version;
+the wrapper fails before a consultation on an older or malformed CLI version.
+Newer CLIs still face the same live envelope validation, so an upstream
+regression fails closed instead of accepting prose as evidence.
+
+Claude receives the compact
+`scripts/ai/claude-model-handoff.schema.json`. It contains only the qualitative
+fields the model can legitimately supply. Role, Git identity, fingerprint, and
+execution-status fields are absent, so spoofing them is a schema error rather
+than something silently overwritten. The validator supplies exact `not-run`
+execution tokens and locally measured metadata, then validates the completed
+result against `scripts/ai/claude-handoff.schema.json`. It also validates the
+outer CLI success envelope and check/result consistency, fingerprints the
+worktree, and invalidates read-only evidence if the tree changes during the
+consultation. A blocked handoff or reported failed check makes the wrapper
+fail. This does not replace Codex's scope assignment or review.
 
 Claude checks distinguish `model-tool` observations from `proposed-command`
 verification. A model-tool record names the exact available Read/Grep/Glob/Web
@@ -215,12 +277,21 @@ or edit tool and may report its result. Every shell, compiler, test, sanitizer,
 or benchmark command is only a proposed command with `result: not-run` and
 `exit_code: -1`; `red`, `green`, and `sanitizers` likewise remain `not-run` or
 `not-applicable` as exact tokens without appended prose. Explanations belong in
-`risks` or proposed-command checks. Only Codex or CI execution may promote those commands to
-verification evidence.
+`risks` or proposed-command checks. Only Codex or CI execution may promote
+those commands to verification evidence.
 
 Hooks are intentionally reserved for cheap deterministic invariants. Long test
 suites belong in explicit verification and CI, where failures are visible and
 reproducible; do not attach a full build to every model stop event.
+
+Codex agent `sandbox_mode` values are defaults, not an enforcement boundary: a
+parent turn's live sandbox or approval override is inherited by children and
+can supersede an agent file. Before any writable Codex worker, the lead verifies
+that `git rev-parse --git-dir` and `--git-common-dir` differ and records the
+assigned linked-worktree path. A read-only reviewer receives an explicit
+no-edit task plus before/after `worktree-fingerprint.py` checks when its evidence
+affects integration. Never use a permissive parent runtime as a substitute for
+worktree isolation.
 
 [codex-subagents]: https://learn.chatgpt.com/docs/agent-configuration/subagents
 [codex-best]: https://learn.chatgpt.com/guides/best-practices

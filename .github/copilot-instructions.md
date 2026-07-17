@@ -2,7 +2,8 @@
 
 This repository contains Microsoft's read-only historical snapshots and the
 unofficial **Comic Chat: Reinked** modernization. For modern work, also follow
-`AGENTS.md` and `docs/AI-DEVELOPMENT-WORKFLOW.md`.
+`AGENTS.md`, `docs/AI-DEVELOPMENT-WORKFLOW.md`, and the canonical C++ policy in
+`docs/CPP26-ENGINEERING.md`.
 
 ## Repository Layout
 

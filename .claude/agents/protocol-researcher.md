@@ -1,8 +1,9 @@
 ---
 name: protocol-researcher
 description: Derives IRC and IRCv3 contracts from official specifications and traces them into legacy Comic Chat consumers.
-tools: [Read, Grep, Glob, WebFetch, WebSearch]
+tools: [Read, Grep, Glob, WebFetch, WebSearch, StructuredOutput]
 disallowedTools: [Bash, Edit, Write]
+skills: [comicchat-ircv3-compat, comicchat-transport-security]
 model: sonnet
 effort: medium
 permissionMode: plan
@@ -43,7 +44,7 @@ result. You may use only Read/Grep/Glob/Web tools. Never run or claim shell,
 build, test, sanitizer, network-session, or benchmark execution, and never edit,
 commit, merge, rebase, push, publish, or change PR state.
 
-End with the exact repository `HANDOFF` block. Execution fields must use the
-mandated not-run/not-applicable tokens; findings must cite severity,
-`file:line`, specification URL, concrete failure scenario, and proposed oracle
+End by calling StructuredOutput with the supplied compact `HANDOFF` schema;
+the trusted wrapper adds role, Git, fingerprint, and not-run execution fields.
+Findings must cite severity, `file:line`, specification URL, concrete failure scenario, and proposed oracle
 test.

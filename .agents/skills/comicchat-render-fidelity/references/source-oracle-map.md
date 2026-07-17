@@ -27,6 +27,7 @@ Use other historical versions only to answer an explicit version-difference ques
 | Cairo comic canvas and title rendering | portable/include/comicchat/render.hpp, portable/src/render.cpp | portable/tests/render_test.cpp |
 | Source raster extraction | portable/include/comicchat/source_raster.hpp, portable/src/source_raster.cpp | portable/tests/source_raster_test.cpp |
 | AVB avatar parsing and composition | portable/include/comicchat/avatar_assets.hpp, portable/src/avatar_assets.cpp | portable/tests/avatar_assets_test.cpp |
+| Legacy-exact and high-resolution avatar oracle | portable/tools/avatar_oracle.cpp | modern-remaster topology cases in portable/tests/avatar_assets_test.cpp |
 | Unicode shaping and metrics | portable/include/comicchat/text.hpp, portable/src/text.cpp | portable/tests/text_test.cpp |
 | Bounded immutable render batches | portable/include/comicchat/memory.hpp, portable/src/memory.cpp | portable/tests/memory_test.cpp |
 | Deterministic scheduling | portable/include/comicchat/scheduler.hpp, portable/src/scheduler.cpp | portable/tests/runtime_test.cpp |

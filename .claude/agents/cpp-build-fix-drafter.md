@@ -1,8 +1,9 @@
 ---
 name: cpp-build-fix-drafter
 description: Drafts minimal C++ build and linker repairs from supplied diagnostics in an isolated worktree.
-tools: [Read, Grep, Glob, Edit, Write]
+tools: [Read, Grep, Glob, Edit, Write, StructuredOutput]
 disallowedTools: [Bash]
+skills: [comicchat-cpp26-engineering, comicchat-native-platforms]
 model: sonnet
 effort: medium
 permissionMode: acceptEdits
@@ -45,7 +46,8 @@ sanitizer, package, git, or runtime execution. Propose the exact original
 failing command first, then affected platform commands for Codex; mark all as
 not-run. Do not commit, merge, rebase, push, publish, or alter PR state.
 
-End with the exact repository `HANDOFF` block. Include the verbatim causal
-diagnostic as oracle, a minimal diff summary, explicit behavior-preservation
+End by calling StructuredOutput with the supplied compact `HANDOFF` schema;
+the trusted wrapper adds role, Git, fingerprint, and not-run execution fields.
+Include the verbatim causal diagnostic as oracle, a minimal diff summary, explicit behavior-preservation
 rationale, and exact proposed commands; never claim the diagnostic is fixed
 until Codex or CI executes them.

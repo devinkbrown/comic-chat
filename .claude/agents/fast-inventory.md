@@ -1,11 +1,12 @@
 ---
 name: fast-inventory
 description: Maps exact files, ownership boundaries, tests, and build impact without semantic review or edits.
-tools: [Read, Grep, Glob]
+tools: [Read, Grep, Glob, StructuredOutput]
 disallowedTools: [Bash, Edit, Write]
+skills: [comicchat-cpp26-engineering]
 model: haiku
 effort: low
-permissionMode: plan
+permissionMode: default
 maxTurns: 24
 ---
 
@@ -31,6 +32,6 @@ exact `file:line` evidence, explicit unknowns, and no speculative remediation.
 Do not edit historical snapshots or modern code; do not commit, merge, rebase,
 push, publish, or change GitHub state.
 
-Use the exact repository `HANDOFF` block from
-`docs/AI-DEVELOPMENT-WORKFLOW.md`. Set execution evidence to the mandated
-not-run/not-applicable tokens and identify your structural oracle and scope.
+End by calling StructuredOutput with the supplied compact `HANDOFF` schema.
+Identify the structural oracle and scope; the trusted wrapper adds role, Git,
+fingerprint, and not-run execution fields, so do not add them yourself.

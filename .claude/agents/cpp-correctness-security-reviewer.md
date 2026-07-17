@@ -1,8 +1,9 @@
 ---
 name: cpp-correctness-security-reviewer
 description: Adversarial C++ review for single-thread semantics, memory safety, parsers, crypto, bounds, and fail-closed behavior.
-tools: [Read, Grep, Glob, WebFetch, WebSearch]
+tools: [Read, Grep, Glob, WebFetch, WebSearch, StructuredOutput]
 disallowedTools: [Bash, Edit, Write]
+skills: [comicchat-cpp26-engineering, comicchat-transport-security, comicchat-ircv3-compat]
 model: opus
 effort: high
 permissionMode: plan
@@ -51,5 +52,5 @@ claiming it in this lane.
 Use only Read/Grep/Glob/Web tools. Never run or claim shell, build, test,
 sanitizer, fuzzer, debugger, benchmark, or runtime execution. Never edit,
 commit, merge, push, publish, or alter PR state. End with a block/pass verdict
-and the exact repository `HANDOFF` block, using mandated not-run/not-applicable
-tokens for execution evidence.
+by calling StructuredOutput with the supplied compact `HANDOFF` schema. The
+trusted wrapper adds role, Git, fingerprint, and not-run execution fields.

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -88,28 +89,39 @@ def git(repo: Path, *arguments: str) -> str:
         raise ValidationError(f"could not capture trusted Git metadata: {detail}") from error
 
 
-def trusted_metadata(repo: Path, base: str, role: str) -> dict[str, str]:
-    root = Path(git(repo, "rev-parse", "--show-toplevel"))
-    status = git(root, "status", "--short", "--untracked-files=all")
-    diffstat = git(root, "diff", "--stat", "HEAD", "--", ".")
-    fingerprint = subprocess.run(
+def fingerprint(root: Path) -> str:
+    result = subprocess.run(
         [sys.executable, os.fspath(root / "scripts/ai/worktree-fingerprint.py"), "--repo", os.fspath(root)],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
-    if fingerprint.returncode != 0:
-        raise ValidationError(f"could not fingerprint worktree: {fingerprint.stderr.strip()}")
+    if result.returncode != 0:
+        raise ValidationError(f"could not fingerprint worktree: {result.stderr.strip()}")
+    return result.stdout.strip()
+
+
+def trusted_metadata(repo: Path, base: str, role: str, expected_fingerprint: str) -> dict[str, str]:
+    root = Path(git(repo, "rev-parse", "--show-toplevel"))
+    before = fingerprint(root)
+    if before != expected_fingerprint:
+        raise ValidationError("worktree fingerprint changed before trusted metadata capture")
+    status = git(root, "status", "--short", "--untracked-files=all")
+    diffstat = git(root, "diff", "--stat", "HEAD", "--", ".")
+    head = git(root, "rev-parse", "HEAD")
+    after = fingerprint(root)
+    if after != before:
+        raise ValidationError("worktree changed during trusted metadata capture")
     return {
         "role": role,
         "worktree": os.fspath(root),
         "base": base,
-        "head": git(root, "rev-parse", "HEAD"),
+        "head": head,
         "commit": "none",
         "git_status": status or "clean",
         "diffstat": diffstat or "none",
-        "patch_sha256": fingerprint.stdout.strip(),
+        "patch_sha256": before,
     }
 
 
@@ -145,23 +157,45 @@ def validate_check_semantics(handoff: dict[str, Any], allowed_tools: set[str] | 
             raise ValidationError(f"$.checks[{index}]: not-run requires exit_code -1")
 
 
+def validate_execution_prose(handoff: dict[str, Any]) -> None:
+    subject = r"(?:tests?|build|compile|link|meson|nmake|asan|ubsan|tsan|sanitizers?|benchmarks?|ci)"
+    outcome = r"(?:passed|succeeded|successful|green|clean|ran|executed|exit(?:\s+code)?\s*0)"
+    patterns = (
+        re.compile(rf"\b{subject}\b.{{0,48}}\b{outcome}\b", re.IGNORECASE | re.DOTALL),
+        re.compile(rf"\b{outcome}\b.{{0,48}}\b{subject}\b", re.IGNORECASE | re.DOTALL),
+    )
+    fields: list[tuple[str, str]] = [
+        ("summary", handoff["summary"]),
+        ("artifacts", handoff["artifacts"]),
+        ("next", handoff["next"]),
+    ]
+    fields.extend((f"risks[{index}]", value) for index, value in enumerate(handoff["risks"]))
+    for location, value in fields:
+        if any(pattern.search(value) for pattern in patterns):
+            raise ValidationError(f"$.{location}: unsupported execution claim outside checks")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("envelope", type=Path)
-    parser.add_argument("schema", type=Path)
-    parser.add_argument("--repo", type=Path)
-    parser.add_argument("--base")
-    parser.add_argument("--role", choices=["research", "implementation", "review", "verification"])
+    parser.add_argument("model_schema", type=Path)
+    parser.add_argument("final_schema", type=Path)
+    parser.add_argument("--repo", type=Path, required=True)
+    parser.add_argument("--base", required=True)
+    parser.add_argument(
+        "--role",
+        choices=["research", "implementation", "review", "verification"],
+        required=True,
+    )
+    parser.add_argument("--expected-model", choices=["haiku", "sonnet", "opus"], required=True)
     parser.add_argument("--allowed-tools")
+    parser.add_argument("--expected-fingerprint", required=True)
     arguments = parser.parse_args()
-    if any(value is not None for value in (arguments.repo, arguments.base, arguments.role)) and any(
-        value is None for value in (arguments.repo, arguments.base, arguments.role)
-    ):
-        parser.error("--repo, --base, and --role must be supplied together")
 
     try:
         envelope = load_json(arguments.envelope, "Claude JSON envelope")
-        schema = load_json(arguments.schema, "Claude handoff schema")
+        model_schema = load_json(arguments.model_schema, "Claude model handoff schema")
+        final_schema = load_json(arguments.final_schema, "Claude final handoff schema")
         if not isinstance(envelope, dict):
             raise ValidationError("Claude JSON envelope must be an object")
         if (
@@ -170,19 +204,34 @@ def main() -> int:
             or envelope.get("is_error") is not False
         ):
             raise ValidationError("Claude envelope is not a successful result")
+        model_usage = envelope.get("modelUsage")
+        if not isinstance(model_usage, dict) or not model_usage:
+            raise ValidationError("Claude envelope omitted modelUsage")
+        unexpected_models = sorted(
+            model_name
+            for model_name in model_usage
+            if arguments.expected_model not in model_name.lower()
+        )
+        if unexpected_models:
+            raise ValidationError(
+                "Claude used a model outside the routed family: " + ", ".join(unexpected_models)
+            )
         handoff = envelope.get("structured_output")
         if not isinstance(handoff, dict):
             raise ValidationError("Claude response omitted structured_output")
-        if not isinstance(schema, dict):
-            raise ValidationError("Claude handoff schema must be an object")
-        validate(handoff, schema)
+        if not isinstance(model_schema, dict) or not isinstance(final_schema, dict):
+            raise ValidationError("Claude handoff schemas must be objects")
+        validate(handoff, model_schema)
+        handoff.update({"red": "not-run", "green": "not-run", "sanitizers": "not-run"})
         allowed_tools = None
         if arguments.allowed_tools is not None:
             allowed_tools = {tool for tool in arguments.allowed_tools.split(",") if tool}
         validate_check_semantics(handoff, allowed_tools)
-        if arguments.repo is not None:
-            handoff.update(trusted_metadata(arguments.repo, arguments.base, arguments.role))
-            validate(handoff, schema)
+        validate_execution_prose(handoff)
+        handoff.update(
+            trusted_metadata(arguments.repo, arguments.base, arguments.role, arguments.expected_fingerprint)
+        )
+        validate(handoff, final_schema)
     except ValidationError as error:
         print(f"Invalid Claude handoff: {error}", file=sys.stderr)
         return 65
