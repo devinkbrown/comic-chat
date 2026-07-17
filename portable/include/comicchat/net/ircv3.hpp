@@ -238,6 +238,12 @@ public:
 	bool IsOffered(std::string_view capability) const;
 	bool IsEnabled(std::string_view capability) const;
 	std::optional<std::string> CapabilityValue(std::string_view capability) const;
+	// Product readiness is deliberately separate from wire support. The safe
+	// default policy requests only capabilities whose effects the legacy UI can
+	// consume today. A frontend may opt a catalogued capability in or out before
+	// BeginRegistration once its complete product adapter is active. STS, tags,
+	// commands, batch types, and ISUPPORT tokens are never valid overrides.
+	bool SetCapabilityRequestEnabled(std::string_view capability, bool enabled);
 	const std::map<std::string, std::string>& Accounts() const { return accounts_; }
 	const std::map<std::string, std::string>& AwayMessages() const { return away_; }
 	const std::map<std::string, std::string>& Hosts() const { return hosts_; }
@@ -314,6 +320,7 @@ private:
 	std::set<std::string> enabled_;
 	std::set<std::string> pending_ack_;
 	std::vector<CapabilityRequest> capability_requests_;
+	std::map<std::string, bool, std::less<>> capability_request_overrides_;
 	std::map<std::string, Batch> batches_;
 	std::vector<PendingEcho> pending_echoes_;
 	std::map<std::string, std::string> label_commands_;

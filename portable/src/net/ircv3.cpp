@@ -473,9 +473,13 @@ const std::vector<CapabilityDefinition>& CapabilityCatalog()
 {
 	static const std::vector<CapabilityDefinition> catalog = {
 		{"message-tags", {}},
-		{"batch", {}},
+		// Generic batches can carry replayed or shape-changing commands. The
+		// product enables this only alongside a complete batch consumer.
+		{"batch", {}, false},
 		{"server-time", {}},
-		{"standard-replies", {}},
+		// FAIL/WARN/NOTE are consumed by the protocol engine. Do not request them
+		// until the frontend exposes every reply instead of hiding it from users.
+		{"standard-replies", {}, false},
 		{"cap-notify", {}},
 		{"account-notify", {}},
 		{"account-tag", {}},
@@ -483,16 +487,18 @@ const std::vector<CapabilityDefinition>& CapabilityCatalog()
 		// Orochi deliberately advertises bot as a capability. The standard bot
 		// tag is otherwise enabled by message-tags, so only request this
 		// non-standard extension when both are explicitly offered.
-		{"bot", {"message-tags"}},
+		{"bot", {"message-tags"}, false},
 		{"chghost", {}},
-		{"echo-message", {}},
+		// Echo suppression must be driven by a durable pending-message identity,
+		// not the current content fallback across multiple bouncer sessions.
+		{"echo-message", {}, false},
 		// Enable after the Windows adapter normalizes extended JOIN and applies
 		// its account and realname fields before the legacy JOIN handler runs.
 		{"extended-join", {}, false},
 		// Enable after third-party invitations are distinguished from invitations
 		// for the local user before reaching the legacy INVITE handler.
 		{"invite-notify", {}, false},
-		{"labeled-response", {"batch"}},
+		{"labeled-response", {"batch"}, false},
 		// Enable after NAMES adaptation decomposes every advertised prefix into
 		// legacy user flags instead of treating trailing prefixes as nickname text.
 		{"multi-prefix", {}, false},
@@ -506,26 +512,26 @@ const std::vector<CapabilityDefinition>& CapabilityCatalog()
 		{"userhost-in-names", {}, false},
 		// Enable after RENAME updates the legacy document, tab, and member model.
 		{"draft/channel-rename", {}, false},
-		{"draft/account-registration", {}},
+		{"draft/account-registration", {}, false},
 		// Chathistory has useful limited operation without batch/server-time/
 		// message-tags; its specification explicitly tells servers not to
 		// enforce those as prerequisites.
-		{"draft/chathistory", {}},
+		{"draft/chathistory", {}, false},
 		// Enable after historical state changes are isolated from live legacy state.
 		{"draft/event-playback", {"draft/chathistory"}, false},
-		{"draft/extended-isupport", {}},
-		{"draft/metadata-2", {"batch"}},
+		{"draft/extended-isupport", {}, false},
+		{"draft/metadata-2", {"batch"}, false},
 		// Enable after redactions update already-rendered legacy messages.
 		{"draft/message-redaction", {"message-tags"}, false},
 		// Enable after receive limits and send-side batching have complete product
 		// semantics, including legacy rendering of the reassembled message.
 		{"draft/multiline", {"batch"}, false},
-		{"draft/oper-tag", {}},
-		{"draft/pre-away", {}},
-		{"draft/read-marker", {}},
+		{"draft/oper-tag", {}, false},
+		{"draft/pre-away", {}, false},
+		{"draft/read-marker", {}, false},
 		// Extended-monitor's four notification extensions are independent and
 		// optional. Command use remains separately gated by 005 MONITOR.
-		{"extended-monitor", {}},
+		{"extended-monitor", {}, false},
 	};
 	return catalog;
 }
@@ -1256,6 +1262,15 @@ std::optional<std::string> Engine::CapabilityValue(std::string_view capability) 
 	return *found->second;
 }
 
+bool Engine::SetCapabilityRequestEnabled(std::string_view capability, bool enabled)
+{
+	// cap-notify is an inseparable part of CAP 302 state and STS is observed,
+	// never requested. Everything else must be a known client capability.
+	if (capability == "cap-notify" || !FindCapability(capability)) return false;
+	capability_request_overrides_[std::string(capability)] = enabled;
+	return true;
+}
+
 std::optional<std::size_t> Engine::TargetLimit(std::string_view command) const
 {
 	const auto found = target_limits_.find(Upper(command));
@@ -1388,7 +1403,11 @@ std::vector<std::string> Engine::SelectCapabilities() const
 {
 	std::vector<std::string> selected;
 	for (const auto& definition : CapabilityCatalog()) {
-		if (!definition.auto_request) continue;
+		bool request = definition.auto_request;
+		if (const auto override = capability_request_overrides_.find(definition.name);
+			override != capability_request_overrides_.end())
+			request = override->second;
+		if (!request) continue;
 		if (!DependenciesAvailable(definition.name)) continue;
 		if (std::string_view(definition.name) == "sasl" &&
 			(!secure_transport_ || ((!sasl_config_.allow_external) &&
@@ -2498,6 +2517,31 @@ ProcessResult Engine::Process(std::string_view wire)
 		ProcessResult result;
 		result.consumed = true;
 		return result;
+	}
+	if (message.command == "ACK") {
+		// Labeled-response defines ACK as a server-only terminal response with
+		// no parameters. Consume it before the historical command table so a
+		// successful no-output command never becomes an "unknown command" line.
+		ProcessResult acknowledgment;
+		acknowledgment.consumed = true;
+		const auto* label = message.FindTag("label");
+		if (!IsEnabled("labeled-response") || !message.params.empty() || !label ||
+			!label->value || label->value->empty()) {
+			acknowledgment.events.push_back(
+				{EventType::ProtocolError, {}, {}, "invalid-labeled-ack", {}, {}, {}});
+			return acknowledgment;
+		}
+		Event event;
+		event.type = EventType::LabeledResponse;
+		event.key = *label->value;
+		event.detail = "ack";
+		const auto pending = label_commands_.find(event.key);
+		if (pending != label_commands_.end()) {
+			event.value = pending->second;
+			label_commands_.erase(pending);
+		}
+		acknowledgment.events.push_back(std::move(event));
+		return acknowledgment;
 	}
 	if (const auto numeric = NumericCommand(message.command)) {
 		if (*numeric == 421 && cap_negotiating_ &&

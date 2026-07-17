@@ -217,7 +217,11 @@ void TestCapabilityState()
 		"standard-replies sts=port=6697\r\n");
 	const auto requested = RequestedNames(second.outbound);
 	Check(std::find(requested.begin(), requested.end(), "message-tags") != requested.end(), "message-tags requested");
-	Check(std::find(requested.begin(), requested.end(), "labeled-response") != requested.end(), "dependency chain requested");
+	Check(std::find(requested.begin(), requested.end(), "batch") == requested.end() &&
+		std::find(requested.begin(), requested.end(), "labeled-response") == requested.end() &&
+		std::find(requested.begin(), requested.end(), "echo-message") == requested.end() &&
+		std::find(requested.begin(), requested.end(), "standard-replies") == requested.end(),
+		"observe-only response and batch features default to discoverable but not requested");
 	Check(std::find(requested.begin(), requested.end(), "draft/multiline") == requested.end() &&
 		engine.IsOffered("draft/multiline"),
 		"multiline advertisement is retained without requesting incomplete product behavior");
@@ -237,9 +241,8 @@ void TestCapabilityState()
 	Check(engine.IsEnabled("account-tag"), "ACK enables capability");
 
 	auto added = engine.Process(":server CAP Alice NEW :draft/read-marker\r\n");
-	Check(RequestedNames(added.outbound) == std::vector<std::string>{"draft/read-marker"}, "CAP NEW requests supported addition");
-	engine.Process(":server CAP Alice ACK :draft/read-marker\r\n");
-	Check(engine.IsEnabled("draft/read-marker"), "dynamic ACK applies");
+	Check(added.outbound.empty() && engine.IsOffered("draft/read-marker"),
+		"CAP NEW retains a product-gated capability without requesting it");
 	engine.Process(":server CAP Alice DEL :batch\r\n");
 	Check(!engine.IsEnabled("batch") && !engine.IsEnabled("labeled-response") &&
 		!engine.IsEnabled("draft/multiline"), "CAP DEL removes dependency closure");
@@ -283,10 +286,12 @@ void TestCapabilityState()
 		"account-notify chghost setname draft/account-registration draft/extended-isupport draft/oper-tag "
 		"draft/pre-away extended-monitor bot\r\n");
 	const auto expanded_requested = RequestedNames(expanded_ls.outbound);
-	for (const auto* name : {"draft/account-registration", "draft/extended-isupport", "draft/oper-tag",
-		"draft/pre-away", "extended-monitor"})
-		Check(std::find(expanded_requested.begin(), expanded_requested.end(), name) != expanded_requested.end(),
-			"published client capability requested");
+	for (const auto* name : {"standard-replies", "draft/account-registration", "draft/extended-isupport",
+		"draft/oper-tag", "draft/pre-away", "extended-monitor", "bot"}) {
+		Check(std::find(expanded_requested.begin(), expanded_requested.end(), name) == expanded_requested.end(),
+			"capability without a complete product consumer is not requested by default");
+		Check(expanded.IsOffered(name), "gated capability remains discoverable");
+	}
 	Check(std::find(expanded_requested.begin(), expanded_requested.end(), "monitor") == expanded_requested.end(),
 		"MONITOR is discovered through ISUPPORT and never requested as a capability");
 	Engine case_sensitive;
@@ -313,10 +318,28 @@ void TestCapabilityRegistryAndDependencies()
 	auto independent_ls = independent.Process(":server CAP * LS :account-tag extended-monitor "
 		"draft/account-registration draft/chathistory draft/oper-tag\r\n");
 	const auto independent_names = RequestedNames(independent_ls.outbound);
-	for (const auto* name : {"account-tag", "extended-monitor",
+	Check(independent_names == std::vector<std::string>{"account-tag"},
+		"wire support does not bypass the safe product-readiness default");
+	for (const auto* name : {"extended-monitor", "draft/account-registration",
+		"draft/chathistory", "draft/oper-tag"})
+		Check(independent.IsOffered(name), "advanced capability remains discoverable under safe policy");
+
+	Engine opted_in;
+	for (const auto* name : {"batch", "labeled-response", "draft/metadata-2",
 		"draft/account-registration", "draft/chathistory", "draft/oper-tag"})
-		Check(std::find(independent_names.begin(), independent_names.end(), name) != independent_names.end(),
-			"independently negotiable capability is not overconstrained");
+		Check(opted_in.SetCapabilityRequestEnabled(name, true), "known capability accepts product opt-in");
+	Check(!opted_in.SetCapabilityRequestEnabled("sts", true) &&
+		!opted_in.SetCapabilityRequestEnabled("draft/unknown-capability", true) &&
+		!opted_in.SetCapabilityRequestEnabled("cap-notify", false),
+		"non-capability, unknown, and implicit CAP 302 overrides are rejected");
+	opted_in.BeginRegistration(config, "Alice", true);
+	const auto opted_ls = opted_in.Process(":server CAP * LS :batch labeled-response draft/metadata-2 "
+		"draft/account-registration draft/chathistory draft/oper-tag\r\n");
+	const auto opted_names = RequestedNames(opted_ls.outbound);
+	for (const auto* name : {"batch", "labeled-response", "draft/metadata-2",
+		"draft/account-registration", "draft/chathistory", "draft/oper-tag"})
+		Check(std::find(opted_names.begin(), opted_names.end(), name) != opted_names.end(),
+			"explicit product opt-in requests a supported capability with available dependencies");
 
 	Engine legacy_wire;
 	legacy_wire.BeginRegistration(config, "Alice", true);
@@ -351,19 +374,18 @@ void TestCapabilityRegistryAndDependencies()
 	auto dependency_ls = dependencies.Process(":server CAP * LS :batch message-tags draft/chathistory "
 		"labeled-response draft/metadata-2 draft/message-redaction draft/multiline draft/event-playback\r\n");
 	const auto dependency_names = RequestedNames(dependency_ls.outbound);
-	for (const auto* name : {"labeled-response", "draft/metadata-2"})
-		Check(std::find(dependency_names.begin(), dependency_names.end(), name) != dependency_names.end(),
-			"normative capability prerequisite unlocks its dependent");
-	for (const auto* name : {"draft/message-redaction", "draft/multiline", "draft/event-playback"})
+	for (const auto* name : {"labeled-response", "draft/metadata-2", "draft/message-redaction",
+		"draft/multiline", "draft/event-playback"})
 		Check(std::find(dependency_names.begin(), dependency_names.end(), name) == dependency_names.end(),
-			"normative prerequisites do not override product-readiness gating");
+			"normative prerequisites never override product-readiness gating");
 
 	Engine orochi;
 	orochi.BeginRegistration(config, "Alice", true);
 	auto orochi_ls = orochi.Process(":orochi CAP * LS :message-tags bot\r\n");
 	const auto orochi_names = RequestedNames(orochi_ls.outbound);
-	Check(std::find(orochi_names.begin(), orochi_names.end(), "bot") != orochi_names.end(),
-		"Orochi offered-only bot capability exception is retained");
+	Check(std::find(orochi_names.begin(), orochi_names.end(), "bot") == orochi_names.end() &&
+		orochi.IsOffered("bot"),
+		"non-standard bot capability stays discoverable but product-gated");
 }
 
 void TestOutboundValidationAndTagPreservation()
@@ -451,6 +473,8 @@ void TestStateEvents()
 void TestLabelsAndEchoes()
 {
 	Engine engine;
+	for (const auto* name : {"batch", "labeled-response", "echo-message"})
+		Check(engine.SetCapabilityRequestEnabled(name, true), "label test opts complete product path in");
 	Enable(&engine, "message-tags batch labeled-response echo-message");
 	const auto outgoing = engine.PrepareOutgoing("PRIVMSG #room :hello\r\n");
 	Message sent;
@@ -461,11 +485,32 @@ void TestLabelsAndEchoes()
 	Check(echoed.consumed && echoed.messages.empty(), "echo-message does not create duplicate balloon");
 	Check(echoed.events.size() == 1 && echoed.events[0].type == EventType::LabeledResponse,
 		"echo still resolves label correlation");
+
+	const auto join = engine.PrepareOutgoing("JOIN #other\r\n");
+	Message labeled_join;
+	Check(Message::Parse(join, &labeled_join), "labeled no-output command parses");
+	const auto* join_label = labeled_join.FindTag("label");
+	Check(join_label && join_label->value, "no-output command receives a correlation label");
+	const auto acknowledged = engine.Process("@label=" + *join_label->value +
+		" :server ACK\r\n");
+	Check(acknowledged.consumed && acknowledged.messages.empty() &&
+		acknowledged.events.size() == 1 &&
+		acknowledged.events[0].type == EventType::LabeledResponse &&
+		acknowledged.events[0].value == "JOIN" && acknowledged.events[0].detail == "ack",
+		"labeled ACK terminates correlation without reaching the legacy command table");
+	const auto malformed_ack = engine.Process(":server ACK unexpected\r\n");
+	Check(malformed_ack.consumed && malformed_ack.events.size() == 1 &&
+		malformed_ack.events[0].type == EventType::ProtocolError &&
+		malformed_ack.events[0].key == "invalid-labeled-ack",
+		"malformed or unlabeled ACK is contained as a protocol error");
 }
 
 void TestSafeRecovery()
 {
 	Engine engine;
+	Check(engine.SetCapabilityRequestEnabled("batch", true) &&
+		engine.SetCapabilityRequestEnabled("draft/chathistory", true),
+		"history recovery test opts complete product path in");
 	Enable(&engine, "batch message-tags server-time draft/chathistory");
 	engine.PrepareOutgoing("JOIN #room\r\n");
 	const auto recovery = engine.RecoveryCommands(50);
@@ -1160,6 +1205,9 @@ void TestMetadata2StateMachine()
 void TestAccountRegistrationAndOutputPolicy()
 {
 	Engine account;
+	Check(account.SetCapabilityRequestEnabled("standard-replies", true) &&
+		account.SetCapabilityRequestEnabled("draft/account-registration", true),
+		"account UI opts registration capabilities in explicitly");
 	account.BeginRegistration({}, "Alice", true);
 	auto ls = account.Process(":server CAP * LS :standard-replies "
 		"draft/account-registration=min-password-length=8,max-password-length=20\r\n");
