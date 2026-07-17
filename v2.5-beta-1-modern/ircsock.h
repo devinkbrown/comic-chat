@@ -541,6 +541,7 @@ private:
 	std::shared_ptr<WakeupState> m_wakeupState;
 	comic_chat::ircv3::Engine m_ircEngine;
 	comic_chat::ircv3::LineFramer m_lineFramer;
+	comic_chat::legacy_ui::IrcTransportIngressGate m_ingressGate;
 	comicchat::net::GenerationId m_generation = 0;
 	comicchat::net::SendId m_nextSendId = 1;
 	std::vector<char> m_outputBuffer;

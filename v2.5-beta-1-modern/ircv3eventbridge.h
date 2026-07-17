@@ -1,6 +1,7 @@
 #ifndef COMIC_CHAT_IRCV3_EVENT_BRIDGE_H
 #define COMIC_CHAT_IRCV3_EVENT_BRIDGE_H
 
+#include "comicchat/net/connection_engine.hpp"
 #include "comicchat/net/ircv3.hpp"
 
 #include <algorithm>
@@ -10,6 +11,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 
 struct Ircv3AdapterEvent {
@@ -21,6 +23,100 @@ struct Ircv3AdapterEvent {
 };
 
 namespace comic_chat::legacy_ui {
+
+enum class IrcTransportIngressPhase : std::uint8_t {
+	stopped,
+	connecting,
+	connected,
+	reconnecting,
+};
+
+enum class IrcTransportIngressAction : std::uint8_t {
+	accepted,
+	stale,
+	out_of_order,
+};
+
+// The transport normally emits events in order, but this adapter is the final
+// trust boundary before Microsoft's stateful parser. Keep generation and phase
+// validation independent of MFC so malformed ordering is causally testable.
+class IrcTransportIngressGate final {
+public:
+	void Begin(comicchat::net::GenerationId generation) noexcept
+	{
+		generation_ = generation;
+		phase_ = generation == 0
+			? IrcTransportIngressPhase::stopped
+			: IrcTransportIngressPhase::connecting;
+	}
+
+	void Stop() noexcept
+	{
+		generation_ = 0;
+		phase_ = IrcTransportIngressPhase::stopped;
+	}
+
+	[[nodiscard]] IrcTransportIngressAction Classify(
+		const comicchat::net::Event& event) noexcept
+	{
+		if (generation_ == 0 || event.generation != generation_)
+			return IrcTransportIngressAction::stale;
+		return std::visit([this](const auto& body) noexcept {
+			using Body = std::remove_cvref_t<decltype(body)>;
+			if constexpr (std::is_same_v<Body, comicchat::net::Connected>) {
+				if (phase_ != IrcTransportIngressPhase::connecting &&
+					phase_ != IrcTransportIngressPhase::reconnecting)
+					return IrcTransportIngressAction::out_of_order;
+				phase_ = IrcTransportIngressPhase::connected;
+				return IrcTransportIngressAction::accepted;
+			} else if constexpr (std::is_same_v<Body, comicchat::net::BytesReceived> ||
+				std::is_same_v<Body, comicchat::net::PingDue> ||
+				std::is_same_v<Body, comicchat::net::SendComplete>) {
+				return phase_ == IrcTransportIngressPhase::connected
+					? IrcTransportIngressAction::accepted
+					: IrcTransportIngressAction::out_of_order;
+			} else if constexpr (std::is_same_v<Body, comicchat::net::Closed>) {
+				if (phase_ == IrcTransportIngressPhase::stopped)
+					return IrcTransportIngressAction::out_of_order;
+				phase_ = body.retry_after > std::chrono::milliseconds::zero()
+					? IrcTransportIngressPhase::reconnecting
+					: IrcTransportIngressPhase::stopped;
+				return IrcTransportIngressAction::accepted;
+			} else {
+				return phase_ == IrcTransportIngressPhase::stopped
+					? IrcTransportIngressAction::out_of_order
+					: IrcTransportIngressAction::accepted;
+			}
+		}, event.body);
+	}
+
+	[[nodiscard]] IrcTransportIngressPhase phase() const noexcept { return phase_; }
+
+private:
+	comicchat::net::GenerationId generation_{};
+	IrcTransportIngressPhase phase_{IrcTransportIngressPhase::stopped};
+};
+
+inline constexpr std::size_t kIrcProtocolLinesPerWake = 512;
+
+class IrcProtocolLineBudget final {
+public:
+	explicit IrcProtocolLineBudget(
+		std::size_t maximum = kIrcProtocolLinesPerWake) noexcept
+		: remaining_{maximum} {}
+
+	[[nodiscard]] bool Consume(std::size_t count) noexcept
+	{
+		if (count > remaining_) return false;
+		remaining_ -= count;
+		return true;
+	}
+
+	[[nodiscard]] std::size_t remaining() const noexcept { return remaining_; }
+
+private:
+	std::size_t remaining_{};
+};
 
 enum class Ircv3UserMutationKind {
 	none,

@@ -730,6 +730,7 @@ CIrcSocket::StartConnection(LPCSTR pszServer, UINT nPort, BOOL bSecure)
 	}
 	m_serverHost = std::move(serverHost);
 	m_generation = started->generation;
+	m_ingressGate.Begin(m_generation);
 	// Security becomes true only after ConnectionEngine publishes a verified
 	// TLS Connected event. A planned TLS transport is not yet authenticated.
 	m_bSecureTransport = FALSE;
@@ -746,6 +747,7 @@ void CIrcSocket::Close()
 	m_wakeupState->cookie.store(0, std::memory_order_release);
 	m_wakeupState->pending.store(false, std::memory_order_release);
 	m_connection.stop();
+	m_ingressGate.Stop();
 	m_bTransportOpen = FALSE;
 	m_generation = 0;
 	m_localAddress.clear();
@@ -849,6 +851,7 @@ void CIrcSocket::PollNetworkEvents(LPARAM wakeupCookie)
 	if (cookie == 0 || m_wakeupState->cookie.load(std::memory_order_acquire) != cookie)
 		return;
 	m_wakeupState->pending.store(false, std::memory_order_release);
+	comic_chat::legacy_ui::IrcProtocolLineBudget lineBudget;
 	bool possiblyMore = false;
 	for (std::size_t batch = 0; batch < kMaximumEventBatchesPerWake; ++batch) {
 		auto events = m_connection.poll_events(kMaximumEventBatch);
@@ -858,9 +861,16 @@ void CIrcSocket::PollNetworkEvents(LPARAM wakeupCookie)
 		}
 		possiblyMore = events.size() == kMaximumEventBatch;
 		for (auto& event : events) {
-			if (event.generation != m_generation)
+			const auto ingress = m_ingressGate.Classify(event);
+			if (ingress == comic_chat::legacy_ui::IrcTransportIngressAction::stale)
 				continue;
-			std::visit([this, eventGeneration = event.generation](auto&& body) {
+			if (ingress == comic_chat::legacy_ui::IrcTransportIngressAction::out_of_order) {
+				TRACE0("IRC transport event violated the connected session phase.\n");
+				Close();
+				OnClose(WSAECONNABORTED);
+				return;
+			}
+			std::visit([this, eventGeneration = event.generation, &lineBudget](auto&& body) {
 			using Body = std::remove_cvref_t<decltype(body)>;
 			if constexpr (std::is_same_v<Body, comicchat::net::StateChanged>) {
 				m_transportState = body.state;
@@ -882,7 +892,7 @@ void CIrcSocket::PollNetworkEvents(LPARAM wakeupCookie)
 				if (!body.bytes)
 					return;
 				auto lines = m_lineFramer.Push(std::span<const std::byte>(*body.bytes));
-				if (!lines) {
+				if (!lines || !lineBudget.Consume(lines->size())) {
 					TRACE0("IRC transport rejected an invalid or oversized frame.\n");
 					OnClose(WSAEMSGSIZE);
 					return;

@@ -2,6 +2,7 @@
 #include "../ircv3eventbridge.h"
 
 #include <map>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -37,6 +38,10 @@ using comic_chat::legacy_ui::Ircv3UserMutationResult;
 using comic_chat::legacy_ui::AdaptProtocolMessage;
 using comic_chat::legacy_ui::HasSafeLegacyDispatchShape;
 using comic_chat::legacy_ui::PrepareLegacyProtocolWire;
+using comic_chat::legacy_ui::IrcProtocolLineBudget;
+using comic_chat::legacy_ui::IrcTransportIngressAction;
+using comic_chat::legacy_ui::IrcTransportIngressGate;
+using comic_chat::legacy_ui::IrcTransportIngressPhase;
 
 struct FakeUser {
 	std::string account;
@@ -330,6 +335,46 @@ void TestLegacyDispatchShapeGate()
 	}
 }
 
+void TestTransportIngressPhaseAndWorkGates()
+{
+	IrcTransportIngressGate gate;
+	gate.Begin(7);
+	const auto wire = std::make_shared<const std::vector<std::byte>>(
+		std::vector<std::byte>{std::byte{'P'}});
+	Check(gate.Classify({6, comicchat::net::BytesReceived{wire}}) ==
+		IrcTransportIngressAction::stale);
+	Check(gate.Classify({7, comicchat::net::BytesReceived{wire}}) ==
+		IrcTransportIngressAction::out_of_order);
+	Check(gate.Classify({7, comicchat::net::Connected{"irc.example", "127.0.0.1", true, false}}) ==
+		IrcTransportIngressAction::accepted);
+	Check(gate.phase() == IrcTransportIngressPhase::connected);
+	Check(gate.Classify({7, comicchat::net::BytesReceived{wire}}) ==
+		IrcTransportIngressAction::accepted);
+	Check(gate.Classify({7, comicchat::net::Connected{"irc.example", "127.0.0.1", true, false}}) ==
+		IrcTransportIngressAction::out_of_order);
+	Check(gate.Classify({7, comicchat::net::Closed{"retry", std::chrono::milliseconds{50}}}) ==
+		IrcTransportIngressAction::accepted);
+	Check(gate.phase() == IrcTransportIngressPhase::reconnecting);
+	Check(gate.Classify({7, comicchat::net::BytesReceived{wire}}) ==
+		IrcTransportIngressAction::out_of_order);
+	Check(gate.Classify({7, comicchat::net::Connected{"irc.example", "127.0.0.1", true, false}}) ==
+		IrcTransportIngressAction::accepted);
+	Check(gate.Classify({7, comicchat::net::Closed{"done", std::chrono::milliseconds{0}}}) ==
+		IrcTransportIngressAction::accepted);
+	Check(gate.phase() == IrcTransportIngressPhase::stopped);
+	Check(gate.Classify({7, comicchat::net::PingDue{}}) ==
+		IrcTransportIngressAction::out_of_order);
+	gate.Stop();
+	Check(gate.Classify({7, comicchat::net::Diagnostic{"late", "ignored"}}) ==
+		IrcTransportIngressAction::stale);
+
+	IrcProtocolLineBudget budget{512};
+	Check(budget.Consume(256) && budget.remaining() == 256);
+	Check(!budget.Consume(257) && budget.remaining() == 256);
+	Check(budget.Consume(256) && budget.remaining() == 0);
+	Check(!budget.Consume(1));
+}
+
 } // namespace
 
 int main()
@@ -339,5 +384,6 @@ int main()
 	TestStandardReplyPresentation();
 	TestChannelRenameConsumer();
 	TestLegacyDispatchShapeGate();
+	TestTransportIngressPhaseAndWorkGates();
 	return failures == 0 ? 0 : 1;
 }
