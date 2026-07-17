@@ -149,8 +149,8 @@ public:
     ~DccTransferEngine();
     DccTransferEngine(const DccTransferEngine&) = delete;
     auto operator=(const DccTransferEngine&) -> DccTransferEngine& = delete;
-    DccTransferEngine(DccTransferEngine&&) noexcept;
-    auto operator=(DccTransferEngine&&) noexcept -> DccTransferEngine&;
+    DccTransferEngine(DccTransferEngine&&) = delete;
+    auto operator=(DccTransferEngine&&) -> DccTransferEngine& = delete;
 
     [[nodiscard]] auto start_listen(DccListenOptions options)
         -> std::expected<DccTransferHandle, DccError>;

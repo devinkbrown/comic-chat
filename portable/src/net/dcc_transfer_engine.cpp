@@ -7,7 +7,6 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <cstring>
 #include <deque>
 #include <limits>
@@ -184,7 +183,7 @@ public:
             queued_send_bytes_ += chunk_size;
             final_posted_ = final_posted_ || chunk_final;
         }
-        if (loop_ready_.load(std::memory_order_acquire)) (void)uv_async_send(&wakeup_handle_);
+        wake_loop();
         return {};
     }
 
@@ -205,22 +204,13 @@ public:
     }
 
     void stop() noexcept {
-        {
-            std::scoped_lock lock{mutex_};
-            stopped_ = true;
-        }
-        thread_.request_stop();
-        if (loop_ready_.load(std::memory_order_acquire)) (void)uv_async_send(&wakeup_handle_);
-        if (thread_.joinable() && std::this_thread::get_id() == thread_.get_id()) return;
-        if (thread_.joinable()) {
-            try {
-                thread_.join();
-            } catch (...) {
-                // Detaching is unsafe because the worker captures Impl.
-                // Self-thread stop is handled above, so fail closed.
-                std::terminate();
-            }
-        }
+        signal_stop();
+        // A stop raised from the worker (a wakeup callback re-entering the
+        // engine) must never join or disown its own thread. The loop is
+        // already unwinding; a later start or the destructor reaps it.
+        if (is_worker_thread()) return;
+        std::scoped_lock lifecycle{lifecycle_mutex_};
+        join_worker(take_worker());
         std::scoped_lock lock{mutex_};
         commands_.clear();
         queued_send_bytes_ = 0;
@@ -248,20 +238,31 @@ private:
 
     auto start_common(const Direction direction, DccListenOptions listen, DccConnectOptions connect)
         -> std::expected<DccTransferHandle, DccError> {
-        std::unique_lock lock{mutex_};
-        if (!stopped_) {
-            if (accepting_commands_ || !thread_.joinable() ||
-                thread_.get_id() == std::this_thread::get_id())
-                return std::unexpected{DccError::already_running};
-            lock.unlock();
-            try {
-                thread_.join();
-            } catch (...) {
-                return std::unexpected{DccError::already_running};
-            }
-            lock.lock();
-            if (!stopped_) return std::unexpected{DccError::already_running};
+        // try_to_lock, not a blocking acquire: a wakeup callback may re-enter
+        // start from the worker while another thread holds lifecycle_mutex_ to
+        // join that same worker. Blocking here would deadlock that join.
+        std::unique_lock lifecycle{lifecycle_mutex_, std::try_to_lock};
+        if (!lifecycle.owns_lock()) return std::unexpected{DccError::already_running};
+
+        threading::JThread previous;
+        {
+            std::scoped_lock lock{mutex_};
+            // stopped_ only means a stop was requested, never that the worker
+            // has exited, so a previous worker may still be running here.
+            if (!stopped_ && accepting_commands_) return std::unexpected{DccError::already_running};
+            if (worker_id_ == std::this_thread::get_id()) return std::unexpected{DccError::already_running};
+            stopped_ = true;
+            (void)stop_source_.request_stop();
+            // Move into an empty local: the outgoing thread is not joined here,
+            // only handed to join_worker below, outside mutex_.
+            previous = std::move(thread_);
         }
+        join_worker(std::move(previous));
+
+        // The previous worker is fully joined, so its state is ours alone now.
+        std::unique_lock lock{mutex_};
+        stop_source_ = threading::StopSource{};
+        worker_id_ = std::thread::id{};
         direction_ = direction;
         listen_options_ = std::move(listen);
         connect_options_ = std::move(connect);
@@ -299,10 +300,62 @@ private:
         stopped_ = false;
         accepting_commands_ = true;
         terminal_ = false;
-        thread_ = threading::JThread{[this](const threading::StopToken token) noexcept {
-            network_thread_entry(token);
-        }};
-        return handle_;
+        const auto token = stop_source_.get_token();
+        const auto started = handle_;
+        lock.unlock();
+        // thread_ is empty and mutex_ is released, so this assignment cannot
+        // join anything and the new worker never blocks on us.
+        thread_ = threading::JThread{[this, token]() noexcept { network_thread_entry(token); }};
+        return started;
+    }
+
+    // Lock ordering: lifecycle_mutex_ before mutex_, never the reverse.
+    // lifecycle_mutex_ guards thread_ and is never taken by the worker, so a
+    // join may hold it. The worker needs mutex_ to finish, so no join or
+    // move-assignment of thread_ may happen while mutex_ is held.
+    auto take_worker() noexcept -> threading::JThread {
+        std::scoped_lock lock{mutex_};
+        return std::move(thread_);
+    }
+
+    void join_worker(threading::JThread worker) noexcept {
+        if (!worker.joinable()) return;
+        wake_loop();
+        try {
+            worker.join();
+        } catch (...) {
+            // Detaching is unsafe because the worker captures Impl, and the
+            // self-thread case never reaches a join, so fail closed.
+            std::terminate();
+        }
+    }
+
+    auto is_worker_thread() const noexcept -> bool {
+        std::scoped_lock lock{mutex_};
+        return worker_id_ == std::this_thread::get_id();
+    }
+
+    void wake_loop() noexcept {
+        // libuv permits cross-thread sends, but Windows explicitly forbids a
+        // send once uv_close has begun. Serialize the readiness check with the
+        // close transition so a caller can never retain a stale true value.
+        std::scoped_lock wakeup{wakeup_mutex_};
+        if (loop_ready_) (void)uv_async_send(&wakeup_handle_);
+    }
+
+    void signal_stop() noexcept {
+        {
+            std::scoped_lock lock{mutex_};
+            stopped_ = true;
+            (void)stop_source_.request_stop();
+        }
+        wake_loop();
+    }
+
+    // Stops the loop without touching thread_, which the worker may not read.
+    void request_worker_stop() noexcept {
+        std::scoped_lock lock{mutex_};
+        (void)stop_source_.request_stop();
     }
 
     auto limits() const noexcept -> const DccLimits& {
@@ -406,7 +459,7 @@ private:
             phase_ = Phase::terminal;
             set_accepting_commands(false);
         }
-        thread_.request_stop();
+        request_worker_stop();
         close_network();
     }
 
@@ -420,19 +473,25 @@ private:
     }
 
     void network_thread_entry(const threading::StopToken token) noexcept {
+        // Recorded before any code that could re-enter the engine, so a stop
+        // raised from this thread always recognises itself.
+        {
+            std::scoped_lock lock{mutex_};
+            worker_id_ = std::this_thread::get_id();
+        }
         try {
             network_loop(token);
         } catch (...) {
             fail_noexcept("network-exception", "DCC network thread failed safely");
         }
         cleanup_network_loop();
-        loop_ready_.store(false, std::memory_order_release);
         {
             std::scoped_lock lock{mutex_};
             stopped_ = true;
             accepting_commands_ = false;
             commands_.clear();
             queued_send_bytes_ = 0;
+            worker_id_ = std::thread::id{};
         }
     }
 
@@ -454,7 +513,10 @@ private:
             return;
         }
         deadline_initialized_ = true;
-        loop_ready_.store(true, std::memory_order_release);
+        {
+            std::scoped_lock wakeup{wakeup_mutex_};
+            loop_ready_ = true;
+        }
         if (direction_ == Direction::send) begin_listen();
         else begin_connect();
         while (!token.stop_requested()) {
@@ -468,8 +530,12 @@ private:
     void cleanup_network_loop() noexcept {
         if (!loop_initialized_) return;
         close_network();
-        if (wakeup_initialized_ && !uv_is_closing(reinterpret_cast<uv_handle_t*>(&wakeup_handle_)))
-            uv_close(reinterpret_cast<uv_handle_t*>(&wakeup_handle_), nullptr);
+        {
+            std::scoped_lock wakeup{wakeup_mutex_};
+            loop_ready_ = false;
+            if (wakeup_initialized_ && !uv_is_closing(reinterpret_cast<uv_handle_t*>(&wakeup_handle_)))
+                uv_close(reinterpret_cast<uv_handle_t*>(&wakeup_handle_), nullptr);
+        }
         if (deadline_initialized_ && !uv_is_closing(reinterpret_cast<uv_handle_t*>(&deadline_timer_)))
             uv_close(reinterpret_cast<uv_handle_t*>(&deadline_timer_), nullptr);
         while (uv_run(&loop_, UV_RUN_DEFAULT) != 0) {}
@@ -871,7 +937,7 @@ private:
         (void)uv_timer_stop(&deadline_timer_);
         set_accepting_commands(false);
         (void)publish(DccCompleted{file_size()});
-        thread_.request_stop();
+        request_worker_stop();
         close_network();
     }
 
@@ -883,7 +949,7 @@ private:
         set_accepting_commands(false);
         (void)publish(DccDiagnostic{std::move(code), std::move(message)});
         (void)publish(DccClosed{"transfer failed"});
-        thread_.request_stop();
+        request_worker_stop();
         close_network();
     }
 
@@ -894,7 +960,7 @@ private:
         (void)uv_timer_stop(&deadline_timer_);
         set_accepting_commands(false);
         (void)publish(DccClosed{std::move(reason)});
-        thread_.request_stop();
+        request_worker_stop();
         close_network();
     }
 
@@ -925,7 +991,9 @@ private:
         accepting_commands_ = accepting;
     }
 
+    mutable std::mutex lifecycle_mutex_;
     mutable std::mutex mutex_;
+    mutable std::mutex wakeup_mutex_;
     std::deque<DccCommand> commands_;
     std::deque<DccEvent> events_;
     std::function<void()> wakeup_;
@@ -934,6 +1002,10 @@ private:
     DccTransferHandle handle_;
     Direction direction_{Direction::send};
     threading::JThread thread_;
+    // Owned by Impl rather than read back from thread_, so the worker can stop
+    // its own loop without touching lifecycle_mutex_ state.
+    threading::StopSource stop_source_;
+    std::thread::id worker_id_;
     bool stopped_{true};
     bool accepting_commands_{};
     std::size_t queued_send_bytes_{};
@@ -946,7 +1018,7 @@ private:
     uv_tcp_t listener_{};
     uv_connect_t connect_request_{};
     uv_write_t write_request_{};
-    std::atomic_bool loop_ready_{};
+    bool loop_ready_{};
     bool loop_initialized_{};
     bool wakeup_initialized_{};
     bool deadline_initialized_{};
@@ -979,8 +1051,6 @@ private:
 
 DccTransferEngine::DccTransferEngine() : impl_{std::make_unique<Impl>()} {}
 DccTransferEngine::~DccTransferEngine() = default;
-DccTransferEngine::DccTransferEngine(DccTransferEngine&&) noexcept = default;
-auto DccTransferEngine::operator=(DccTransferEngine&&) noexcept -> DccTransferEngine& = default;
 auto DccTransferEngine::start_listen(DccListenOptions options)
     -> std::expected<DccTransferHandle, DccError> { return impl_->start_listen(std::move(options)); }
 auto DccTransferEngine::start_connect(DccConnectOptions options)
