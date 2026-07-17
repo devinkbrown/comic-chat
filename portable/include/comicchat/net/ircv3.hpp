@@ -32,6 +32,14 @@ struct Tag {
 
 struct ParseFailure {
 	std::string reason;
+	// Optional machine-readable failure code. For multiline builder rejections
+	// this carries the matching IRCv3 standard-reply code
+	// (MULTILINE_MAX_BYTES/MULTILINE_MAX_LINES/MULTILINE_INVALID_TARGET/
+	// MULTILINE_INVALID) so a frontend can present the specific failure rather
+	// than parsing free text. Empty for failures that have no standard code.
+	// A default member initializer keeps the existing brace-initialized
+	// ParseFailure{"reason"} call sites valid without a code argument.
+	std::string code = {};
 };
 
 // One logical line of an outbound draft/multiline batch. `concat` appends this
@@ -358,6 +366,10 @@ private:
 		std::string nick,
 		bool secure_transport);
 	void ClearSaslSecrets() noexcept;
+	// Shared bounded-recovery command builder used by both the public
+	// RecoveryCommands() query and the reconnect (RPL_WELCOME) auto-emitter.
+	std::vector<std::string> BuildRecoveryCommands(
+		const std::set<std::string>& channels, std::size_t history_limit) const;
 	std::string Casefold(std::string_view value) const;
 	bool SameIdentifier(std::string_view left, std::string_view right) const;
 	void ReindexState(CaseMapping previous);
@@ -379,6 +391,11 @@ private:
 	std::set<std::string> metadata_subscriptions_;
 	std::set<std::string> redacted_;
 	std::set<std::string> joined_channels_;
+	// Channels remembered across a reconnect so the engine can emit bounded
+	// recovery (rejoin + CHATHISTORY LATEST) on the reconnect's RPL_WELCOME.
+	// Snapshotted from joined_channels_ before a re-registration wipes it and
+	// consumed once at 001; empty on a first connection.
+	std::set<std::string> recovery_channels_;
 	std::map<std::string, std::string> isupport_;
 	std::map<std::string, std::string> monitor_online_;
 	std::set<std::string> monitor_list_;
