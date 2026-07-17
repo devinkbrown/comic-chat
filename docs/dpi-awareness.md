@@ -1,5 +1,12 @@
 # Making Microsoft Comic Chat DPI-Aware
 
+> **Archival note (2026-07-17):** This DPI work was first done on the
+> `v1.0-pre-modern` Windows lane, which has since been **archived** to the
+> `version/v1.0-pre-modern` branch and is no longer on `main`. The one
+> `v1.0-pre-modern/…:line` citation below refers to that archival branch. Reinked
+> is now one version with two UIs (`v2.5-beta-1-modern` + `portable`) over the
+> shared `portable/src` core.
+
 This document captures everything learned while getting the 1996 Microsoft
 Comic Chat MFC client to render correctly on a modern high-DPI Windows
 display. It is written for the next person who touches the rendering code, so

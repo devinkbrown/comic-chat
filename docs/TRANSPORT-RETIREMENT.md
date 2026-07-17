@@ -3,6 +3,13 @@
 Audit date: 2026-07-16
 Audited revision: `1dc102030035d5cdf55e9f4d62b7cc5b2c77093b`
 
+> **Archival note (2026-07-17):** The `v1.0-pre-modern` Windows lane has since
+> been **archived** to the `version/v1.0-pre-modern` branch and is no longer part
+> of `main`. Reinked is now one version with two UIs (`v2.5-beta-1-modern` +
+> `portable`) over the shared `portable/src` core. Every `v1.0-pre-modern/…:line`
+> citation in this document refers to that archival branch, not a current
+> on-`main` tree.
+
 > **Status update (2026-07-17): superseded on later revisions.** This is retained
 > as the 2026-07-16 snapshot of the pinned revision above. Two of its central
 > negative findings no longer hold at the current tree (`0f1f9f8`):

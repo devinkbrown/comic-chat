@@ -58,50 +58,8 @@ class TransportOwnershipGateTest(unittest.TestCase):
     def test_current_repository_has_zero_legacy_transport_ownership(self) -> None:
         result = gate.audit_repository(REPOSITORY)
         self.assertEqual([], result.errors)
-        self.assertEqual(0, len(result.v1_findings))
-        self.assertEqual(0, len(result.v1_makefile_deficits))
         allowed_paths = {finding.path for finding in result.allowed_network_findings}
         self.assertEqual(gate.NETWORK_IMPLEMENTATION_ALLOWLIST, allowed_paths)
-
-    def test_v1_compatibility_facade_names_are_not_socket_ownership(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            write(
-                root,
-                "v1.0-pre-modern/irc.cpp",
-                "void ui_facade() { serverConn.Connect(host, port, true); "
-                "serverConn.Send(line, size); serverConn.Close(); }\n",
-            )
-            findings = gate.scan_v1_legacy_inventory(root)
-            self.assertEqual([], findings)
-            self.assertEqual([], gate.compare_v1_inventory(findings))
-
-    def test_new_v1_legacy_socket_in_another_file_is_not_directory_allowlisted(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            write(
-                root,
-                "v1.0-pre-modern/alternate.cpp",
-                "class AlternateSocket : public CSocket {};\n",
-            )
-            errors = gate.compare_v1_inventory(gate.scan_v1_legacy_inventory(root))
-            self.assertTrue(any("alternate.cpp" in error for error in errors))
-            self.assertTrue(any("legacy transport regression" in error for error in errors))
-
-    def test_v1_receive_path_regression_is_fatal(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            write(
-                root,
-                "v1.0-pre-modern/irc.cpp",
-                "void CIrcSocket::OnReceive(int error) { Receive(buffer, size); }\n",
-            )
-            findings = gate.scan_v1_legacy_inventory(root)
-            self.assertEqual(
-                {"mfc-receive-callback", "inherited-receive"},
-                {finding.rule for finding in findings},
-            )
-            self.assertNotEqual([], gate.compare_v1_inventory(findings))
 
     def test_v2_mfc_socket_regression_is_fatal(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -165,9 +123,8 @@ class TransportOwnershipGateTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             makefile = valid_v2_makefile()
-            errors, deficits = self._check_makefiles(root, makefile)
+            errors = self._check_makefiles(root, makefile)
             self.assertEqual([], errors)
-            self.assertEqual(0, len(deficits))
 
             spoofed = makefile.replace(
                 '\t"$(INTDIR)\\connection_engine.obj" \\\n', ""
@@ -180,34 +137,16 @@ class TransportOwnershipGateTest(unittest.TestCase):
                 "LINK32_FLAGS=libuv.lib\n"
                 "!ENDIF\n"
             )
-            errors, _ = self._check_makefiles(root, spoofed)
+            errors = self._check_makefiles(root, spoofed)
             self.assertTrue(any("object:connection-engine" in error for error in errors))
             self.assertTrue(any("library:libuv" in error for error in errors))
 
-    def test_partial_v1_makefile_substrate_is_fatal(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            write(root, "v2.5-beta-1-modern/chat.mak", valid_v2_makefile())
-            write(
-                root,
-                "v1.0-pre-modern/chat.mak",
-                'LINK32_OBJS="$(INTDIR)\\connection_engine.obj"\n',
-            )
-            errors, deficits = gate.check_makefiles(root)
-            self.assertTrue(any("v1 makefile does not prove" in error for error in errors))
-            self.assertEqual(18, len(deficits))
-
-    def test_schannel_experiment_must_remain_unwired(self) -> None:
+    def test_schannel_transport_activation_is_fatal(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             write(
                 root,
-                "v1.0-pre-modern/tlssock.cpp",
-                '#include "tlssock.h"\nAcquireCredentialsHandle();\n',
-            )
-            write(
-                root,
-                "v1.0-pre-modern/consumer.cpp",
+                "portable/src/net/rogue_tls.cpp",
                 '#include "tlssock.h"\n#include <schannel.h>\nInitializeSecurityContext();\n',
             )
             findings = gate.scan_schannel_activation(root)
@@ -217,8 +156,7 @@ class TransportOwnershipGateTest(unittest.TestCase):
                 {finding.rule for finding in findings},
             )
 
-    def _check_makefiles(self, root: Path, v2_makefile: str) -> tuple[list[str], tuple[str, ...]]:
-        write(root, "v1.0-pre-modern/chat.mak", valid_v2_makefile())
+    def _check_makefiles(self, root: Path, v2_makefile: str) -> list[str]:
         write(root, "v2.5-beta-1-modern/chat.mak", v2_makefile)
         return gate.check_makefiles(root)
 

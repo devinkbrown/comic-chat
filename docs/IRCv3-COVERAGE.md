@@ -2,6 +2,13 @@
 
 Audit snapshot: 2026-07-17, `main` at `1adea2d`.
 
+> **Archival note:** The `v1.0-pre-modern` Windows lane cited in some entries
+> below has been **archived** to the `version/v1.0-pre-modern` branch and is no
+> longer on `main`. Reinked's current shape is one version with two UIs
+> (`v2.5-beta-1-modern` + `portable`) over the shared `portable/src` core. Any
+> `v1.0-pre-modern/…:line` citation here refers to that archival branch, and the
+> "v1" completion entries record work that landed on it before it was archived.
+
 This is the compatibility ledger for the legacy Microsoft Comic Chat client in
 `v2.5-beta-1-modern/` and the shared protocol engine in `portable/`. It measures
 observable product behavior, not the number of identifiers recognized by the

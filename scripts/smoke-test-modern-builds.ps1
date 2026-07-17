@@ -19,11 +19,6 @@ $PackageDirectory = [IO.Path]::GetFullPath($PackageDirectory)
 
 $packages = @(
     [pscustomobject]@{
-        Name = 'ComicChat-1.0-pre-unofficial-modern'
-        Executable = 'chat.exe'
-        ArtPatterns = @('ComicArt\Avatars\*.avb', 'ComicArt\Backdrop\*')
-    },
-    [pscustomobject]@{
         Name = 'ComicChat-2.5-beta-1-unofficial-modern'
         Executable = 'CChat.exe'
         ArtPatterns = @('ComicArt\*.avb', 'ComicArt\*.bgb')

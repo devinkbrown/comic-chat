@@ -1,5 +1,11 @@
 # Native TLS (SSL) support for Comic Chat over IRC
 
+> **Archival note (2026-07-17):** The `v1.0-pre-modern` Windows lane referenced
+> below has been **archived** to the `version/v1.0-pre-modern` branch and is no
+> longer on `main`. Any `v1.0-pre-modern/…:line` citation here refers to that
+> archival branch. Reinked is now one version with two UIs (`v2.5-beta-1-modern`
+> + `portable`) over the shared `portable/src` core.
+
 > **Status (2026-07-17): superseded design spike — not the shipped TLS path.**
 > This documents an early Windows SChannel (SSPI) experiment
 > (`tlssock.cpp`/`tlssock.h`). The modern clients now obtain TLS from the shared

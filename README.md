@@ -1,6 +1,6 @@
 # Comic Chat: Reinked
 
-**Comic Chat: Reinked** is an unofficial, actively-developed modernization of Microsoft Comic Chat. It keeps Microsoft's original source and artwork (MIT-licensed) as the source of truth and builds three modern lanes on top of it: a current Windows/MFC build of the 2.5 beta-1 client, a modern build of the 1.0-pre client, and a native C++26 port for Linux and the BSDs. The builds here are **unofficial and unsupported**, and are not endorsed by Microsoft.
+**Comic Chat: Reinked** is an unofficial, actively-developed modernization of Microsoft Comic Chat. It keeps Microsoft's original source and artwork (MIT-licensed) as the source of truth and builds **one modern version with two UIs** on top of it over a shared core: the Windows/MFC UI (a current build of the 2.5 beta-1 client) and the native C++26 *nix UI (a port for Linux and the BSDs). The builds here are **unofficial and unsupported**, and are not endorsed by Microsoft.
 
 Microsoft Comic Chat is a Microsoft-developed Internet Relay Chat (IRC) chat client released in 1996 that rendered conversations as automatically generated comic strips. Instead of plain text, users communicated through cartoon avatars with messages displayed in speech bubbles inside dynamically composed comic panels. The application used an expert system to determine character placement, gestures, facial expressions, balloon shape, and panel layout in real time. It shipped as part of Internet Explorer 3.0 and was later bundled with Windows 98 and MSN before being discontinued in the early 2000s.
 
@@ -32,13 +32,18 @@ Microsoft Comic Chat is a Microsoft-developed Internet Relay Chat (IRC) chat cli
 Comic Chat: Reinked is under active development. It is an unofficial fork; its
 builds are not supported or endorsed by Microsoft.
 
-- **`v2.5-beta-1-modern/`** and **`v1.0-pre-modern/`** are the modern Windows
-  clients (native Win32/MFC, **MSVC-only**).
-- **`portable/`** is a native **C++26** port for Linux, FreeBSD, and OpenBSD
+Reinked is **one version with two UIs over a shared core**:
+
+- **`v2.5-beta-1-modern/`** is the Windows UI (native Win32/MFC, **MSVC-only**).
+- **`portable/`** is the native **C++26** *nix UI for Linux, FreeBSD, and OpenBSD
   (SDL3 + Cairo, Meson build) carrying the shared libuv + mbedTLS IRC transport.
   Its gate is `meson test -C portable/build` (11/11 at the current audit). The
   renderer is a source-derived title-panel foundation, not a complete
   visual-parity client yet.
+- Both UIs sit on top of the shared engine in **`portable/src`**.
+
+The earlier `v1.0-pre-modern` Windows lane has been **archived** to the
+`version/v1.0-pre-modern` branch and is no longer part of `main`.
 
 IRC / IRCv3 capability status is tracked in one authoritative ledger,
 [`docs/IRCv3-COVERAGE.md`](docs/IRCv3-COVERAGE.md). **Reinked does not implement
@@ -74,7 +79,7 @@ Mermaid Elizabeth maintains a list of [IRC servers](https://mermeliz.com/srvr_rm
 
 ## Repository Structure
 
-The `main` branch carries the actively-developed **Comic Chat: Reinked** modernization across three lanes: the two Windows **`*-modern`** build folders and the native **`portable/`** C++26 port (see [the note on the modernized folders](#a-note-on-the-modernized-folders) for what they are and why they exist). The original Microsoft source snapshots — the integrity-preserved provenance import — are kept off `main` in dedicated `version/*` archival branches so the working tree stays focused on the modern lanes. Each snapshot retains its full history; check one out to browse or build it (`git checkout version/v2.5-beta-1`). The portable build's source-fidelity reference bitmaps and font were relocated onto `main` under [`portable/assets/`](portable/assets/) so the build no longer depends on the archived snapshots.
+The `main` branch carries the actively-developed **Comic Chat: Reinked** modernization as **one version with two UIs over a shared core**: the Windows **`v2.5-beta-1-modern/`** build folder and the native **`portable/`** C++26 *nix UI, both on top of the shared **`portable/src`** engine (see [the note on the modernized folders](#a-note-on-the-modernized-folders) for what they are and why they exist). The original Microsoft source snapshots — the integrity-preserved provenance import — are kept off `main` in dedicated `version/*` archival branches so the working tree stays focused on the modern lanes. Each snapshot retains its full history; check one out to browse or build it (`git checkout version/v2.5-beta-1`). The portable build's source-fidelity reference bitmaps and font were relocated onto `main` under [`portable/assets/`](portable/assets/) so the build no longer depends on the archived snapshots.
 
 | Location | Date | Description |
 |----------|------|-------------|
@@ -83,9 +88,10 @@ The `main` branch carries the actively-developed **Comic Chat: Reinked** moderni
 | `version/v2.1b` branch | February 1998 | Comic Chat 2.1 beta source — [README](docs/v2.1b/README.md) |
 | `version/v2.5-beta-1` branch | June 1998 | Comic Chat 2.5 beta 1 source — [README](docs/v2.5-beta-1/README.md) |
 | [`artifacts/`](artifacts/) | January 1998 | SDK, companion tools, JChat, documentation |
-| [`v1.0-pre-modern/`](v1.0-pre-modern/) | 2026 | Modernized v1.0-pre: builds with current Visual Studio, DPI-aware UI scaling, native TLS |
-| [`v2.5-beta-1-modern/`](v2.5-beta-1-modern/) | 2026 | Modernized v2.5-beta-1: builds with current Visual Studio (nmake replaces the NT DDK build), uniform display scaling, runs live on modern IRC |
-| [`portable/`](portable/) | 2026 | Native C++26 SDL3/Cairo port for Linux, FreeBSD, OpenBSD, Wayland, and X11 — [README](portable/README.md) |
+| `version/v1.0-pre-modern` branch | 2026 | Archived modernized v1.0-pre Windows lane (no longer on `main`) |
+| [`v2.5-beta-1-modern/`](v2.5-beta-1-modern/) | 2026 | Windows UI: modernized v2.5-beta-1, builds with current Visual Studio (nmake replaces the NT DDK build), uniform display scaling, runs live on modern IRC |
+| [`portable/`](portable/) | 2026 | Native C++26 SDL3/Cairo *nix UI for Linux, FreeBSD, OpenBSD, Wayland, and X11 — [README](portable/README.md) |
+| [`portable/src/`](portable/src/) | 2026 | Shared core engine used by both UIs |
 | [`docs/`](docs/) | — | Modernization write-ups and documentation |
 
 See [`file dates.txt`](file%20dates.txt) for the original file modification timestamps from each archive.
@@ -119,17 +125,7 @@ A `.mdp` (Visual C++ 4.x) project file is included in the `client/` directory of
 
 ### Modernized build (Visual Studio 2022)
 
-`v1.0-pre-modern/` builds with a current Visual Studio C++/MFC toolchain and runs on modern high-DPI Windows:
-
-```bat
-call "<VisualStudio>\VC\Auxiliary\Build\vcvars32.bat"
-cd v1.0-pre-modern
-nmake /f chat.mak CFG="chat - Win32 Debug"
-```
-
-The modernization covers build fixes (legacy C++, MFC/OLE macro clashes, linker libs), **DPI-aware rendering and UI scaling**, several **UX fixes** (mouse-wheel scrolling, panels-per-row auto-fit, balloon word-wrap), and optional **native TLS** for connecting to modern IRC networks. See [`docs/MODERNIZATION.md`](docs/MODERNIZATION.md) for details.
-
-`v2.5-beta-1-modern/` brings the more advanced **Comic Chat 2.5 beta-1** (June 1998) client — which originally built with the Windows NT DDK `BUILD.EXE` system — up on the modern toolchain with its own clean `nmake` makefile:
+`v2.5-beta-1-modern/` is the Windows UI. It brings the more advanced **Comic Chat 2.5 beta-1** (June 1998) client — which originally built with the Windows NT DDK `BUILD.EXE` system — up on the modern toolchain with its own clean `nmake` makefile:
 
 ```bat
 call "<VisualStudio>\VC\Auxiliary\Build\vcvars32.bat"
@@ -138,27 +134,27 @@ nmake /f chat.mak CFG="chat - Win32 Release"    REM everyday use
 nmake /f chat.mak CFG="chat - Win32 Debug"      REM asserts + TRACE for DebugView
 ```
 
-It carries the mouse-wheel and panels-per-row work across and runs **DPI-unaware** so Windows scales the whole window uniformly (rather than scaling a few surfaces and leaving the rest tiny). The chief 2.5-specific fixes were dropping the MFC-4.0 common-control struct-tag remap, adding a Common Controls v6 manifest so the rebar toolbar creates, and the runtime fixes needed to connect/join/chat on a present-day IRC network. See [`v2.5-beta-1-modern/README.md`](v2.5-beta-1-modern/README.md).
+It carries the mouse-wheel and panels-per-row work and runs **DPI-unaware** so Windows scales the whole window uniformly (rather than scaling a few surfaces and leaving the rest tiny). The chief 2.5-specific fixes were dropping the MFC-4.0 common-control struct-tag remap, adding a Common Controls v6 manifest so the rebar toolbar creates, and the runtime fixes needed to connect/join/chat on a present-day IRC network. See [`v2.5-beta-1-modern/README.md`](v2.5-beta-1-modern/README.md). The foundational DPI/UX/TLS write-ups — first developed on the now-archived `v1.0-pre-modern` lane (preserved on the `version/v1.0-pre-modern` branch) — are collected in [`docs/MODERNIZATION.md`](docs/MODERNIZATION.md).
 
 ### Cloud builds
 
 The manually triggered **Build unofficial modern clients** GitHub Actions
-workflow builds both modernized clients on a pinned Windows runner, packages
-each executable with its art and documentation, smoke-tests the extracted ZIPs
-from random folders, and uploads release-ready artifacts with SHA-256 hashes.
+workflow builds the modernized Windows client on a pinned Windows runner, packages
+the executable with its art and documentation, smoke-tests the extracted ZIP
+from a random folder, and uploads release-ready artifacts with SHA-256 hashes.
 Fork owners can enable Actions and run the workflow without any secrets. See
 [`docs/UNOFFICIAL-RELEASE.md`](docs/UNOFFICIAL-RELEASE.md) for the packaging and
 manual release process.
 
 ### A note on the modernized folders
 
-This repository preserves Microsoft's original Comic Chat source as a **historical artifact** — the versioned `v*/` snapshots and `artifacts*/` are here for reference, study, and preservation, and are not modernized in place. The `*-modern` folders and `portable/` are the actively-developed **Comic Chat: Reinked** modernization; they are **unofficial and unsupported**, not a polished Microsoft re-release. The Windows `*-modern` lanes in particular began as **worked examples** of the kinds of changes it takes to get a 1996–1998 MFC application building and running on a current machine, such as:
+This repository preserves Microsoft's original Comic Chat source as a **historical artifact** — the versioned `version/*` snapshots and `artifacts*/` are here for reference, study, and preservation, and are not modernized in place. The `v2.5-beta-1-modern/` Windows UI and the `portable/` *nix UI are the actively-developed **Comic Chat: Reinked** modernization; they are **unofficial and unsupported**, not a polished Microsoft re-release. The Windows `*-modern` UI in particular began as a set of **worked examples** of the kinds of changes it takes to get a 1996–1998 MFC application building and running on a current machine, such as:
 
 - Getting it to **build with a current Visual Studio / MFC toolchain** on a normal developer machine (the original Visual C++ 4.x and NT DDK `BUILD.EXE` systems are long gone).
 - **Uniform display scaling** so the window and its controls are legible on today's high-DPI monitors.
 - A handful of modern-Windows compatibility fixes — Common Controls v6 for the toolbar, modern RichEdit/CRT behavior, IRC parsing that works with present-day servers, and short-circuiting the long-dead Microsoft art-download servers in favor of the bundled art.
 
-These changes are intentionally **left as an exercise for the reader**: they demonstrate an approach and a few representative fixes rather than an exhaustive, production-hardened port. If you'd like to take it further — full per-monitor DPI awareness, TLS to modern IRC networks, the other client versions — the `*-modern` folders are a good place to start.
+These changes are intentionally **left as an exercise for the reader**: they demonstrate an approach and a few representative fixes rather than an exhaustive, production-hardened port. If you'd like to take it further — full per-monitor DPI awareness, TLS to modern IRC networks, the other client versions — the `v2.5-beta-1-modern/` folder is a good place to start.
 
 ### Original build requirements
 

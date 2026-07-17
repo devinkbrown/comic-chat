@@ -1,6 +1,10 @@
 # Comic Chat — v1.0 Source (August 1996)
 
-This folder contains the source code for **Microsoft Comic Chat 1.0**, archived from August 1996. It shares the same internal version identifier as `v1.0-pre` (`rup 206, "Beta 2"`, built on `DJKLAPTOP`), but includes the full build infrastructure, installer, help system, and shared runtime libraries that were absent from the pre-release snapshot. Approximately 99 of the 111 shared source files differ between the two snapshots.
+> **Note:** This original snapshot is archived on the **`version/v1.0`** branch,
+> not on `main`. Check it out with `git checkout version/v1.0` to browse or build
+> the source described below.
+
+This snapshot contains the source code for **Microsoft Comic Chat 1.0**, archived from August 1996. It shares the same internal version identifier as `v1.0-pre` (`rup 206, "Beta 2"`, built on `DJKLAPTOP`), but includes the full build infrastructure, installer, help system, and shared runtime libraries that were absent from the pre-release snapshot. Approximately 99 of the 111 shared source files differ between the two snapshots.
 
 ## Structure
 
@@ -29,14 +33,16 @@ Field, Pastoral, Room
 ## Building
 
 ```batch
-cd v1.0\client
+git checkout version/v1.0
+cd client
 NMAKE /f "chat.mak" CFG="chat - Win32 Release"
 ```
 
 Or use the top-level build wrapper:
 
 ```batch
-cd v1.0\build
+git checkout version/v1.0
+cd build
 build exe
 ```
 

@@ -16,9 +16,13 @@ unofficial **Comic Chat: Reinked** modernization. For modern work, also follow
 | `version/v2.1b` branch | Comic Chat 2.1 beta (Feb 1998) | Visual C++ 5.x |
 | `version/v2.5-beta-1` branch | Comic Chat 2.5 beta 1 (Jun 1998) | Visual C++ 5.x |
 | `artifacts/` | Companion tools: avatar editor, Java client, SDK | various |
-| `v1.0-pre-modern/` | Native modern Windows port | Current MSVC/MFC |
-| `v2.5-beta-1-modern/` | Native modern Windows port | Current MSVC/MFC, C++26 |
-| `portable/` | Native Linux/BSD/Wayland/X11 port | Meson, Clang 21+, C++26 |
+| `v2.5-beta-1-modern/` | Windows UI — native modern Windows port | Current MSVC/MFC, C++26 |
+| `portable/` | *nix UI — native Linux/BSD/Wayland/X11 port | Meson, Clang 21+, C++26 |
+| `portable/src/` | Shared core engine used by both UIs | Meson, Clang 21+, C++26 |
+
+Reinked is now **one version with two UIs over a shared core**. The earlier
+`v1.0-pre-modern/` Windows lane has been **archived** to the
+`version/v1.0-pre-modern` branch and is no longer on `main`.
 
 `file dates.txt` records original file modification timestamps from the archive.
 

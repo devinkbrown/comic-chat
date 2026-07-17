@@ -22,7 +22,6 @@ from typing import Iterable, Pattern, Sequence
 SOURCE_SUFFIXES = frozenset({".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"})
 PRODUCT_ROOTS = (
     Path("portable/src"),
-    Path("v1.0-pre-modern"),
     Path("v2.5-beta-1-modern"),
 )
 NETWORK_IMPLEMENTATION_ALLOWLIST = frozenset(
@@ -46,13 +45,6 @@ class Finding:
 
 
 @dataclass(frozen=True)
-class SourceRule:
-    name: str
-    pattern: Pattern[str]
-    preserve_literals: bool = False
-
-
-@dataclass(frozen=True)
 class SourceSnapshot:
     source: str
     searchable: str
@@ -62,52 +54,12 @@ class SourceSnapshot:
 @dataclass
 class AuditResult:
     errors: list[str]
-    v1_findings: list[Finding]
     allowed_network_findings: list[Finding]
-    v1_makefile_deficits: tuple[str, ...]
 
     @property
     def ok(self) -> bool:
         return not self.errors
 
-
-V1_RULES = (
-    SourceRule(
-        "mfc-socket-header",
-        re.compile(r"(?m)^[ \t]*#[ \t]*include[ \t]*[<\"]afxsock\.h[>\"]"),
-        preserve_literals=True,
-    ),
-    SourceRule(
-        "mfc-socket-base",
-        re.compile(r"\b(?:CAsyncSocket|CSocket)\b"),
-    ),
-    SourceRule(
-        "mfc-socket-init",
-        re.compile(r"\bAfxSocketInit\s*\("),
-    ),
-    SourceRule(
-        "socket-handle-access",
-        re.compile(r"\bm_hSocket\b"),
-    ),
-    SourceRule(
-        "inherited-create",
-        re.compile(r"\bserverConn\s*\.\s*Create\s*\("),
-    ),
-    SourceRule(
-        "mfc-receive-callback",
-        re.compile(r"\bOnReceive\s*\("),
-    ),
-)
-V1_IRC_IMPLEMENTATION_RULES = (
-    SourceRule(
-        "inherited-receive",
-        re.compile(r"(?<![A-Za-z0-9_:.>])Receive\s*\("),
-    ),
-)
-
-# The migration is complete: any finding is a regression. Keep this tuple so
-# compare_v1_inventory remains useful to external gate consumers.
-V1_EXPECTED_OCCURRENCES: tuple[tuple[str, Path, int, str], ...] = ()
 
 V2_FORBIDDEN_RULES = (
     (
@@ -156,7 +108,7 @@ TLSSOCK_INCLUDE_PATTERN = re.compile(
 )
 
 # Every semantic build check is independently inventoried.  That makes partial
-# v1 substrate wiring visible instead of hiding it behind one compound bit.
+# substrate wiring visible instead of hiding it behind one compound bit.
 MAKEFILE_SUBSTRATE_UNITS = (
     ("crypto-runtime", "crypto_runtime.obj", "../portable/src/crypto_runtime.cpp"),
     ("connection-engine", "connection_engine.obj", "../portable/src/net/connection_engine.cpp"),
@@ -390,57 +342,6 @@ def load_product_sources(root: Path) -> dict[Path, SourceSnapshot]:
     return snapshots
 
 
-def scan_v1_legacy_inventory(
-    root: Path, snapshots: dict[Path, SourceSnapshot] | None = None
-) -> list[Finding]:
-    findings: list[Finding] = []
-    snapshots = snapshots if snapshots is not None else load_product_sources(root)
-    for relative, snapshot in snapshots.items():
-        if not relative.is_relative_to("v1.0-pre-modern"):
-            continue
-        for rule in V1_RULES:
-            searchable = snapshot.include_searchable if rule.preserve_literals else snapshot.searchable
-            findings.extend(_find_matches(snapshot.source, searchable, relative, rule.name, rule.pattern))
-        if relative == Path("v1.0-pre-modern/irc.cpp"):
-            for rule in V1_IRC_IMPLEMENTATION_RULES:
-                findings.extend(
-                    _find_matches(
-                        snapshot.source,
-                        snapshot.searchable,
-                        relative,
-                        rule.name,
-                        rule.pattern,
-                    )
-                )
-    return findings
-
-
-def compare_v1_inventory(findings: Sequence[Finding]) -> list[str]:
-    actual = Counter((finding.rule, finding.path, finding.line, finding.signature) for finding in findings)
-    expected = Counter(V1_EXPECTED_OCCURRENCES)
-    if actual == expected:
-        return []
-
-    errors: list[str] = []
-    for occurrence, count in sorted((expected - actual).items(), key=lambda item: str(item[0])):
-        rule, path, line, signature = occurrence
-        errors.append(
-            f"v1 expected ownership occurrence missing ({count}): "
-            f"{path.as_posix()}:{line} [{rule}] {signature}"
-        )
-    for occurrence, count in sorted((actual - expected).items(), key=lambda item: str(item[0])):
-        rule, path, line, signature = occurrence
-        errors.append(
-            f"v1 legacy transport regression ({count}): "
-            f"{path.as_posix()}:{line} [{rule}] {signature}"
-        )
-    errors.append(
-        f"v1 zero-tolerance ownership mismatch: expected {sum(expected.values())}, "
-        f"found {sum(actual.values())}"
-    )
-    return errors
-
-
 def scan_v2_legacy_ownership(
     root: Path, snapshots: dict[Path, SourceSnapshot] | None = None
 ) -> list[Finding]:
@@ -475,14 +376,8 @@ def scan_schannel_activation(
     root: Path, snapshots: dict[Path, SourceSnapshot] | None = None
 ) -> list[Finding]:
     findings: list[Finding] = []
-    dormant_experiment = {
-        Path("v1.0-pre-modern/tlssock.cpp"),
-        Path("v1.0-pre-modern/tlssock.h"),
-    }
     snapshots = snapshots if snapshots is not None else load_product_sources(root)
     for relative, snapshot in snapshots.items():
-        if relative in dormant_experiment:
-            continue
         findings.extend(
             _find_matches(
                 snapshot.source,
@@ -626,10 +521,9 @@ def _satisfied_makefile_checks(text: str, configuration: str) -> tuple[set[str],
     return satisfied, normalized
 
 
-def check_makefiles(root: Path) -> tuple[list[str], tuple[str, ...]]:
+def check_makefiles(root: Path) -> list[str]:
     errors: list[str] = []
     makefiles = {
-        "v1": Path("v1.0-pre-modern/chat.mak"),
         "v2": Path("v2.5-beta-1-modern/chat.mak"),
     }
     source: dict[str, str] = {}
@@ -642,8 +536,8 @@ def check_makefiles(root: Path) -> tuple[list[str], tuple[str, ...]]:
             source[name] = _read_text(path)
 
     configurations = ("chat - Win32 Release", "chat - Win32 Debug")
-    checks: dict[str, list[set[str]]] = {"v1": [], "v2": []}
-    active_views: dict[str, list[str]] = {"v1": [], "v2": []}
+    checks: dict[str, list[set[str]]] = {"v2": []}
+    active_views: dict[str, list[str]] = {"v2": []}
     for name in makefiles:
         for configuration in configurations:
             satisfied, active_view = _satisfied_makefile_checks(source[name], configuration)
@@ -661,26 +555,12 @@ def check_makefiles(root: Path) -> tuple[list[str], tuple[str, ...]]:
                 f"v2 makefile does not prove {check} in: " + ", ".join(missing_configs)
             )
 
-    v1_deficits_list: list[str] = []
-    for check in MAKEFILE_SUBSTRATE_CHECKS:
-        missing_configs = [
-            configuration
-            for configuration, satisfied in zip(configurations, checks["v1"])
-            if check not in satisfied
-        ]
-        if missing_configs:
-            v1_deficits_list.append(check)
-            errors.append(
-                f"v1 makefile does not prove {check} in: " + ", ".join(missing_configs)
-            )
-    v1_deficits = tuple(v1_deficits_list)
-
     for name, views in active_views.items():
         relative = makefiles[name]
         for marker in FORBIDDEN_MAKEFILE_TRANSPORT_MARKERS:
             if any(marker in view for view in views):
                 errors.append(f"{relative.as_posix()} activates forbidden legacy TLS transport marker: {marker}")
-    return errors, v1_deficits
+    return errors
 
 
 def audit_repository(root: Path) -> AuditResult:
@@ -698,13 +578,6 @@ def audit_repository(root: Path) -> AuditResult:
         errors.append(f"could not load modern product sources: {error}")
 
     try:
-        v1_findings = scan_v1_legacy_inventory(root, snapshots)
-        errors.extend(compare_v1_inventory(v1_findings))
-    except (OSError, UnicodeError) as error:
-        v1_findings = []
-        errors.append(f"could not inventory v1 legacy transport: {error}")
-
-    try:
         v2_findings = scan_v2_legacy_ownership(root, snapshots)
         errors.extend(f"v2 legacy transport regression: {finding.render()}" for finding in v2_findings)
         allowed_network, forbidden_network = scan_network_ownership(root, snapshots)
@@ -719,17 +592,14 @@ def audit_repository(root: Path) -> AuditResult:
         errors.append(f"could not scan modern product sources: {error}")
 
     try:
-        makefile_errors, v1_makefile_deficits = check_makefiles(root)
+        makefile_errors = check_makefiles(root)
         errors.extend(makefile_errors)
     except (OSError, UnicodeError) as error:
-        v1_makefile_deficits = ()
         errors.append(f"could not verify Windows makefiles: {error}")
 
     return AuditResult(
         errors=errors,
-        v1_findings=v1_findings,
         allowed_network_findings=allowed_network,
-        v1_makefile_deficits=v1_makefile_deficits,
     )
 
 
@@ -740,22 +610,7 @@ def _print_result(result: AuditResult) -> None:
         print("transport ownership gate: FAIL", file=sys.stderr)
         for error in result.errors:
             print(f"  - {error}", file=sys.stderr)
-        if result.v1_findings:
-            print("  current v1 legacy ownership findings:", file=sys.stderr)
-            for finding in result.v1_findings:
-                print(f"    {finding.render()}", file=sys.stderr)
 
-    counts = Counter(finding.rule for finding in result.v1_findings)
-    print(
-        f"v1 legacy ownership findings: {len(result.v1_findings)}/"
-        f"{len(V1_EXPECTED_OCCURRENCES)} findings"
-    )
-    for rule, count in sorted(counts.items()):
-        print(f"  {rule}: {count}")
-    print(
-        f"v1 shared-substrate makefile deficits: {len(result.v1_makefile_deficits)}/"
-        f"{len(MAKEFILE_SUBSTRATE_CHECKS)} checks"
-    )
     allowed_counts = Counter(finding.path for finding in result.allowed_network_findings)
     print("shared network implementation allowlist:")
     for path in sorted(NETWORK_IMPLEMENTATION_ALLOWLIST):

@@ -84,7 +84,7 @@ The tree is deliberately split by purpose:
 |---|---|---|
 | `v1.0-pre/`, `v1.0/`, `v2.1b/`, `v2.5-beta-1/` | Released Microsoft source and artwork snapshots | Read-only behavioral oracle |
 | historical contents of `artifacts/` | Archived headers, libraries, and build evidence | Read-only reference |
-| `v1.0-pre-modern/`, `v2.5-beta-1-modern/` | Native Win32/MFC modernization | Edit for Windows work |
+| `v2.5-beta-1-modern/` | Native Win32/MFC modernization (Windows UI) | Edit for Windows work |
 | `portable/` | Shared C++ core and native SDL3/Cairo Unix/BSD frontend | Edit for portable and shared work |
 | `portable/assets/icons/` | Declared modern icon sources and generated catalog | Edit sources/manifest, never generated binaries directly |
 | `third_party/` and `portable/subprojects/` | Pinned dependency sources and fallback build descriptions | Change only as a separately reviewed dependency update |
@@ -128,11 +128,12 @@ preprocessor, `/W4`, and a force-included `cpp26mode.h`. It intentionally
 compiles generated MIDL glue and third-party/legacy C as C rather than
 mislabeling it as C++.
 
-`v1.0-pre-modern/chat.mak` is a separate legacy-compatible MFC/NMAKE lane and
-is also built by Windows CI. Its generated Visual C++ 4.2-era flags are not a
-C++26 proof and must not be confused with the v2.5 C++26 migration. Check it
-when a change touches shared packaging, resources, dependencies, or release
-behavior; modernize it only in an explicitly assigned scope, not incidentally.
+The earlier `v1.0-pre-modern` Windows lane has been **archived** to the
+`version/v1.0-pre-modern` branch and is no longer on `main`. It was a separate
+legacy-compatible MFC/NMAKE lane whose generated Visual C++ 4.2-era flags were
+never a C++26 proof and must not be confused with the v2.5 C++26 migration. Any
+`file:line` references to `v1.0-pre-modern/` below or elsewhere in the docs point
+at that archival branch, not a current on-`main` tree.
 
 `/std:c++latest` is a working-draft mode, not a promise that every C++26 feature
 exists; Microsoft says its contents can change. Use it because it is this
@@ -179,10 +180,10 @@ Use repository-aware searches, not one symbol lookup:
 
 ```sh
 rg -n --hidden --glob '!third_party/**' --glob '!portable/subprojects/packagecache/**' \
-  'Symbol|wire-token|resource-id' portable v1.0-pre-modern v2.5-beta-1-modern
+  'Symbol|wire-token|resource-id' portable v2.5-beta-1-modern
 rg -n 'source\.cpp|public_header|test\(' portable/meson.build
 rg -n 'source\.obj|public_header|RESOURCE_INPUTS' \
-  v1.0-pre-modern/chat.mak v2.5-beta-1-modern/chat.mak
+  v2.5-beta-1-modern/chat.mak
 rg -n 'original-symbol|resource-id|numeric|layout-constant' \
   v1.0-pre v1.0 v2.1b v2.5-beta-1
 rg -n 'feature-or-file' .github/workflows docs README.md

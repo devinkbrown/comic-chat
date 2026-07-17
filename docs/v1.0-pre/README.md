@@ -1,6 +1,10 @@
 # Comic Chat — v1.0 Pre-release Source (August 1996)
 
-This folder contains the source code for a pre-release build of **Microsoft Comic Chat**, archived from August 1996. The internal version identifier is `rup 206, "Beta 2"`, built on `DJKLAPTOP`. This is the earliest source snapshot in this repository, predating the v1.0 release build.
+> **Note:** This original snapshot is archived on the **`version/v1.0-pre`**
+> branch, not on `main`. Check it out with `git checkout version/v1.0-pre` to
+> browse or build the source described below.
+
+This snapshot contains the source code for a pre-release build of **Microsoft Comic Chat**, archived from August 1996. The internal version identifier is `rup 206, "Beta 2"`, built on `DJKLAPTOP`. This is the earliest source snapshot in this repository, predating the v1.0 release build.
 
 ## Contents
 
@@ -28,7 +32,8 @@ Field, Pastoral, Room
 ## Building
 
 ```batch
-cd v1.0-pre\client
+git checkout version/v1.0-pre
+cd client
 NMAKE /f "chat.mak" CFG="chat - Win32 Release"
 ```
 

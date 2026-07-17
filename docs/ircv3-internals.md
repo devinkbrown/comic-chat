@@ -13,6 +13,13 @@ are "done." Every structural claim below is cited to source you can open.
 > for the named symbol rather than trusting the number. (The coverage ledger's own
 > anchors have already drifted — see [What is NOT done](#what-is-not-done).)
 
+> **Archival note (2026-07-17):** The `v1.0-pre-modern` Windows lane cited below
+> has been **archived** to the `version/v1.0-pre-modern` branch and is no longer
+> on `main`. Reinked's current shape is one version with two UIs
+> (`v2.5-beta-1-modern` + `portable`) over the shared `portable/src` core. Any
+> `v1.0-pre-modern/…:line` citation here refers to that archival branch; the v1
+> adapter described below lives on it.
+
 ## The shape of the subsystem
 
 There are three layers, and they are physically separated so the innermost one
@@ -235,8 +242,8 @@ tokens are never valid overrides (the contract is stated at `ircv3.hpp:271-276`)
 ### 2.3 The catalog default is GLOBAL; the lever is per-Engine
 
 The catalog is a function-local `static` (`ircv3.cpp:518`) — one table shared by
-the whole process. Both frontends (`v2.5-beta-1-modern` and `v1.0-pre-modern`)
-construct their **own** `Engine` instance, but they read the **same** catalog
+the whole process. Both frontends (`v2.5-beta-1-modern` and the now-archived
+`v1.0-pre-modern`) construct their **own** `Engine` instance, but they read the **same** catalog
 defaults. So flipping an `auto_request` bit in `CapabilityCatalog()` changes the
 default for *both* frontends at once. The override map, by contrast, lives on the
 `Engine` instance (`capability_request_overrides_`, `ircv3.hpp:369`), so it is

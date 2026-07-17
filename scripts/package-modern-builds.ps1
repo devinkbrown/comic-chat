@@ -45,23 +45,6 @@ New-Item -ItemType Directory -Path $stagingDirectory -Force | Out-Null
 
 $packages = @(
     [pscustomobject]@{
-        Name = 'ComicChat-1.0-pre-unofficial-modern'
-        Version = 'Comic Chat 1.0 prerelease (Beta 2), modernized'
-        Executable = 'v1.0-pre-modern\chat.exe'
-        Art = 'v1.0-pre-modern\comicart'
-        Help = 'v1.0-pre-modern\cchat.hlp'
-        Readme = 'docs\MODERNIZATION.md'
-        RuntimeFiles = @(
-            'v1.0-pre-modern\cchat.cnt'
-            'v1.0-pre-modern\log.ept'
-            'v1.0-pre-modern\profile.txt'
-            'v1.0-pre-modern\readme.gif'
-            'v1.0-pre-modern\readme.htm'
-            'v1.0-pre-modern\readme.txt'
-            'v1.0-pre-modern\titles.txt'
-        )
-    },
-    [pscustomobject]@{
         Name = 'ComicChat-2.5-beta-1-unofficial-modern'
         Version = 'Comic Chat 2.5 beta 1, modernized'
         Executable = 'v2.5-beta-1-modern\Release\CChat.exe'

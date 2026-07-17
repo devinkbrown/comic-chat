@@ -1,5 +1,13 @@
 # Modernizing Microsoft Comic Chat (2026)
 
+> **Archival note (2026-07-17):** Most of the work described below was first done
+> on the `v1.0-pre-modern` Windows lane, which has since been **archived** to the
+> `version/v1.0-pre-modern` branch and is no longer part of `main`. Reinked is now
+> one version with two UIs (`v2.5-beta-1-modern` + `portable`) over the shared
+> `portable/src` core. This document is retained as the historical modernization
+> write-up; every `v1.0-pre-modern/…` path and `file:line` citation below refers
+> to that archival branch, not a current on-`main` tree.
+
 This document is the landing page for the work done to get the 1996 Microsoft
 Comic Chat MFC client to **build, run, and look right on a modern high-DPI
 Windows machine** — and to optionally talk TLS to today's IRC networks. It links
