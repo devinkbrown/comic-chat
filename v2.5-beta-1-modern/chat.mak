@@ -121,7 +121,7 @@ LINK32_FLAGS=/nologo /subsystem:windows /FORCE:MULTIPLE /incremental:no /debug \
  /LIBPATH:"$(VCTOOLSINSTALLDIR)ATLMFC\lib\spectre\x86" /LIBPATH:"$(ARTLIB)" \
  /LIBPATH:"$(PORTABLELIB)" \
  uuid.lib comctl32.lib ole32.lib oleaut32.lib windowscodecs.lib oldnames.lib ws2_32.lib \
- uv_a.lib mbedtls.lib mbedx509.lib mbedcrypto.lib bcrypt.lib crypt32.lib userenv.lib iphlpapi.lib psapi.lib advapi32.lib \
+ libuv.lib mbedtls.lib mbedx509.lib mbedcrypto.lib bcrypt.lib crypt32.lib userenv.lib iphlpapi.lib psapi.lib advapi32.lib \
  shell32.lib winmm.lib imm32.lib winspool.lib comdlg32.lib oledlg.lib wininet.lib zlib.lib \
  /out:"$(OUTDIR)\CChat.exe"
 

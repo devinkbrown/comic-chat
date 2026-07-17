@@ -246,6 +246,14 @@ jobs:
           cmake --build out/mbedtls --config Release --target install --parallel
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+          $requiredLibraries = @("libuv.lib", "mbedtls.lib", "mbedx509.lib", "mbedcrypto.lib")
+          foreach ($library in $requiredLibraries) {
+            $installed = Join-Path $prefix "lib/$library"
+            if (-not (Test-Path -LiteralPath $installed -PathType Leaf)) {
+              throw "Pinned native dependency did not install $installed"
+            }
+          }
+
       - name: Build both modernized clients
         shell: cmd
         run: |
