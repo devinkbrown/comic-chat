@@ -250,11 +250,13 @@ void ParsePrefix(char *prefix, char **snick, char **user, char **machine) {
 
 	char *nfield = strpbrk(prefix, "!@");					// parse snick (must be present)
 	if (nfield) {
-		int nchars = nfield - prefix;
+		int nchars = min(static_cast<int>(nfield - prefix),
+			static_cast<int>(sizeof(snickBuff) - 1));
 		strncpy(snickBuff, prefix, nchars);
 		snickBuff[nchars] = '\0';
 	} else {
-		strcpy(snickBuff, prefix);
+		strncpy(snickBuff, prefix, sizeof(snickBuff) - 1);
+		snickBuff[sizeof(snickBuff) - 1] = '\0';
 		return;
 	}
 
@@ -262,26 +264,33 @@ void ParsePrefix(char *prefix, char **snick, char **user, char **machine) {
 		prefix = nfield+1;
 		nfield = strchr(prefix, '@');
 		if (nfield) {
-			int nchars = nfield - prefix;
+			int nchars = min(static_cast<int>(nfield - prefix),
+				static_cast<int>(sizeof(userBuff) - 1));
 			strncpy(userBuff, prefix, nchars);
 			userBuff[nchars] = '\0';
 		} else {
-			strcpy(userBuff, prefix);
+			strncpy(userBuff, prefix, sizeof(userBuff) - 1);
+			userBuff[sizeof(userBuff) - 1] = '\0';
 			return;
 		}
 	}
 
-	strcpy(machBuff, nfield+1);								// nfield now pts to !, parse machine
+	strncpy(machBuff, nfield+1, sizeof(machBuff) - 1);		// nfield now pts to @, parse machine
+	machBuff[sizeof(machBuff) - 1] = '\0';
 }
 
 // returns the "last string" (characters after the colon).  Assumes prefix has been stripped away
 char *GetLastString(char *msg) {
 	static char strBuff[513];				// large enough?
 	char *colon = strchr(msg, ':');
-	ASSERT(colon);							// got to be there, right?
+	if (!colon) {
+		strBuff[0] = '\0';
+		return strBuff;
+	}
 	char *end = _tcspbrk(++colon, "\r\n");
 	if (!end) end = strchr(colon, '\0');	// probably never happens w/ irc
-	int nchars = end - colon;
+	int nchars = min(static_cast<int>(end - colon),
+		static_cast<int>(sizeof(strBuff) - 1));
 	strncpy(strBuff, colon, nchars);
 	strBuff[nchars] = '\0';
 	return (strBuff);
@@ -602,14 +611,13 @@ void GetTalkTos(CWordArray &talkTos, char *str) {
 static char actionID[] = {0x01, 'A', 'C', 'T', 'I', 'O', 'N'};
 #define ACTIONLENGTH	7
 
-void PrepareAction(CUserInfo *pui, char *mesg, UCHAR &mode) {
-	CString newMesg;
-	newMesg = pui->GetName();
-	newMesg += (mesg + ACTIONLENGTH);
-	strcpy(mesg, newMesg);
-	char *endOne = _tcschr(mesg, 0x01);
-	if (endOne) *endOne = '\0';
+std::string PrepareAction(CUserInfo *pui, const char *mesg, UCHAR &mode) {
+	std::string newMesg = pui->GetName();
+	newMesg += mesg + ACTIONLENGTH;
+	const auto endOne = newMesg.find(static_cast<char>(0x01));
+	if (endOne != std::string::npos) newMesg.resize(endOne);
 	mode = SM_ACTION;
+	return newMesg;
 }
 
 static BOOL foundMe;
@@ -638,6 +646,7 @@ void ProcessSay(CUserInfo *pui, char *mesg, char *rest) {
 	int gestE = 0, gestI = 0, exprE = 0, exprI = 0;
 	UCHAR mode = SM_SAY;
 	CWordArray talkTos;
+	std::string actionMesg;
 	if (!strncmp(mesg, "(#", 2)) {
 		char *start = mesg + 2;
 		if (*start == GESTUREPREFIX) {
@@ -674,7 +683,10 @@ void ProcessSay(CUserInfo *pui, char *mesg, char *rest) {
 		}
 	}
 
-	if (strncmp(mesg, actionID, ACTIONLENGTH) == 0) PrepareAction(pui, mesg, mode);
+	if (strncmp(mesg, actionID, ACTIONLENGTH) == 0) {
+		actionMesg = PrepareAction(pui, mesg, mode);
+		mesg = actionMesg.data();
+	}
 	if (!seems_cooked) IdentifyWhispers(rest, mode, talkTos);
 
 	if (!(pui->Ignored()) && strlen(mesg) > 0) {
@@ -691,19 +703,16 @@ void ProcessSay(CUserInfo *pui, char *mesg, char *rest) {
 }
 
 void ProcessKick(char *kicker, char *args) {
-	char chanbuff[90];
 	char *channel = GetToken(args, &args);
 	if (!channel) return;			// malformed message - djk BETA1 fix
-	strcpy(chanbuff, channel);
 	char *kickee = GetToken(args, &args);
 	if (!kickee) return;			// malformed message - djk BETA1 fix
 	char *mesg = GetLastString(args);
 	TRACE("%s kicked %s off channel %s with message (%s).\n", kicker, kickee, channel, mesg);
 	BOOL meKicked = !stricmp(kickee, GetMyName());
 	CUserInfo *kickeePui = LookupPui(kickee);
-	ASSERT(kickeePui);
 	CUserInfo *kickerPui = LookupPui(kicker);
-	ASSERT(kickerPui);
+	if (!kickeePui || !kickerPui) return;
 //	CAvatarX *kickerAv = GetAvatar(kickerPui->GetAvatarID());
 	CWordArray talkTos;
 	talkTos.Add(kickeePui->GetAvatarID());
@@ -819,10 +828,12 @@ void ChatChangeAdmin(const char *nick, BOOL makeAdmin) {
 void ProcessMode(char *args) {
 	if (!GetToken(args, &args)) return;  // channel name
 	char switch_cmd[4], *switch_tmp = GetToken(args, &args);
+	if (!switch_tmp) return;
 	strncpy(switch_cmd, switch_tmp, sizeof(switch_cmd)-1);   // make a temporary copy
-	if (switch_cmd && strlen(switch_cmd) == 2 && switch_cmd[1] == 'o') {
+	switch_cmd[sizeof(switch_cmd)-1] = '\0';
+	if (strlen(switch_cmd) == 2 && switch_cmd[1] == 'o') {
 		const char *nick = GetToken(args, &args);
-		ChatChangeAdmin(nick, switch_cmd[0] == '+');
+		if (nick) ChatChangeAdmin(nick, switch_cmd[0] == '+');
 	}
 }
 
@@ -1112,7 +1123,7 @@ std::expected<comicchat::net::SendId,
 
 void CIrcSocket::DispatchProtocolMessage(const comic_chat::ircv3::Message& message)
 {
-	auto wire = message.SerializeChecked(false);
+	auto wire = comic_chat::v1::transport::PrepareLegacyInbound(message);
 	if (!wire) return;
 	try {
 		std::vector<char> legacy_line(wire->begin(), wire->end());

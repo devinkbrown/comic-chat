@@ -1501,9 +1501,11 @@ void Engine::RemoveCapabilityAndDependents(std::string_view name)
 		[](const CapabilityRequest& request) { return request.names.empty(); }), capability_requests_.end());
 }
 
-// The outer optional is engaged only when exactly one STS capability token is
-// present. The inner optional preserves the distinction between `sts` and
-// `sts=value`. Ambiguous duplicate advertisements never select a policy.
+// The outer optional is engaged when STS is present. The inner optional
+// preserves the distinction between `sts` and `sts=value`. CAP capability
+// lists are processed left-to-right, so a repeated capability's final value
+// replaces earlier values; duplicate keys inside that final STS value remain
+// invalid in UpdateSts.
 static auto UniqueStsValue(const std::string_view list)
 	-> std::optional<std::optional<std::string>>
 {
@@ -1513,7 +1515,6 @@ static auto UniqueStsValue(const std::string_view list)
 			token.erase(token.begin());
 		const auto equal = token.find('=');
 		if (token.substr(0, equal) != "sts") continue;
-		if (result) return std::nullopt;
 		result.emplace(equal == std::string::npos
 			? std::optional<std::string>{}
 			: std::optional<std::string>{token.substr(equal + 1)});
@@ -1595,18 +1596,17 @@ ProcessResult Engine::HandleCap(const Message& message)
 {
 	ProcessResult result;
 	result.consumed = true;
-	cap_response_seen_ = true;
-	std::size_t subcommand_index = message.params.size();
-	for (std::size_t i = 0; i < message.params.size(); ++i) {
-		const auto value = Upper(message.params[i]);
-		if (value == "LS" || value == "ACK" || value == "NAK" || value == "NEW" || value == "DEL") {
-			subcommand_index = i;
-			break;
-		}
-	}
-	if (subcommand_index == message.params.size()) return result;
+	// Server CAP replies have the fixed shape CAP <target> <subcommand> ... .
+	// Never scan the target for a keyword: a user may legitimately be named LS,
+	// ACK, NAK, NEW, or DEL, and confusing it with the subcommand can suppress a
+	// security-critical STS advertisement.
+	if (message.params.size() < 2) return result;
+	constexpr std::size_t subcommand_index = 1;
 	const auto subcommand = Upper(message.params[subcommand_index]);
-	const std::string list = message.params.empty() ? std::string{} : message.params.back();
+	if (subcommand != "LS" && subcommand != "ACK" && subcommand != "NAK" &&
+		subcommand != "NEW" && subcommand != "DEL") return result;
+	cap_response_seen_ = true;
+	const std::string list = message.params.size() > 2 ? message.params.back() : std::string{};
 	if (subcommand == "LS") {
 		const std::size_t separator = !ls_accumulator_.empty() && !list.empty() ? 1 : 0;
 		if (list.size() > kMaxCapabilityBytes || separator > kMaxCapabilityBytes - list.size() ||
@@ -1623,8 +1623,7 @@ ProcessResult Engine::HandleCap(const Message& message)
 		}
 		if (!ls_accumulator_.empty() && !list.empty()) ls_accumulator_.push_back(' ');
 		ls_accumulator_ += list;
-		const bool continued = subcommand_index + 1 < message.params.size() - 1 &&
-			message.params[message.params.size() - 2] == "*";
+		const bool continued = message.params.size() >= 4 && message.params[2] == "*";
 		if (continued) return result;
 		const auto sts = UniqueStsValue(ls_accumulator_);
 		ParseCapabilityList(ls_accumulator_, true);

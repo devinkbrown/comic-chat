@@ -153,6 +153,44 @@ void TestBoundedOutboundFacade()
 	assert(rejected_line.error() == AdapterError::invalid_line);
 }
 
+void TestBoundedLegacyInboundFacade()
+{
+	comic_chat::ircv3::Message message;
+	message.prefix = "nick!user@host.example";
+	message.command = "PRIVMSG";
+	message.params = {"#ink", "hello"};
+	auto prepared = comic_chat::v1::transport::PrepareLegacyInbound(message);
+	assert(prepared.has_value());
+	assert(prepared->starts_with(":nick!user@host.example PRIVMSG #ink hello"));
+
+	message.prefix = std::string(
+		comic_chat::v1::transport::maximum_legacy_prefix_component_bytes, 'n') +
+		"!" + std::string(
+			comic_chat::v1::transport::maximum_legacy_prefix_component_bytes, 'u') +
+		"@" + std::string(
+			comic_chat::v1::transport::maximum_legacy_prefix_component_bytes, 'h');
+	assert(comic_chat::v1::transport::PrepareLegacyInbound(message).has_value());
+
+	message.prefix = std::string(
+		comic_chat::v1::transport::maximum_legacy_prefix_component_bytes + 1, 'n');
+	auto long_nickname = comic_chat::v1::transport::PrepareLegacyInbound(message);
+	assert(!long_nickname.has_value());
+	assert(long_nickname.error() == AdapterError::invalid_line);
+
+	message.prefix = "nick!" + std::string(
+		comic_chat::v1::transport::maximum_legacy_prefix_component_bytes + 1, 'u') + "@host";
+	assert(!comic_chat::v1::transport::PrepareLegacyInbound(message).has_value());
+	message.prefix = "nick!user@" + std::string(
+		comic_chat::v1::transport::maximum_legacy_prefix_component_bytes + 1, 'h');
+	assert(!comic_chat::v1::transport::PrepareLegacyInbound(message).has_value());
+
+	message.prefix = "nick!user@host";
+	message.params[1] = std::string(comic_chat::v1::transport::maximum_legacy_wire_bytes, 'x');
+	auto oversized = comic_chat::v1::transport::PrepareLegacyInbound(message);
+	assert(!oversized.has_value());
+	assert(oversized.error() == AdapterError::invalid_line);
+}
+
 } // namespace
 
 int main()
@@ -160,5 +198,6 @@ int main()
 	TestGenerationAndOrdering();
 	TestWakeupCoalescingAndCookieIsolation();
 	TestBoundedOutboundFacade();
+	TestBoundedLegacyInboundFacade();
 	return 0;
 }

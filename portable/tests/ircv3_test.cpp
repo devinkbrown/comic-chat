@@ -263,9 +263,10 @@ void TestCapabilityState()
 		"unrelated CAP NEW does not refresh the previously advertised STS duration");
 	auto duplicate_capability = secure_sts.Process(
 		":server CAP Alice NEW :sts=duration=5 sts=duration=0\r\n");
-	Check(!duplicate_capability.sts_update && secure_sts.CurrentStsPolicy() &&
-		secure_sts.CurrentStsPolicy()->duration == 3600,
-		"duplicate STS capability tokens in CAP NEW cannot select or remove a durable policy");
+	Check(duplicate_capability.sts_update &&
+		duplicate_capability.sts_update->action == StsPolicyAction::Remove &&
+		!secure_sts.CurrentStsPolicy(),
+		"the final duplicate STS capability value wins from left to right");
 	auto secure_remove = secure_sts.Process(":server CAP Alice NEW :sts=duration=0\r\n");
 	Check(!secure_sts.CurrentStsPolicy(), "secure duration zero clears STS persistence");
 	Check(secure_remove.sts_update && secure_remove.sts_update->action == StsPolicyAction::Remove,
@@ -277,8 +278,33 @@ void TestCapabilityState()
 	duplicate_ls.BeginRegistration(config, "Alice", true);
 	auto ambiguous_ls = duplicate_ls.Process(
 		":server CAP * LS :sts=duration=3600 sts=duration=0\r\n");
-	Check(!ambiguous_ls.sts_update && !duplicate_ls.CurrentStsPolicy(),
-		"duplicate STS capability tokens in completed CAP LS cannot select a durable policy");
+	Check(ambiguous_ls.sts_update && ambiguous_ls.sts_update->action == StsPolicyAction::Remove &&
+		!duplicate_ls.CurrentStsPolicy(),
+		"completed CAP LS applies the final duplicate STS capability value");
+	auto final_persist = duplicate_ls.Process(
+		":server CAP Alice NEW :sts=duration=0 sts=duration=90\r\n");
+	Check(final_persist.sts_update && final_persist.sts_update->action == StsPolicyAction::Persist &&
+		duplicate_ls.CurrentStsPolicy() && duplicate_ls.CurrentStsPolicy()->duration == 90,
+		"a final persistent STS value replaces an earlier removal value");
+
+	for (const std::string_view target : {"LS", "ACK", "NAK", "NEW", "DEL"}) {
+		Engine target_named;
+		target_named.BeginRegistration(config, std::string(target), false);
+		auto target_ls = target_named.Process(
+			":server CAP " + std::string(target) + " LS :sts=port=7443\r\n");
+		Check(target_ls.sts_update && target_ls.sts_update->action == StsPolicyAction::Upgrade &&
+			target_ls.sts_update->port == 7443,
+			"CAP target names never shadow the fixed LS subcommand");
+	}
+	Engine target_multiline;
+	target_multiline.BeginRegistration(config, "DEL", false);
+	auto target_first = target_multiline.Process(":server CAP DEL LS * :message-tags\r\n");
+	Check(target_first.outbound.empty() && !target_first.sts_update,
+		"CAP LS continuation is recognized after a keyword-shaped target");
+	auto target_final = target_multiline.Process(":server CAP DEL LS :sts=port=7667\r\n");
+	Check(target_final.sts_update && target_final.sts_update->port == 7667 &&
+		target_multiline.IsOffered("message-tags"),
+		"multiline CAP LS retains prior offers and the final STS value for a DEL target");
 
 	Engine expanded;
 	expanded.BeginRegistration(config, "Alice", true);

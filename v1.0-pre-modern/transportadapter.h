@@ -23,6 +23,8 @@
 namespace comic_chat::v1::transport {
 
 inline constexpr std::size_t maximum_irc_wire_bytes = 8191U + 512U;
+inline constexpr std::size_t maximum_legacy_wire_bytes = 512U;
+inline constexpr std::size_t maximum_legacy_prefix_component_bytes = 49U;
 
 enum class AdapterError : std::uint8_t {
 	not_open,
@@ -31,6 +33,46 @@ enum class AdapterError : std::uint8_t {
 	allocation_failed,
 	transport_error,
 };
+
+// Microsoft's v1 parser stores nick, user, and host components in independent
+// 50-byte buffers and assumes the traditional 512-byte IRC framing limit.
+// Validate the typed message before recreating that legacy wire shape; silent
+// truncation would alias identities and is therefore not acceptable.
+[[nodiscard]] inline bool LegacyPrefixFits(std::string_view prefix) noexcept
+{
+	const auto nickname_end = prefix.find_first_of("!@");
+	const auto nickname_size = nickname_end == std::string_view::npos
+		? prefix.size() : nickname_end;
+	if (nickname_size > maximum_legacy_prefix_component_bytes)
+		return false;
+	if (nickname_end == std::string_view::npos)
+		return true;
+
+	std::size_t host_start = nickname_end + 1;
+	if (prefix[nickname_end] == '!') {
+		const auto host_separator = prefix.find('@', host_start);
+		const auto user_size = host_separator == std::string_view::npos
+			? prefix.size() - host_start : host_separator - host_start;
+		if (user_size > maximum_legacy_prefix_component_bytes)
+			return false;
+		if (host_separator == std::string_view::npos)
+			return true;
+		host_start = host_separator + 1;
+	}
+	return prefix.size() - host_start <= maximum_legacy_prefix_component_bytes;
+}
+
+[[nodiscard]] inline std::expected<std::string, AdapterError> PrepareLegacyInbound(
+	const comic_chat::ircv3::Message& message)
+{
+	if (message.prefix && !LegacyPrefixFits(*message.prefix))
+		return std::unexpected(AdapterError::invalid_line);
+	auto wire = message.SerializeChecked(false);
+	if (!wire) return std::unexpected(AdapterError::invalid_line);
+	if (wire->size() > maximum_legacy_wire_bytes)
+		return std::unexpected(AdapterError::line_too_long);
+	return std::move(*wire);
+}
 
 enum class SessionPhase : std::uint8_t {
 	stopped,

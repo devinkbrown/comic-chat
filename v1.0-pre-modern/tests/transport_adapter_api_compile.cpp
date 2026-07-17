@@ -90,6 +90,10 @@ static_assert(std::same_as<decltype(comic_chat::v1::transport::PrepareOutbound(
 								   comicchat::net::GenerationId{1},
 								   comicchat::net::SendId{1})),
 				   std::expected<comicchat::net::Send,
+				 comic_chat::v1::transport::AdapterError>>);
+static_assert(std::same_as<decltype(comic_chat::v1::transport::PrepareLegacyInbound(
+								   std::declval<const comic_chat::ircv3::Message &>())),
+				   std::expected<std::string,
 							 comic_chat::v1::transport::AdapterError>>);
 static_assert(noexcept(std::declval<comic_chat::v1::transport::SessionGate &>().Stop()));
 static_assert(noexcept(std::declval<comic_chat::v1::transport::WakeupGate &>().Disable()));
