@@ -20,7 +20,7 @@ import sys
 import tempfile
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any, Iterable, Sequence
 
 
@@ -456,9 +456,20 @@ def lint_sources(catalog: Catalog, *, complete: bool) -> tuple[Path, ...]:
 
 
 def tool(name: str) -> str:
-    result = shutil.which(name)
-    require(result is not None, f"required icon build tool is missing: {name}")
-    return result
+    # ImageMagick 7 installs the `magick` front end, while stable Linux and BSD
+    # distributions may still package ImageMagick 6 as `convert`.  The command
+    # surface used by this pipeline is shared by both versions.
+    candidates = ("magick", "convert") if name == "magick" else (name,)
+    for candidate in candidates:
+        result = shutil.which(candidate)
+        if result is not None:
+            return result
+    raise IconBuildError(f"required icon build tool is missing: {name}")
+
+
+def canonical_relative(path: PurePath) -> str:
+    """Return the stable slash-separated spelling used by catalog.lock.json."""
+    return path.as_posix()
 
 
 def run(command: Sequence[str]) -> None:
@@ -813,7 +824,10 @@ def tool_version(name: str) -> str:
 
 
 def source_fingerprint(catalog: Catalog) -> tuple[str, dict[str, str]]:
-    sources = {str(path.relative_to(REPOSITORY)): sha256(path) for path in selected_sources(catalog)}
+    sources = {
+        canonical_relative(path.relative_to(REPOSITORY)): sha256(path)
+        for path in selected_sources(catalog)
+    }
     payload = {"manifest": catalog.raw, "sources": sources}
     return hashlib.sha256(canonical_json(payload)).hexdigest(), sources
 
@@ -821,7 +835,7 @@ def source_fingerprint(catalog: Catalog) -> tuple[str, dict[str, str]]:
 def write_lock(catalog: Catalog, output: Path) -> None:
     fingerprint, sources = source_fingerprint(catalog)
     outputs = {
-        str(path): sha256(output / path)
+        canonical_relative(path): sha256(output / path)
         for path in required_outputs(catalog)
     }
     lock = {
@@ -870,7 +884,7 @@ def verify_catalog(catalog: Catalog, root: Path | None = None) -> None:
         raise IconBuildError(f"cannot read generated catalog lock {lock_path}: {error}") from error
     require(lock.get("schema") == 1, "generated catalog lock schema is invalid")
     required = required_outputs(catalog)
-    expected_keys = {str(path) for path in required}
+    expected_keys = {canonical_relative(path) for path in required}
     require(set(lock.get("outputs", {})) == expected_keys, "generated output coverage is incomplete or stale")
     fingerprint, sources = source_fingerprint(catalog)
     require(lock.get("source_fingerprint") == fingerprint and lock.get("sources") == sources,
@@ -878,7 +892,8 @@ def verify_catalog(catalog: Catalog, root: Path | None = None) -> None:
     for relative in required:
         path = root / relative
         require(path.is_file(), f"missing generated output {path}")
-        require(sha256(path) == lock["outputs"][str(relative)], f"generated output hash drifted: {path}")
+        require(sha256(path) == lock["outputs"][canonical_relative(relative)],
+                f"generated output hash drifted: {path}")
     actual_files = {
         path.relative_to(root) for path in root.rglob("*") if path.is_file()
     }

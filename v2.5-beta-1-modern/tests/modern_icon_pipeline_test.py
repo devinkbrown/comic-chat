@@ -11,7 +11,8 @@ import sys
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -55,6 +56,20 @@ class ModernIconPipelineTests(unittest.TestCase):
         self.assertIn(Path("windows/expressions/laugh-80x104.bmp"), outputs)
         self.assertEqual(len(outputs), 345)
         self.assertIn(self.catalog.raw["art_review"]["status"], {"blocked", "approved"})
+
+    def test_catalog_keys_and_imagemagick_launcher_are_host_independent(self) -> None:
+        self.assertEqual(
+            icons.canonical_relative(PureWindowsPath("png", "chat", "16.png")),
+            "png/chat/16.png",
+        )
+        with mock.patch.object(
+            icons.shutil,
+            "which",
+            side_effect=lambda name: None if name == "magick" else (
+                "/usr/bin/convert" if name == "convert" else None
+            ),
+        ):
+            self.assertEqual(icons.tool("magick"), "/usr/bin/convert")
 
     def test_reserved_windows_blocks_match_all_six_sizes(self) -> None:
         resource_header = (ROOT / "v2.5-beta-1-modern" / "resource.h").read_text(encoding="cp1252")
