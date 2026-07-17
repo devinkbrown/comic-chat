@@ -118,7 +118,9 @@ installed_avatars = get_option('prefix') / avatar_install_dir
 # The comicart source lives with the Windows UI (v2.5-beta-1-modern/comicart);
 # a dev build with no `meson install` can still resolve avatars from there.
 comicart_source_dir = meson.project_source_root() / '..' / 'v2.5-beta-1-modern' / 'comicart'
+source_comic_font = meson.project_source_root() / 'assets' / 'fonts' / 'comic.ttf'
 core_cpp_args = ['-DCOMICCHAT_INSTALL_FONT_PATH="' + installed_comic_font + '"']
+core_cpp_args += ['-DCOMICCHAT_SOURCE_FONT_PATH="' + source_comic_font + '"']
 core_cpp_args += ['-DCOMICCHAT_INSTALL_SOURCE_RASTER_DIR="' + installed_source_raster + '"']
 core_cpp_args += ['-DCOMICCHAT_INSTALL_AVATAR_DIR="' + installed_avatars + '"']
 core_cpp_args += ['-DCOMICCHAT_SOURCE_AVATAR_DIR="' + comicart_source_dir + '"']
