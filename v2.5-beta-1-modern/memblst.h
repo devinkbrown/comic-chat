@@ -59,6 +59,7 @@ public:
 	void Sort();
 	void MakeVisible(CUserInfo *);
 	void RefreshSystemAppearance();
+	void ApplyModernMetrics(UINT dpi);
 
 // Overrides
 	// ClassWizard generated virtual function overrides
@@ -79,6 +80,7 @@ protected:
 	afx_msg void OnChar(UINT nChar, UINT nRepCnt, UINT nFlags);
 	afx_msg void OnSysColorChange();
 	afx_msg void OnSettingChange(UINT uFlags, LPCTSTR lpszSection);
+	afx_msg LRESULT OnDpiChanged(WPARAM wParam, LPARAM lParam);
 	//}}AFX_MSG
 	afx_msg void OnLVKillFocus( NMHDR * pNotifyStruct, LRESULT * result );
 	afx_msg void OnDblClick(NMHDR* pNotifyStruct, LRESULT* result);

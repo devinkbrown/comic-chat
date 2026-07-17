@@ -4,6 +4,8 @@
 #include "chatbars.h"
 #include "tabbar.h"
 #include "mainfrm.h"
+#include "modernicons.h"
+#include "modernui.h"
 
 // Private definitions
 
@@ -552,6 +554,34 @@ DWORD dwRemove)
 	}
 }
 
+BOOL
+CCoolToolBarEx::RefreshModernImages(UINT nResourceID, UINT dpi)
+{
+	int imageCount = 0;
+	switch (nResourceID)
+	{
+	case IDR_MAINFRAME:
+	case IDR_NM_MAIN:
+		imageCount = 10;
+		break;
+	case IDR_USERTOOLBAR:
+	case IDR_NMUSERTOOLBAR:
+	case IDR_TEXTTOOLBAR:
+		imageCount = 7;
+		break;
+	default:
+		return FALSE;
+	}
+	const auto metrics = comic_chat::modern_ui::MetricsForDpi(dpi);
+	if (!comic_chat::modern_ui::BuildStripImageList(
+			m_modernImages, nResourceID, metrics.icon, imageCount, m_hWnd))
+		return FALSE;
+	GetToolBarCtrl().SetImageList(&m_modernImages);
+	SetSizes(CSize(metrics.target, metrics.target), CSize(metrics.icon, metrics.icon));
+	Invalidate(FALSE);
+	return TRUE;
+}
+
 extern CChatApp theApp;
 
 static UINT nIDs[] = { 0, 0, IDR_TEXTTOOLBAR, 0 };
@@ -588,15 +618,33 @@ BOOL  bDoCB32)
 	return b;
 }
 
+void
+CChatToolBar::RefreshModernImages(UINT dpi)
+{
+	POSITION pos = m_mapToolBars.GetStartPosition();
+	while (pos)
+	{
+		WORD resourceID = 0;
+		CCoolToolBarEx* pToolBar = NULL;
+		m_mapToolBars.GetNextAssoc(pos, resourceID, (PVOID&)pToolBar);
+		if (pToolBar)
+			pToolBar->RefreshModernImages(resourceID, dpi);
+	}
+	if (CFrameWnd* pFrame = GetParentFrame())
+		pFrame->RecalcLayout();
+}
+
 void 
 CChatToolBar::OnPrepareToolBar(
 UINT nID,
 CCoolToolBarEx * pToolBar)
 {
+	pToolBar->RefreshModernImages(nID, comic_chat::modern_ui::DpiForWindow(pToolBar->m_hWnd));
 	switch (nID)
 	{
 		case IDR_NM_MAIN:
 		case IDR_MAINFRAME:
+			pToolBar->SetWindowText("Chat session commands");
 			// Give the Favorites menu a dropdown, if available.
 			pToolBar->SendMessage (TB_SETEXTENDEDSTYLE, 0, TBSTYLE_EX_DRAWDDARROWS);
 			pToolBar->ModifyButtonStyle (ID_FAVORITES_OPENFAVORITES, TBSTYLE_DROPDOWN);
@@ -607,10 +655,12 @@ CCoolToolBarEx * pToolBar)
 
 		case IDR_NMUSERTOOLBAR:
 		case IDR_USERTOOLBAR:
+			pToolBar->SetWindowText("Member commands");
 			pToolBar->ModifyButtonStyle (ID_AWAY_TOGGLE, TBSTYLE_CHECK);
 			break;
 
 		case IDR_TEXTTOOLBAR:
+			pToolBar->SetWindowText("Text formatting");
 			pToolBar->ModifyButtonStyle (ID_SWITCHBOLD, TBSTYLE_CHECK);
 			pToolBar->ModifyButtonStyle (ID_SWITCHITALIC, TBSTYLE_CHECK);
 			pToolBar->ModifyButtonStyle (ID_SWITCHUNDERLINED, TBSTYLE_CHECK);

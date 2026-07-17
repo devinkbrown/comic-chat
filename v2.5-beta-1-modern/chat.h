@@ -284,7 +284,7 @@ public:
 
 private:
 	void		SetBaseDir(const char *fullpath);
-	void		InitStatusIcons();
+	void		InitStatusIcons(UINT dpi = 0, HWND themedWindow = NULL);
 	void		ParseCommandLine(CCommandLineInfo& rCmdInfo);  // use our own  -- old sometimes gets corrupted (which used?)
 	BOOL		LoadFromReg();
 	void		InitVals();

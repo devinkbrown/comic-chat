@@ -166,7 +166,6 @@ CSettingsPage::CSettingsPage() : CCSPropertyPage(CSettingsPage::IDD)
 	m_bShowArrivals = theApp.m_bShowArrivals;
 	m_strSoundPath = theApp.m_soundPath;
 	m_bAllowInvites = theApp.m_bAllowInvites;
-	m_bAcceptNMCalls = theApp.m_bAcceptNMCalls;
 	m_bPlaySounds = theApp.m_bPlaySounds;
 	m_bShowIdentity = theApp.m_bShowIdentity;
 	m_bAllowFileTX = theApp.m_bAllowFileTX;
@@ -198,7 +197,6 @@ void CSettingsPage::DoDataExchange(CDataExchange* pDX)
 	DDX_Text(pDX, IDC_SOUNDPATH, m_strSoundPath);
 	DDV_MaxChars(pDX, m_strSoundPath, MAX_PATH);
 	DDX_Check(pDX, IDC_ALLOWINVITES, m_bAllowInvites);
-	DDX_Check(pDX, IDC_NETMEETING_AUTOSTART, m_bAcceptNMCalls);
 	DDX_Check(pDX, IDC_PLAYSOUNDS, m_bPlaySounds);
 	DDX_Check(pDX, IDC_SHOWIDENTITY, m_bShowIdentity);
 	DDX_Check(pDX, IDC_ALLOW_FILETX, m_bAllowFileTX);
@@ -217,7 +215,6 @@ BEGIN_MESSAGE_MAP(CSettingsPage, CCSPropertyPage)
 	ON_BN_CLICKED(IDC_SHOWARRIVALS, OnShowarrivals)
 	ON_EN_CHANGE(IDC_SOUNDPATH, OnChangeSoundpath)
 	ON_BN_CLICKED(IDC_ALLOWINVITES, OnAllowinvites)
-	ON_BN_CLICKED(IDC_NETMEETING_AUTOSTART, OnAcceptNMCalls)
 	ON_BN_CLICKED(IDC_PLAYSOUNDS, OnPlaysounds)
 	ON_BN_CLICKED(IDC_SHOWIDENTITY, OnShowidentity)
 	ON_BN_CLICKED(IDC_ALLOW_FILETX, OnAllowFiletx)
@@ -374,7 +371,6 @@ void CSettingsPage::OnOK()
 	theApp.m_bAllowFileTX = m_bAllowFileTX;
 	theApp.m_bShowArrivals = m_bShowArrivals;
 	theApp.m_bPlaySounds = m_bPlaySounds;
-	theApp.m_bAcceptNMCalls = m_bAcceptNMCalls;
 	theApp.m_bShowIdentity = m_bShowIdentity;
 	if (ISTRUE(theApp.m_flags1 & F1_USERVISIBLE) != m_bVisible)
 		SetVisibility(m_bVisible);
@@ -410,13 +406,6 @@ void CSettingsPage::OnShowarrivals()
 }
 
 
-void CSettingsPage::OnAcceptNMCalls() 
-{
-	m_bAcceptNMCalls = !m_bAcceptNMCalls;
-	SetModified(TRUE);
-}
-
-
 void CSettingsPage::OnPlaysounds() 
 {
 	m_bPlaySounds = !m_bPlaySounds;
@@ -442,7 +431,6 @@ const DWORD CSettingsPage::m_nHelpIDs[] =
 	IDC_SOUNDPATH,			IDH_SOUND_PATH,
 	IDC_SHOWIDENTITY,		IDH_OPTIONS_SETTINGS_GETID,
 	IDC_PLAYSOUNDS,			IDH_OPTIONS_SETTINGS_PLAYSOUNDS,
-	IDC_NETMEETING_AUTOSTART, IDH_OPTIONS_SETTINGS_REC_NETMEET,
 	IDC_RATINGS_TURN_ON,	IDH_SETTINGS_ENABLE_RATINGS,
 	IDC_ADVANCED_RATINGS_BUTTON, IDH_SETTINGS_SETTINGS_BUTTON,
 	IDC_GROUP0,				IDH_GROUP_ID,

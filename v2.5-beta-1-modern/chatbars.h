@@ -7,7 +7,10 @@ public:
 	CCoolToolBarEx() 
 		{ m_bVisible = TRUE; }
 	void ModifyButtonStyle(UINT nID, DWORD dwAdd, DWORD dwRemove = 0);
+	BOOL RefreshModernImages(UINT nResourceID, UINT dpi);
 	BOOL m_bVisible;
+private:
+	CImageList m_modernImages;
 };
 
 class CCoolBarEx : public CCoolBar
@@ -49,6 +52,7 @@ class CChatToolBar : public CCoolBarEx
 public:
 	BOOL Create(CWnd* pParentWnd, BOOL bDoCB32);
 	void ToggleBar(UINT nWhich);
+	void RefreshModernImages(UINT dpi);
 protected:
 	virtual void OnPrepareToolBar(UINT nID, CCoolToolBarEx * pToolBar);
 	afx_msg void OnContextMenu(CWnd* pWnd, CPoint pt);

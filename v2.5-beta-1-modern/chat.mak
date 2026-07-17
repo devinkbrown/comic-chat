@@ -124,6 +124,7 @@ OBJS= \
 	"$(INTDIR)\ircv3.obj" \
 	"$(INTDIR)\sound_resolver.obj" \
 	"$(INTDIR)\transport_adapter_api_compile.obj" \
+	"$(INTDIR)\modernicons.obj" \
 	"$(INTDIR)\modernui.obj" \
 	"$(INTDIR)\MainFrm.obj" \
 	"$(INTDIR)\memblst.obj" \

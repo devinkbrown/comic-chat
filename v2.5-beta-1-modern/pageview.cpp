@@ -500,7 +500,7 @@ void CPageView::PrintFooter(CDC *pDC, CPrintInfo *pInfo) {
 
 	// first output title
 	int oldAlign = pDC->SetTextAlign(TA_LEFT | TA_BOTTOM);
-	pDC->TextOut(pbox->left, y, "Microsoft Chat");
+	pDC->TextOut(pbox->left, y, "Comic Chat: Reinked");
 
 	// next output page num
 	pDC->SetTextAlign(TA_CENTER | TA_BOTTOM);
@@ -1056,7 +1056,6 @@ void UpdateMemberContext(CMenu &menu) {
 	menu.EnableMenuItem(ID_SEND_EMAIL, flag | MF_BYCOMMAND);
 	enabled = !bNMInstalled() || enabled;
 	flag = enabled ? MF_ENABLED : MF_GRAYED;
-	menu.EnableMenuItem(ID_START_NETMEETING, flag | MF_BYCOMMAND);
 
 	enabled = (status == CX_INCHANNEL) && pui;
 	flag = enabled ? MF_ENABLED : MF_GRAYED;

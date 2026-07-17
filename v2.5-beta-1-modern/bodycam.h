@@ -26,9 +26,11 @@ protected:
 	short		m_bullSide;
 	CDIB		m_icons[NEMOTIONS];
 	RECT		m_bodyRect;
-	static short	m_cursorRadius;
-	static short	m_iconWidth;
-	static short	m_iconHeight;
+	short		m_cursorRadius;
+	short		m_iconWidth;
+	short		m_iconHeight;
+	UINT		m_dpi;
+	CImageList	m_emotionImages;
 	CToolTipCtrl	m_toolTip;						// for emotion tooltips
 	char			m_toolTipString[15];			// permanent string to hold emotion tooltips
 	CPalette		*m_palette;
@@ -62,6 +64,7 @@ public:
 	CPalette *InstallPalette();
 	void FreeRetainedPanel() {	if (m_retDib) delete m_retDib; if (m_retSec) ::DeleteObject(m_retSec); m_retDib = NULL; m_retSec = NULL; }
 	void RecalcRetainedBMP();
+	void UpdateDpiMetrics(UINT dpi);
 // Overrides
 	// ClassWizard generated virtual function overrides
 	//{{AFX_VIRTUAL(CBodyCam)
@@ -96,6 +99,8 @@ protected:
 	afx_msg void OnMenuSelect(UINT nItemID, UINT nFlags, HMENU hSysMenu);
 	afx_msg void OnEnterIdle(UINT nWhy, CWnd* pWho);
 	//}}AFX_MSG
+	afx_msg LRESULT OnDpiChanged(WPARAM wParam, LPARAM lParam);
+	afx_msg LRESULT OnThemeChanged(WPARAM wParam, LPARAM lParam);
 	DECLARE_MESSAGE_MAP()
 };
 

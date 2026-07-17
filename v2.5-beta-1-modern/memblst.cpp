@@ -17,6 +17,7 @@
 #include "textcore.h"
 #include "textview.h"
 #include "protsupp.h"
+#include "modernui.h"
 
 
 extern CChatApp theApp;
@@ -105,6 +106,7 @@ BEGIN_MESSAGE_MAP(CMemberList, CFrameWnd)
 	ON_WM_SYSCOLORCHANGE()
 	ON_WM_SETTINGCHANGE()
 	//}}AFX_MSG_MAP
+	ON_MESSAGE(WM_DPICHANGED, OnDpiChanged)
 	ON_WM_SIZE()
 	ON_NOTIFY(NM_KILLFOCUS,1,OnLVKillFocus)
 	ON_NOTIFY(NM_DBLCLK,1,OnDblClick)
@@ -124,7 +126,7 @@ BOOL CMemberList::OnCreateClient(LPCREATESTRUCT lpcs, CCreateContext* pContext)
 
 	m_MemberListBox.SetFont(&theApp.m_fontGui);
 	m_MemberListBox.SetExtendedStyle(m_MemberListBox.GetExtendedStyle() |
-		LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP);
+		LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP | LVS_EX_FULLROWSELECT);
 	RefreshSystemAppearance();
 	m_MemberListBox.SetImageList(&theApp.m_ImageList,LVSIL_NORMAL);
 	m_MemberListBox.SetImageList(&theApp.m_StatusIcons, LVSIL_SMALL);
@@ -136,8 +138,30 @@ BOOL CMemberList::OnCreateClient(LPCREATESTRUCT lpcs, CCreateContext* pContext)
 	m_MemberListBox.InsertColumn(0, membersLabel, LVCFMT_LEFT, 100);
 	UINT mask = m_MemberListBox.GetCallbackMask();
 	m_MemberListBox.SetCallbackMask(mask /*| LVIS_OVERLAYMASK*/ | LVIS_STATEIMAGEMASK);
+	ApplyModernMetrics(comic_chat::modern_ui::DpiForWindow(m_hWnd));
 
 	return CFrameWnd::OnCreateClient(lpcs, pContext);
+}
+
+void CMemberList::ApplyModernMetrics(UINT dpi)
+{
+	if (!m_MemberListBox.GetSafeHwnd()) return;
+	if (HFONT font = comic_chat::modern_ui::UiFont(dpi))
+		m_MemberListBox.SendMessage(WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+	m_MemberListBox.SetImageList(&theApp.m_StatusIcons, LVSIL_SMALL);
+	if ((m_MemberListBox.GetStyle() & LVS_TYPEMASK) == LVS_ICON)
+		m_MemberListBox.SetImageList(&theApp.m_StatusIcons, LVSIL_STATE);
+	m_MemberListBox.SetIconSpacing(
+		comic_chat::modern_ui::Scale(88, dpi), comic_chat::modern_ui::Scale(64, dpi));
+	m_MemberListBox.Invalidate(FALSE);
+}
+
+LRESULT CMemberList::OnDpiChanged(WPARAM wParam, LPARAM)
+{
+	const UINT dpi = HIWORD(wParam) ? HIWORD(wParam) : LOWORD(wParam);
+	ApplyModernMetrics(dpi);
+	RecalcLayout();
+	return 0;
 }
 
 void CMemberList::RefreshSystemAppearance()
@@ -145,10 +169,11 @@ void CMemberList::RefreshSystemAppearance()
 	if (!m_MemberListBox.GetSafeHwnd())
 		return;
 
-	const COLORREF background = ::GetSysColor(COLOR_WINDOW);
+	const auto palette = comic_chat::modern_ui::PaletteForWindow(m_MemberListBox.m_hWnd);
+	const COLORREF background = comic_chat::modern_ui::ToColorRef(palette.paper);
 	m_MemberListBox.SetBkColor(background);
 	m_MemberListBox.SetTextBkColor(background);
-	m_MemberListBox.SetTextColor(::GetSysColor(COLOR_WINDOWTEXT));
+	m_MemberListBox.SetTextColor(comic_chat::modern_ui::ToColorRef(palette.ink));
 	m_MemberListBox.Invalidate(FALSE);
 }
 

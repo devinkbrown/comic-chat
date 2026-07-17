@@ -142,7 +142,7 @@ BEGIN
     SEPARATOR
     BUTTON      ID_SEND_EMAIL
     BUTTON      ID_VISIT_HOMEPAGE
-    BUTTON      ID_START_NETMEETING
+    BUTTON      ID_SEND_FILE
 END
 
 
@@ -248,7 +248,6 @@ BEGIN
         MENUITEM "Send &E-mail",                ID_SEND_EMAIL
         MENUITEM "Send &File...",               ID_SEND_FILE
         MENUITEM "Visit H&ome Page",            ID_VISIT_HOMEPAGE
-        MENUITEM "Net&Meeting",                 ID_START_NETMEETING
         MENUITEM SEPARATOR
         MENUITEM "&Version",                    ID_GET_VERSION
         MENUITEM "Lag &Time",                   ID_PING_USER
@@ -286,7 +285,7 @@ BEGIN
         MENUITEM "Online &Support",             ID_HELP_ONLINESUPPORT
         MENUITEM "&Release Notes",              ID_HELP_RELEASENOTES
         MENUITEM SEPARATOR
-        MENUITEM "&About Microsoft Chat",       ID_APP_ABOUT
+        MENUITEM "&About Comic Chat: Reinked", ID_APP_ABOUT
     END
 END
 
@@ -368,7 +367,6 @@ BEGIN
         MENUITEM "Send &E-mail",                ID_SEND_EMAIL
         MENUITEM "Send &File...",               ID_SEND_FILE
         MENUITEM "Visit H&ome Page",            ID_VISIT_HOMEPAGE
-        MENUITEM "Net&Meeting",                 ID_START_NETMEETING
         MENUITEM SEPARATOR
         MENUITEM "&Version",                    ID_GET_VERSION
         MENUITEM "Lag &Time",                   ID_PING_USER
@@ -395,7 +393,7 @@ BEGIN
         MENUITEM "Online &Support",             ID_HELP_ONLINESUPPORT
         MENUITEM "&Release Notes",              ID_HELP_RELEASENOTES
         MENUITEM SEPARATOR
-        MENUITEM "&About Microsoft Chat",       ID_APP_ABOUT
+        MENUITEM "&About Comic Chat: Reinked", ID_APP_ABOUT
     END
 END
 
@@ -427,7 +425,6 @@ BEGIN
         MENUITEM "Send &E-mail",                ID_SEND_EMAIL
         MENUITEM "Send &File...",               ID_SEND_FILE
         MENUITEM "Visit H&ome Page",            ID_VISIT_HOMEPAGE
-        MENUITEM "Net&Meeting",                 ID_START_NETMEETING
         MENUITEM SEPARATOR
         MENUITEM "&Version",                    ID_GET_VERSION
         MENUITEM "Lag &Time",                   ID_PING_USER
@@ -519,7 +516,6 @@ BEGIN
         MENUITEM "Send &E-mail",                ID_SEND_EMAIL
         MENUITEM "Send &File...",               ID_SEND_FILE
         MENUITEM "Visit H&ome Page",            ID_VISIT_HOMEPAGE
-        MENUITEM "Net&Meeting",                 ID_START_NETMEETING
         MENUITEM SEPARATOR
         MENUITEM "&Version",                    ID_GET_VERSION
         MENUITEM "Lag &Time",                   ID_PING_USER
@@ -648,9 +644,9 @@ END
 // Dialog
 //
 
-IDD_ABOUTBOX DIALOG DISCARDABLE  34, 22, 279, 137
-STYLE DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "About Microsoft Chat"
+IDD_ABOUTBOX DIALOGEX DISCARDABLE  34, 22, 279, 137
+STYLE DS_SHELLFONT | DS_MODALFRAME | DS_CENTER | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "About Comic Chat: Reinked"
 FONT 8, "Comic Sans MS"
 BEGIN
     CONTROL         "%1 %2 (%3)",IDC_VERSION,"Static",SS_LEFTNOWORDWRAP | 
@@ -667,10 +663,10 @@ BEGIN
                     SS_REALSIZEIMAGE,0,0,280,137
 END
 
-IDD_ROOMLIST DIALOG DISCARDABLE  0, 0, 400, 255
-STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+IDD_ROOMLIST DIALOGEX DISCARDABLE  0, 0, 400, 255
+STYLE DS_SHELLFONT | DS_MODALFRAME | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Chat Room List"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     LTEXT           "Dis&play chat rooms that contain:",IDC_STATIC,7,7,101,8
     EDITTEXT        IDC_TOPIC_EDIT,110,5,132,12,ES_AUTOHSCROLL
@@ -701,10 +697,10 @@ BEGIN
     RTEXT           "",IDC_SEARCH_TIME,211,244,182,8
 END
 
-IDD_SETTINGSPAGE DIALOG DISCARDABLE  0, 0, 252, 218
-STYLE WS_CHILD | WS_DISABLED | WS_CAPTION | WS_SYSMENU
+IDD_SETTINGSPAGE DIALOGEX DISCARDABLE  0, 0, 252, 218
+STYLE DS_SHELLFONT | WS_CHILD | WS_DISABLED | WS_CAPTION | WS_SYSMENU
 CAPTION "Settings"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     GROUPBOX        "Connection",IDC_GROUP0,7,7,236,45
     LTEXT           "If you are speaking mostly to people who are not using Microsoft Chat, check the box below:",
@@ -733,19 +729,17 @@ BEGIN
                     BS_AUTOCHECKBOX | WS_TABSTOP,139,121,93,10
     CONTROL         "Receive &file transfer requests",IDC_ALLOW_FILETX,
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,139,133,106,10
-    CONTROL         "Receive &NetMeeting calls",IDC_NETMEETING_AUTOSTART,
-                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,139,145,97,10
     CONTROL         "Prompt to &save on exit",IDC_SAVE,"Button",
-                    BS_AUTOCHECKBOX | WS_TABSTOP,139,157,86,10
+                    BS_AUTOCHECKBOX | WS_TABSTOP,139,145,86,10
     LTEXT           "Sound search &path:",IDC_STATIC,7,186,63,8
     EDITTEXT        IDC_SOUNDPATH,7,197,221,13,ES_AUTOHSCROLL
     PUSHBUTTON      "...",IDC_SOUNDPATH_BROWSE,229,197,14,12,BS_CENTER
 END
 
-IDD_PERSONALPAGE_IRC DIALOG DISCARDABLE  0, 0, 252, 218
-STYLE WS_CHILD | WS_DISABLED | WS_CAPTION | WS_SYSMENU
+IDD_PERSONALPAGE_IRC DIALOGEX DISCARDABLE  0, 0, 252, 218
+STYLE DS_SHELLFONT | WS_CHILD | WS_DISABLED | WS_CAPTION | WS_SYSMENU
 CAPTION "Personal Info"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     LTEXT           "&Real name:",IDC_STATIC,7,7,37,8
     EDITTEXT        IDC_REALNAME,7,21,119,14,ES_AUTOHSCROLL
@@ -767,10 +761,10 @@ BEGIN
                     WS_VISIBLE | WS_TABSTOP,206,39,39,10
 END
 
-IDD_CHARACTERPAGE DIALOG DISCARDABLE  0, 0, 252, 218
-STYLE WS_CHILD | WS_DISABLED | WS_CAPTION | WS_SYSMENU
+IDD_CHARACTERPAGE DIALOGEX DISCARDABLE  0, 0, 252, 218
+STYLE DS_SHELLFONT | WS_CHILD | WS_DISABLED | WS_CAPTION | WS_SYSMENU
 CAPTION "Character"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     LTEXT           "&Character:",IDC_STATIC,7,7,34,8
     LISTBOX         IDC_AVLIST,7,21,125,166,LBS_SORT | LBS_NOINTEGRALHEIGHT | 
@@ -782,10 +776,10 @@ BEGIN
                     ES_AUTOHSCROLL | ES_READONLY
 END
 
-IDD_BACKGROUNDPAGE DIALOG DISCARDABLE  0, 0, 252, 218
-STYLE WS_CHILD | WS_DISABLED | WS_CAPTION | WS_SYSMENU
+IDD_BACKGROUNDPAGE DIALOGEX DISCARDABLE  0, 0, 252, 218
+STYLE DS_SHELLFONT | WS_CHILD | WS_DISABLED | WS_CAPTION | WS_SYSMENU
 CAPTION "Background"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     LTEXT           "&Background:",IDC_STATIC,7,7,42,8
     LISTBOX         IDC_BACKLIST,7,21,85,166,LBS_SORT | LBS_NOINTEGRALHEIGHT | 
@@ -801,10 +795,10 @@ BEGIN
                     ES_AUTOHSCROLL | ES_READONLY
 END
 
-IDD_KICK DIALOG DISCARDABLE  0, 0, 186, 89
-STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+IDD_KICK DIALOGEX DISCARDABLE  0, 0, 186, 89
+STYLE DS_SHELLFONT | DS_MODALFRAME | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Kick"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     LTEXT           "",IDC_KICKMSG,7,7,170,8
     EDITTEXT        IDC_REASON,7,18,172,27,ES_MULTILINE | ES_AUTOVSCROLL
@@ -815,10 +809,10 @@ BEGIN
     PUSHBUTTON      "Cancel",IDCANCEL,129,68,50,14
 END
 
-IDD_NICKNAME DIALOG DISCARDABLE  0, 0, 188, 71
-STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+IDD_NICKNAME DIALOGEX DISCARDABLE  0, 0, 188, 71
+STYLE DS_SHELLFONT | DS_MODALFRAME | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Enter New Nickname"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     LTEXT           "Static",IDC_STATICNICKNAME,7,7,115,35
     LTEXT           "&Nickname:",IDC_STATIC,7,51,40,10
@@ -827,10 +821,10 @@ BEGIN
     PUSHBUTTON      "Cancel",IDCANCEL,133,24,50,14
 END
 
-IDD_CHANNEL DIALOG DISCARDABLE  0, 0, 144, 110
-STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+IDD_CHANNEL DIALOGEX DISCARDABLE  0, 0, 144, 110
+STYLE DS_SHELLFONT | DS_MODALFRAME | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Enter Room"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     LTEXT           "Enter the name of a new or existing chat &room:",
                     IDC_STATIC,7,6,122,17
@@ -842,10 +836,9 @@ BEGIN
 END
 
 IDD_CHANNELPROP DIALOGEX 0, 0, 186, 196
-STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
-EXSTYLE WS_EX_CONTEXTHELP
+STYLE DS_SHELLFONT | DS_MODALFRAME | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Room Properties"
-FONT 8, "MS Sans Serif", 0, 0, 0x1
+FONT 9, "Segoe UI", 0, 0, 0x1
 BEGIN
     LTEXT           "Static",IDC_CHANPROP_MESG,7,7,172,19
     LTEXT           "Chat room &topic:",IDC_STATIC,7,31,107,8
@@ -877,10 +870,10 @@ BEGIN
     PUSHBUTTON      "Cancel",IDCANCEL,129,175,50,14
 END
 
-IDD_BAN DIALOG DISCARDABLE  0, 0, 186, 170
-STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+IDD_BAN DIALOGEX DISCARDABLE  0, 0, 186, 170
+STYLE DS_SHELLFONT | DS_MODALFRAME | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Ban / UnBan"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     LTEXT           "Banned u&sers",IDC_BANMESG,7,7,172,18
     COMBOBOX        IDC_BANNED_USERS,7,26,172,120,CBS_SIMPLE | CBS_SORT | 
@@ -890,10 +883,10 @@ BEGIN
     PUSHBUTTON      "OK",IDOK,127,149,52,14
 END
 
-IDD_INVITE DIALOG DISCARDABLE  0, 0, 186, 89
-STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+IDD_INVITE DIALOGEX DISCARDABLE  0, 0, 186, 89
+STYLE DS_SHELLFONT | DS_MODALFRAME | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Invite"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     LTEXT           "Nicknames of people to invite to this room:",IDC_STATIC,
                     7,7,170,8
@@ -903,9 +896,9 @@ BEGIN
 END
 
 IDD_SOUND_DLG DIALOGEX 0, 0, 188, 228
-STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+STYLE DS_SHELLFONT | DS_MODALFRAME | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Play Sound"
-FONT 8, "MS Sans Serif", 0, 0, 0x1
+FONT 9, "Segoe UI", 0, 0, 0x1
 BEGIN
     LTEXT           "&Sound file:",IDC_STATIC,7,25,34,8
     CONTROL         "List1",IDC_SOUNDLIST,"SysListView32",LVS_REPORT | 
@@ -922,10 +915,10 @@ BEGIN
     EDITTEXT        IDC_SOUND_MATCH,87,7,94,14,ES_AUTOHSCROLL
 END
 
-IDD_SETTEXTFONT DIALOG DISCARDABLE  13, 54, 264, 261
-STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+IDD_SETTEXTFONT DIALOGEX DISCARDABLE  13, 54, 264, 261
+STYLE DS_SHELLFONT | DS_MODALFRAME | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Set Text Font"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     LTEXT           "Choose a &message type to change its font:",IDC_STATIC,
                     7,6,135,8
@@ -965,10 +958,10 @@ BEGIN
     PUSHBUTTON      "&Help",1038,218,205,40,14,WS_GROUP
 END
 
-IDD_USERLIST DIALOG DISCARDABLE  0, 0, 395, 263
-STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+IDD_USERLIST DIALOGEX DISCARDABLE  0, 0, 395, 263
+STYLE DS_SHELLFONT | DS_MODALFRAME | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "User List"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     DEFPUSHBUTTON   "&Search",IDC_RESET_LIST,338,7,50,14
     GROUPBOX        "Search &for",IDC_GROUP0,7,3,324,46,WS_GROUP
@@ -995,11 +988,11 @@ BEGIN
     RTEXT           "",IDC_SEARCH_TIME,260,252,128,8
 END
 
-IDD_WHISPERBOX DIALOG DISCARDABLE  0, 0, 334, 196
-STYLE DS_3DLOOK | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU | 
+IDD_WHISPERBOX DIALOGEX DISCARDABLE  0, 0, 334, 196
+STYLE DS_SHELLFONT | DS_3DLOOK | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU |
     WS_THICKFRAME
 CAPTION "Whisper Box"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     CONTROL         "Tab1",IDC_TAB1,"SysTabControl32",TCS_BUTTONS | 
                     TCS_MULTILINE | WS_TABSTOP,7,7,320,147
@@ -1009,10 +1002,10 @@ BEGIN
                     WS_TABSTOP,216,180,51,10
 END
 
-IDD_COMICS_VIEW DIALOG DISCARDABLE  0, 0, 252, 218
-STYLE WS_CHILD | WS_DISABLED | WS_CAPTION | WS_SYSMENU
+IDD_COMICS_VIEW DIALOGEX DISCARDABLE  0, 0, 252, 218
+STYLE DS_SHELLFONT | WS_CHILD | WS_DISABLED | WS_CAPTION | WS_SYSMENU
 CAPTION "Comics View"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     GROUPBOX        "Comic fonts",IDC_GROUP0,7,6,238,66
     LTEXT           "Click on the buttons below to customize the fonts for various message types, or reset the defaults.",
@@ -1022,7 +1015,7 @@ BEGIN
     CONTROL         "&Show rich text formatting",IDC_SHOWCOMICRTF,"Button",
                     BS_AUTOCHECKBOX | WS_TABSTOP,16,57,206,9
     GROUPBOX        "&Page layout",IDC_GROUP1,7,76,238,59
-    LTEXT           "You may change how many panels Microsoft Chat uses horizontally to display the comic strip.  On some computers this may cause the window to scroll horizontally.",
+    LTEXT           "Choose how many panels Comic Chat: Reinked uses horizontally to display the comic strip. On narrow windows the comic remains scrollable.",
                     IDC_STATIC,15,87,214,25
     COMBOBOX        IDC_PANELS,16,116,91,60,CBS_DROPDOWNLIST | CBS_SORT | 
                     WS_VSCROLL | WS_TABSTOP
@@ -1037,10 +1030,10 @@ BEGIN
                     WS_TABSTOP,16,186,200,10
 END
 
-IDD_AUTOMATION_PAGE DIALOG DISCARDABLE  0, 0, 252, 218
-STYLE WS_CHILD | WS_DISABLED | WS_CAPTION | WS_SYSMENU
+IDD_AUTOMATION_PAGE DIALOGEX DISCARDABLE  0, 0, 252, 218
+STYLE DS_SHELLFONT | WS_CHILD | WS_DISABLED | WS_CAPTION | WS_SYSMENU
 CAPTION "General"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     GROUPBOX        "Automatic greeting",IDC_GROUP0,7,7,238,70,WS_GROUP
     LTEXT           "You may choose to send a message to any user who enters the room after you, if you are a host in the current room.",
@@ -1082,10 +1075,10 @@ BEGIN
     PUSHBUTTON      "&Delete Macro",IDC_DELETE_MACRO,186,192,50,14
 END
 
-IDD_RULESPAGE DIALOG DISCARDABLE  0, 0, 252, 218
-STYLE WS_CHILD | WS_DISABLED | WS_CAPTION | WS_SYSMENU
+IDD_RULESPAGE DIALOGEX DISCARDABLE  0, 0, 252, 218
+STYLE DS_SHELLFONT | WS_CHILD | WS_DISABLED | WS_CAPTION | WS_SYSMENU
 CAPTION "Rules"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     LTEXT           "&Current rule sets:",IDC_STATIC,7,3,75,8
     LISTBOX         IDC_LSTSETS,6,13,162,50,WS_VSCROLL | WS_TABSTOP
@@ -1106,10 +1099,9 @@ BEGIN
 END
 
 IDD_EDITRULE DIALOGEX 0, 0, 265, 260
-STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
-EXSTYLE WS_EX_CONTEXTHELP
+STYLE DS_SHELLFONT | DS_MODALFRAME | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Edit Rule"
-FONT 8, "MS Sans Serif", 0, 0, 0x1
+FONT 9, "Segoe UI", 0, 0, 0x1
 BEGIN
     GROUPBOX        "Select an event and define it",IDC_STATIC,3,2,256,102
     LTEXT           "&Event:",IDC_STATIC,11,15,26,12,SS_CENTERIMAGE
@@ -1168,10 +1160,9 @@ BEGIN
 END
 
 IDD_CHANNELCREATE DIALOGEX 0, 0, 186, 194
-STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
-EXSTYLE WS_EX_CONTEXTHELP
+STYLE DS_SHELLFONT | DS_MODALFRAME | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Create Chat Room"
-FONT 8, "MS Sans Serif", 0, 0, 0x1
+FONT 9, "Segoe UI", 0, 0, 0x1
 BEGIN
     LTEXT           "Chat &room name:",IDC_STATIC,7,9,54,8
     EDITTEXT        IDC_CHANNELNAME,68,7,111,14,ES_AUTOHSCROLL
@@ -1204,10 +1195,10 @@ BEGIN
     PUSHBUTTON      "Cancel",IDCANCEL,129,173,50,14
 END
 
-IDD_CHANPASSWORD DIALOG DISCARDABLE  0, 0, 173, 86
-STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+IDD_CHANPASSWORD DIALOGEX DISCARDABLE  0, 0, 173, 86
+STYLE DS_SHELLFONT | DS_MODALFRAME | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Room Password"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     LTEXT           "",IDC_PASSWORD_MESG,7,6,159,32
     EDITTEXT        IDC_PASSWORD,7,46,159,14,ES_PASSWORD | ES_AUTOHSCROLL
@@ -1215,10 +1206,10 @@ BEGIN
     PUSHBUTTON      "Cancel",IDCANCEL,116,66,50,14
 END
 
-IDD_FILE_TRANSFER DIALOG DISCARDABLE  0, 0, 186, 93
-STYLE DS_MODALFRAME | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU
+IDD_FILE_TRANSFER DIALOGEX DISCARDABLE  0, 0, 186, 93
+STYLE DS_SHELLFONT | DS_MODALFRAME | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "File Send"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     DEFPUSHBUTTON   "OK",IDOK,73,72,50,14
     PUSHBUTTON      "Cancel",IDCANCEL,129,72,50,14
@@ -1232,10 +1223,10 @@ BEGIN
     LTEXT           "Waiting for connection",IDC_CX_STATUS,60,53,119,16
 END
 
-IDD_MOTD DIALOG DISCARDABLE  0, 0, 298, 146
-STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+IDD_MOTD DIALOGEX DISCARDABLE  0, 0, 298, 146
+STYLE DS_SHELLFONT | DS_MODALFRAME | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Message of the Day"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     CONTROL         "&Show this whenever connecting",IDC_SHOW_MOTD,"Button",
                     BS_AUTOCHECKBOX | WS_TABSTOP,7,127,123,10
@@ -1243,12 +1234,12 @@ BEGIN
     DEFPUSHBUTTON   "OK",IDOK,241,125,50,14
 END
 
-IDD_SETUPDIALOG DIALOG DISCARDABLE  0, 0, 252, 218
-STYLE WS_CHILD | WS_DISABLED | WS_CAPTION | WS_SYSMENU
+IDD_SETUPDIALOG DIALOGEX DISCARDABLE  0, 0, 252, 218
+STYLE DS_SHELLFONT | WS_CHILD | WS_DISABLED | WS_CAPTION | WS_SYSMENU
 CAPTION "Connect"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
-    LTEXT           "Welcome to Microsoft Chat.  You can specify chat server connection information here, and optionally adjust your Personal Information from the next tab.  ",
+    LTEXT           "Welcome to Comic Chat: Reinked.  You can specify chat server connection information here, and optionally adjust your Personal Information from the next tab.  ",
                     IDC_STATIC,7,7,238,26
     LTEXT           "Users of comics mode can choose a character and background from two additional tabs.",
                     IDC_COMICSWELCOME,7,35,238,18,NOT WS_VISIBLE
@@ -1268,10 +1259,10 @@ BEGIN
     EDITTEXT        IDC_CHANNEL,110,152,91,14,ES_AUTOHSCROLL
 END
 
-IDD_AWAYDLG DIALOG DISCARDABLE  0, 0, 186, 87
-STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+IDD_AWAYDLG DIALOGEX DISCARDABLE  0, 0, 186, 87
+STYLE DS_SHELLFONT | DS_MODALFRAME | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Away From Keyboard"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     LTEXT           "&Away message:",IDC_STATIC,7,7,50,8
     CONTROL         "",IDC_AWAYMSG,"RICHEDIT",ES_MULTILINE | ES_AUTOVSCROLL | 
@@ -1280,10 +1271,10 @@ BEGIN
     PUSHBUTTON      "Cancel",IDCANCEL,129,66,50,14
 END
 
-IDD_TEXTFONTPAGE_IRC DIALOG DISCARDABLE  0, 0, 252, 218
-STYLE WS_CHILD | WS_DISABLED | WS_CAPTION | WS_SYSMENU
+IDD_TEXTFONTPAGE_IRC DIALOGEX DISCARDABLE  0, 0, 252, 218
+STYLE DS_SHELLFONT | WS_CHILD | WS_DISABLED | WS_CAPTION | WS_SYSMENU
 CAPTION "Text View"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     GROUPBOX        "Line spacing",IDC_SPACE_GROUP,7,8,238,78,WS_GROUP
     LTEXT           "Place blank lines between:",IDC_STATIC,16,19,90,8
@@ -1310,17 +1301,17 @@ BEGIN
 END
 
 IDD_CHOOSECOLOR DIALOGEX 0, 0, 118, 38
-STYLE DS_MODALFRAME | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU
+STYLE DS_SHELLFONT | DS_MODALFRAME | WS_MINIMIZEBOX | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU
 EXSTYLE WS_EX_TOOLWINDOW
 CAPTION "Choose Color"
 FONT 6, "MS Serif", 0, 0, 0x1
 BEGIN
 END
 
-IDD_INVITATION DIALOG DISCARDABLE  0, 0, 186, 93
-STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+IDD_INVITATION DIALOGEX DISCARDABLE  0, 0, 186, 93
+STYLE DS_SHELLFONT | DS_MODALFRAME | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Invitation"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     DEFPUSHBUTTON   "&Reject",IDNO,129,72,50,14
     CONTROL         "&Ignore user",IDC_IGNORE,"Button",BS_AUTOCHECKBOX | 
@@ -1331,10 +1322,10 @@ BEGIN
                     IDC_STATIC,7,29,172,26
 END
 
-IDD_ADVANCEDEVENTPARAMS DIALOG DISCARDABLE  0, 0, 186, 85
-STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+IDD_ADVANCEDEVENTPARAMS DIALOGEX DISCARDABLE  0, 0, 186, 85
+STYLE DS_SHELLFONT | DS_MODALFRAME | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Advanced"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     DEFPUSHBUTTON   "OK",IDOK,76,63,50,14
     PUSHBUTTON      "Cancel",IDCANCEL,129,63,50,14
@@ -1346,10 +1337,10 @@ BEGIN
                     BS_AUTOCHECKBOX | WS_TABSTOP,22,45,107,9
 END
 
-IDD_RULESETSPAGE DIALOG DISCARDABLE  0, 0, 252, 218
-STYLE WS_CHILD | WS_DISABLED | WS_CAPTION | WS_SYSMENU
+IDD_RULESETSPAGE DIALOGEX DISCARDABLE  0, 0, 252, 218
+STYLE DS_SHELLFONT | WS_CHILD | WS_DISABLED | WS_CAPTION | WS_SYSMENU
 CAPTION "Rule Sets"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     LTEXT           "&Current rule sets:",IDC_STATIC,5,7,129,10
     LISTBOX         IDC_LSTRULESETS,5,17,162,92,LBS_OWNERDRAWFIXED | 
@@ -1369,10 +1360,10 @@ BEGIN
     PUSHBUTTON      "&Open Set...",IDC_BTNLOADSET,192,190,52,14
 END
 
-IDD_ADDTOSETS DIALOG DISCARDABLE  0, 0, 252, 161
-STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+IDD_ADDTOSETS DIALOGEX DISCARDABLE  0, 0, 252, 161
+STYLE DS_SHELLFONT | DS_MODALFRAME | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Add To Rule Sets"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     DEFPUSHBUTTON   "OK",IDOK,195,121,50,14
     PUSHBUTTON      "Cancel",IDCANCEL,195,140,50,14
@@ -1387,10 +1378,10 @@ BEGIN
                     WS_TABSTOP,7,17,238,33
 END
 
-IDD_RENAMELOADEDSET DIALOG DISCARDABLE  0, 0, 258, 103
-STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+IDD_RENAMELOADEDSET DIALOGEX DISCARDABLE  0, 0, 258, 103
+STYLE DS_SHELLFONT | DS_MODALFRAME | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Load Rule Set"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     LTEXT           "",IDC_RULESETCONFLICT,7,7,244,18
     LTEXT           "You can overwrite the existing rule set, rename the rule set being opened or cancel the operation.",
@@ -1403,10 +1394,10 @@ BEGIN
     PUSHBUTTON      "Cancel",IDCANCEL,196,82,54,14
 END
 
-IDD_RENAMESET DIALOG DISCARDABLE  0, 0, 226, 79
-STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+IDD_RENAMESET DIALOGEX DISCARDABLE  0, 0, 226, 79
+STYLE DS_SHELLFONT | DS_MODALFRAME | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Renaming Rule Set"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     LTEXT           "Please type in the name you want.",IDC_STATIC,7,7,212,8
     LTEXT           "Rule set &name:",IDC_STATIC,7,26,67,10
@@ -1415,10 +1406,10 @@ BEGIN
     PUSHBUTTON      "Cancel",IDCANCEL,169,58,50,14
 END
 
-IDD_NOTIFICATIONS DIALOG DISCARDABLE  0, 0, 252, 218
-STYLE WS_CHILD | WS_DISABLED | WS_CAPTION | WS_SYSMENU
+IDD_NOTIFICATIONS DIALOGEX DISCARDABLE  0, 0, 252, 218
+STYLE DS_SHELLFONT | WS_CHILD | WS_DISABLED | WS_CAPTION | WS_SYSMENU
 CAPTION "Logon Notifications"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     LTEXT           "&Current notifications:",IDC_STATIC,4,6,117,10
     CONTROL         "ListNotifications",IDC_LSTNOTIFS,"SysListView32",
@@ -1448,10 +1439,10 @@ BEGIN
     PUSHBUTTON      "De&lete",IDC_DELETENOTIF,192,197,54,14
 END
 
-IDD_ADVANCEDRULESETTINGS DIALOG DISCARDABLE  0, 0, 186, 95
-STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+IDD_ADVANCEDRULESETTINGS DIALOGEX DISCARDABLE  0, 0, 186, 95
+STYLE DS_SHELLFONT | DS_MODALFRAME | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Advanced Rules Settings"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     LTEXT           "These settings permit you to limit the number of occurrences of a rule during the time interval specified.",
                     IDC_STATIC,7,5,172,26
@@ -1472,10 +1463,10 @@ BEGIN
 END
 
 IDD_NOTIFICATIONUSERS DIALOGEX 0, 0, 262, 111
-STYLE DS_3DLOOK | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU | 
+STYLE DS_SHELLFONT | DS_3DLOOK | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU |
     WS_THICKFRAME
 CAPTION "Logon Notifications"
-FONT 8, "MS Sans Serif", 0, 0, 0x1
+FONT 9, "Segoe UI", 0, 0, 0x1
 BEGIN
     LTEXT           "The following users are logged on to your network.",
                     IDC_NOTIFTOPLABEL,5,7,252,11
@@ -1494,10 +1485,10 @@ BEGIN
     LTEXT           "",IDC_NOTIFTIME,123,96,134,10,0,WS_EX_RIGHT
 END
 
-IDD_SERVERSPAGE DIALOG DISCARDABLE  0, 0, 252, 218
-STYLE WS_CHILD | WS_DISABLED | WS_CAPTION | WS_SYSMENU
+IDD_SERVERSPAGE DIALOGEX DISCARDABLE  0, 0, 252, 218
+STYLE DS_SHELLFONT | WS_CHILD | WS_DISABLED | WS_CAPTION | WS_SYSMENU
 CAPTION "Servers"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     LTEXT           "&Network:",IDC_STATIC,5,7,30,8
     COMBOBOX        IDC_SRVGROUP_COMBO,57,5,190,96,CBS_DROPDOWN | 
@@ -1532,10 +1523,10 @@ BEGIN
                     BS_AUTOCHECKBOX | WS_TABSTOP,145,189,82,10
 END
 
-IDD_PASSWORD DIALOG DISCARDABLE  0, 0, 198, 127
-STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+IDD_PASSWORD DIALOGEX DISCARDABLE  0, 0, 198, 127
+STYLE DS_SHELLFONT | DS_MODALFRAME | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "IRC Password"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     LTEXT           "This server requires a password. Please enter it below.",
                     IDC_STATIC,7,7,172,8
@@ -1551,10 +1542,10 @@ BEGIN
     PUSHBUTTON      "Cancel",IDCANCEL,141,107,50,14
 END
 
-IDD_CREATESET DIALOG DISCARDABLE  0, 0, 226, 79
-STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+IDD_CREATESET DIALOGEX DISCARDABLE  0, 0, 226, 79
+STYLE DS_SHELLFONT | DS_MODALFRAME | WS_MINIMIZEBOX | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Creating Rule Set"
-FONT 8, "MS Sans Serif"
+FONT 9, "Segoe UI"
 BEGIN
     LTEXT           "Please type the new rule set name.",IDC_STATIC,7,7,212,
                     8
@@ -1954,7 +1945,7 @@ END
 
 STRINGTABLE PRELOAD DISCARDABLE 
 BEGIN
-    IDR_MAINFRAME           "Microsoft Chat\nRoom\nRoom\nMicrosoft Chat Room (*.ccr)\n.ccr\nComicChat.Room.2\nMicrosoft Chat Room\nCCHI\ncchi Files"
+    IDR_MAINFRAME           "Comic Chat: Reinked\nRoom\nRoom\nComic Chat Room (*.ccr)\n.ccr\nComicChat.Room.2\nComic Chat Room\nCCHI\ncchi Files"
     IDS_NOTINROOM           "You are not in room: %1."
     IDS_ERR_TOOMANYCHANNELS "You cannot enter any more rooms without exiting a current room."
     IDS_BANMESG             "&People banned from %1.\n(Format: nickname!username@netaddress)"
@@ -1999,7 +1990,7 @@ END
 
 STRINGTABLE PRELOAD DISCARDABLE 
 BEGIN
-    AFX_IDS_APP_TITLE       "Microsoft Chat"
+    AFX_IDS_APP_TITLE       "Comic Chat: Reinked"
     AFX_IDS_IDLEMESSAGE     " "
 END
 
@@ -2015,8 +2006,8 @@ END
 
 STRINGTABLE DISCARDABLE 
 BEGIN
-    ID_FILE_NEW             "Creates or connects to a Microsoft Chat room.\nNew"
-    ID_FILE_OPEN            "Opens a previously saved Microsoft Chat conversation.\nOpen"
+    ID_FILE_NEW             "Creates or connects to a Comic Chat room.\nNew"
+    ID_FILE_OPEN            "Opens a previously saved Comic Chat conversation.\nOpen"
     ID_FILE_CLOSE           "Closes the active document.\nClose"
     ID_FILE_SAVE            "Saves the current chat conversation.\nSave"
     ID_FILE_SAVE_AS         "Saves the current chat conversation with a new name.\nSave As"
@@ -2031,7 +2022,7 @@ END
 STRINGTABLE DISCARDABLE 
 BEGIN
     ID_APP_ABOUT            "Displays the program information and copyright.\nAbout"
-    ID_APP_EXIT             "Quits Microsoft Chat.\nExit"
+    ID_APP_EXIT             "Quits Comic Chat: Reinked.\nExit"
 END
 
 STRINGTABLE DISCARDABLE 
@@ -2161,7 +2152,7 @@ END
 
 STRINGTABLE DISCARDABLE 
 BEGIN
-    ID_HELP_TOPICS          "Displays help for Microsoft Chat."
+    ID_HELP_TOPICS          "Displays help for Comic Chat: Reinked."
     ID_VIEW_LIST            "Views the Members window as a list."
     ID_VIEW_ICON            "Views the Members window as icons."
     ID_VIEW_STATUSBAR       "Shows or hides the status bar.\nToggle StatusBar"
@@ -2266,7 +2257,7 @@ BEGIN
     ID_ERR_DUPED_NICK       "Your requested nickname is already in use.  Chat nicknames must be unique.  Please choose another."
     ID_ERR_OPEN             "%1: Unable to open file."
     ID_ERR_SAVE             "%1: Unable to save file."
-    ID_ERR_NOT_CHATCONV     "Not a Microsoft Chat Conversation file."
+    ID_ERR_NOT_CHATCONV     "Not a Comic Chat conversation file."
     ID_ERR_BAD_CONV_FIELD   "%1: Unknown conversation file field."
     ID_ERR_WHERE_SERVER     "Cannot find a server named %1."
     ID_DEFAULT_PROFILE      "This person is too lazy to create a profile entry."
@@ -2277,7 +2268,7 @@ BEGIN
     ID_CONNECTED            "Now chatting in room %1 on %2."
     ID_USER_SINGULAR        "%1 member"
     ID_USER_PLURAL          "%1 members"
-    ID_MESSAGE_BOX_TITLE    "Microsoft Chat"
+    ID_MESSAGE_BOX_TITLE    "Comic Chat: Reinked"
     IDS_SHORTCUT            "A shortcut to this chat room will be placed on your Desktop."
 END
 
@@ -2313,7 +2304,7 @@ BEGIN
     ID_RL_DESCR_WIDTH       "500"
     IDS_SENDENABLED         "You must enter some text before sending a message."
     IDS_WHISPERENABLED      "Please select someone other than yourself and type some text before you press the whisper button."
-    IDS_OPTIONS             "Microsoft Chat Options"
+    IDS_OPTIONS             "Comic Chat: Reinked Options"
     ID_SAY_PREFIX           "%1:   "
 END
 
@@ -2334,12 +2325,12 @@ BEGIN
     IDS_KICKREASON          "Why are you kicking %1?"
     IDS_ILLEGAL_TO_SEND     "To enter text or graphics, you must either be connected to a chat room or be working offline."
     IDS_DFLT_COMICSPNTSIZE  "12"
-    IDS_AUTOMATIONS         "Microsoft Chat Automations"
+    IDS_AUTOMATIONS         "Comic Chat: Reinked Automations"
 END
 
 STRINGTABLE DISCARDABLE 
 BEGIN
-    ID_VIEW_OPTIONS         "Changes the options for Microsoft Chat. \nOptions"
+    ID_VIEW_OPTIONS         "Changes the options for Comic Chat: Reinked. \nOptions"
     ID_VIEW_AUTOMATIONS     "Brings up the automation dialog. \nAutomation"
     ID_ADMINISTRATOR_KICK   "Removes member from chat room.\nKick"
     ID_ADMINISTRATOR_MAKEOPERATOR 
@@ -2407,7 +2398,7 @@ BEGIN
     ID_ERR_BANNEDFROMSERVER "Either you or your internet address has been banned from this server."
     ID_ERR_SECURITY         "You do not have sufficient privileges to enter room: %1."
     ID_ERR_BADUSERINFO      "This login information is incorrect."
-    ID_SIMPLE_VERSION       "Microsoft Chat 2.5 (%1)"
+    ID_SIMPLE_VERSION       "Comic Chat: Reinked 2.5 (%1)"
     IDS_SOUND_DIR           "media"
     IDS_VERSION_PREFIX      "%1's version: %2"
     IDS_PING_MESSAGE        "%1's roundtrip delay: %2 seconds"
@@ -2423,7 +2414,7 @@ BEGIN
     ID_ERR_LOGIN            "Server login error (%1)."
     ID_ERR_SERVERISFULL     "The server is full and is not accepting additional chatters."
     ID_JOIN_OFFER           "%1 invites you to join: %2"
-    IDS_WARNING_TEXT        "Warning:  This computer program is protected by copyright law and international treaties.  Unauthorized reproduction or distribution of this program, or any portion of it, may result in severe civil and criminal penalties and will be prosecuted to the maximum extent possible under the law."
+    IDS_WARNING_TEXT        "Community modernization of Microsoft Comic Chat source. Not affiliated with or endorsed by Microsoft. Original software copyright remains with Microsoft Corporation."
     IDS_SPECTATEONLY        "You are a spectator in this room, and not allowed to communicate."
     IDS_DEFAULT_CHANNEL     "#Microsoft_Chat"
     IDS_DEFAULT_REALNAME    "Your Full Name"
@@ -2432,7 +2423,7 @@ BEGIN
     IDS_CHANPROP_NOTADMIN   "You are not a host in this room, and you cannot change any properties."
     IDS_CHANPROP_TOPICONLY  "You are not a host in this room, and can only change the topic."
     IDS_MUSTBE_CONNECTED    "You must be connected to a server to perform this command."
-    IDS_NOSLASH_COMMANDS    "Microsoft Chat does not support this ""/"" command yet."
+    IDS_NOSLASH_COMMANDS    "Comic Chat: Reinked does not support this ""/"" command yet."
     IDS_REPORT_IDENT        "The identity of %1 is:\nuser: %2\nsource: %3"
     IDS_UNAVAILABLE_IDENT   "The identity of %1 is unavailable."
 END
@@ -2440,8 +2431,8 @@ END
 STRINGTABLE DISCARDABLE 
 BEGIN
     IDS_EMPTYMACRO          "You need to specify a key combination, a macro name, and a message before adding a macro."
-    IDS_CCC_FILTER          "Microsoft Chat Conversation (*.ccc)|*.ccc||"
-    IDS_CCR_FILTER          "Microsoft Chat Room (*.ccr)|*.ccr||"
+    IDS_CCC_FILTER          "Comic Chat Conversation (*.ccc)|*.ccc||"
+    IDS_CCR_FILTER          "Comic Chat Room (*.ccr)|*.ccr||"
     IDS_COMICS_BOLD_DFLT    "700"
     IDS_REPORT_IDENT2       "%1's identity:  %2@%3"
     IDS_ROOM_EXISTS         "A room by this name already exists.  Enter this room?"
@@ -2911,7 +2902,7 @@ END
 
 STRINGTABLE DISCARDABLE 
 BEGIN
-    IDR_NM_MAIN             "Microsoft Chat\nRoom\nRoom\nMicrosoft Chat Room (*.ccr)\n.ccr\nComicChat.Room.2\nMicrosoft Chat Room\nCCHI\ncchi Files"
+    IDR_NM_MAIN             "Comic Chat: Reinked\nRoom\nRoom\nComic Chat Room (*.ccr)\n.ccr\nComicChat.Room.2\nComic Chat Room\nCCHI\ncchi Files"
     IDS_COMICSTABWELCOME    "Two additional tabs allow you to choose your comics mode character and background."
     IDS_IRCWELCOME          "IRC Chat allows you to visit many Internet Chat Rooms, populated\nby people who are not in your current NetMeeting conference.\n\nDo you want to start an IRC Chat window?"
     IDS_NEEDART             "Comics mode adds spice to traditional text chat, by illustrating the conversation.\nHowever, in order to switch to comics mode, you must first download comic art\nto your machine.\n\nDo you wish to do this now?"
@@ -3018,4 +3009,3 @@ LANGUAGE 9, 1
 #include "..\inc\textview.rc" // Text view resources
 /////////////////////////////////////////////////////////////////////////////
 #endif    // not APSTUDIO_INVOKED
-
