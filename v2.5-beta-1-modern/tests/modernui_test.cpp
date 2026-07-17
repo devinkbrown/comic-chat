@@ -88,15 +88,15 @@ void TestIconCatalog()
 	using namespace comic_chat::modern_ui;
 	CheckStrip(kMainToolbarIcons, "main");
 	CheckStrip(kTextToolbarIcons, "text");
-	CheckStrip(kUserToolbarIcons, "member");
+	CheckStrip(kUserToolbarIcons, "member", true);
 	CheckStrip(kRoomTabIcons, "tabs", true);
 	Check(kMainToolbarIcons[0].command == ID_SESSION_CONNECT &&
 		kMainToolbarIcons[1].command == ID_SESSION_DISCONNECT &&
 		kMainToolbarIcons[9].command == ID_FAVORITES_OPENFAVORITES,
 		"main strip preserves original command order");
-	Check(kUserToolbarIcons[6].command == ID_SEND_FILE &&
-		kUserToolbarIcons[6].glyph == Glyph::send_file,
-		"dead NetMeeting cell is replaced in-place by Send File");
+	Check(kUserToolbarIcons[6].command == 0 &&
+		kUserToolbarIcons[6].glyph == Glyph::netmeeting,
+		"obsolete NetMeeting source cell is catalogued but not relabelled");
 	for (const auto& strip : kIconStrips) {
 		Check(FindIconStrip(strip.resource) == &strip, "resource resolves to exact icon strip");
 		for (std::size_t index = 0; index < strip.binding_count; ++index) {

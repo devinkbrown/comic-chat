@@ -72,6 +72,12 @@ def main() -> None:
         require("BuildStripImageList(" in text,
                 f"{filename} bypasses the audited original-bitmap loader")
 
+    user_toolbar = re.search(
+        r"IDR_USERTOOLBAR TOOLBAR[^\r\n]*[\s\S]+?\nEND", rc)
+    require(user_toolbar is not None, "cannot audit member toolbar commands")
+    require("ID_SEND_FILE" not in user_toolbar.group(0),
+            "Microsoft's NetMeeting glyph is falsely exposed as Send File")
+
     require(not (MODERN / "res" / "modern-ui-assets.rcinc").exists(),
             "generated resource include remains in the effective resource tree")
     require(not (MODERN / "res" / "modern-ui").exists(),

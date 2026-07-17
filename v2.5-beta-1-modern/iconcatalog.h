@@ -34,7 +34,7 @@ enum class Glyph : std::uint8_t {
 	whisper,
 	email,
 	homepage,
-	send_file,
+	netmeeting,
 	tab_room,
 	tab_new_content,
 	tab_status,
@@ -84,9 +84,10 @@ inline constexpr std::array<IconBinding, 7> kUserToolbarIcons{{
 	{ID_WHISPERBOX_MLIST, Glyph::whisper, "whisper"},
 	{ID_SEND_EMAIL, Glyph::email, "email"},
 	{ID_VISIT_HOMEPAGE, Glyph::homepage, "homepage"},
-	// The dead NetMeeting slot is deliberately replaced in place so all other
-	// source strip indices remain stable.
-	{ID_SEND_FILE, Glyph::send_file, "send-file"},
+	// Microsoft authored this physical cell for NetMeeting.  The obsolete
+	// command is omitted from the toolbar, but the catalog retains the source
+	// cell and never misrepresents its glyph as another action.
+	{0, Glyph::netmeeting, "netmeeting-obsolete"},
 }};
 
 inline constexpr std::array<IconBinding, 4> kRoomTabIcons{{
