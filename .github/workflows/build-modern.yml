@@ -58,7 +58,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          CC=clang-22 CXX=clang++-22 meson setup portable/build-ci \
+          CC=clang-22 CXX=clang++-22 meson setup portable/build-ci portable \
             --buildtype=release \
             --force-fallback-for=sdl3,harfbuzz,icu,catch2
           meson compile -C portable/build-ci
@@ -119,7 +119,7 @@ jobs:
             export CXX=/usr/local/llvm22/bin/clang++
             "$CXX" --version
             "$CXX" --version | grep -F 'clang version 22.'
-            meson setup portable/build-freebsd --buildtype=release
+            meson setup portable/build-freebsd portable --buildtype=release
             meson compile -C portable/build-freebsd
             SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
               meson test -C portable/build-freebsd --print-errorlogs
@@ -155,7 +155,7 @@ jobs:
             export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/X11R6/lib/pkgconfig
             "$CXX" --version
             "$CXX" --version | grep -F 'clang version 21.'
-            meson setup portable/build-openbsd --buildtype=release --force-fallback-for=catch2
+            meson setup portable/build-openbsd portable --buildtype=release --force-fallback-for=catch2
             meson compile -C portable/build-openbsd
             SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
               meson test -C portable/build-openbsd --print-errorlogs
