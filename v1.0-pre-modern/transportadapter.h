@@ -27,6 +27,7 @@ namespace comic_chat::v1::transport {
 inline constexpr std::size_t maximum_irc_wire_bytes = 8191U + 512U;
 inline constexpr std::size_t maximum_legacy_wire_bytes = 512U;
 inline constexpr std::size_t maximum_legacy_prefix_component_bytes = 49U;
+inline constexpr std::size_t maximum_protocol_lines_per_ui_wake = 512U;
 
 enum class AdapterError : std::uint8_t {
 	not_open,
@@ -34,6 +35,29 @@ enum class AdapterError : std::uint8_t {
 	line_too_long,
 	allocation_failed,
 	transport_error,
+};
+
+// One instance is created for each drained Windows UI notification and shared
+// by every BytesReceived event in that drain. This bounds parser and legacy UI
+// work across event-batch boundaries rather than merely bounding each socket
+// read in isolation.
+class ProtocolLineBudget final {
+public:
+	explicit ProtocolLineBudget(
+		std::size_t maximum = maximum_protocol_lines_per_ui_wake) noexcept
+		: remaining_{maximum} {}
+
+	[[nodiscard]] bool Consume(const std::size_t count) noexcept
+	{
+		if (count > remaining_) return false;
+		remaining_ -= count;
+		return true;
+	}
+
+	[[nodiscard]] std::size_t remaining() const noexcept { return remaining_; }
+
+private:
+	std::size_t remaining_{};
 };
 
 namespace detail {

@@ -1,10 +1,21 @@
+// This is an assertion-driven standalone test executable. Release CI defines
+// NDEBUG for product code, but removing the expressions here would both erase
+// the test oracle and leave the fixtures unused under Clang's -Werror gate.
+#if defined(NDEBUG)
+#undef NDEBUG
+#endif
+
 #include "../transportadapter.h"
+
+#include "comicchat/net/sts_session.hpp"
 
 #include <atomic>
 #include <array>
 #include <cassert>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <span>
@@ -19,6 +30,7 @@ using comic_chat::v1::transport::AdapterError;
 using comic_chat::v1::transport::EventAction;
 using comic_chat::v1::transport::SessionGate;
 using comic_chat::v1::transport::SessionPhase;
+using comic_chat::v1::transport::ProtocolLineBudget;
 using comic_chat::v1::transport::WakeupGate;
 
 comicchat::net::Event Connected(comicchat::net::GenerationId generation)
@@ -108,6 +120,190 @@ void TestWakeupCoalescingAndCookieIsolation()
 		start.notify_all();
 	}
 	assert(winners.load(std::memory_order_relaxed) == 1);
+}
+
+void TestAggregateProtocolLineBudget()
+{
+	ProtocolLineBudget budget;
+	assert(budget.remaining() ==
+		comic_chat::v1::transport::maximum_protocol_lines_per_ui_wake);
+	assert(budget.Consume(128));
+	assert(budget.remaining() == 384);
+	assert(budget.Consume(383));
+	assert(budget.remaining() == 1);
+	assert(!budget.Consume(2));
+	assert(budget.remaining() == 1);
+	assert(budget.Consume(1));
+	assert(budget.remaining() == 0);
+	assert(budget.Consume(0));
+	assert(!budget.Consume(1));
+
+	ProtocolLineBudget empty{0};
+	assert(empty.Consume(0));
+	assert(!empty.Consume(1));
+}
+
+comicchat::net::StsTimePoint At(const std::int64_t seconds)
+{
+	return comicchat::net::StsTimePoint{std::chrono::seconds{seconds}};
+}
+
+struct TemporaryDirectory final {
+	TemporaryDirectory()
+	{
+		static std::uint64_t sequence{};
+		std::error_code error;
+		const auto root = std::filesystem::temp_directory_path(error);
+		if (error) return;
+		for (unsigned int attempt = 0; attempt < 100; ++attempt) {
+			path = root / ("comicchat-v1-sts-test-" + std::to_string(++sequence) +
+				"-" + std::to_string(attempt));
+			if (std::filesystem::create_directory(path, error)) return;
+			error.clear();
+		}
+		path.clear();
+	}
+
+	~TemporaryDirectory()
+	{
+		std::error_code error;
+		if (!path.empty()) std::filesystem::remove_all(path, error);
+	}
+
+	std::filesystem::path path;
+};
+
+comicchat::net::ConnectionOptions Request(
+	std::string host,
+	const std::uint16_t port,
+	const comicchat::net::Security security)
+{
+	comicchat::net::ConnectionOptions options;
+	options.endpoint.host = host;
+	options.endpoint.port = port;
+	options.server_name = std::move(host);
+	options.security = security;
+	return options;
+}
+
+void TestDurableStsPolicyOrdersTransportAndProtocolOutput()
+{
+	using comic_chat::ircv3::StsPolicyAction;
+	using comic_chat::ircv3::StsPolicyUpdate;
+	using comicchat::net::EngineError;
+	using comicchat::net::GenerationId;
+	using comicchat::net::Security;
+	using comicchat::net::StsProtocolDisposition;
+	using comicchat::net::StsSessionPolicy;
+
+	TemporaryDirectory temporary;
+	assert(!temporary.path.empty());
+	const auto policy_file = temporary.path / "sts-policies-v1";
+	StsSessionPolicy first{policy_file};
+	assert(first.load(At(10)).has_value());
+	const auto secure = first.start(
+		Request("IRC.Example.", 7443, Security::tls), At(10),
+		[](const comicchat::net::ConnectionOptions& planned) {
+			assert(planned.security == Security::tls);
+			assert(planned.endpoint.port == 7443);
+			return std::expected<GenerationId, EngineError>{GenerationId{31}};
+		});
+	assert(secure && first.connected(31, true).has_value());
+
+	comic_chat::ircv3::ProcessResult result;
+	result.sts_update = StsPolicyUpdate{StsPolicyAction::Persist, 0, 3600, false};
+	result.outbound.emplace_back("CAP END\r\n");
+	bool same_line_output{};
+	const auto persisted = first.route_protocol_update(
+		result.sts_update, 31, At(11),
+		[](std::uint16_t) { return false; },
+		[&] {
+			assert(first.has_persistence_receipt());
+			same_line_output = true;
+			return true;
+		});
+	assert(persisted && *persisted == StsProtocolDisposition::continued);
+	assert(same_line_output);
+	assert(first.transport_disconnected(31, false, At(12)).has_value());
+
+	StsSessionPolicy restarted{policy_file};
+	assert(restarted.load(At(13)).has_value());
+	bool transport_started{};
+	const auto enforced = restarted.start(
+		Request("irc.example", 6667, Security::plaintext), At(13),
+		[&](const comicchat::net::ConnectionOptions& planned) {
+			transport_started = true;
+			assert(planned.security == Security::tls);
+			assert(planned.endpoint.port == 7443);
+			return std::expected<GenerationId, EngineError>{GenerationId{32}};
+		});
+	assert(transport_started && enforced && enforced->enforced);
+	assert(restarted.connected(32, true).has_value());
+
+	result.sts_update.reset();
+	bool ordinary_output{};
+	const auto continued = restarted.route_protocol_update(
+		result.sts_update, 32, At(14),
+		[](std::uint16_t) { return false; },
+		[&] { ordinary_output = true; return true; });
+	assert(continued && *continued == StsProtocolDisposition::continued);
+	assert(ordinary_output);
+	assert(restarted.transport_disconnected(32, true, At(15)).has_value());
+	assert(restarted.active_generation() == 32);
+	assert(restarted.connected(32, true).has_value());
+	assert(restarted.transport_disconnected(32, false, At(16)).has_value());
+
+	StsSessionPolicy upgrade_session{temporary.path / "upgrade-policies"};
+	assert(upgrade_session.load(At(20)).has_value());
+	const auto plaintext = upgrade_session.start(
+		Request("irc.example", 6667, Security::plaintext), At(20),
+		[](const comicchat::net::ConnectionOptions&) {
+			return std::expected<GenerationId, EngineError>{GenerationId{40}};
+		});
+	assert(plaintext && upgrade_session.connected(40, false).has_value());
+	result.sts_update = StsPolicyUpdate{StsPolicyAction::Upgrade, 6697, 0, false};
+	bool upgraded{};
+	bool forbidden_output{};
+	const auto disposition = upgrade_session.route_protocol_update(
+		result.sts_update, 40, At(21),
+		[&](const std::uint16_t port) {
+			assert(port == 6697);
+			upgraded = true;
+			return true;
+		},
+		[&] { forbidden_output = true; return true; });
+	assert(disposition && *disposition == StsProtocolDisposition::reconnected);
+	assert(upgraded && !forbidden_output);
+
+	const auto failing_directory = temporary.path / "failing-store";
+	std::error_code error;
+	assert(std::filesystem::create_directory(failing_directory, error));
+	StsSessionPolicy failing{failing_directory / "sts-policies-v1"};
+	assert(failing.load(At(30)).has_value());
+	const auto failing_secure = failing.start(
+		Request("irc.example", 6697, Security::tls), At(30),
+		[](const comicchat::net::ConnectionOptions&) {
+			return std::expected<GenerationId, EngineError>{GenerationId{50}};
+		});
+	assert(failing_secure && failing.connected(50, true).has_value());
+	std::filesystem::remove_all(failing_directory, error);
+	assert(!error);
+	bool released_after_store_failure{};
+	const auto store_failure = failing.route_protocol_update(
+		StsPolicyUpdate{StsPolicyAction::Persist, 0, 600, false},
+		50, At(31), [](std::uint16_t) { return false; },
+		[&] { released_after_store_failure = true; return true; });
+	assert(!store_failure);
+	assert(store_failure.error().code == comicchat::net::StsSessionError::store_failure);
+	assert(!released_after_store_failure);
+	assert(!failing.healthy() && !failing.ready());
+	bool released_after_latch{};
+	const auto latched = failing.route_protocol_update(
+		std::nullopt, 50, At(32), [](std::uint16_t) { return false; },
+		[&] { released_after_latch = true; return true; });
+	assert(!latched);
+	assert(latched.error().code == comicchat::net::StsSessionError::unhealthy);
+	assert(!released_after_latch);
 }
 
 void TestBoundedOutboundFacade()
@@ -386,6 +582,8 @@ int main()
 {
 	TestGenerationAndOrdering();
 	TestWakeupCoalescingAndCookieIsolation();
+	TestAggregateProtocolLineBudget();
+	TestDurableStsPolicyOrdersTransportAndProtocolOutput();
 	TestBoundedOutboundFacade();
 	TestCheckedLegacyOutboundBuilder();
 	TestLegacyOutboundMicrosoftWireGrammar();

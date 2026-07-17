@@ -2,12 +2,15 @@
 #include "comicchat/net/connection_engine.hpp"
 #include "comicchat/net/dcc_transfer_engine.hpp"
 #include "comicchat/net/ircv3.hpp"
+#include "comicchat/net/private_config.hpp"
 #include "comicchat/net/sts_policy_store.hpp"
+#include "comicchat/net/sts_session.hpp"
 #include "../transportadapter.h"
 
 #include <concepts>
 #include <cstddef>
 #include <expected>
+#include <filesystem>
 #include <functional>
 #include <optional>
 #include <span>
@@ -24,6 +27,7 @@ namespace {
 using comicchat::net::ConnectionEngine;
 using comicchat::net::DccTransferEngine;
 using comicchat::net::StsPolicyStore;
+using comicchat::net::StsSessionPolicy;
 using IrcEngine = comic_chat::ircv3::Engine;
 
 static_assert(
@@ -84,6 +88,34 @@ static_assert(std::same_as<decltype(std::declval<const StsPolicyStore &>().plan(
 								   std::declval<comicchat::net::StsTimePoint>())),
 				   std::expected<comicchat::net::StsConnectionPlan,
 							 comicchat::net::StsStoreError>>);
+static_assert(std::same_as<decltype(std::declval<StsSessionPolicy &>().start(
+								   std::declval<comicchat::net::ConnectionOptions>(),
+								   std::declval<comicchat::net::StsTimePoint>(),
+								   std::declval<const StsSessionPolicy::StartTransport &>())),
+				   std::expected<comicchat::net::StsSessionStart,
+							 comicchat::net::StsSessionFailure>>);
+static_assert(std::same_as<decltype(std::declval<StsSessionPolicy &>().connected(
+								   comicchat::net::GenerationId{1}, true)),
+				   std::expected<void, comicchat::net::StsSessionFailure>>);
+static_assert(std::same_as<decltype(std::declval<StsSessionPolicy &>()
+								   .route_protocol_update(
+									   std::declval<const std::optional<
+										   comic_chat::ircv3::StsPolicyUpdate> &>(),
+									   comicchat::net::GenerationId{1},
+									   std::declval<comicchat::net::StsTimePoint>(),
+									   std::declval<const StsSessionPolicy::ReconnectSecure &>(),
+									   std::declval<const StsSessionPolicy::ContinueProtocolOutput &>())),
+				   std::expected<comicchat::net::StsProtocolDisposition,
+							 comicchat::net::StsSessionFailure>>);
+static_assert(std::same_as<decltype(std::declval<StsSessionPolicy &>()
+								   .transport_disconnected(
+									   comicchat::net::GenerationId{1}, true,
+									   std::declval<comicchat::net::StsTimePoint>())),
+				   std::expected<void, comicchat::net::StsSessionFailure>>);
+static_assert(std::same_as<decltype(comicchat::net::native_private_config_file(
+								   std::declval<std::string_view>())),
+				   std::expected<std::filesystem::path,
+							 comicchat::net::PrivateConfigError>>);
 
 static_assert(std::same_as<decltype(comic_chat::v1::transport::PrepareOutbound(
 								   std::declval<IrcEngine &>(),
@@ -110,6 +142,10 @@ static_assert(std::same_as<decltype(comic_chat::v1::transport::BuildLegacyOutbou
 							 comic_chat::v1::transport::AdapterError>>);
 static_assert(noexcept(std::declval<comic_chat::v1::transport::SessionGate &>().Stop()));
 static_assert(noexcept(std::declval<comic_chat::v1::transport::WakeupGate &>().Disable()));
+static_assert(std::same_as<decltype(std::declval<
+	comic_chat::v1::transport::ProtocolLineBudget &>().Consume(std::size_t{1})), bool>);
+static_assert(noexcept(std::declval<
+	comic_chat::v1::transport::ProtocolLineBudget &>().Consume(std::size_t{1})));
 
 static_assert(
     std::same_as<decltype(comicchat::crypto::initialize_runtime()), bool>);

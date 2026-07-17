@@ -111,7 +111,7 @@ BSC32_SBRS= \
 LINK32=link.exe
 # ADD BASE LINK32 /nologo /subsystem:windows /machine:I386
 # ADD LINK32 uuid.lib winmm.lib /nologo /subsystem:windows /machine:I386 /nodefaultlib:"libc"
-LINK32_FLAGS=uuid.lib winmm.lib ws2_32.lib libuv.lib mbedtls.lib mbedx509.lib \
+LINK32_FLAGS=uuid.lib ole32.lib shell32.lib winmm.lib ws2_32.lib libuv.lib mbedtls.lib mbedx509.lib \
  mbedcrypto.lib bcrypt.lib crypt32.lib userenv.lib iphlpapi.lib psapi.lib advapi32.lib \
  /nologo /subsystem:windows /incremental:no /FORCE:MULTIPLE\
  /LIBPATH:"$(VCTOOLSINSTALLDIR)ATLMFC\lib\spectre\x86"\
@@ -150,7 +150,9 @@ LINK32_OBJS= \
 	"$(INTDIR)\connection_engine.obj" \
 	"$(INTDIR)\dcc_transfer_engine.obj" \
 	"$(INTDIR)\ircv3.obj" \
+	"$(INTDIR)\private_config.obj" \
 	"$(INTDIR)\sts_policy_store.obj" \
+	"$(INTDIR)\sts_session.obj" \
 	"$(INTDIR)\transport_adapter_api_compile.obj" \
 	"$(INTDIR)\MainFrm.obj" \
 	"$(INTDIR)\memblst.obj" \
@@ -233,7 +235,7 @@ BSC32_SBRS= \
 LINK32=link.exe
 # ADD BASE LINK32 /nologo /subsystem:windows /debug /machine:I386
 # ADD LINK32 uuid.lib winmm.lib /nologo /subsystem:windows /incremental:no /debug /machine:I386 /nodefaultlib:"libc"
-LINK32_FLAGS=uuid.lib winmm.lib ws2_32.lib libuv.lib mbedtls.lib mbedx509.lib \
+LINK32_FLAGS=uuid.lib ole32.lib shell32.lib winmm.lib ws2_32.lib libuv.lib mbedtls.lib mbedx509.lib \
  mbedcrypto.lib bcrypt.lib crypt32.lib userenv.lib iphlpapi.lib psapi.lib advapi32.lib \
  /nologo /subsystem:windows /FORCE:MULTIPLE\
  /LIBPATH:"$(VCTOOLSINSTALLDIR)ATLMFC\lib\spectre\x86"\
@@ -272,7 +274,9 @@ LINK32_OBJS= \
 	"$(INTDIR)\connection_engine.obj" \
 	"$(INTDIR)\dcc_transfer_engine.obj" \
 	"$(INTDIR)\ircv3.obj" \
+	"$(INTDIR)\private_config.obj" \
 	"$(INTDIR)\sts_policy_store.obj" \
+	"$(INTDIR)\sts_session.obj" \
 	"$(INTDIR)\transport_adapter_api_compile.obj" \
 	"$(INTDIR)\MainFrm.obj" \
 	"$(INTDIR)\memblst.obj" \
@@ -341,8 +345,14 @@ LINK32_OBJS= \
 "$(INTDIR)\ircv3.obj" : ..\portable\src\net\ircv3.cpp cpp26mode.h "$(INTDIR)"
 	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\ircv3.obj" ..\portable\src\net\ircv3.cpp
 
+"$(INTDIR)\private_config.obj" : ..\portable\src\net\private_config.cpp cpp26mode.h "$(INTDIR)"
+	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\private_config.obj" ..\portable\src\net\private_config.cpp
+
 "$(INTDIR)\sts_policy_store.obj" : ..\portable\src\net\sts_policy_store.cpp cpp26mode.h "$(INTDIR)"
 	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\sts_policy_store.obj" ..\portable\src\net\sts_policy_store.cpp
+
+"$(INTDIR)\sts_session.obj" : ..\portable\src\net\sts_session.cpp cpp26mode.h "$(INTDIR)"
+	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\sts_session.obj" ..\portable\src\net\sts_session.cpp
 
 "$(INTDIR)\transport_adapter_api_compile.obj" : tests\transport_adapter_api_compile.cpp cpp26mode.h transportadapter.h "$(INTDIR)"
 	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\transport_adapter_api_compile.obj" tests\transport_adapter_api_compile.cpp

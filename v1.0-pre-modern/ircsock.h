@@ -6,6 +6,7 @@
 
 #include "comicchat/net/connection_engine.hpp"
 #include "comicchat/net/ircv3.hpp"
+#include "comicchat/net/sts_session.hpp"
 #include "transportadapter.h"
 
 #include <atomic>
@@ -49,8 +50,11 @@ private:
 			LPCSTR server, UINT port, BOOL secure_transport);
 	std::expected<comicchat::net::SendId,
 		comic_chat::v1::transport::AdapterError> QueueProtocolLine(std::string_view wire);
+	BOOL EnsureStsPolicyLoaded();
+	BOOL FinishStsTransport(comicchat::net::GenerationId generation, BOOL retain_for_retry);
 	void DispatchProtocolMessage(const comic_chat::ircv3::Message& message);
-	void ProcessReceivedBytes(const comicchat::net::BytesReceived& received);
+	void ProcessReceivedBytes(const comicchat::net::BytesReceived& received,
+		comic_chat::v1::transport::ProtocolLineBudget& line_budget);
 	void RequestUiWakeup(std::uint64_t cookie);
 	void DrainNetworkEvents(std::uint64_t cookie);
 
@@ -59,6 +63,7 @@ private:
 	comic_chat::ircv3::Engine ircv3_;
 	comic_chat::ircv3::LineFramer line_framer_;
 	comic_chat::v1::transport::SessionGate session_;
+	std::optional<comicchat::net::StsSessionPolicy> sts_session_;
 	comicchat::net::GenerationId generation_{};
 	comicchat::net::SendId next_send_id_{1};
 	comicchat::net::State transport_state_{comicchat::net::State::stopped};
