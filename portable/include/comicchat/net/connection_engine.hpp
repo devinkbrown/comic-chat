@@ -127,9 +127,10 @@ public:
     ConnectionEngine(ConnectionEngine&&) noexcept;
     auto operator=(ConnectionEngine&&) noexcept -> ConnectionEngine&;
 
-    // A running engine must be stopped before it can be started again. Calling
-    // start() from its network-thread notifier returns already_running even if
-    // that notifier just requested stop, because the worker is still joinable.
+    // External start()/stop() calls are linearized. A running engine must be
+    // stopped before it can be started again. Calling start() from its
+    // network-thread notifier returns already_running even if that notifier
+    // just requested stop, because the worker is still joinable.
     [[nodiscard]] auto start(ConnectionOptions options) -> std::expected<GenerationId, EngineError>;
     [[nodiscard]] auto post(Command command) -> std::expected<void, EngineError>;
     [[nodiscard]] auto poll_events(std::size_t maximum = 128) -> std::vector<Event>;

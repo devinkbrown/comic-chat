@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <barrier>
 #include <chrono>
 #include <csignal>
 #include <cstddef>
@@ -716,6 +717,33 @@ auto options_for(const LoopbackServer& server, const comicchat::net::Security se
     return options;
 }
 
+auto lifecycle_options() -> comicchat::net::ConnectionOptions {
+    comicchat::net::ConnectionOptions options;
+    options.endpoint = {"127.0.0.1", 1};
+    options.security = comicchat::net::Security::plaintext;
+    options.deadlines.connect = 100ms;
+    options.deadlines.handshake = 100ms;
+    options.deadlines.idle = 1s;
+    options.deadlines.ping = 500ms;
+    return options;
+}
+
+template <typename First, typename Second>
+void run_concurrently(First&& first, Second&& second) {
+    std::barrier start{3};
+    std::thread first_thread{[&] {
+        start.arrive_and_wait();
+        std::invoke(first);
+    }};
+    std::thread second_thread{[&] {
+        start.arrive_and_wait();
+        std::invoke(second);
+    }};
+    start.arrive_and_wait();
+    first_thread.join();
+    second_thread.join();
+}
+
 auto bytes(std::string_view value) -> std::vector<std::byte> {
     std::vector<std::byte> result(value.size());
     std::memcpy(result.data(), value.data(), value.size());
@@ -1007,6 +1035,59 @@ TEST_CASE("start rejects an already running connection without changing generati
           std::unexpected{comicchat::net::EngineError::already_running});
     CHECK(engine.generation() == *generation);
     engine.stop();
+}
+
+TEST_CASE("concurrent starts have exactly one lifecycle winner") {
+    auto options = lifecycle_options();
+    comicchat::net::ConnectionEngine engine;
+
+    for (unsigned int iteration = 0; iteration < 32; ++iteration) {
+        std::expected<comicchat::net::GenerationId, comicchat::net::EngineError> first =
+            std::unexpected{comicchat::net::EngineError::not_running};
+        std::expected<comicchat::net::GenerationId, comicchat::net::EngineError> second =
+            std::unexpected{comicchat::net::EngineError::not_running};
+        run_concurrently(
+            [&] { first = engine.start(options); },
+            [&] { second = engine.start(options); });
+
+        const auto successes = static_cast<unsigned int>(first.has_value()) +
+            static_cast<unsigned int>(second.has_value());
+        CHECK(successes == 1);
+        const auto& rejected = first ? second : first;
+        CHECK_FALSE(rejected.has_value());
+        CHECK(rejected.error() == comicchat::net::EngineError::already_running);
+        engine.stop();
+    }
+}
+
+TEST_CASE("concurrent start and stop form one complete lifecycle transition") {
+    auto options = lifecycle_options();
+    comicchat::net::ConnectionEngine engine;
+
+    for (unsigned int iteration = 0; iteration < 64; ++iteration) {
+        std::expected<comicchat::net::GenerationId, comicchat::net::EngineError> started =
+            std::unexpected{comicchat::net::EngineError::not_running};
+        run_concurrently(
+            [&] { started = engine.start(options); },
+            [&] { engine.stop(); });
+        CHECK(started.has_value());
+        engine.stop();
+    }
+}
+
+TEST_CASE("concurrent stops share one completed worker join") {
+    auto options = lifecycle_options();
+    comicchat::net::ConnectionEngine engine;
+
+    for (unsigned int iteration = 0; iteration < 32; ++iteration) {
+        const auto generation = engine.start(options);
+        REQUIRE(generation.has_value());
+        run_concurrently(
+            [&] { engine.stop(); },
+            [&] { engine.stop(); });
+        CHECK(engine.post(comicchat::net::Disconnect{*generation, "already stopped"}) ==
+              std::unexpected{comicchat::net::EngineError::not_running});
+    }
 }
 
 TEST_CASE("moved-from connection wrappers remain reusable stopped objects") {

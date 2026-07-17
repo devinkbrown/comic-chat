@@ -147,18 +147,18 @@ public:
     }
 
     auto start(ConnectionOptions options) -> std::expected<GenerationId, EngineError> {
-        bool already_running{};
-        {
-            std::scoped_lock lock{mutex_};
-            // Assigning a jthread over its own joinable worker terminates (or
-            // throws into a noexcept move assignment). A stopped worker may be
-            // joined and reused by an external caller, but never by itself.
-            already_running = !stopped_ ||
-                (thread_.joinable() && thread_.get_id() == std::this_thread::get_id());
-        }
-        if (already_running) {
+        const auto reject_running = [&options]() -> std::expected<GenerationId, EngineError> {
             if (options.proxy.password) secure_clear(*options.proxy.password);
             return std::unexpected{EngineError::already_running};
+        };
+        // A notifier executes on the worker. It must never wait behind an
+        // external lifecycle operation that may already be joining that worker.
+        if (called_from_worker()) return reject_running();
+
+        std::scoped_lock lifecycle_lock{lifecycle_mutex_};
+        {
+            std::scoped_lock lock{mutex_};
+            if (!stopped_) return reject_running();
         }
         if (!crypto_ready_) return std::unexpected{EngineError::crypto_unavailable};
         if (options.security == Security::tls && options.server_name.empty()) options.server_name = options.endpoint.host;
@@ -176,7 +176,7 @@ public:
             secure_clear(*options.proxy.password);
             options.proxy.password.reset();
         }
-        stop();
+        stop_external();
         reset_tls_configuration();
         {
             std::scoped_lock lock{mutex_};
@@ -197,7 +197,7 @@ public:
         thread_ = threading::JThread{[this](const threading::StopToken token) noexcept { network_thread_entry(token); }};
         const auto posted = post(Connect{generation(), options_});
         if (!posted) {
-            stop();
+            stop_external();
             return std::unexpected{posted.error()};
         }
         return generation();
@@ -268,30 +268,15 @@ public:
     }
 
     void stop() noexcept {
-        bool self_stop{};
-        {
+        if (called_from_worker()) {
             std::scoped_lock lock{mutex_};
             stopped_ = true;
-            if (!thread_.joinable()) return;
             thread_.request_stop();
             if (loop_ready_.load(std::memory_order_acquire)) (void)uv_async_send(&command_wakeup_);
-            self_stop = thread_.get_id() == std::this_thread::get_id();
+            return;
         }
-        if (self_stop) return;
-        try {
-            thread_.join();
-        } catch (...) {
-            // A detached worker captures Impl and would become a destructor
-            // use-after-free. The self-thread case is handled above; any other
-            // join failure violates the engine lifetime contract.
-            std::terminate();
-        }
-        std::scoped_lock lock{mutex_};
-        clear_command_queues_locked();
-        queued_bytes_ = 0;
-        reserved_send_completions_ = 0;
-        reserved_receive_events_ = 0;
-        proxy_password_.reset();
+        std::scoped_lock lifecycle_lock{lifecycle_mutex_};
+        stop_external();
     }
 
     auto generation() const noexcept -> GenerationId {
@@ -315,6 +300,38 @@ public:
     }
 
 private:
+    auto called_from_worker() const noexcept -> bool {
+        std::scoped_lock lock{mutex_};
+        return worker_id_ == std::this_thread::get_id();
+    }
+
+    // lifecycle_mutex_ serializes all external access to thread_ and the TLS
+    // reset/start transition. The worker never takes it, so this may join while
+    // still allowing a notifier's request-only stop() to finish.
+    void stop_external() noexcept {
+        {
+            std::scoped_lock lock{mutex_};
+            stopped_ = true;
+            if (!thread_.joinable()) return;
+            thread_.request_stop();
+            if (loop_ready_.load(std::memory_order_acquire)) (void)uv_async_send(&command_wakeup_);
+        }
+        try {
+            thread_.join();
+        } catch (...) {
+            // A detached worker captures Impl and would become a destructor
+            // use-after-free. The self-thread case is handled above; any other
+            // join failure violates the engine lifetime contract.
+            std::terminate();
+        }
+        std::scoped_lock lock{mutex_};
+        clear_command_queues_locked();
+        queued_bytes_ = 0;
+        reserved_send_completions_ = 0;
+        reserved_receive_events_ = 0;
+        proxy_password_.reset();
+    }
+
     enum class Pipeline { idle, resolving, connecting, proxy, tls, open, reconnect_wait };
     enum class ProxyPhase { none, socks_greeting, socks_auth, socks_connect, http_connect };
 
@@ -621,6 +638,10 @@ private:
     }
 
     void network_thread_entry(const threading::StopToken token) noexcept {
+        {
+            std::scoped_lock lock{mutex_};
+            worker_id_ = std::this_thread::get_id();
+        }
         try {
             network_loop(token);
         } catch (...) {
@@ -628,6 +649,7 @@ private:
             cleanup_network_loop();
         }
         std::scoped_lock lock{mutex_};
+        worker_id_ = {};
         stopped_ = true;
         clear_command_queues_locked();
         queued_bytes_ = 0;
@@ -1680,6 +1702,7 @@ private:
 #endif
     }
 
+    std::mutex lifecycle_mutex_;
     mutable std::mutex mutex_;
     std::array<std::deque<Command>, 5> commands_;
     std::array<std::deque<PendingWrite>, 5> transmit_;
@@ -1688,6 +1711,7 @@ private:
     ConnectionOptions options_;
     std::optional<LockedSecret> proxy_password_;
     threading::JThread thread_;
+    std::thread::id worker_id_;
     GenerationId generation_{};
     std::size_t queued_bytes_{};
     std::size_t queued_receive_bytes_{};
