@@ -312,6 +312,12 @@ jobs:
           rem /K reports every independent strict-mode source failure in one CI run.
           nmake /K /f chat.mak CFG="chat - Win32 Release"
           if errorlevel 1 exit /b 1
+          nmake /f chat.mak CFG="chat - Win32 Release" TESTS
+          if errorlevel 1 exit /b 1
+          Release\modernui_test.exe
+          if errorlevel 1 exit /b 1
+          Release\transport_ui_bridge_test.exe
+          if errorlevel 1 exit /b 1
           popd
 
       - name: Create archival ZIP files

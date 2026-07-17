@@ -125,6 +125,13 @@ LINK32_FLAGS=/nologo /subsystem:windows /FORCE:MULTIPLE /incremental:no /debug \
  shell32.lib winmm.lib imm32.lib winspool.lib comdlg32.lib oledlg.lib wininet.lib zlib.lib \
  /out:"$(OUTDIR)\CChat.exe"
 
+# Standalone console tests deliberately link only their own main() and the
+# implementation under test.  In particular, none of the CChat.exe object set
+# (and therefore no MFC WinMain) is present in these links.
+TEST_LINK32_FLAGS=/nologo /subsystem:console /incremental:no /debug /machine:I386 \
+ /LIBPATH:"$(VCTOOLSINSTALLDIR)ATLMFC\lib\spectre\x86" \
+ user32.lib gdi32.lib advapi32.lib comctl32.lib
+
 OBJS= \
 	"$(INTDIR)\stdafx.obj" \
 	"$(INTDIR)\dlylddll.obj" \
@@ -223,6 +230,8 @@ OBJS= \
 
 ALL : "$(OUTDIR)\CChat.exe"
 
+TESTS : "$(OUTDIR)\modernui_test.exe" "$(OUTDIR)\transport_ui_bridge_test.exe"
+
 "$(INTDIR)" :
 	if not exist "$(INTDIR)/$(NULL)" mkdir "$(INTDIR)"
 
@@ -234,6 +243,16 @@ icchat_i.c icchat.h : base\icchat.idl
 "$(OUTDIR)\CChat.exe" : "$(INTDIR)" icchat.h $(OBJS)
 	$(LINK32) @<<
 $(LINK32_FLAGS) $(OBJS)
+<<
+
+"$(OUTDIR)\modernui_test.exe" : "$(INTDIR)" "$(INTDIR)\modernui_test.obj" "$(INTDIR)\modernui.obj"
+	$(LINK32) @<<
+$(TEST_LINK32_FLAGS) /out:"$(OUTDIR)\modernui_test.exe" "$(INTDIR)\modernui_test.obj" "$(INTDIR)\modernui.obj"
+<<
+
+"$(OUTDIR)\transport_ui_bridge_test.exe" : "$(INTDIR)" "$(INTDIR)\transport_ui_bridge_test.obj"
+	$(LINK32) @<<
+$(TEST_LINK32_FLAGS) /out:"$(OUTDIR)\transport_ui_bridge_test.exe" "$(INTDIR)\transport_ui_bridge_test.obj"
 <<
 
 # ---- Resource ----
@@ -264,6 +283,12 @@ $(LINK32_FLAGS) $(OBJS)
 
 "$(INTDIR)\transport_adapter_api_compile.obj" : tests\transport_adapter_api_compile.cpp
 	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\transport_adapter_api_compile.obj" tests\transport_adapter_api_compile.cpp
+
+"$(INTDIR)\modernui_test.obj" : tests\modernui_test.cpp
+	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\modernui_test.obj" tests\modernui_test.cpp
+
+"$(INTDIR)\transport_ui_bridge_test.obj" : tests\transport_ui_bridge_test.cpp
+	$(CPP) $(CPP_PROJ) /Fo"$(INTDIR)\transport_ui_bridge_test.obj" tests\transport_ui_bridge_test.cpp
 
 # ---- C sources ----
 {.}.c{$(INTDIR)}.obj:

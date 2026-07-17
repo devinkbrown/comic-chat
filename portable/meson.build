@@ -432,6 +432,30 @@ if get_option('tests')
   )
   test('comicchat-dcc-transfer', dcc_transfer_tests, timeout: 30)
 
+  # These tests exercise the UI contract shared with the native MFC client.
+  # Keep them as standalone executables: linking them into comicchat-tests or
+  # the frontend would introduce a second main() (and WinMain on Windows).
+  # The Windows implementation includes MFC's stdafx.h and is therefore
+  # covered by chat.mak below rather than by the portable Windows frontend.
+  if host_machine.system() != 'windows'
+    modernui_tests = executable(
+      'comicchat-modernui-tests',
+      [
+        '../v2.5-beta-1-modern/tests/modernui_test.cpp',
+        '../v2.5-beta-1-modern/modernui.cpp',
+      ],
+      include_directories: inc,
+    )
+    test('comicchat-modernui', modernui_tests, timeout: 30)
+  endif
+
+  transport_ui_bridge_tests = executable(
+    'comicchat-transport-ui-bridge-tests',
+    '../v2.5-beta-1-modern/tests/transport_ui_bridge_test.cpp',
+    include_directories: inc,
+  )
+  test('comicchat-transport-ui-bridge', transport_ui_bridge_tests, timeout: 30)
+
   executable(
     'comicchat-avatar-oracle',
     'tools/avatar_oracle.cpp',
