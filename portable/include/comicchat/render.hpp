@@ -1,11 +1,14 @@
 #pragma once
 
+#include "comicchat/avatar_assets.hpp"
 #include "comicchat/balloon.hpp"
 #include "comicchat/cpp26.hpp"
 #include "comicchat/layout.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -13,6 +16,19 @@
 namespace comicchat {
 
 class TextEngine;
+
+// Resolve a placed PanelBody to a composited avatar raster (Item 2.2 output:
+// render_avatar's AvatarBitmap, 0xAARRGGBB matching Cairo's ARGB32). Given the
+// device pixel size render_panel will stretch the raster into, the provider is
+// free to composite at that exact resolution for a crisp 1:1 blit, or return a
+// natural-size raster and let render_panel StretchBlt-scale it into the body
+// rect. Returning std::nullopt (or a default-constructed provider) keeps the
+// flat color-box placeholder for that body. Pure and deterministic: the same
+// PanelBody + target size must yield the same raster so frames stay
+// byte-reproducible. The nick->avatar mapping (Phase 2.5b) is the caller that
+// will supply this; here a single default avatar drives it.
+using PanelAvatarProvider = std::function<std::optional<AvatarBitmap>(
+    const PanelBody& body, std::int32_t target_width, std::int32_t target_height)>;
 
 struct Rgba final {
     double red{};
@@ -49,13 +65,15 @@ public:
     void render_title_panel(const TitlePanel& model, TextEngine& text);
 
     // Emit an assembled conversation panel (Item 2.1, render-port-spec.md
-    // §2.1.f) into the logical drawing pass: avatar body placeholders, the
+    // §2.1.f) into the logical drawing pass: real composited avatar bodies (when
+    // `avatars` resolves a PanelBody to an Item 2.2 raster) or a flat color-box
+    // placeholder otherwise, the
     // beta-spline cloud (or action box) outline, the whisper dash / think
     // bubbles / say tail, and the balloon text. Geometry arrives in panel-local
     // twips (Y-up) and is mapped through the single panel transform, exactly as
     // fill_logical_rect. Deterministic: the same Panel yields a byte-identical
     // frame.
-    void render_panel(const Panel& panel, TextEngine& text);
+    void render_panel(const Panel& panel, TextEngine& text, const PanelAvatarProvider& avatars = {});
 
     // The shared logical-coordinate drawing pass foundation (render-port-spec.md
     // §0). Compute the device transform that fits a `source_units`-twip square

@@ -1,11 +1,15 @@
+#include "comicchat/avatar_assets.hpp"
 #include "comicchat/balloon.hpp"
 #include "comicchat/layout.hpp"
 #include "comicchat/render.hpp"
 #include "comicchat/text.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <limits>
+#include <optional>
 #include <string>
 #include <vector>
 #include <catch2/catch_approx.hpp>
@@ -442,4 +446,148 @@ TEST_CASE("render_panel emits a deterministic byte-identical balloon frame") {
     // Pixel-exact PNG parity vs. MSVC GDI is a visual/MSVC follow-up; the
     // deterministic hash above is the Linux gate.
     CHECK(a.write_png("balloon_panel_golden.png"));
+}
+
+// ===================================================================
+// Item 2.5b#4 — render_panel blits the REAL Item 2.2 composited avatar raster
+// into each placed PanelBody, replacing the flat color-box placeholder. The
+// nick->avatar MAPPING is a separate 2.5b item; this task fixes the blit with a
+// single hardcoded default avatar (xeno.avb, the primary complex head+torso
+// composite in the shipped corpus). All geometry stays deterministic.
+// ===================================================================
+
+namespace {
+
+// A PanelAvatarProvider backed by one default avatar's neutral pose, composited
+// at the exact device pixel size render_panel asks for (crisp near-1:1 blit).
+// Honors body.flip. Returns nullopt on any failure so render_panel falls back to
+// the color box. Loading happens once per body render; the corpus avatar is tiny
+// so this stays fast and deterministic.
+auto default_avatar_provider(const char* filename) -> comicchat::PanelAvatarProvider {
+    const auto path = std::filesystem::path{COMICCHAT_TEST_COMICART_DIR} / filename;
+    return [path](const comicchat::PanelBody& body, std::int32_t target_width,
+                  std::int32_t target_height) -> std::optional<comicchat::AvatarBitmap> {
+        if (target_width <= 0 || target_height <= 0) return std::nullopt;
+        const auto asset = comicchat::load_avatar_asset(path);
+        if (!asset.has_value()) return std::nullopt;
+        const auto neutral = comicchat::select_avatar_expression(*asset, {0.0, 0.0});
+        if (!neutral.has_value()) return std::nullopt;
+        auto raster = comicchat::render_avatar(
+            *asset, {*neutral, target_width, target_height, body.flip, false});
+        if (!raster.has_value()) return std::nullopt;
+        return std::move(*raster);
+    };
+}
+
+// Count frame pixels exactly equal to a packed 0x00RRGGBB color, opacified to
+// Cairo's post-OVER opaque ARGB (0xffRRGGBB).
+auto count_color(const comicchat::Canvas& canvas, std::uint32_t rgb) -> long {
+    const auto argb = 0xff000000U | (rgb & 0x00ffffffU);
+    return std::ranges::count(canvas.pixels(), argb);
+}
+
+} // namespace
+
+TEST_CASE("render_panel blits the composited avatar raster over the color-box placeholder") {
+    const auto font = comicchat::find_portable_comic_font();
+    REQUIRE(font.has_value());
+    auto text = comicchat::TextEngine::create(*font);
+    REQUIRE(text.has_value());
+
+    const auto panel = demo_panel();
+    REQUIRE(panel.bodies.size() == 2);
+    const auto color0 = panel.bodies[0].color;  // 0x6c8ebf placeholder
+    const auto color1 = panel.bodies[1].color;  // 0xb85c5c placeholder
+
+    // Baseline: the flat color-box placeholders (no provider wired).
+    comicchat::Canvas boxes{460, 460};
+    boxes.clear({1.0, 1.0, 1.0, 1.0});
+    boxes.render_panel(panel, **text);
+
+    // The two body boxes are large flat fills of their placeholder colors.
+    const auto box_fill0 = count_color(boxes, color0);
+    const auto box_fill1 = count_color(boxes, color1);
+    CHECK(box_fill0 > 3000);
+    CHECK(box_fill1 > 3000);
+
+    // Same panel, now with a real avatar composited into every body box.
+    const auto provider = default_avatar_provider("xeno.avb");
+    comicchat::Canvas avatars{460, 460};
+    avatars.clear({1.0, 1.0, 1.0, 1.0});
+    avatars.render_panel(panel, **text, provider);
+
+    // Determinism gate: identical model + provider -> byte-identical frame.
+    comicchat::Canvas avatars_repeat{460, 460};
+    avatars_repeat.clear({1.0, 1.0, 1.0, 1.0});
+    avatars_repeat.render_panel(panel, **text, provider);
+    CHECK(std::ranges::equal(avatars.pixels(), avatars_repeat.pixels()));
+    CHECK(frame_hash(avatars) == frame_hash(avatars_repeat));
+
+    // The blit replaced the flat boxes: the placeholder-color fills are gone
+    // (the opaque avatar raster overwrote the box interiors).
+    const auto avatar_fill0 = count_color(avatars, color0);
+    const auto avatar_fill1 = count_color(avatars, color1);
+    CHECK(avatar_fill0 < box_fill0 / 4);
+    CHECK(avatar_fill1 < box_fill1 / 4);
+
+    // The avatar raster genuinely changed the body region: a large number of
+    // pixels differ from the flat-box baseline, proving real pixels were drawn
+    // and not a color box. (The balloons/text are identical between the two
+    // frames, so every diff comes from the body boxes.)
+    std::size_t differing{};
+    REQUIRE(avatars.pixels().size() == boxes.pixels().size());
+    for (std::size_t i = 0; i < avatars.pixels().size(); ++i) {
+        if (avatars.pixels()[i] != boxes.pixels()[i]) ++differing;
+    }
+    CHECK(differing > 5000);
+
+    // Region-scoped proof: inside each placed body box (the exact device rect
+    // render_panel maps the logical twip box to, via the shared 2300-twip panel
+    // transform) the baseline is an essentially solid placeholder-color fill,
+    // while the avatar frame is dominated by real composited art — many opaque
+    // pixels that are neither white nor the placeholder color. This isolates the
+    // body region from the shared balloons/text, so it cleanly separates a drawn
+    // avatar from a color box.
+    const auto white = std::uint32_t{0xffffffffU};
+    const auto transform = avatars.panel_transform();  // logical_panel_width == render_panel's 2300
+    const auto pixel_at = [](const comicchat::Canvas& canvas, int x, int y) {
+        return canvas.pixels()[static_cast<std::size_t>(y) * 460 + static_cast<std::size_t>(x)];
+    };
+    for (const auto& body : panel.bodies) {
+        const auto tl = transform.to_device(comicchat::LogicalPoint{
+            static_cast<double>(body.box.left), static_cast<double>(body.box.top)});
+        const auto br = transform.to_device(comicchat::LogicalPoint{
+            static_cast<double>(body.box.right), static_cast<double>(body.box.bottom)});
+        const auto x0 = std::max(0, static_cast<int>(std::lround(tl.x)) + 1);
+        const auto y0 = std::max(0, static_cast<int>(std::lround(tl.y)) + 1);
+        const auto x1 = std::min(460, static_cast<int>(std::lround(br.x)) - 1);
+        const auto y1 = std::min(460, static_cast<int>(std::lround(br.y)) - 1);
+        REQUIRE(x1 > x0);
+        REQUIRE(y1 > y0);
+        const auto placeholder = 0xff000000U | (body.color & 0x00ffffffU);
+        std::size_t box_placeholder{};
+        std::size_t avatar_placeholder{};
+        std::size_t avatar_art{};
+        for (int y = y0; y < y1; ++y) {
+            for (int x = x0; x < x1; ++x) {
+                if (pixel_at(boxes, x, y) == placeholder) ++box_placeholder;
+                const auto a = pixel_at(avatars, x, y);
+                if (a == placeholder) ++avatar_placeholder;
+                if (a != white && a != placeholder) ++avatar_art;  // real composited silhouette
+            }
+        }
+        const auto area = static_cast<std::size_t>(x1 - x0) * static_cast<std::size_t>(y1 - y0);
+        // Baseline body interior is (near) wholly the placeholder color.
+        CHECK(box_placeholder > area * 9 / 10);
+        // The flat box is gone: almost none of the placeholder color survives the
+        // opaque avatar blit inside the body rect.
+        CHECK(avatar_placeholder < area / 50);
+        // A substantial opaque silhouette of real (non-white, non-placeholder)
+        // avatar pixels now occupies the body rect — far more than the stray
+        // antialiasing a color box could produce.
+        CHECK(avatar_art > 800);
+    }
+
+    // Emit the headless PNG artifact showing an actual avatar in the panel.
+    CHECK(avatars.write_png("avatar_panel_render.png"));
 }

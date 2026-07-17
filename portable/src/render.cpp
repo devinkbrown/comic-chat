@@ -5,7 +5,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -283,26 +285,85 @@ void draw_tail(cairo_t* context, const PanelTransform& transform, const TailGeom
     cairo_set_dash(context, nullptr, 0, 0.0);
 }
 
+// Blit an Item 2.2 composited avatar raster (AvatarBitmap, 0xAARRGGBB, Y-down
+// screen space matching the Win32 RECT the source StretchBlt's into) into the
+// device rectangle [dev_x, dev_y]..[dev_x+dev_w, dev_y+dev_h]. The raster byte
+// order equals Cairo's ARGB32, so it wraps directly into an image surface; the
+// (dev_w/width, dev_h/height) scale reproduces the source StretchBlt of the body
+// bitmap into the placed body box. The avatar's own top row lands at the box top
+// (dev_y) — the Y-up->Y-down flip already happened when the caller mapped the
+// logical body rect corners through the panel transform, so the raster is drawn
+// upright without a second flip.
+void blit_avatar(cairo_t* context, const AvatarBitmap& bitmap, const double dev_x, const double dev_y,
+                 const double dev_w, const double dev_h) {
+    if (bitmap.width <= 0 || bitmap.height <= 0 || dev_w <= 0.0 || dev_h <= 0.0) return;
+    const auto expected = static_cast<std::size_t>(bitmap.width) * static_cast<std::size_t>(bitmap.height);
+    if (bitmap.pixels.size() < expected) return;
+    auto* surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, bitmap.width, bitmap.height);
+    if (!surface || cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
+        if (surface) cairo_surface_destroy(surface);
+        return;
+    }
+    cairo_surface_flush(surface);
+    const auto stride = static_cast<std::size_t>(cairo_image_surface_get_stride(surface));
+    auto* destination = cairo_image_surface_get_data(surface);
+    const auto row_bytes = static_cast<std::size_t>(bitmap.width) * sizeof(std::uint32_t);
+    for (std::int32_t row = 0; row < bitmap.height; ++row) {
+        std::memcpy(destination + static_cast<std::size_t>(row) * stride,
+                    bitmap.pixels.data() + static_cast<std::size_t>(row) * static_cast<std::size_t>(bitmap.width),
+                    row_bytes);
+    }
+    cairo_surface_mark_dirty(surface);
+    cairo_save(context);
+    cairo_translate(context, dev_x, dev_y);
+    cairo_scale(context, dev_w / static_cast<double>(bitmap.width), dev_h / static_cast<double>(bitmap.height));
+    cairo_set_source_surface(context, surface, 0.0, 0.0);
+    // Deterministic sampling for the StretchBlt-equivalent scale; nudged onto the
+    // pad region so the fitted body box is fully covered.
+    cairo_pattern_set_filter(cairo_get_source(context), CAIRO_FILTER_BILINEAR);
+    cairo_pattern_set_extend(cairo_get_source(context), CAIRO_EXTEND_PAD);
+    cairo_rectangle(context, 0.0, 0.0, static_cast<double>(bitmap.width), static_cast<double>(bitmap.height));
+    cairo_fill(context);
+    cairo_restore(context);
+    cairo_surface_destroy(surface);
+}
+
 } // namespace
 
-void Canvas::render_panel(const Panel& panel, TextEngine& text) {
+void Canvas::render_panel(const Panel& panel, TextEngine& text, const PanelAvatarProvider& avatars) {
     auto* context = impl_->context.get();
     const auto transform = fit_panel_transform(impl_->width, impl_->height, source_panel_units);
     const auto stroke_width = std::max(1.0, 28.0 * transform.scale);  // CBWoodringNormal::m_pen 28
 
     cairo_save(context);
 
-    // Avatar body placeholders (Item 2.2 owns real compositing; here a flat
-    // rounded box gives the balloon tails something to point at).
+    // Avatar bodies. Map the logical (twips, Y-up) body box through the panel
+    // transform to a device rect (this applies the Y-up->Y-down flip once), then
+    // blit the Item 2.2 composited raster the provider resolves. When no provider
+    // is wired, or it declines a body, fall back to the flat color box so the
+    // balloon tails still have something to point at.
     for (const auto& body : panel.bodies) {
         const auto top_left = transform.to_device(LogicalPoint{static_cast<double>(body.box.left),
                                                                static_cast<double>(body.box.top)});
         const auto bottom_right = transform.to_device(LogicalPoint{static_cast<double>(body.box.right),
                                                                    static_cast<double>(body.box.bottom)});
-        set_color(context, unpack_color(body.color, 1.0));
-        cairo_rectangle(context, top_left.x, top_left.y, bottom_right.x - top_left.x,
-                        bottom_right.y - top_left.y);
-        cairo_fill(context);
+        const auto dev_w = bottom_right.x - top_left.x;
+        const auto dev_h = bottom_right.y - top_left.y;
+
+        std::optional<AvatarBitmap> raster;
+        if (avatars) {
+            raster = avatars(body, static_cast<std::int32_t>(std::lround(dev_w)),
+                             static_cast<std::int32_t>(std::lround(dev_h)));
+        }
+        if (raster && raster->width > 0 && raster->height > 0 &&
+            raster->pixels.size() >= static_cast<std::size_t>(raster->width) *
+                                         static_cast<std::size_t>(raster->height)) {
+            blit_avatar(context, *raster, top_left.x, top_left.y, dev_w, dev_h);
+        } else {
+            set_color(context, unpack_color(body.color, 1.0));
+            cairo_rectangle(context, top_left.x, top_left.y, dev_w, dev_h);
+            cairo_fill(context);
+        }
     }
 
     for (const auto& balloon : panel.balloons) {
