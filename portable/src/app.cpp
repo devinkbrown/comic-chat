@@ -1,4 +1,6 @@
+#include "comicchat/comic_page.hpp"
 #include "comicchat/config.hpp"
+#include "comicchat/net/ircv3.hpp"
 #include "comicchat/net/native_session.hpp"
 #include "comicchat/render.hpp"
 #include "comicchat/text.hpp"
@@ -37,10 +39,16 @@ struct RendererDeleter final { void operator()(SDL_Renderer* value) const noexce
 struct TextureDeleter final { void operator()(SDL_Texture* value) const noexcept { SDL_DestroyTexture(value); } };
 struct SurfaceDeleter final { void operator()(SDL_Surface* value) const noexcept { SDL_DestroySurface(value); } };
 
+struct ChatLine final {
+    std::string nick;
+    std::string text;
+};
+
 struct Arguments final {
     std::optional<std::string> font;
     std::optional<std::string> png;
     std::optional<comicchat::ConnectionConfig> connection;
+    std::optional<ChatLine> say;  // synthetic message for headless --png demos
     std::uint64_t frames{};
 };
 
@@ -63,20 +71,25 @@ auto parse_arguments(const int argc, char** argv) -> std::optional<Arguments> {
         if ((argument == "--font" || argument == "--png" || argument == "--frames") && index + 1 >= argc) {
             return std::nullopt;
         }
+        if (argument == "--say" && index + 2 >= argc) return std::nullopt;
         if (argument == "--font") result.font = argv[++index];
         else if (argument == "--png") result.png = argv[++index];
-        else if (argument == "--frames") {
+        else if (argument == "--say") {
+            std::string nick = argv[++index];
+            result.say = ChatLine{std::move(nick), argv[++index]};
+        } else if (argument == "--frames") {
             const std::string_view value{argv[++index]};
             const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), result.frames);
             if (error != std::errc{} || end != value.data() + value.size()) return std::nullopt;
         } else if (argument == "--help") {
-            std::cout << "comic-chat [--font FILE] [--png FILE] [--frames COUNT] "
+            std::cout << "comic-chat [--font FILE] [--png FILE] [--frames COUNT] [--say NICK TEXT] "
                          "[--connect HOST [PORT] NICK CHANNEL [--tls|--plaintext] "
                          "[--ca-file FILE]]\n";
             return Arguments{
                 .font = std::string{},
                 .png = std::string{},
                 .connection = std::nullopt,
+                .say = std::nullopt,
                 .frames = 0,
             };
         } else if (argument == "--connect") {
@@ -105,6 +118,36 @@ auto model() -> comicchat::TitlePanel {
             {"Linus", 0x6b986bU, false},
         },
     };
+}
+
+// The speaker nick is the prefix up to '!' (nick!user@host); a serverless
+// prefix (no '!') is used whole. Empty when the message carries no prefix.
+auto nick_from_prefix(std::string_view prefix) -> std::string_view {
+    const auto bang = prefix.find('!');
+    return prefix.substr(0, bang == std::string_view::npos ? prefix.size() : bang);
+}
+
+auto ascii_iequals(std::string_view lhs, std::string_view rhs) -> bool {
+    if (lhs.size() != rhs.size()) return false;
+    for (std::size_t index = 0; index < lhs.size(); ++index) {
+        const auto lower = [](char value) {
+            return (value >= 'A' && value <= 'Z') ? static_cast<char>(value - 'A' + 'a') : value;
+        };
+        if (lower(lhs[index]) != lower(rhs[index])) return false;
+    }
+    return true;
+}
+
+// A PRIVMSG addressed to `channel` becomes one comic line. CTCP ACTION and other
+// commands (NOTICE, JOIN, ...) are Phase 2.5b work and are ignored here.
+auto channel_line(const comic_chat::ircv3::Message& message, std::string_view channel)
+    -> std::optional<ChatLine> {
+    if (!ascii_iequals(message.command, "PRIVMSG") || message.params.size() < 2) return std::nullopt;
+    if (!ascii_iequals(message.params[0], channel)) return std::nullopt;
+    const std::string_view prefix = message.prefix ? std::string_view{*message.prefix} : std::string_view{};
+    const std::string_view nick = nick_from_prefix(prefix);
+    if (nick.empty() || message.params[1].empty()) return std::nullopt;
+    return ChatLine{std::string{nick}, message.params[1]};
 }
 
 auto complete_icon_ladder(const std::filesystem::path& root) -> bool {
@@ -188,7 +231,7 @@ auto main(const int argc, char** argv) -> int {
     try {
         const auto arguments = parse_arguments(argc, argv);
         if (!arguments) {
-            std::cerr << "usage: comic-chat [--font FILE] [--png FILE] [--frames COUNT] "
+            std::cerr << "usage: comic-chat [--font FILE] [--png FILE] [--frames COUNT] [--say NICK TEXT] "
                          "[--connect HOST [PORT] NICK CHANNEL [--tls|--plaintext] "
                          "[--ca-file FILE]]\n";
             return 2;
@@ -244,6 +287,9 @@ auto main(const int argc, char** argv) -> int {
         apply_modern_window_icon(window.get());
         std::unique_ptr<SDL_Texture, TextureDeleter> texture;
         std::unique_ptr<comicchat::Canvas> canvas;
+        // The most recent chat line rendered as a comic panel. Empty until the
+        // first message arrives, so the title card shows on an idle connection.
+        std::optional<comicchat::Panel> current_panel;
 
         const auto rebuild = [&] {
             int width{};
@@ -253,7 +299,11 @@ auto main(const int argc, char** argv) -> int {
             height = std::max(height, 1);
             canvas = std::make_unique<comicchat::Canvas>(width, height);
             canvas->clear({1.0, 1.0, 1.0, 1.0});
-            canvas->render_title_panel(model(), **text);
+            if (current_panel) {
+                canvas->render_panel(*current_panel, **text);
+            } else {
+                canvas->render_title_panel(model(), **text);
+            }
             texture.reset(SDL_CreateTexture(renderer.get(), SDL_PIXELFORMAT_ARGB8888,
                                             SDL_TEXTUREACCESS_STREAMING, width, height));
             if (!texture) throw std::runtime_error{SDL_GetError()};
@@ -261,6 +311,11 @@ auto main(const int argc, char** argv) -> int {
                 throw std::runtime_error{SDL_GetError()};
             }
         };
+        // A synthetic --say line drives the same message -> panel builder the
+        // live feed uses, so a headless --png snapshot shows a real comic panel.
+        if (arguments->say) {
+            current_panel = comicchat::build_say_panel(**text, arguments->say->nick, arguments->say->text);
+        }
         rebuild();
         if (arguments->png && !arguments->png->empty() && !canvas->write_png(*arguments->png)) {
             std::cerr << "could not write PNG snapshot\n";
@@ -286,6 +341,15 @@ auto main(const int argc, char** argv) -> int {
                 const auto network = session->poll(64, 512);
                 for (const auto& diagnostic : network.diagnostics) {
                     std::cerr << "IRC session [" << diagnostic.code << "]: " << diagnostic.message << '\n';
+                }
+                // First live increment: the newest channel line replaces the
+                // panel. Multi-message page accounting / panel splitting is 2.5b.
+                for (const auto& message : network.messages) {
+                    if (auto line = channel_line(message, arguments->connection->channel)) {
+                        current_panel = comicchat::build_say_panel(**text, line->nick, line->text);
+                        rebuild();
+                        redraw = true;
+                    }
                 }
             }
             if (redraw || arguments->frames != 0) {
