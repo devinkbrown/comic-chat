@@ -189,8 +189,15 @@ public:
 	Engine(const Engine&) = delete;
 	Engine& operator=(const Engine&) = delete;
 
+	// Lvalues are copied and remain caller-owned. The rvalue overload consumes
+	// and overwrites source storage so short-string credentials cannot survive
+	// in moved-from SSO buffers.
 	std::vector<std::string> BeginRegistration(
-		SaslConfig sasl,
+		const SaslConfig& sasl,
+		std::string nick,
+		bool secure_transport);
+	std::vector<std::string> BeginRegistration(
+		SaslConfig&& sasl,
 		std::string nick,
 		bool secure_transport);
 	ProcessResult Process(std::string_view wire);

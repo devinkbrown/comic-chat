@@ -207,6 +207,27 @@ void SecureClear(std::string* value)
 	value->clear();
 }
 
+void SecureClear(SaslConfig* value)
+{
+	if (!value) return;
+	SecureClear(&value->authentication_id);
+	SecureClear(&value->password);
+	SecureClear(&value->authorization_id);
+	SecureClear(&value->nonce);
+	value->allow_external = false;
+}
+
+class ScopedSaslConfigWipe final {
+public:
+	explicit ScopedSaslConfigWipe(SaslConfig* value) noexcept : value_(value) {}
+	~ScopedSaslConfigWipe() { SecureClear(value_); }
+	ScopedSaslConfigWipe(const ScopedSaslConfigWipe&) = delete;
+	ScopedSaslConfigWipe& operator=(const ScopedSaslConfigWipe&) = delete;
+
+private:
+	SaslConfig* value_;
+};
+
 void SecureClear(std::vector<std::string>* values)
 {
 	if (!values) return;
@@ -884,13 +905,10 @@ void LineFramer::Reset()
 
 class Engine::SaslSession {
 public:
-	explicit SaslSession(SaslConfig config) : config_(std::move(config)) {}
+	explicit SaslSession(SaslConfig* config) : config_(config) {}
 	~SaslSession()
 	{
-		SecureClear(&config_.authentication_id);
-		SecureClear(&config_.password);
-		SecureClear(&config_.authorization_id);
-		SecureClear(&config_.nonce);
+		SecureClear(config_);
 		SecureClear(&incoming_);
 		SecureClear(&nonce_);
 		SecureClear(&client_first_bare_);
@@ -901,11 +919,11 @@ public:
 
 	std::optional<std::string> Start(std::optional<std::string> advertised)
 	{
-		if (config_.authentication_id.size() > kMaxIdentityBytes ||
-			config_.authorization_id.size() > kMaxIdentityBytes ||
-			config_.password.size() > kMaxCredentialBytes || config_.nonce.size() > kMaxScramNonceBytes ||
-			HasLineControl(config_.authentication_id) || HasLineControl(config_.authorization_id) ||
-			HasLineControl(config_.password) || HasLineControl(config_.nonce))
+		if (config_->authentication_id.size() > kMaxIdentityBytes ||
+			config_->authorization_id.size() > kMaxIdentityBytes ||
+			config_->password.size() > kMaxCredentialBytes || config_->nonce.size() > kMaxScramNonceBytes ||
+			HasLineControl(config_->authentication_id) || HasLineControl(config_->authorization_id) ||
+			HasLineControl(config_->password) || HasLineControl(config_->nonce))
 			return std::nullopt;
 		std::set<std::string> mechanisms;
 		if (advertised && !advertised->empty())
@@ -913,10 +931,10 @@ public:
 		auto available = [&](std::string_view mechanism) {
 			return mechanisms.empty() || mechanisms.count(std::string(mechanism)) != 0;
 		};
-		if (!config_.authentication_id.empty() && !config_.password.empty() && available("SCRAM-SHA-256"))
+		if (!config_->authentication_id.empty() && !config_->password.empty() && available("SCRAM-SHA-256"))
 			mechanism_ = "SCRAM-SHA-256";
-		else if (config_.allow_external && available("EXTERNAL")) mechanism_ = "EXTERNAL";
-		else if (!config_.authentication_id.empty() && !config_.password.empty() && available("PLAIN"))
+		else if (config_->allow_external && available("EXTERNAL")) mechanism_ = "EXTERNAL";
+		else if (!config_->authentication_id.empty() && !config_->password.empty() && available("PLAIN"))
 			mechanism_ = "PLAIN";
 		else return std::nullopt;
 		return "AUTHENTICATE " + mechanism_ + "\r\n";
@@ -952,12 +970,12 @@ private:
 	{
 		if (mechanism_ == "PLAIN") {
 			if (stage_++ != 0 || !challenge.empty()) return Fail();
-			std::string plain = config_.authorization_id;
+			std::string plain = config_->authorization_id;
 			ScopedStringWipe wipe_plain(&plain);
 			plain.push_back('\0');
-			plain += config_.authentication_id;
+			plain += config_->authentication_id;
 			plain.push_back('\0');
-			plain += config_.password;
+			plain += config_->password;
 			std::string encoded = Base64Encode(plain);
 			ScopedStringWipe wipe_encoded(&encoded);
 			*outbound = SaslWireChunks(encoded);
@@ -966,7 +984,7 @@ private:
 		}
 		if (mechanism_ == "EXTERNAL") {
 			if (stage_++ != 0 || !challenge.empty()) return Fail();
-			std::string encoded = Base64Encode(config_.authorization_id);
+			std::string encoded = Base64Encode(config_->authorization_id);
 			ScopedStringWipe wipe_encoded(&encoded);
 			*outbound = SaslWireChunks(encoded);
 			return !outbound->empty() || Fail();
@@ -981,17 +999,17 @@ private:
 	bool ScramFirst(std::string_view challenge, std::vector<std::string>* outbound)
 	{
 		if (!challenge.empty()) return Fail();
-		nonce_ = config_.nonce.empty() ? RandomNonce() : config_.nonce;
+		nonce_ = config_->nonce.empty() ? RandomNonce() : config_->nonce;
 		if (nonce_.empty() || nonce_.size() > kMaxScramNonceBytes ||
 			!std::ranges::all_of(nonce_, [](const unsigned char ch) {
 				return ch >= 0x21U && ch <= 0x7eU && ch != ',';
 			})) return Fail();
-		client_first_bare_ = "n=" + ScramName(config_.authentication_id) + ",r=" + nonce_;
+		client_first_bare_ = "n=" + ScramName(config_->authentication_id) + ",r=" + nonce_;
 		// Persisted verbatim so the client-final c= attribute can bind to the
 		// exact gs2-header sent here, per RFC 5802 channel-binding rules.
-		gs2_header_ = config_.authorization_id.empty()
+		gs2_header_ = config_->authorization_id.empty()
 			? "n,,"
-			: "n,a=" + ScramName(config_.authorization_id) + ',';
+			: "n,a=" + ScramName(config_->authorization_id) + ',';
 		std::string first_message = gs2_header_ + client_first_bare_;
 		ScopedStringWipe wipe_first_message(&first_message);
 		std::string encoded = Base64Encode(first_message);
@@ -1047,7 +1065,7 @@ private:
 			}
 		} secrets;
 		if (mbedtls_pkcs5_pbkdf2_hmac_ext(MBEDTLS_MD_SHA256,
-			reinterpret_cast<const unsigned char*>(config_.password.data()), config_.password.size(),
+			reinterpret_cast<const unsigned char*>(config_->password.data()), config_->password.size(),
 			reinterpret_cast<const unsigned char*>(salt.data()), salt.size(),
 			static_cast<unsigned int>(iterations), secrets.salted.size(), secrets.salted.data()) != 0) {
 			SecureClear(&salt);
@@ -1098,7 +1116,7 @@ private:
 		return server_verified_ || Fail();
 	}
 
-	SaslConfig config_;
+	SaslConfig* config_;
 	std::string mechanism_;
 	std::string incoming_;
 	std::string nonce_;
@@ -1126,29 +1144,27 @@ Engine::~Engine()
 }
 
 std::vector<std::string> Engine::BeginRegistration(
-	SaslConfig sasl,
+	SaslConfig&& sasl,
+	std::string nick,
+	bool secure_transport)
+{
+	ScopedSaslConfigWipe wipe_source(&sasl);
+	return BeginRegistration(static_cast<const SaslConfig&>(sasl), std::move(nick), secure_transport);
+}
+
+std::vector<std::string> Engine::BeginRegistration(
+	const SaslConfig& sasl,
 	std::string nick,
 	bool secure_transport)
 {
 	sasl_.reset();
-	SecureClear(&sasl_config_.authentication_id);
-	SecureClear(&sasl_config_.password);
-	SecureClear(&sasl_config_.authorization_id);
-	SecureClear(&sasl_config_.nonce);
-	sasl_config_ = std::move(sasl);
-	SecureClear(&sasl.authentication_id);
-	SecureClear(&sasl.password);
-	SecureClear(&sasl.authorization_id);
-	SecureClear(&sasl.nonce);
+	SecureClear(&sasl_config_);
+	sasl_config_ = sasl;
 	if (sasl_config_.authentication_id.size() > kMaxIdentityBytes ||
 		sasl_config_.authorization_id.size() > kMaxIdentityBytes ||
 		sasl_config_.password.size() > kMaxCredentialBytes ||
 		sasl_config_.nonce.size() > kMaxScramNonceBytes) {
-		SecureClear(&sasl_config_.authentication_id);
-		SecureClear(&sasl_config_.password);
-		SecureClear(&sasl_config_.authorization_id);
-		SecureClear(&sasl_config_.nonce);
-		sasl_config_.allow_external = false;
+		SecureClear(&sasl_config_);
 	}
 	nick_ = std::move(nick);
 	secure_transport_ = secure_transport;
@@ -1536,11 +1552,7 @@ ProcessResult Engine::HandleCap(const Message& message)
 				if (!secure_transport_) {
 					sasl_terminal_ = true;
 				} else {
-					sasl_ = std::make_unique<SaslSession>(std::move(sasl_config_));
-					SecureClear(&sasl_config_.authentication_id);
-					SecureClear(&sasl_config_.password);
-					SecureClear(&sasl_config_.authorization_id);
-					SecureClear(&sasl_config_.nonce);
+					sasl_ = std::make_unique<SaslSession>(&sasl_config_);
 					const auto command = sasl_->Start(CapabilityValue("sasl"));
 					if (command) result.outbound.push_back(*command);
 					else sasl_terminal_ = true;

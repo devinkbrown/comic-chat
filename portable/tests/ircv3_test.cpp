@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <span>
 #include <string>
 #include <string_view>
 #include <sstream>
@@ -35,6 +36,16 @@ void Check(bool condition, std::string_view description)
 	if (condition) return;
 	std::cerr << "FAIL: " << description << '\n';
 	++failures;
+}
+
+bool ObjectStorageContains(const std::string& value, std::string_view needle)
+{
+	const auto* bytes = reinterpret_cast<const unsigned char*>(&value);
+	for (std::size_t offset = 0; offset + needle.size() <= sizeof(value); ++offset) {
+		if (std::ranges::equal(needle, std::span(bytes + offset, needle.size()), {},
+			[](char ch) { return static_cast<unsigned char>(ch); })) return true;
+	}
+	return false;
 }
 
 std::string Encode(std::string_view value)
@@ -434,6 +445,33 @@ void TestPlainAndExternal()
 	Check(external_start.outbound == std::vector<std::string>{"AUTHENTICATE EXTERNAL\r\n"}, "EXTERNAL selected");
 	auto external_payload = external.Process("AUTHENTICATE +\r\n");
 	Check(Decode(AuthenticatePayload(external_payload.outbound[0])) == "cert-user", "EXTERNAL authorization id payload");
+}
+
+void TestSaslRvalueConfigWipesShortStringStorage()
+{
+	SaslConfig config;
+	config.authentication_id = "sso-user";
+	config.password = "sso-password";
+	config.authorization_id = "sso-authzid";
+	config.nonce = "sso-nonce";
+	Check(ObjectStorageContains(config.authentication_id, "user") &&
+		ObjectStorageContains(config.password, "password") &&
+		ObjectStorageContains(config.authorization_id, "authzid") &&
+		ObjectStorageContains(config.nonce, "nonce"),
+		"short SASL test credentials are observable in string object storage before transfer");
+
+	Engine engine;
+	engine.BeginRegistration(std::move(config), "Alice", true);
+	Check(config.authentication_id.empty() && config.password.empty() &&
+		config.authorization_id.empty() && config.nonce.empty(),
+		"rvalue SASL transfer consumes the source config");
+	Check(!ObjectStorageContains(config.authentication_id, "user") &&
+		!ObjectStorageContains(config.password, "password") &&
+		!ObjectStorageContains(config.authorization_id, "authzid") &&
+		!ObjectStorageContains(config.nonce, "nonce"),
+		"rvalue SASL transfer wipes short-string source object storage");
+	engine.FinishRegistrationWithoutCapabilities();
+	Check(engine.SecretsCleared(), "registration teardown wipes the engine-owned SASL config");
 }
 
 void TestScramSha256Rfc7677()
@@ -1162,6 +1200,7 @@ int main()
 	TestLabelsAndEchoes();
 	TestSafeRecovery();
 	TestPlainAndExternal();
+	TestSaslRvalueConfigWipesShortStringStorage();
 	TestScramSha256Rfc7677();
 	TestScramAuthzidChannelBindingAndFailClosedSignature();
 	TestIndependentWireBounds();
