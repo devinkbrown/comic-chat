@@ -6,6 +6,8 @@
 #include "comicchat/render.hpp"
 #include "comicchat/text.hpp"
 
+#include "compose_input.hpp"
+
 #include <algorithm>
 #include <array>
 #include <charconv>
@@ -25,6 +27,18 @@
 
 #include <SDL3/SDL.h>
 
+// The compose bar (this file's ComposeBar) draws directly with Cairo + the
+// public TextEngine::shape()/native_face() API, the same technique
+// render.cpp's internal draw_shaped() uses. Canvas (render.hpp) has no public
+// "draw arbitrary text/rect" primitive to reuse — its surface is a comic
+// panel, not app chrome — so the compose bar owns a second, independent
+// Cairo ARGB32 surface for its own small overlay strip and never touches
+// Canvas's pixels.
+#include <cairo-ft.h>
+#include <cairo.h>
+#include <ft2build.h>
+#include FT_FREETYPE_H
+
 namespace {
 
 struct Sdl final {
@@ -40,11 +54,155 @@ struct WindowDeleter final { void operator()(SDL_Window* value) const noexcept {
 struct RendererDeleter final { void operator()(SDL_Renderer* value) const noexcept { SDL_DestroyRenderer(value); } };
 struct TextureDeleter final { void operator()(SDL_Texture* value) const noexcept { SDL_DestroyTexture(value); } };
 struct SurfaceDeleter final { void operator()(SDL_Surface* value) const noexcept { SDL_DestroySurface(value); } };
+struct CairoSurfaceDeleter final { void operator()(cairo_surface_t* value) const noexcept { cairo_surface_destroy(value); } };
+struct CairoContextDeleter final { void operator()(cairo_t* value) const noexcept { cairo_destroy(value); } };
 
 struct ChatLine final {
     std::string nick;
     std::string text;
 };
+
+// RAII guard around SDL3's per-window text-input subsystem
+// (SDL_StartTextInput/SDL_StopTextInput). Construction failure is logged, not
+// thrown: a headless/dummy video driver run (--frames/--png) must keep working
+// even if the backend has no IME/text-input support to start, since it never
+// waits on text-input events either way.
+class TextInputSession final {
+public:
+    explicit TextInputSession(SDL_Window* window) : window_{window} {
+        if (!SDL_StartTextInput(window_)) {
+            std::cerr << "Comic Chat could not begin text input: " << SDL_GetError() << '\n';
+        }
+    }
+    ~TextInputSession() { (void)SDL_StopTextInput(window_); }
+    TextInputSession(const TextInputSession&) = delete;
+    auto operator=(const TextInputSession&) -> TextInputSession& = delete;
+    TextInputSession(TextInputSession&&) = delete;
+    auto operator=(TextInputSession&&) -> TextInputSession& = delete;
+
+private:
+    SDL_Window* window_;
+};
+
+// Compose-bar layout constants, in device pixels (matching the canvas's own
+// SDL_GetWindowSizeInPixels device-pixel coordinate space, so the bar and the
+// comic panel composite with one consistent scale).
+constexpr double compose_bar_height = 56.0;
+constexpr double compose_bar_padding = 14.0;
+constexpr double compose_bar_font_size = 24.0;
+constexpr Uint64 caret_blink_interval_ms = 500;
+
+// The rasterized compose bar, ready for SDL_UpdateTexture: premultiplied
+// ARGB32 pixels (matching both Cairo's native layout and
+// SDL_PIXELFORMAT_ARGB8888, the same format the main canvas texture already
+// uses) plus the row stride SDL_UpdateTexture needs.
+struct ComposeBarSurface final {
+    std::vector<std::uint32_t> pixels;
+    int width{};
+    int height{};
+    int stride_bytes{};
+};
+
+// Total glyph advance of `glyphs`, mirroring render.cpp's local
+// shape_advance() (not reusable here: it is an internal, non-exported detail
+// of render.cpp, not part of Canvas's public API).
+auto shape_advance(const std::vector<comicchat::ShapedGlyph>& glyphs) -> double {
+    double advance{};
+    for (const auto& glyph : glyphs) advance += glyph.x_advance;
+    return advance;
+}
+
+// The x-advance `value` occupies when shaped at `size` (0 on shaping
+// failure), used to place the compose-bar caret and to scroll long lines.
+auto measure_text(comicchat::TextEngine& text, std::string_view value, double size) -> double {
+    const auto shaped = text.shape(value, size);
+    return shaped ? shape_advance(*shaped) : 0.0;
+}
+
+// Draws `value` left-aligned so its first glyph starts at (x, baseline),
+// mirroring render.cpp's local draw_shaped() technique (Cairo positioned via
+// the shared TextEngine::shape()/native_face() API) for this independent
+// compose-bar surface.
+void draw_text(cairo_t* context, comicchat::TextEngine& text, std::string_view value, double size, double x,
+               double baseline) {
+    const auto shaped = text.shape(value, size);
+    if (!shaped || shaped->empty()) return;
+    auto* face = static_cast<FT_Face>(text.native_face());
+    auto* cairo_face = cairo_ft_font_face_create_for_ft_face(face, 0);
+    cairo_set_font_face(context, cairo_face);
+    cairo_set_font_size(context, size);
+    cairo_font_face_destroy(cairo_face);
+    std::vector<cairo_glyph_t> glyphs;
+    glyphs.reserve(shaped->size());
+    double cursor = x;
+    for (const auto& glyph : *shaped) {
+        glyphs.push_back({glyph.index, cursor + glyph.x_offset, baseline - glyph.y_offset});
+        cursor += glyph.x_advance;
+    }
+    cairo_show_glyphs(context, glyphs.data(), static_cast<int>(glyphs.size()));
+}
+
+// Renders the compose bar (background, border, current text scrolled so the
+// caret stays visible, and an optional blinking caret) into a fresh Cairo
+// ARGB32 surface `window_width` wide. Never throws: a shaping failure just
+// leaves that glyph run undrawn, matching render.cpp's draw_shaped()
+// best-effort behavior.
+auto render_compose_bar(comicchat::TextEngine& text, const comicchat::ComposeBuffer& buffer, int window_width,
+                        bool caret_visible) -> ComposeBarSurface {
+    const int width = std::max(window_width, 1);
+    const int height = static_cast<int>(compose_bar_height);
+    const int stride = cairo_format_stride_for_width(CAIRO_FORMAT_ARGB32, width);
+    const auto stride_pixels = static_cast<std::size_t>(stride) / sizeof(std::uint32_t);
+
+    ComposeBarSurface result;
+    result.width = width;
+    result.height = height;
+    result.stride_bytes = stride;
+    result.pixels.assign(stride_pixels * static_cast<std::size_t>(height), 0);
+
+    std::unique_ptr<cairo_surface_t, CairoSurfaceDeleter> surface{cairo_image_surface_create_for_data(
+        reinterpret_cast<unsigned char*>(result.pixels.data()), CAIRO_FORMAT_ARGB32, width, height, stride)};
+    if (!surface || cairo_surface_status(surface.get()) != CAIRO_STATUS_SUCCESS) {
+        throw std::runtime_error{"Cairo compose-bar surface creation failed"};
+    }
+    std::unique_ptr<cairo_t, CairoContextDeleter> context{cairo_create(surface.get())};
+    if (!context || cairo_status(context.get()) != CAIRO_STATUS_SUCCESS) {
+        throw std::runtime_error{"Cairo compose-bar context creation failed"};
+    }
+
+    cairo_set_source_rgba(context.get(), 0.98, 0.98, 0.96, 1.0);
+    cairo_paint(context.get());
+    cairo_set_source_rgba(context.get(), 0.16, 0.15, 0.18, 1.0);
+    cairo_set_line_width(context.get(), 2.0);
+    cairo_move_to(context.get(), 0.0, 1.0);
+    cairo_line_to(context.get(), static_cast<double>(width), 1.0);
+    cairo_stroke(context.get());
+    cairo_rectangle(context.get(), 1.0, 3.0, std::max(0.0, width - 2.0), std::max(0.0, height - 6.0));
+    cairo_stroke(context.get());
+
+    const double baseline = static_cast<double>(height) / 2.0 + compose_bar_font_size * 0.36;
+    const double text_left = compose_bar_padding;
+    const double text_width = std::max(0.0, static_cast<double>(width) - 2.0 * compose_bar_padding);
+    const double caret_advance =
+        measure_text(text, buffer.text().substr(0, buffer.cursor_offset()), compose_bar_font_size);
+    const double scroll = std::max(0.0, caret_advance - text_width);
+
+    cairo_save(context.get());
+    cairo_rectangle(context.get(), text_left, 0.0, text_width, static_cast<double>(height));
+    cairo_clip(context.get());
+    cairo_set_source_rgba(context.get(), 0.08, 0.07, 0.08, 1.0);
+    draw_text(context.get(), text, buffer.text(), compose_bar_font_size, text_left - scroll, baseline);
+    if (caret_visible) {
+        const double caret_x = text_left - scroll + caret_advance;
+        cairo_set_line_width(context.get(), 2.0);
+        cairo_move_to(context.get(), caret_x, baseline - compose_bar_font_size * 0.82);
+        cairo_line_to(context.get(), caret_x, baseline + compose_bar_font_size * 0.18);
+        cairo_stroke(context.get());
+    }
+    cairo_restore(context.get());
+    cairo_surface_flush(surface.get());
+    return result;
+}
 
 struct Arguments final {
     std::optional<std::string> font;
@@ -287,8 +445,15 @@ auto main(const int argc, char** argv) -> int {
         std::unique_ptr<SDL_Window, WindowDeleter> window{raw_window};
         std::unique_ptr<SDL_Renderer, RendererDeleter> renderer{raw_renderer};
         apply_modern_window_icon(window.get());
+        // Owns SDL_StartTextInput()/SDL_StopTextInput() for the window's whole
+        // lifetime. A headless --frames/--png run still starts and stops it
+        // (harmlessly, even under the dummy video driver): it never blocks on a
+        // text-input event either way, satisfying "headless must not require
+        // text input" without a separate code path.
+        TextInputSession text_input{window.get()};
         std::unique_ptr<SDL_Texture, TextureDeleter> texture;
         std::unique_ptr<comicchat::Canvas> canvas;
+        std::unique_ptr<SDL_Texture, TextureDeleter> compose_texture;
 
         // The faithful page-composition model (CUnitPanelPage::AddLine, panel.cpp:1061):
         // chat lines accumulate into `page`, which runs the real LayoutAvatars /
@@ -333,6 +498,30 @@ auto main(const int argc, char** argv) -> int {
             if (!page.panels().empty()) current_panel = page.panels().back();
         };
 
+        // The local user's own nick for compose-bar submissions: the connected
+        // session's nickname when live, otherwise the title panel's "You" star
+        // (model() above) so an offline compose still labels its own lines
+        // consistently with the idle title card.
+        const std::string local_nickname = arguments->connection ? arguments->connection->nickname : "You";
+
+        // The message-composition buffer (Phase 2.5c): SDL3 text-input events
+        // and editing keys (Backspace/Left/Right/Home/End/Escape) mutate this;
+        // Enter submits it. Purely local UI state, independent of `page`.
+        comicchat::ComposeBuffer compose;
+        bool caret_visible = true;
+
+        // Repaints the compose bar's own Cairo surface into `compose_texture`
+        // from the buffer's current text/cursor. Safe to call before the first
+        // rebuild() (compose_texture/canvas are still null then, so it is a
+        // no-op) so callers never need to special-case startup ordering.
+        const auto render_compose_into_texture = [&] {
+            if (!compose_texture || !canvas) return;
+            const auto surface = render_compose_bar(**text, compose, canvas->width(), caret_visible);
+            if (!SDL_UpdateTexture(compose_texture.get(), nullptr, surface.pixels.data(), surface.stride_bytes)) {
+                throw std::runtime_error{SDL_GetError()};
+            }
+        };
+
         const auto rebuild = [&] {
             int width{};
             int height{};
@@ -352,6 +541,24 @@ auto main(const int argc, char** argv) -> int {
             if (!SDL_UpdateTexture(texture.get(), nullptr, canvas->pixels().data(), width * 4)) {
                 throw std::runtime_error{SDL_GetError()};
             }
+
+            const int compose_height = std::min(height, static_cast<int>(compose_bar_height));
+            compose_texture.reset(SDL_CreateTexture(renderer.get(), SDL_PIXELFORMAT_ARGB8888,
+                                                     SDL_TEXTUREACCESS_STREAMING, width, compose_height));
+            if (!compose_texture) throw std::runtime_error{SDL_GetError()};
+            render_compose_into_texture();
+
+            // Hint the native IME/candidate window at the compose bar, in window
+            // (not device-pixel) coordinates per SDL_SetTextInputArea's contract.
+            int window_width{};
+            int window_height{};
+            if (SDL_GetWindowSize(window.get(), &window_width, &window_height)) {
+                const float density = SDL_GetWindowPixelDensity(window.get());
+                const float scale = density > 0.0f ? density : 1.0f;
+                const int area_height = static_cast<int>(static_cast<float>(compose_height) / scale);
+                const SDL_Rect area{0, std::max(0, window_height - area_height), window_width, area_height};
+                (void)SDL_SetTextInputArea(window.get(), &area, 0);
+            }
         };
         // A synthetic --say line drives the same page-composition path the live
         // feed uses, so a headless --png snapshot shows a real framed comic panel.
@@ -367,6 +574,7 @@ auto main(const int argc, char** argv) -> int {
         bool running = true;
         bool redraw = true;
         std::uint64_t rendered{};
+        Uint64 next_caret_toggle = SDL_GetTicks() + caret_blink_interval_ms;
         while (running) {
             SDL_Event event{};
             while (SDL_PollEvent(&event)) {
@@ -374,10 +582,78 @@ auto main(const int argc, char** argv) -> int {
                 else if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
                     rebuild();
                     redraw = true;
-                } else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_C &&
-                           (event.key.mod & SDL_KMOD_CTRL) != 0) {
-                    (void)SDL_SetClipboardText("A Chat to Remember — Microsoft Comic Chat");
+                } else if (event.type == SDL_EVENT_TEXT_INPUT) {
+                    // event.text.text is an SDL-owned, UTF-8 C string valid only
+                    // for this event; insert() copies it into the buffer
+                    // immediately, so nothing retains the pointer past this branch.
+                    compose.insert(event.text.text != nullptr ? std::string_view{event.text.text}
+                                                               : std::string_view{});
+                    caret_visible = true;
+                    next_caret_toggle = SDL_GetTicks() + caret_blink_interval_ms;
+                    render_compose_into_texture();
+                    redraw = true;
+                } else if (event.type == SDL_EVENT_KEY_DOWN) {
+                    const bool ctrl = (event.key.mod & SDL_KMOD_CTRL) != 0;
+                    bool compose_touched = true;
+                    if (event.key.key == SDLK_C && ctrl) {
+                        (void)SDL_SetClipboardText("A Chat to Remember — Microsoft Comic Chat");
+                        compose_touched = false;
+                    } else if (event.key.key == SDLK_BACKSPACE) {
+                        compose.backspace();
+                    } else if (event.key.key == SDLK_LEFT) {
+                        compose.move_left();
+                    } else if (event.key.key == SDLK_RIGHT) {
+                        compose.move_right();
+                    } else if (event.key.key == SDLK_HOME) {
+                        compose.move_home();
+                    } else if (event.key.key == SDLK_END) {
+                        compose.move_end();
+                    } else if (event.key.key == SDLK_ESCAPE) {
+                        compose.clear();
+                    } else if (event.key.key == SDLK_RETURN || event.key.key == SDLK_KP_ENTER) {
+                        if (compose.empty()) {
+                            compose_touched = false;
+                        } else {
+                            const auto submitted = compose.take();
+                            // Feeds the same Page::add_line() path the live IRC
+                            // feed and --say both use, so the submitted line
+                            // becomes a real framed comic panel immediately.
+                            feed_line(local_nickname, submitted);
+                            // NOTE (Phase 2.5c honest limit): NativeSession only
+                            // exposes start()/poll()/set_wakeup()/stop() — there is
+                            // no public outbound-send API yet to also PRIVMSG this
+                            // line over the wire when `session` is connected. That
+                            // requires a NativeSession send surface, which is a
+                            // net/native_session.hpp/.cpp change outside this
+                            // change's file scope; the compose bar stays
+                            // local-echo-only against a live session until that
+                            // lands.
+                            // rebuild() below also repaints compose_texture (now
+                            // empty) against the freshly sized canvas, so the
+                            // shared compose_touched branch below does not need to
+                            // redo that work.
+                            caret_visible = true;
+                            next_caret_toggle = SDL_GetTicks() + caret_blink_interval_ms;
+                            rebuild();
+                            compose_touched = false;
+                            redraw = true;
+                        }
+                    } else {
+                        compose_touched = false;
+                    }
+                    if (compose_touched) {
+                        caret_visible = true;
+                        next_caret_toggle = SDL_GetTicks() + caret_blink_interval_ms;
+                        render_compose_into_texture();
+                        redraw = true;
+                    }
                 }
+            }
+            if (const auto now = SDL_GetTicks(); now >= next_caret_toggle) {
+                caret_visible = !caret_visible;
+                next_caret_toggle = now + caret_blink_interval_ms;
+                render_compose_into_texture();
+                redraw = true;
             }
             if (session) {
                 const auto network = session->poll(64, 512);
@@ -399,6 +675,14 @@ auto main(const int argc, char** argv) -> int {
                 SDL_SetRenderDrawColor(renderer.get(), 255, 255, 255, 255);
                 SDL_RenderClear(renderer.get());
                 SDL_RenderTexture(renderer.get(), texture.get(), nullptr, nullptr);
+                // The compose bar draws last, on top of the comic panel, pinned to
+                // the bottom of the window in the same device-pixel space `canvas`
+                // uses.
+                const auto compose_height =
+                    static_cast<float>(std::min(canvas->height(), static_cast<std::int32_t>(compose_bar_height)));
+                const SDL_FRect compose_dst{0.0f, static_cast<float>(canvas->height()) - compose_height,
+                                            static_cast<float>(canvas->width()), compose_height};
+                SDL_RenderTexture(renderer.get(), compose_texture.get(), nullptr, &compose_dst);
                 SDL_RenderPresent(renderer.get());
                 redraw = false;
                 ++rendered;
