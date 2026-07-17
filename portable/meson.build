@@ -353,13 +353,6 @@ static_library(
   include_directories: inc,
   install: false,
 )
-static_library(
-  'comicchat-v1-adapter-api-compile',
-  '../v1.0-pre-modern/tests/transport_adapter_api_compile.cpp',
-  include_directories: [inc, mbedtls_include],
-  install: false,
-)
-
 install_data('assets/fonts/comic.ttf', install_dir: get_option('datadir') / 'comic-chat')
 install_data(
   'assets/source-raster/chat.ico',
@@ -511,13 +504,6 @@ if get_option('tests')
     dependencies: core_dep,
   )
   test('comicchat-transport-ui-bridge', transport_ui_bridge_tests, timeout: 30)
-
-  v1_transport_adapter_tests = executable(
-    'comicchat-v1-transport-adapter-tests',
-    '../v1.0-pre-modern/tests/transport_adapter_test.cpp',
-    dependencies: core_dep,
-  )
-  test('comicchat-v1-transport-adapter', v1_transport_adapter_tests, timeout: 30)
 
   executable(
     'comicchat-avatar-oracle',

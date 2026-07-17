@@ -11,7 +11,6 @@ on:
       - "portable/**"
       - "third_party/libuv"
       - "third_party/mbedtls"
-      - "v1.0-pre-modern/**"
       - "v2.5-beta-1-modern/**"
       - "artifacts/inc/**"
       - "artifacts/lib/i386/zlib.lib"
@@ -325,12 +324,6 @@ jobs:
             echo The x86 Spectre-mitigated MFC libraries are missing.
             exit /b 1
           )
-
-          if exist "v1.0-pre-modern\Release" rmdir /s /q "v1.0-pre-modern\Release"
-          pushd "v1.0-pre-modern"
-          nmake /f chat.mak CFG="chat - Win32 Release"
-          if errorlevel 1 exit /b 1
-          popd
 
           if exist "v2.5-beta-1-modern\Release" rmdir /s /q "v2.5-beta-1-modern\Release"
           pushd "v2.5-beta-1-modern"
