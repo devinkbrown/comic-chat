@@ -67,7 +67,9 @@ class CUserInfo
 {
 protected:
 	CString		m_strName;
-	CString		m_fullName;
+	CString		m_strAccount;
+	CString		m_fullName;		// Historical user@host identity, not IRC realname.
+	CString		m_strRealName;
 	CString		m_strScreenName;
 	USHORT		m_uRequests;
 	USHORT		m_flags;
@@ -80,8 +82,12 @@ public:
 	CUserInfo(const char *nick, const char *fullName = NULL);
 	virtual ~CUserInfo() {};
 	CString& GetName() { return m_strName; }
+	const CString& GetAccount() const { return m_strAccount; }
+	void SetAccount(const CString& account) { m_strAccount = account; }
 	CString& GetFullName() { return m_fullName; }
 	void SetFullName(const char *fName) { m_fullName = fName; }
+	const CString& GetRealName() const { return m_strRealName; }
+	void SetRealName(const CString& realName) { m_strRealName = realName; }
 	virtual CString& GetScreenName();
 	virtual const char *GetQualifiedName();
 	BOOL IsRequestInfo(USHORT uRequest) {				// BETA1 fix

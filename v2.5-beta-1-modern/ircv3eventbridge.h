@@ -9,6 +9,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 struct Ircv3AdapterEvent {
@@ -20,6 +21,94 @@ struct Ircv3AdapterEvent {
 };
 
 namespace comic_chat::legacy_ui {
+
+enum class Ircv3UserMutationKind {
+	none,
+	account,
+	away,
+	host,
+	realname,
+};
+
+// A non-owning, MFC-independent description of the only typed identity
+// mutations the v2.5 model currently consumes. Views remain valid for the
+// duration of the synchronous WM_COMICCHAT_IRCV3_EVENT broadcast.
+struct Ircv3UserMutation {
+	Ircv3UserMutationKind kind = Ircv3UserMutationKind::none;
+	std::string_view nickname;
+	std::string_view value;
+	std::string_view secondary;
+	bool active = false;
+};
+
+enum class Ircv3UserMutationResult {
+	ignored,
+	unknown_user,
+	applied,
+};
+
+constexpr std::size_t kIrcv3LegacyNicknameMaximum = 255;
+constexpr std::size_t kIrcv3LegacyIdentityPartMaximum = 255;
+constexpr std::size_t kIrcv3LegacyUserValueMaximum = 512;
+
+inline bool ValidUserMutationText(std::string_view value, std::size_t maximum) noexcept
+{
+	return value.size() <= maximum && value.find('\0') == std::string_view::npos;
+}
+
+inline Ircv3UserMutation ClassifyUserMutation(
+	const comic_chat::ircv3::Event& event) noexcept
+{
+	std::string_view nickname = event.source;
+	// ACCOUNT notifications use source. The SASL 900/901 numerics instead put
+	// the affected local nickname in target.
+	if (event.type == comic_chat::ircv3::EventType::Account && nickname.empty())
+		nickname = event.target;
+	if (nickname.empty() || !ValidUserMutationText(nickname, kIrcv3LegacyNicknameMaximum) ||
+		nickname.front() == '@' || nickname.front() == '>' || nickname.front() == '+')
+		return {};
+
+	switch (event.type) {
+	case comic_chat::ircv3::EventType::Account:
+		if (!ValidUserMutationText(event.value, kIrcv3LegacyUserValueMaximum)) return {};
+		return {Ircv3UserMutationKind::account, nickname, event.value, {}, !event.value.empty()};
+	case comic_chat::ircv3::EventType::Away:
+		if (!ValidUserMutationText(event.value, kIrcv3LegacyUserValueMaximum)) return {};
+		return {Ircv3UserMutationKind::away, nickname, event.value, {}, !event.value.empty()};
+	case comic_chat::ircv3::EventType::HostChanged:
+		if (event.key.empty() || event.value.empty() ||
+			!ValidUserMutationText(event.key, kIrcv3LegacyIdentityPartMaximum) ||
+			!ValidUserMutationText(event.value, kIrcv3LegacyIdentityPartMaximum) ||
+			event.key.find('@') != std::string::npos ||
+			event.value.find('@') != std::string::npos)
+			return {};
+		return {Ircv3UserMutationKind::host, nickname, event.key, event.value, true};
+	case comic_chat::ircv3::EventType::RealnameChanged:
+		if (!ValidUserMutationText(event.value, kIrcv3LegacyUserValueMaximum)) return {};
+		return {Ircv3UserMutationKind::realname, nickname, event.value, {}, !event.value.empty()};
+	default:
+		return {};
+	}
+}
+
+// Resolve through the receiving document, then mutate only that document's
+// CUserInfo. Keeping lookup in the callback prevents this bridge from gaining
+// any dependency on MFC or on process-global room state.
+template <typename FindUser, typename ApplyMutation>
+Ircv3UserMutationResult ConsumeUserMutation(
+	const comic_chat::ircv3::Event& event,
+	FindUser&& find_user,
+	ApplyMutation&& apply_mutation)
+{
+	const auto mutation = ClassifyUserMutation(event);
+	if (mutation.kind == Ircv3UserMutationKind::none)
+		return Ircv3UserMutationResult::ignored;
+	auto* user = std::invoke(std::forward<FindUser>(find_user), mutation.nickname);
+	if (!user)
+		return Ircv3UserMutationResult::unknown_user;
+	std::invoke(std::forward<ApplyMutation>(apply_mutation), *user, mutation);
+	return Ircv3UserMutationResult::applied;
+}
 
 struct Ircv3LegacyMessageAdaptation {
 	std::optional<Ircv3AdapterEvent> typed_context;

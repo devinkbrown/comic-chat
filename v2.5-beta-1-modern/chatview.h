@@ -100,6 +100,7 @@ protected:
 	afx_msg BOOL OnEraseBkgnd(CDC* pDC);
 	//}}AFX_MSG
 	afx_msg LRESULT OnLoginDlg(WPARAM wParam, LPARAM lParam);
+	afx_msg LRESULT OnIrcv3Event(WPARAM wParam, LPARAM lParam);
 	DECLARE_MESSAGE_MAP()
 };
 

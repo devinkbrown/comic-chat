@@ -22,6 +22,7 @@
 #include "ui.h"
 #include "memblst.h"
 #include "protsupp.h"
+#include "ircsock.h"
 #include <imm.h>
 
 #ifdef _DEBUG
@@ -51,6 +52,7 @@ BEGIN_MESSAGE_MAP(CChatView, CView)
 	ON_COMMAND(ID_FILE_PRINT_DIRECT, CView::OnFilePrint)
 	ON_COMMAND(ID_FILE_PRINT_PREVIEW, CView::OnFilePrintPreview)
 	ON_MESSAGE(WM_LOGINDLG, OnLoginDlg)
+	ON_MESSAGE(WM_COMICCHAT_IRCV3_EVENT, OnIrcv3Event)
 END_MESSAGE_MAP()
 
 /////////////////////////////////////////////////////////////////////////////
@@ -78,6 +80,55 @@ CChatView::~CChatView()
 		doc->m_client = NULL;
 		doc->m_bodyCam = NULL;
 	}
+}
+
+LRESULT CChatView::OnIrcv3Event(WPARAM wParam, LPARAM lParam)
+{
+	if (!lParam)
+		return 0;
+	const auto* adapter = reinterpret_cast<const Ircv3AdapterEvent*>(lParam);
+	if (wParam != static_cast<WPARAM>(adapter->event.type))
+		return 0;
+	CChatDoc* doc = GetDocument();
+	if (!doc)
+		return 0;
+
+	// WM_COMICCHAT_IRCV3_EVENT is synchronously broadcast by CMainFrame only
+	// after its UI-thread network drain. Resolve against this view's document so
+	// rooms never share CUserInfo pointers or mutate MFC state on the worker.
+	const auto result = comic_chat::legacy_ui::ConsumeUserMutation(adapter->event,
+		[doc](std::string_view nickname) -> CUserInfo* {
+			const std::string ownedNickname(nickname);
+			return LookupPui(ownedNickname.c_str(), doc);
+		},
+		[doc](CUserInfo& user, const comic_chat::legacy_ui::Ircv3UserMutation& mutation) {
+			switch (mutation.kind) {
+			case comic_chat::legacy_ui::Ircv3UserMutationKind::account:
+				user.SetAccount(CString(mutation.value.data(),
+					static_cast<int>(mutation.value.size())));
+				break;
+			case comic_chat::legacy_ui::Ircv3UserMutationKind::away:
+				// Preserve Microsoft's remove/mutate/reinsert path so the member
+				// list immediately repaints its away/back icon.
+				DoUserAway(doc, &user, mutation.active ? TRUE : FALSE);
+				break;
+			case comic_chat::legacy_ui::Ircv3UserMutationKind::host: {
+				CString identity(mutation.value.data(), static_cast<int>(mutation.value.size()));
+				identity += '@';
+				identity += CString(mutation.secondary.data(),
+					static_cast<int>(mutation.secondary.size()));
+				user.SetFullName(identity);
+				break;
+			}
+			case comic_chat::legacy_ui::Ircv3UserMutationKind::realname:
+				user.SetRealName(CString(mutation.value.data(),
+					static_cast<int>(mutation.value.size())));
+				break;
+			case comic_chat::legacy_ui::Ircv3UserMutationKind::none:
+				break;
+			}
+		});
+	return result == comic_chat::legacy_ui::Ircv3UserMutationResult::applied ? 1 : 0;
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -698,4 +749,3 @@ LRESULT CChatView::OnLoginDlg(WPARAM wParam, LPARAM lParam)
 
 	return 0;
 }
-
