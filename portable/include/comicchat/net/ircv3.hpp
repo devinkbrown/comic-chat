@@ -307,6 +307,7 @@ private:
 	ProcessResult HandleMonitorNumeric(const Message& message, unsigned int numeric);
 	ProcessResult HandleMetadataNumeric(const Message& message, unsigned int numeric);
 	ProcessResult HandleBatch(const Message& message);
+	ProcessResult HandleJoinMessage(const Message& message);
 	ProcessResult HandleStateMessage(const Message& message);
 	void HandleIsupport(const Message& message, std::vector<Event>* events);
 	void AppendTagEvents(const Message& message, std::vector<Event>* events) const;

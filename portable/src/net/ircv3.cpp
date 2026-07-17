@@ -170,6 +170,14 @@ bool BoundedAssign(Map* values, std::string key, std::string value, const std::s
 	return true;
 }
 
+template <typename Map>
+bool CanBoundedAssign(const Map& values, const std::string& key,
+	const std::string_view value, const std::size_t maximum)
+{
+	if (key.empty() || key.size() > kMaxIdentityBytes || value.size() > kMaxMessageBytes) return false;
+	return values.contains(key) || values.size() < maximum;
+}
+
 template <typename Set>
 bool BoundedInsert(Set* values, std::string value, const std::size_t maximum)
 {
@@ -589,6 +597,7 @@ public:
 		const auto numeric = NumericCommand(message.command);
 		const bool retained_state = message.command == "ACCOUNT" || message.command == "AWAY" ||
 			message.command == "CHGHOST" || message.command == "SETNAME" ||
+			message.command == "JOIN" ||
 			message.command == "MARKREAD" || message.command == "METADATA" ||
 			message.command == "REDACT" || message.command == "RENAME" ||
 			message.command == "REGISTER" || message.command == "VERIFY" ||
@@ -2228,8 +2237,27 @@ std::vector<Message> Engine::FinishBatch(const std::string& id, std::vector<Even
 			}
 		}
 		for (auto& message : messages) message.RemoveTag("batch");
+		if (std::ranges::none_of(messages, [](const Message& message) {
+			return message.command == "JOIN";
+		})) {
+			release_batch_bytes();
+			return messages;
+		}
+		std::vector<Message> deliverable;
+		deliverable.reserve(messages.size());
+		for (auto& message : messages) {
+			if (message.command != "JOIN") {
+				deliverable.push_back(std::move(message));
+				continue;
+			}
+			auto join_state = HandleJoinMessage(message);
+			events->insert(events->end(),
+				std::make_move_iterator(join_state.events.begin()),
+				std::make_move_iterator(join_state.events.end()));
+			if (!join_state.consumed) deliverable.push_back(std::move(message));
+		}
 		release_batch_bytes();
-		return messages;
+		return deliverable;
 	};
 	if (batch.type == "draft/multiline") {
 		if (batch.messages.empty()) {
@@ -2384,6 +2412,93 @@ bool Engine::IsEcho(const Message& message)
 		}
 	}
 	return false;
+}
+
+ProcessResult Engine::HandleJoinMessage(const Message& message)
+{
+	ProcessResult result;
+	if (message.command != "JOIN") return result;
+	const std::string source = message.prefix ? NickFromPrefix(*message.prefix) : std::string{};
+	auto reject = [&](std::string key) {
+		result.consumed = true;
+		Event event;
+		event.type = EventType::ProtocolError;
+		event.source = source;
+		event.key = std::move(key);
+		result.events.push_back(std::move(event));
+	};
+
+	// The base command has only a channel. With extended-join enabled, the
+	// server adds exactly account-or-* and GECOS. Reject every other shape before
+	// a batch can retain it or a legacy adapter can flatten it.
+	if ((message.params.size() != 1 && message.params.size() != 3) ||
+		message.params.front().empty()) {
+		reject("extended-join-invalid");
+		return result;
+	}
+	if (message.params.size() == 1) return result;
+
+	const auto& account_parameter = message.params[1];
+	const auto& realname = message.params[2];
+	if (source.empty() || source.size() > kMaxIdentityBytes ||
+		(account_parameter != "*" && !ValidMiddleParameter(account_parameter)) ||
+		realname.size() > kMaxMessageBytes || HasLineControl(realname)) {
+		reject("extended-join-invalid");
+		return result;
+	}
+
+	// Batch members are validated before retention, then apply their state and
+	// events only when the outer batch is actually delivered.
+	if (message.FindTag("batch")) return result;
+
+	const std::string key = Casefold(source);
+	const std::string account = account_parameter == "*" ? std::string{} : account_parameter;
+	const bool account_removal = account_parameter == "*";
+	if ((!account_removal && !CanBoundedAssign(accounts_, key, account, kMaxStateEntries)) ||
+		!CanBoundedAssign(realnames_, key, realname, kMaxStateEntries)) {
+		reject("extended-join-state-limit");
+		return result;
+	}
+
+	// Allocate every new node, value, and event before changing either retained
+	// map. The final node-handle inserts, swaps, and optional erase require no
+	// further allocation, so account and realname commit as one logical update.
+	const auto account_found = accounts_.find(key);
+	const auto realname_found = realnames_.find(key);
+	std::string account_update = account;
+	std::string realname_update = realname;
+	std::map<std::string, std::string> staged_accounts;
+	std::map<std::string, std::string> staged_realnames;
+	if (!account_removal && account_found == accounts_.end())
+		staged_accounts.emplace(key, account_update);
+	if (realname_found == realnames_.end())
+		staged_realnames.emplace(key, realname_update);
+
+	result.events.reserve(2);
+	Event account_event;
+	account_event.type = EventType::Account;
+	account_event.source = source;
+	account_event.value = account;
+	result.events.push_back(std::move(account_event));
+	Event realname_event;
+	realname_event.type = EventType::RealnameChanged;
+	realname_event.source = source;
+	realname_event.value = realname;
+	result.events.push_back(std::move(realname_event));
+
+	if (account_removal) {
+		accounts_.erase(key);
+	} else if (account_found != accounts_.end()) {
+		account_found->second.swap(account_update);
+	} else {
+		(void)accounts_.insert(staged_accounts.extract(staged_accounts.begin()));
+	}
+	if (realname_found != realnames_.end()) {
+		realname_found->second.swap(realname_update);
+	} else {
+		(void)realnames_.insert(staged_realnames.extract(staged_realnames.begin()));
+	}
+	return result;
 }
 
 ProcessResult Engine::HandleStateMessage(const Message& message)
@@ -2589,6 +2704,8 @@ ProcessResult Engine::Process(std::string_view wire)
 		abuse.events.push_back(std::move(event));
 		return abuse;
 	}
+	ProcessResult join_state = HandleJoinMessage(message);
+	if (join_state.consumed) return join_state;
 	if (message.command == "CAP") return HandleCap(message);
 	if (message.command == "AUTHENTICATE") return HandleAuthenticate(message);
 	if (message.command == "BATCH") return HandleBatch(message);
@@ -2664,7 +2781,7 @@ ProcessResult Engine::Process(std::string_view wire)
 			(*numeric >= 770 && *numeric <= 772) || *numeric == 774)
 			return HandleMetadataNumeric(message, *numeric);
 	}
-	ProcessResult result;
+	ProcessResult result = std::move(join_state);
 	if (message.command == "004" && message.params.size() >= 3 &&
 		message.params[1].size() <= kMaxIdentityBytes &&
 		message.params[2].size() <= kMaxIdentityBytes) {

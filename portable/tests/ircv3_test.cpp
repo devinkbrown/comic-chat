@@ -522,6 +522,113 @@ void TestStateEvents()
 	Check(!engine.Accounts().contains("bob"), "SASL logout numeric clears account state");
 }
 
+void TestExtendedJoinStateAndShape()
+{
+	Engine engine;
+	auto joined = engine.Process(
+		":Tiki!user@example.test JOIN #ink tiki-account :Tiki Example\r\n");
+	Check(!joined.consumed && joined.messages.size() == 1 && joined.events.size() == 2,
+		"extended JOIN remains deliverable while emitting both identity events");
+	Check(joined.messages[0].params ==
+		std::vector<std::string>{"#ink", "tiki-account", "Tiki Example"},
+		"extended JOIN preserves the complete typed parameter set");
+	Check(joined.events[0].type == EventType::Account && joined.events[0].source == "Tiki" &&
+		joined.events[0].value == "tiki-account" &&
+		joined.events[1].type == EventType::RealnameChanged && joined.events[1].source == "Tiki" &&
+		joined.events[1].value == "Tiki Example",
+		"extended JOIN emits account then realname mutations for the joining nick");
+	Check(engine.Accounts().at("tiki") == "tiki-account" &&
+		engine.Realnames().at("tiki") == "Tiki Example",
+		"extended JOIN commits bounded account and realname state");
+
+	auto unauthenticated = engine.Process(
+		":Tiki!user@example.test JOIN #other * :Tiki Renamed\r\n");
+	Check(!unauthenticated.consumed && unauthenticated.messages.size() == 1 &&
+		unauthenticated.events.size() == 2 && unauthenticated.events[0].value.empty() &&
+		!engine.Accounts().contains("tiki") && engine.Realnames().at("tiki") == "Tiki Renamed",
+		"extended JOIN star atomically clears account state and refreshes realname");
+
+	auto legacy = engine.Process(":Legacy!user@example.test JOIN #classic\r\n");
+	Check(!legacy.consumed && legacy.events.empty() && legacy.messages.size() == 1 &&
+		legacy.messages[0].params == std::vector<std::string>{"#classic"},
+		"one-parameter legacy JOIN remains unchanged");
+
+	for (const auto& malformed : {
+		std::string(":Bob!u@h JOIN\r\n"),
+		std::string(":Bob!u@h JOIN :\r\n"),
+		std::string(":Bob!u@h JOIN #ink bob-account\r\n"),
+		std::string(":Bob!u@h JOIN #ink bob-account extra :Bob Example\r\n"),
+		std::string("JOIN #ink bob-account :Bob Example\r\n"),
+	}) {
+		auto rejected = engine.Process(malformed);
+		Check(rejected.consumed && rejected.messages.empty() && rejected.events.size() == 1 &&
+			rejected.events[0].type == EventType::ProtocolError &&
+			rejected.events[0].key == "extended-join-invalid",
+			"malformed extended JOIN is contained before legacy delivery");
+	}
+
+	Engine batch;
+	batch.Process(":server BATCH +netjoin netjoin old.example new.example\r\n");
+	auto rejected_batch = batch.Process(
+		"@batch=netjoin :Bob!u@h JOIN #ink bob-account\r\n");
+	auto closed_batch = batch.Process(":server BATCH -netjoin\r\n");
+	Check(rejected_batch.consumed && rejected_batch.events.size() == 1 &&
+		rejected_batch.events[0].key == "extended-join-invalid" && closed_batch.messages.empty(),
+		"malformed extended JOIN cannot hide in a batch and reach legacy dispatch later");
+
+	Engine delivered_batch;
+	delivered_batch.Process(":server BATCH +joined netjoin old.example new.example\r\n");
+	auto deferred_join = delivered_batch.Process(
+		"@batch=joined :BatchNick!u@h JOIN #ink batch-account :Batch Nick\r\n");
+	Check(deferred_join.consumed && deferred_join.events.empty() &&
+		!delivered_batch.Accounts().contains("batchnick"),
+		"valid extended JOIN defers identity mutation with its containing batch");
+	auto delivered_join = delivered_batch.Process(":server BATCH -joined\r\n");
+	const auto account_event = std::ranges::find_if(delivered_join.events, [](const auto& event) {
+		return event.type == EventType::Account;
+	});
+	const auto realname_event = std::ranges::find_if(delivered_join.events, [](const auto& event) {
+		return event.type == EventType::RealnameChanged;
+	});
+	Check(!delivered_join.consumed && delivered_join.messages.size() == 1 &&
+		delivered_join.messages[0].params ==
+			std::vector<std::string>{"#ink", "batch-account", "Batch Nick"} &&
+		account_event != delivered_join.events.end() &&
+		realname_event != delivered_join.events.end() && account_event < realname_event &&
+		delivered_batch.Accounts().at("batchnick") == "batch-account" &&
+		delivered_batch.Realnames().at("batchnick") == "Batch Nick",
+		"batch delivery preserves the complete JOIN and commits ordered identity events");
+
+	constexpr std::size_t maximum = 4096;
+	Engine account_full;
+	for (std::size_t index = 0; index < maximum; ++index)
+		account_full.Process(":account" + std::to_string(index) + " ACCOUNT old\r\n");
+	auto existing = account_full.Process(
+		":account0!u@h JOIN #ink updated :Existing User\r\n");
+	Check(existing.messages.size() == 1 && account_full.Accounts().size() == maximum &&
+		account_full.Accounts().at("account0") == "updated" &&
+		account_full.Realnames().at("account0") == "Existing User",
+		"extended JOIN may update an existing key at the state bound");
+	auto account_limit = account_full.Process(
+		":fresh!u@h JOIN #ink fresh-account :Fresh User\r\n");
+	Check(account_limit.consumed && account_limit.messages.empty() && account_limit.events.size() == 1 &&
+		account_limit.events[0].key == "extended-join-state-limit" &&
+		!account_full.Accounts().contains("fresh") && !account_full.Realnames().contains("fresh"),
+		"account-map exhaustion cannot partially commit an extended JOIN realname");
+
+	Engine realname_full;
+	realname_full.Process(":held!u@h ACCOUNT old-account\r\n");
+	for (std::size_t index = 0; index < maximum; ++index)
+		realname_full.Process(":real" + std::to_string(index) + " SETNAME :Real Name\r\n");
+	auto realname_limit = realname_full.Process(
+		":held!u@h JOIN #ink * :Held User\r\n");
+	Check(realname_limit.consumed && realname_limit.messages.empty() && realname_limit.events.size() == 1 &&
+		realname_limit.events[0].key == "extended-join-state-limit" &&
+		realname_full.Accounts().at("held") == "old-account" &&
+		!realname_full.Realnames().contains("held"),
+		"realname-map exhaustion cannot partially erase an extended JOIN account");
+}
+
 void TestLabelsAndEchoes()
 {
 	Engine engine;
@@ -1450,6 +1557,7 @@ int main()
 	TestOutboundValidationAndTagPreservation();
 	TestBatches();
 	TestStateEvents();
+	TestExtendedJoinStateAndShape();
 	TestLabelsAndEchoes();
 	TestSafeRecovery();
 	TestPlainAndExternal();
