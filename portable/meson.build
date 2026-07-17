@@ -36,14 +36,62 @@ threads_dep = dependency('threads')
 uv_dep = dependency(
   'libuv',
   fallback: ['libuv', 'libuv_dep'],
+  include_type: 'system',
   default_options: ['werror=false', 'warning_level=0', 'build_tests=false', 'build_benchmarks=false'],
 )
-zlib_dep = dependency('zlib', fallback: ['zlib', 'zlib_dep'])
-freetype_dep = dependency('freetype2', fallback: ['freetype2', 'freetype2_dep'])
-harfbuzz_dep = dependency('harfbuzz', fallback: ['harfbuzz', 'harfbuzz_dep'])
-icu_uc_dep = dependency('icu-uc', fallback: ['icu', 'icu_uc_dep'])
-icu_i18n_dep = dependency('icu-i18n', fallback: ['icu', 'icu_i18n_dep'])
-cairo_dep = dependency('cairo', fallback: ['cairo', 'libcairo_dep'])
+zlib_dep = dependency('zlib', fallback: ['zlib', 'zlib_dep'], include_type: 'system')
+freetype_dep = dependency('freetype2', fallback: ['freetype2', 'freetype2_dep'], include_type: 'system')
+harfbuzz_dep = dependency(
+  'harfbuzz',
+  fallback: 'harfbuzz',
+  include_type: 'system',
+  default_options: [
+    'benchmark=disabled',
+    'cairo=disabled',
+    'chafa=disabled',
+    'docs=disabled',
+    'glib=disabled',
+    'gobject=disabled',
+    'gpu=disabled',
+    'gpu_demo=disabled',
+    'icu=disabled',
+    'introspection=disabled',
+    'png=disabled',
+    'subset=disabled',
+    'tests=disabled',
+    'utilities=disabled',
+    'warning_level=0',
+    'werror=false',
+  ],
+)
+icu_uc_dep = dependency(
+  'icu-uc',
+  fallback: 'icu',
+  include_type: 'system',
+  default_options: ['warning_level=0', 'werror=false'],
+)
+icu_i18n_dep = dependency(
+  'icu-i18n',
+  fallback: 'icu',
+  include_type: 'system',
+  default_options: ['warning_level=0', 'werror=false'],
+)
+cairo_dep = dependency('cairo', fallback: ['cairo', 'libcairo_dep'], include_type: 'system')
+fontconfig_dep = dependency(
+  'fontconfig',
+  required: host_machine.system() != 'windows',
+  include_type: 'system',
+)
+text_platform_deps = []
+installed_comic_font = get_option('prefix') / get_option('datadir') / 'comic-chat' / 'comic.ttf'
+source_raster_install_dir = get_option('datadir') / 'comic-chat' / 'source-res'
+installed_source_raster = get_option('prefix') / source_raster_install_dir
+core_cpp_args = ['-DCOMICCHAT_INSTALL_FONT_PATH="' + installed_comic_font + '"']
+core_cpp_args += ['-DCOMICCHAT_INSTALL_SOURCE_RASTER_DIR="' + installed_source_raster + '"']
+if fontconfig_dep.found()
+  text_platform_deps += fontconfig_dep
+  core_cpp_args += ['-DCOMICCHAT_HAS_FONTCONFIG=1']
+endif
 platform_deps = []
 if host_machine.system() == 'windows'
   platform_deps += cpp.find_library('crypt32', required: true)
@@ -222,11 +270,14 @@ core = static_library(
     'src/scheduler.cpp',
     'src/text.cpp',
     'src/assets.cpp',
+    'src/avatar_assets.cpp',
+    'src/source_raster.cpp',
     'src/sound.cpp',
     'src/render.cpp',
     'src/memory.cpp',
   ],
   include_directories: inc,
+  cpp_args: core_cpp_args,
   dependencies: [
     threads_dep,
     uv_dep,
@@ -237,6 +288,7 @@ core = static_library(
     icu_uc_dep,
     icu_i18n_dep,
     cairo_dep,
+    text_platform_deps,
     platform_deps,
   ],
   install: false,
@@ -254,6 +306,7 @@ core_dep = declare_dependency(
     icu_uc_dep,
     icu_i18n_dep,
     cairo_dep,
+    text_platform_deps,
     platform_deps,
   ],
 )
@@ -267,8 +320,41 @@ static_library(
   install: false,
 )
 
+install_data('../v1.0/shared/comic.ttf', install_dir: get_option('datadir') / 'comic-chat')
+install_data(
+  '../v2.5-beta-1/res/chat.ico',
+  '../v2.5-beta-1/res/chatdoc.ico',
+  '../v2.5-beta-1/res/room.ico',
+  '../v2.5-beta-1/res/ruleset.ico',
+  '../v2.5-beta-1/res/avatar.ico',
+  '../v2.5-beta-1/res/backgd.ico',
+  '../v2.5-beta-1/res/ratings.ico',
+  '../v2.5-beta-1/res/whisper.ico',
+  '../v2.5-beta-1/res/notif.ico',
+  '../v2.5-beta-1/res/tosrv.ico',
+  '../v2.5-beta-1/res/tonet.ico',
+  '../v2.5-beta-1/res/balloons.bmp',
+  '../v2.5-beta-1/res/tiki2.bmp',
+  '../v2.5-beta-1/res/toolbar.bmp',
+  '../v2.5-beta-1/res/tabbar.bmp',
+  '../v2.5-beta-1/res/member.bmp',
+  '../v2.5-beta-1/res/oldnew.bmp',
+  '../v2.5-beta-1/res/connect.bmp',
+  '../v2.5-beta-1/res/stopped.bmp',
+  '../v2.5-beta-1/res/inactive.bmp',
+  '../v2.5-beta-1/res/active.bmp',
+  '../v2.5-beta-1/res/texttool.bmp',
+  '../v2.5-beta-1/res/usertool.bmp',
+  install_dir: source_raster_install_dir,
+)
+
 if get_option('frontend')
-  sdl_dep = dependency('sdl3', fallback: ['sdl3', 'sdl3_dep'])
+  sdl_dep = dependency(
+    'sdl3',
+    fallback: ['sdl3', 'sdl3_dep'],
+    include_type: 'system',
+    default_options: ['warning_level=0', 'werror=false'],
+  )
   executable(
     'comic-chat',
     'src/app.cpp',
@@ -281,7 +367,8 @@ if get_option('tests')
   catch2 = dependency(
     'catch2-with-main',
     fallback: ['catch2', 'catch2_with_main_dep'],
-    default_options: ['tests=false', 'install=false'],
+    include_type: 'system',
+    default_options: ['tests=false', 'install=false', 'warning_level=0', 'werror=false'],
   )
   unit_tests = executable(
     'comicchat-tests',
@@ -291,13 +378,21 @@ if get_option('tests')
       'tests/runtime_test.cpp',
       'tests/text_test.cpp',
       'tests/assets_test.cpp',
+      'tests/avatar_assets_test.cpp',
+      'tests/source_raster_test.cpp',
       'tests/render_test.cpp',
       'tests/memory_test.cpp',
       'tests/sound_test.cpp',
     ],
     dependencies: [core_dep, catch2, cairo_dep, freetype_dep, harfbuzz_dep, icu_uc_dep, icu_i18n_dep, zlib_dep],
+    cpp_args: [
+      '-DCOMICCHAT_TEST_COMICART_DIR="' + meson.project_source_root() + '/../v2.5-beta-1-modern/comicart"',
+      '-DCOMICCHAT_TEST_SOURCE_RASTER_DIR="' + meson.project_source_root() + '/../v2.5-beta-1/res"',
+    ],
   )
-  test('comicchat-headless', unit_tests, timeout: 30)
+  headless_test_env = environment()
+  headless_test_env.set('COMICCHAT_FONT_PATH', meson.project_source_root() / '../v1.0/shared/comic.ttf')
+  test('comicchat-headless', unit_tests, timeout: 30, env: headless_test_env)
 
   ircv3_tests = executable(
     'comicchat-ircv3-tests',
@@ -321,6 +416,13 @@ if get_option('tests')
     dependencies: [core_dep, catch2],
   )
   test('comicchat-dcc-transfer', dcc_transfer_tests, timeout: 30)
+
+  executable(
+    'comicchat-avatar-oracle',
+    'tools/avatar_oracle.cpp',
+    dependencies: core_dep,
+    install: false,
+  )
 endif
 
 if get_option('benchmarks')

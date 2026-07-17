@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -24,9 +25,21 @@ constexpr double source_reference_width = 4860.0;
 constexpr double source_title_font_height = 576.0;
 constexpr double source_shout_font_height = 252.0;
 
-auto checked_pixel_count(const std::int32_t width, const std::int32_t height) -> std::size_t {
+struct ImageLayout final {
+    int stride{};
+    std::size_t pixels{};
+};
+
+auto checked_image_layout(const std::int32_t width, const std::int32_t height) -> ImageLayout {
     if (width <= 0 || height <= 0) throw std::invalid_argument{"canvas dimensions must be positive"};
-    return static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+    const auto stride = cairo_format_stride_for_width(CAIRO_FORMAT_ARGB32, width);
+    if (stride < 0 || stride % static_cast<int>(sizeof(std::uint32_t)) != 0)
+        throw std::length_error{"canvas stride is not representable"};
+    const auto row_pixels = static_cast<std::size_t>(stride) / sizeof(std::uint32_t);
+    const auto rows = static_cast<std::size_t>(height);
+    if (row_pixels > std::numeric_limits<std::size_t>::max() / rows)
+        throw std::length_error{"canvas pixel storage overflows"};
+    return {stride, row_pixels * rows};
 }
 
 void set_color(cairo_t* context, const Rgba color) {
@@ -103,24 +116,24 @@ void draw_shaped(cairo_t* context, TextEngine& text, const std::string_view valu
 class Canvas::Impl final {
 public:
     Impl(const std::int32_t requested_width, const std::int32_t requested_height)
-        : width{requested_width}, height{requested_height}, data(checked_pixel_count(width, height)) {
-        surface = cairo_image_surface_create_for_data(
-            reinterpret_cast<unsigned char*>(data.data()), CAIRO_FORMAT_ARGB32, width, height, width * 4);
-        if (cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) throw std::runtime_error{"Cairo surface creation failed"};
-        context = cairo_create(surface);
-        if (cairo_status(context) != CAIRO_STATUS_SUCCESS) throw std::runtime_error{"Cairo context creation failed"};
-    }
-
-    ~Impl() {
-        if (context != nullptr) cairo_destroy(context);
-        if (surface != nullptr) cairo_surface_destroy(surface);
+        : width{requested_width}, height{requested_height}, layout{checked_image_layout(width, height)},
+          data(layout.pixels),
+          surface{cairo_image_surface_create_for_data(reinterpret_cast<unsigned char*>(data.data()),
+                                                       CAIRO_FORMAT_ARGB32, width, height, layout.stride),
+                  cairo_surface_destroy} {
+        if (!surface || cairo_surface_status(surface.get()) != CAIRO_STATUS_SUCCESS)
+            throw std::runtime_error{"Cairo surface creation failed"};
+        context = {cairo_create(surface.get()), cairo_destroy};
+        if (!context || cairo_status(context.get()) != CAIRO_STATUS_SUCCESS)
+            throw std::runtime_error{"Cairo context creation failed"};
     }
 
     std::int32_t width{};
     std::int32_t height{};
+    ImageLayout layout;
     std::vector<std::uint32_t> data;
-    cairo_surface_t* surface{};
-    cairo_t* context{};
+    std::unique_ptr<cairo_surface_t, decltype(&cairo_surface_destroy)> surface{nullptr, cairo_surface_destroy};
+    std::unique_ptr<cairo_t, decltype(&cairo_destroy)> context{nullptr, cairo_destroy};
 };
 
 Canvas::Canvas(const std::int32_t width, const std::int32_t height) : impl_{std::make_unique<Impl>(width, height)} {}
@@ -132,16 +145,16 @@ auto Canvas::height() const noexcept -> std::int32_t { return impl_->height; }
 auto Canvas::pixels() const noexcept -> std::span<const std::uint32_t> { return impl_->data; }
 
 void Canvas::clear(const Rgba color) {
-    cairo_save(impl_->context);
-    cairo_set_operator(impl_->context, CAIRO_OPERATOR_SOURCE);
-    set_color(impl_->context, color);
-    cairo_paint(impl_->context);
-    cairo_restore(impl_->context);
-    cairo_surface_flush(impl_->surface);
+    cairo_save(impl_->context.get());
+    cairo_set_operator(impl_->context.get(), CAIRO_OPERATOR_SOURCE);
+    set_color(impl_->context.get(), color);
+    cairo_paint(impl_->context.get());
+    cairo_restore(impl_->context.get());
+    cairo_surface_flush(impl_->surface.get());
 }
 
 void Canvas::render_title_panel(const TitlePanel& model, TextEngine& text) {
-    auto* context = impl_->context;
+    auto* context = impl_->context.get();
     const auto panel_size = static_cast<double>(std::min(impl_->width, impl_->height));
     const auto scale = panel_size / source_panel_units;
     const auto origin_x = (static_cast<double>(impl_->width) - panel_size) / 2.0;
@@ -194,12 +207,12 @@ void Canvas::render_title_panel(const TitlePanel& model, TextEngine& text) {
         row_top += row_height;
     }
     cairo_restore(context);
-    cairo_surface_flush(impl_->surface);
+    cairo_surface_flush(impl_->surface.get());
 }
 
 auto Canvas::write_png(const std::string_view path) const -> bool {
     const std::string owned_path{path};
-    return cairo_surface_write_to_png(impl_->surface, owned_path.c_str()) == CAIRO_STATUS_SUCCESS;
+    return cairo_surface_write_to_png(impl_->surface.get(), owned_path.c_str()) == CAIRO_STATUS_SUCCESS;
 }
 
 } // namespace comicchat

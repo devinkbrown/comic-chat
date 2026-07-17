@@ -1,6 +1,7 @@
 #include "comicchat/text.hpp"
 
 #include <catch2/catch_test_macros.hpp>
+#include <filesystem>
 
 TEST_CASE("ICU normalization is strict and deterministic") {
     const auto normalized = comicchat::normalize_utf8_nfc("Cafe\xCC\x81");
@@ -14,6 +15,7 @@ TEST_CASE("ICU normalization is strict and deterministic") {
 TEST_CASE("FreeType and HarfBuzz shape Unicode text") {
     const auto font = comicchat::find_portable_comic_font();
     REQUIRE(font.has_value());
+    CHECK(std::filesystem::path{*font}.filename() == "comic.ttf");
     auto engine = comicchat::TextEngine::create(*font);
     REQUIRE(engine.has_value());
     const auto glyphs = (*engine)->shape("Comic Chat \xE2\x98\x85", 28.0);

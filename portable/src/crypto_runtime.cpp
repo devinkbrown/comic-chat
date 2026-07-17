@@ -10,7 +10,6 @@
 #include <mbedtls/threading.h>
 #include <mbedtls/version.h>
 #include <psa/crypto.h>
-#include <psa/crypto_extra.h>
 
 static_assert(MBEDTLS_VERSION_NUMBER == 0x03060700,
               "Comic Chat requires the pinned mbedTLS 3.6.7 ABI");
@@ -57,22 +56,12 @@ auto windows_mutex_unlock(mbedtls_threading_mutex_t* mutex) noexcept -> int {
 struct RuntimeState final {
     std::once_flag once;
     bool ready{};
-    bool psa_initialized{};
-#if defined(_WIN32)
-    bool alternate_threading_installed{};
-#endif
-
-    ~RuntimeState() {
-        if (psa_initialized) mbedtls_psa_crypto_free();
-#if defined(_WIN32)
-        // RuntimeState is registered during the first crypto consumer's
-        // construction, so later consumers are destroyed before this guard.
-        if (alternate_threading_installed) mbedtls_threading_free_alt();
-#endif
-    }
 };
 
 auto runtime_state() -> RuntimeState& {
+    // Intentionally process-lifetime. Explicit teardown cannot be ordered
+    // safely against arbitrary late static crypto consumers, while the OS can
+    // reclaim PSA state and Windows alternate mutexes atomically at exit.
     static RuntimeState state;
     return state;
 }
@@ -86,11 +75,8 @@ auto initialize_runtime() noexcept -> bool {
 #if defined(_WIN32)
             mbedtls_threading_set_alt(windows_mutex_init, windows_mutex_free,
                                       windows_mutex_lock, windows_mutex_unlock);
-            state.alternate_threading_installed = true;
 #endif
             if (mbedtls_ssl_list_ciphersuites() == nullptr || psa_crypto_init() != PSA_SUCCESS) return;
-            state.psa_initialized = true;
-
             mbedtls_aes_context aes;
             mbedtls_aes_init(&aes);
             std::array<unsigned char, 16> key{};

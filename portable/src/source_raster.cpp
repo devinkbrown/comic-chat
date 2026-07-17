@@ -567,6 +567,18 @@ auto find_source_raster_directory()
         if (const std::filesystem::path candidate{COMICCHAT_SOURCE_RASTER_DIR};
             is_source_directory(candidate)) return candidate;
 #endif
+        std::error_code error;
+        const auto working = std::filesystem::current_path(error);
+        if (!error) {
+            const std::array candidates{
+                working / "v2.5-beta-1" / "res",
+                working / ".." / "v2.5-beta-1" / "res",
+                working / ".." / ".." / "v2.5-beta-1" / "res",
+            };
+            for (const auto& candidate : candidates) {
+                if (is_source_directory(candidate)) return candidate;
+            }
+        }
         return std::unexpected{SourceRasterError::source_directory_missing};
     } catch (const std::bad_alloc&) {
         return std::unexpected{SourceRasterError::allocation};

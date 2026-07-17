@@ -687,7 +687,7 @@ void TestBatchFamiliesAndGlobalBound()
 	for (std::size_t batch = 0; batch < 5; ++batch) {
 		for (std::size_t item = 0; item < 26; ++item) {
 			bounded.Process("@pad=" + std::string(8100, 'x') + ";batch=b" + std::to_string(batch) +
-				" :Bob NOTICE #room :bounded\r\n");
+				" :Bob TAGMSG #room\r\n");
 		}
 	}
 	auto rejected = bounded.Process(":server BATCH -b4\r\n");

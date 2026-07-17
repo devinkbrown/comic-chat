@@ -445,6 +445,8 @@ FodyWeavers.xsd
 # Native Meson port outputs and downloaded WrapDB source trees
 /portable/build*/
 /portable/.tmp/
+/portable/.tmp-*/
+/portable/.tmp-*.json
 /portable/subprojects/.wraplock
 /portable/subprojects/packagecache/
 /portable/subprojects/Catch2-*/

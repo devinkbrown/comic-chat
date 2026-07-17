@@ -103,8 +103,8 @@ struct SourceStripSpec final {
     -> std::expected<RasterImage, SourceRasterError>;
 
 // Resolve only the released Microsoft resource directory: an explicit
-// COMICCHAT_SOURCE_RASTER_DIR override, the installed data directory, or the
-// build-tree source directory. No generated/replacement art is considered.
+// COMICCHAT_SOURCE_RASTER_DIR override, the installed data directory, or a
+// nearby source checkout. No generated/replacement art is considered.
 [[nodiscard]] auto find_source_raster_directory()
     -> std::expected<std::filesystem::path, SourceRasterError>;
 

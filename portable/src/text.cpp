@@ -1,7 +1,9 @@
 #include "comicchat/text.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <limits>
 #include <mutex>
@@ -14,6 +16,12 @@
 #include <unicode/normalizer2.h>
 #include <unicode/ustring.h>
 #include <unicode/unistr.h>
+
+#if defined(_WIN32)
+#include <windows.h>
+#elif defined(COMICCHAT_HAS_FONTCONFIG)
+#include <fontconfig/fontconfig.h>
+#endif
 
 namespace comicchat {
 
@@ -45,21 +53,60 @@ auto normalize_utf8_nfc(const std::string_view input) -> std::expected<std::stri
 }
 
 auto find_portable_comic_font() -> std::expected<std::string, TextError> {
-    static constexpr std::string_view candidates[]{
-        "/usr/share/fonts/truetype/msttcorefonts/Comic_Sans_MS.ttf",
-        "/usr/share/fonts/truetype/msttcorefonts/comic.ttf",
-        "/usr/share/fonts/TTF/Comic_Sans_MS.ttf",
-        "/usr/local/share/fonts/Comic_Sans_MS.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
-        "/usr/local/share/fonts/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
-        "/usr/local/share/fonts/LiberationSans-Regular.ttf",
-        "/usr/share/fonts/Adwaita/AdwaitaSans-Regular.ttf",
-    };
-    for (const auto candidate : candidates) {
-        if (std::filesystem::is_regular_file(candidate)) return std::string{candidate};
+    std::vector<std::filesystem::path> candidates;
+    if (const auto* override_path = std::getenv("COMICCHAT_FONT_PATH"); override_path != nullptr)
+        candidates.emplace_back(override_path);
+#if defined(COMICCHAT_INSTALL_FONT_PATH)
+    candidates.emplace_back(COMICCHAT_INSTALL_FONT_PATH);
+#endif
+#if defined(COMICCHAT_SOURCE_FONT_PATH)
+    candidates.emplace_back(COMICCHAT_SOURCE_FONT_PATH);
+#endif
+    std::error_code error;
+    const auto working = std::filesystem::current_path(error);
+    if (!error) {
+        candidates.push_back(working / "comic.ttf");
+        candidates.push_back(working / "assets" / "comic.ttf");
+        candidates.push_back(working / "v1.0" / "shared" / "comic.ttf");
+        candidates.push_back(working / ".." / "v1.0" / "shared" / "comic.ttf");
+        candidates.push_back(working / ".." / ".." / "v1.0" / "shared" / "comic.ttf");
     }
+#if defined(_WIN32)
+    std::array<wchar_t, 32768> module{};
+    const auto module_size = GetModuleFileNameW(nullptr, module.data(), static_cast<DWORD>(module.size()));
+    if (module_size != 0 && module_size < module.size()) {
+        const auto directory = std::filesystem::path{module.data()}.parent_path();
+        candidates.push_back(directory / L"comic.ttf");
+        candidates.push_back(directory / L"assets" / L"comic.ttf");
+    }
+    std::array<wchar_t, MAX_PATH + 1> windows{};
+    const auto windows_size = GetWindowsDirectoryW(windows.data(), static_cast<UINT>(windows.size()));
+    if (windows_size != 0 && windows_size < windows.size())
+        candidates.push_back(std::filesystem::path{windows.data()} / L"Fonts" / L"comic.ttf");
+#endif
+    for (const auto& candidate : candidates) {
+        error.clear();
+        if (std::filesystem::is_regular_file(candidate, error) && !error) return candidate.string();
+    }
+#if defined(COMICCHAT_HAS_FONTCONFIG)
+    for (const auto* family : {"Comic Sans MS", "Comic Sans", "DejaVu Sans"}) {
+        auto* pattern = FcPatternCreate();
+        if (pattern == nullptr) continue;
+        (void)FcPatternAddString(pattern, FC_FAMILY, reinterpret_cast<const FcChar8*>(family));
+        FcConfigSubstitute(nullptr, pattern, FcMatchPattern);
+        FcDefaultSubstitute(pattern);
+        FcResult result{};
+        auto* match = FcFontMatch(nullptr, pattern, &result);
+        FcPatternDestroy(pattern);
+        if (match == nullptr) continue;
+        FcChar8* file{};
+        const bool found = FcPatternGetString(match, FC_FILE, 0, &file) == FcResultMatch && file != nullptr;
+        const auto path = found ? std::string{reinterpret_cast<const char*>(file)} : std::string{};
+        FcPatternDestroy(match);
+        error.clear();
+        if (found && std::filesystem::is_regular_file(path, error) && !error) return path;
+    }
+#endif
     return std::unexpected{TextError::font_open};
 }
 

@@ -38,7 +38,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg ninja-build pkg-config python3-pip \
             libcairo2-dev libdbus-1-dev libdecor-0-dev libegl1-mesa-dev libfontconfig1-dev libfreetype-dev \
-            libgl-dev libharfbuzz-dev libicu-dev libuv1-dev libwayland-dev libxkbcommon-dev wayland-protocols \
+            libgl-dev libharfbuzz-dev libicu-dev libudev-dev libuv1-dev libwayland-dev libxkbcommon-dev wayland-protocols \
             weston zlib1g-dev
           curl --fail --location --silent --show-error \
             https://apt.llvm.org/llvm-snapshot.gpg.key -o llvm-snapshot.gpg.key

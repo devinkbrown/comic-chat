@@ -10,7 +10,8 @@ use Wine.
 The code requires Clang 21 or newer in strict post-C++23 mode. Meson spells the
 mode `cpp_std=c++26`; its Clang command line is `-std=c++2c` plus
 `-pedantic-errors`, and `cpp26.hpp` rejects an older language mode. Clang 21 is
-accepted for OpenBSD stable; Linux release and sanitizer gates use Clang 22.
+accepted for OpenBSD stable. The primary Linux CI gate is pinned to upstream
+Clang 22.1.8 and rejects a different compiler version.
 
 ## Source-derived rendering foundation (incomplete)
 
@@ -72,7 +73,17 @@ X11 remains an SDL fallback. FreeBSD and OpenBSD use the same Meson source; no
 Linux-only frontend APIs are used.
 
 System libraries are preferred. The checked-in `.wrap` descriptors provide
-hash-pinned source fallbacks. libuv is pinned to upstream v1.52.1 commit
+hash-pinned source fallbacks. As verified against the official releases on
+2026-07-17, the direct source fallbacks are SDL 3.4.12, Cairo 1.18.4, FreeType
+2.14.3, HarfBuzz 14.2.1, ICU 78.3, zlib 1.3.2, libuv 1.52.1, and Catch2 3.15.2.
+The SDL and ICU archives use the newest applicable WrapDB Meson overlays
+available on that date (SDL 3.4.2-1 and ICU 78.2-1). SDL's overlay is vendored
+for review with its version metadata updated to 3.4.12, its Wayland source
+list extended for the upstream `SDL_waylandutil.c` translation unit, and SDL's
+upstream dummy audio/video backends enabled for headless tests; no SDL source
+is modified. ICU's exact hash-pinned overlay is followed by a one-line
+78.3 metadata patch. libuv is
+pinned to upstream v1.52.1 commit
 `1cfa32ff59c076ffb6ed735bbc8c18361558661f`; mbedTLS is pinned to upstream
 v3.6.7 commit `068ff080b369adfac81509f9b57b2afabaf82dc5`. Downloaded `packagecache/`
 archives and extracted subprojects are deliberately ignored. For an offline
@@ -83,7 +94,10 @@ do not commit the downloaded trees.
 ## Shared transport and IRCv3
 
 `ConnectionEngine` is a typed, thread-safe command/event boundary. A dedicated
-`std::jthread` owns the libuv loop and every socket/TLS object. The UI thread
+cooperatively stopped RAII thread owns the libuv loop and every socket/TLS
+object. It maps directly to `std::jthread`/`std::stop_token` when the platform
+library provides them and uses the same no-detach contract on BSD libc++
+releases that do not. The UI thread
 posts generation-tagged commands, wakes the loop through `uv_async_t`, and
 polls immutable generation-tagged events. Socket readiness uses `uv_poll_t`, so
 an idle connected client sleeps rather than checking the socket on a timer.
@@ -100,8 +114,8 @@ The connection path provides:
   buffers with explicit backpressure;
 - weighted fair priority queues in `PONG`, authentication, control, chat, and
   bulk order, plus token buckets for chat and bulk traffic;
-- connect, proxy/TLS handshake, and idle deadlines; cancellation by
-  `std::stop_token` and generation; exponential reconnect with deterministic
+- connect, proxy/TLS handshake, and idle deadlines; cancellation by the
+  portable stop token and generation; exponential reconnect with deterministic
   jitter; and zeroization of every sensitive send on completion or cancellation;
 - diagnostics containing fixed non-secret descriptions only.
 
@@ -122,10 +136,11 @@ limits. Nothing caches unbounded history, frames, proxy data, or wire data.
 `FrameArena` is a bounded `std::pmr::monotonic_buffer_resource` with a null
 upstream; exhaustion throws instead of growing the process. Render primitives
 are compact contiguous values and finalized into immutable generation-tagged
-snapshots. `LockedSecret` zeroizes credentials and uses `mlock`/`VirtualLock`
-when the OS permits. `WorkerScheduler` uses hardware-concurrency-sized
-`std::jthread` workers, a bounded task queue, generation cancellation, and a
-deterministic inline mode (`-Ddeterministic=true`) for goldens.
+snapshots. `LockedSecret` zeroizes credentials with `mlock`/`VirtualLock` and
+requires the native page lock to succeed. `WorkerScheduler` uses one to
+eight cooperatively stopped workers (bounded by reported hardware concurrency), a
+bounded task queue, generation cancellation, and a deterministic inline mode
+(`-Ddeterministic=true`) for goldens.
 
 ## Verification and performance
 
