@@ -764,14 +764,16 @@ std::expected<std::string, ParseFailure> Message::SerializeChecked(bool include_
 	if (include_tags && !tags.empty()) {
 		tag_frame.push_back('@');
 		for (std::size_t i = 0; i < tags.size(); ++i) {
-			if (!ValidTagKey(tags[i].name)) return std::unexpected(ParseFailure{"invalid tag key"});
+			const auto& tag = tags[i];
+			if (!ValidTagKey(tag.name)) return std::unexpected(ParseFailure{"invalid tag key"});
 			if (i) tag_frame.push_back(';');
-			tag_frame += tags[i].name;
-			if (tags[i].value) {
-				if (tags[i].value->find('\0') != std::string::npos)
+			tag_frame += tag.name;
+			if (tag.value.has_value()) {
+				const auto& value = tag.value.value();
+				if (value.find('\0') != std::string::npos)
 					return std::unexpected(ParseFailure{"NUL in tag value"});
 				tag_frame.push_back('=');
-				tag_frame += EscapeTag(*tags[i].value);
+				tag_frame += EscapeTag(value);
 			}
 		}
 		tag_frame.push_back(' ');
@@ -817,7 +819,9 @@ TypedTags Message::DecodeTags() const
 	TypedTags decoded;
 	auto value = [&](std::initializer_list<std::string_view> names) -> std::optional<std::string> {
 		for (const auto name : names) {
-			if (const auto* tag = FindTag(name); tag && tag->value && !tag->value->empty()) return *tag->value;
+			if (const auto* tag = FindTag(name); tag && tag->value.has_value() &&
+				!tag->value.value().empty())
+				return tag->value;
 		}
 		return std::nullopt;
 	};
@@ -869,7 +873,7 @@ ProcessResult::ProcessResult(ProcessResult&& other) noexcept
 	  messages(std::move(other.messages)),
 	  outbound(std::move(other.outbound)),
 	  events(std::move(other.events)),
-	  sts_update(std::move(other.sts_update))
+	  sts_update(other.sts_update)
 {
 	other.consumed = false;
 	other.sts_update.reset();
@@ -883,7 +887,7 @@ ProcessResult& ProcessResult::operator=(ProcessResult&& other) noexcept
 	messages = std::move(other.messages);
 	outbound = std::move(other.outbound);
 	events = std::move(other.events);
-	sts_update = std::move(other.sts_update);
+	sts_update = other.sts_update;
 	other.consumed = false;
 	other.sts_update.reset();
 	return *this;
@@ -1263,7 +1267,7 @@ std::optional<std::string> Engine::CapabilityValue(std::string_view capability) 
 {
 	const auto found = offered_.find(std::string(capability));
 	if (found == offered_.end() || !found->second) return std::nullopt;
-	return *found->second;
+	return found->second;
 }
 
 bool Engine::SetCapabilityRequestEnabled(std::string_view capability, bool enabled)
@@ -1289,11 +1293,9 @@ bool Engine::ClientTagAllowed(std::string_view tag) const
 	if (found == isupport_.end() || found->second.empty()) return true;
 	bool denied = false;
 	for (const auto& item : Split(found->second, ',')) {
-		if (item == "*") {
-			denied = true;
-		} else if (!item.empty() && item.front() == '-' && item.substr(1) == tag) {
+		if (!item.empty() && item.front() == '-' && item.substr(1) == tag) {
 			denied = false;
-		} else if (item == tag) {
+		} else if (item == "*" || item == tag) {
 			denied = true;
 		}
 	}
@@ -2128,7 +2130,7 @@ std::vector<Message> Engine::FinishBatch(const std::string& id, std::vector<Even
 					EraseBatch(*batch.parent);
 					return std::vector<Message>{};
 				}
-				for (auto& message : messages) message.SetTag("batch", *batch.parent);
+				for (auto& message : messages) message.SetTag("batch", batch.parent);
 				parent->second.wire_bytes += batch.wire_bytes;
 				parent->second.messages.insert(parent->second.messages.end(),
 					std::make_move_iterator(messages.begin()), std::make_move_iterator(messages.end()));
@@ -2373,7 +2375,7 @@ ProcessResult Engine::HandleStateMessage(const Message& message)
 			joined_channels_.erase(old_name);
 			const auto marker = read_markers_.find(old_name);
 			if (marker != read_markers_.end()) {
-				const auto value = std::move(marker->second);
+				auto value = std::move(marker->second);
 				read_markers_.erase(marker);
 				read_markers_[new_name] = std::move(value);
 			}
@@ -2735,14 +2737,7 @@ std::expected<std::string, ParseFailure> Engine::PrepareOutgoingChecked(std::str
 std::expected<std::string, ParseFailure> Engine::PrepareAccountRegistration(
 	std::string account, std::string email, std::string&& password)
 {
-	struct Wipe {
-		std::string* value;
-		~Wipe() {
-			volatile char* bytes = value->empty() ? nullptr : value->data();
-			for (std::size_t index = 0; index < value->size(); ++index) bytes[index] = 0;
-			value->clear();
-		}
-	} wipe{&password};
+	ScopedStringWipe wipe(&password);
 	if (!secure_transport_ || !IsEnabled("draft/account-registration"))
 		return std::unexpected(ParseFailure{"account registration requires TLS and negotiated capability"});
 	if (!ValidMiddleParameter(account) || !ValidMiddleParameter(email) ||
@@ -2778,14 +2773,7 @@ std::expected<std::string, ParseFailure> Engine::PrepareAccountRegistration(
 std::expected<std::string, ParseFailure> Engine::PrepareAccountVerification(
 	std::string account, std::string&& verification_code)
 {
-	struct Wipe {
-		std::string* value;
-		~Wipe() {
-			volatile char* bytes = value->empty() ? nullptr : value->data();
-			for (std::size_t index = 0; index < value->size(); ++index) bytes[index] = 0;
-			value->clear();
-		}
-	} wipe{&verification_code};
+	ScopedStringWipe wipe(&verification_code);
 	if (!secure_transport_ || !IsEnabled("draft/account-registration") ||
 		!ValidMiddleParameter(account) || !ValidMiddleParameter(verification_code))
 		return std::unexpected(ParseFailure{"invalid account verification request"});
