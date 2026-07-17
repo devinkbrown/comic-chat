@@ -39,34 +39,48 @@ Status legend: ✅ done · 🟡 partial · ⬜ not started · 🔒 MSVC-CI-only 
 - ✅ Link-time optimization + aggressive codegen flags (Meson verified; MSVC
   LTCG set pending CI).
 
-## Phase 1 — Verifiable IRCv3 engine/bridge completion (Linux/meson)
+## Phase 1 — Verifiable IRCv3 engine/bridge completion (Linux/meson) — ✅ DONE
 
-Every item here has a Linux test as its gate. This is the honest "finish it"
-surface. Serial on `portable/src/net/ircv3.cpp` (one hot file — do not
-parallelize edits to it).
-
-| # | Item | Anchor | Gate | Status |
-|---|------|--------|------|--------|
-| 1.1 | Multiline `FAIL BATCH MULTILINE_MAX_BYTES/MAX_LINES/INVALID_TARGET/INVALID` on violation | `ircv3.cpp` `PrepareMultiline`/`HandleBatch` | `ircv3_test.cpp` cases per RFC | ⬜ |
-| 1.2 | Wire `RecoveryCommands()` into a production reconnect caller (no live caller today) | `ircv3.cpp:1468`, client reconnect path | causal test that reconnect emits bounded recovery | ⬜ |
-| 1.3 | Labeled-response full presentation (beyond terminal ACK) | `ircv3.cpp` label path | correlation/presentation test | 🟡 |
-| 1.4 | Typing typed-event → `Ircv3UserMutation` bridge classification (testable half; MFC icon 🔒) | `ircv3eventbridge.h` `ConsumeUserMutation` | bridge fake-model test | ⬜ |
-| 1.5 | Reaction → status-line presentation (testable half; in-comic needs 1.6-style msgid index) | `ircv3eventbridge.h` | bridge fake-model test | ⬜ |
-| 1.6 | Metadata whitelist → document-owned `CUserInfo` field (testable half) | `ircv3eventbridge.h` | bridge fake-model test | ⬜ |
-
-## Phase 2 — Portable renderer completion (Linux headless)
-
-The renderer is a title-panel foundation; these are the real "finish the UI"
-items that are verifiable headlessly (`SDL_VIDEODRIVER=dummy … --png`), gated by
-`source_raster_test` and render goldens.
+Every item had a Linux test as its gate. Each landed specialist-built, gated by a
+fresh `cpp-reviewer` pass (which caught the reconnect footgun below), on `main`.
 
 | # | Item | Anchor | Status |
 |---|------|--------|--------|
-| 2.1 | Comic balloon geometry, tails, thought/whisper shapes | `portable/src/render`, `source_raster.*` | ⬜ |
-| 2.2 | `CBodyUnary` avatar pose/body compositing from AVB | render + asset decode | ⬜ |
-| 2.3 | Expert placement (avatar order, panel splitting) port | layout | ⬜ |
-| 2.4 | `CLabel` font-bounding-box exactness | text measurement | 🟡 |
-| 2.5 | Full room/page/composer/member-list shell | app/frontend | ⬜ |
+| 1.1 | Multiline `MULTILINE_*` structured failure codes | `ircv3.cpp` `PrepareMultiline` | ✅ |
+| 1.2 | `RecoveryCommands()` wired into the reconnect-001 path (rejoin unconditional, CHATHISTORY negotiated-only — reviewer footgun fixed) | `ircv3.cpp` | ✅ |
+| 1.3 | Labeled-response presentation (engine/typed half; MFC visual assoc → Phase 3) | `ircv3.cpp` | ✅ |
+| 1.4 | Typing → `Ircv3UserMutationKind::typing` bridge classification | `ircv3eventbridge.h` | ✅ (MFC icon 🔒 Phase 3) |
+| 1.5 | Reaction → status-line presentation classification | `ircv3eventbridge.h` | ✅ (in-comic 🔒 Phase 3) |
+| 1.6 | Metadata whitelist → owned `CUserInfo` field classification | `ircv3eventbridge.h` | ✅ (MFC wiring 🔒 Phase 3) |
+
+## Phase 2 — Portable renderer modules (Linux headless) — ✅ DONE (unwired)
+
+All source-derived renderer modules are ported, gated, and on `main`. Each was
+specialist-built and `cpp-reviewer`-gated (compositing: clean; balloon: a HIGH
+think-bubble bug caught + fixed). **Caveat:** the modules exist and are tested,
+but `render_panel` is **not yet wired into the live app** — see Phase 2.5.
+
+| # | Item | Module | Status |
+|---|------|--------|--------|
+| 2.0 | Seeded MSVCRT PRNG + twips/Y-up logical drawing pass | `render.cpp`/`layout.cpp` | ✅ |
+| 2.1 | Balloon geometry, cloud spline, tails, whisper/think/action-box | `balloon.cpp` | ✅ (multi-balloon rng replay = MEDIUM follow-up, `balloon.hpp`) |
+| 2.2 | `CBodyUnary`/`CBodyDouble` avatar compositing from AVB | `avatar_assets.cpp` | ✅ |
+| 2.3 | Conversation expert placement (order, panel split, arrow anchors) | `layout.cpp` | ✅ |
+| 2.4 | `CLabel`/`CFontInfo` font bounding-box + ellipsis | `text.cpp` | ✅ |
+
+## Phase 2.5 — Wire the renderer into a usable \*nix client (Linux)
+
+The modules are done but `app.cpp` still draws only the title panel; IRC output
+goes to stderr. This is the integration that makes the \*nix UI an actual chat
+client — all verifiable headlessly.
+
+| # | Item | Anchor | Status |
+|---|------|--------|--------|
+| 2.5a | Wire `render_panel` into the live app frame | `portable/src/app.cpp` | ⬜ |
+| 2.5b | Message→panel feed: IRC session → comic pages (the `AddLine`/`AddReaction` page model) | `app.cpp` + a page/session layer | ⬜ |
+| 2.5c | Text input / message composition surface | `app.cpp` | ⬜ |
+| 2.5d | Scrollback + member-list + avatar/emotion picker | `app.cpp` | ⬜ |
+| 2.5e | Multi-balloon panel driver (threads the panel PRNG; fixes the 2.1 MEDIUM rng-replay gap) | `balloon.cpp` caller | ⬜ |
 
 ## Phase 3 — MFC view consumers (MSVC-CI-only) 🔒
 
