@@ -48,10 +48,15 @@ if get_option('optimization') in ['2', '3', 's']
     '-fdata-sections',
     '-fvisibility=hidden',
     '-fvisibility-inlines-hidden',
-    '-fno-semantic-interposition',
-    '-fno-plt',
     language: ['c', 'cpp'],
   )
+  # -fno-semantic-interposition / -fno-plt are ELF shared-library concepts
+  # (interposition, PLT/GOT indirection) with no PE/COFF equivalent; Clang
+  # flags them "unused" for a Windows target, which -Werror escalates to a
+  # hard error.
+  if host_machine.system() != 'windows'
+    add_project_arguments('-fno-semantic-interposition', '-fno-plt', language: ['c', 'cpp'])
+  endif
   add_project_link_arguments('-Wl,--gc-sections', language: ['c', 'cpp'])
 endif
 if get_option('deterministic')
