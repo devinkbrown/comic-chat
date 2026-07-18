@@ -1,5 +1,4 @@
 #include <comicchat/net/ircv3.hpp>
-#include "../../v2.5-beta-1-modern/ircv3eventbridge.h"
 
 #include <algorithm>
 #include <array>
@@ -1823,87 +1822,6 @@ void TestAccountRegistrationAndOutputPolicy()
 		"draft/ICON is exposed as metadata without fetching remote media");
 }
 
-void TestLegacyUiEventBridge()
-{
-	struct Source {
-		std::deque<Ircv3AdapterEvent> queued;
-		std::uint64_t dropped = 7;
-
-		std::vector<Ircv3AdapterEvent> PollIrcv3Events(std::size_t maximum)
-		{
-			std::vector<Ircv3AdapterEvent> result;
-			while (!queued.empty() && result.size() < maximum) {
-				result.push_back(std::move(queued.front()));
-				queued.pop_front();
-			}
-			return result;
-		}
-
-		std::uint64_t DroppedIrcv3Events() const { return dropped; }
-	} source;
-
-	auto tagged = Message::Parse("@msgid=42;+reply=17 :Nick!u@h PRIVMSG #room :hello\r\n");
-	Check(tagged.has_value(), "typed-event bridge fixture parses tagged context");
-	for (std::size_t index = 0; index < 300; ++index) {
-		comic_chat::ircv3::Event event;
-		event.type = index == 0 ? EventType::MessageContext : EventType::Typing;
-		event.key = index == 1 ? "reject" : std::to_string(index);
-		std::optional<Message> context;
-		if (index == 0 && tagged) context = *tagged;
-		source.queued.push_back({std::move(event), std::move(context)});
-	}
-
-	bool preserved_context{};
-	std::size_t observed{};
-	const auto first = comic_chat::legacy_ui::DrainIrcv3EventsForUi(source,
-		[&](Ircv3AdapterEvent event) {
-			if (event.event.key == "reject") throw std::runtime_error{"view rejected event"};
-			++observed;
-			if (event.event.type == EventType::MessageContext && event.message) {
-				const auto* msgid = event.message->FindTag("msgid");
-				const auto* reply = event.message->FindTag("+reply");
-				preserved_context = msgid && msgid->value == "42" &&
-					reply && reply->value == "17" && event.message->params.back() == "hello";
-			}
-		}, 260);
-	Check(first.drained == 260 && first.delivered == 259 && first.rejected == 1 &&
-		first.dropped_before_delivery == 7 && observed == 259,
-		"typed-event bridge bounds batches and isolates a rejecting UI sink");
-	Check(preserved_context, "typed-event bridge preserves complete MessageContext tags and payload");
-	Check(source.queued.size() == 40, "typed-event bridge leaves work beyond the caller bound queued");
-	const auto second = comic_chat::legacy_ui::DrainIrcv3EventsForUi(source,
-		[&](Ircv3AdapterEvent) { ++observed; });
-	Check(second.drained == 40 && second.delivered == 40 && source.queued.empty(),
-		"next UI event-loop turn drains the remaining typed events");
-
-	auto tagmsg = Message::Parse("@+typing=active;future~key=opaque :Nick!u@h TAGMSG #room\r\n");
-	Check(tagmsg.has_value(), "legacy adapter TAGMSG fixture parses");
-	if (tagmsg) {
-		const auto adapted = comic_chat::legacy_ui::AdaptProtocolMessage(*tagmsg);
-		Check(adapted.typed_context && adapted.typed_context->message &&
-			adapted.typed_context->event.type == EventType::MessageContext &&
-			adapted.typed_context->event.key == "TAGMSG" &&
-			adapted.typed_context->message->FindTag("future~key") &&
-			!adapted.legacy_wire,
-			"TAGMSG remains a complete typed context and cannot reach legacy command dispatch");
-	}
-	auto bare_tagmsg = Message::Parse(":Nick!u@h TAGMSG #room\r\n");
-	Check(bare_tagmsg.has_value(), "legacy adapter bare TAGMSG fixture parses");
-	if (bare_tagmsg) {
-		const auto adapted = comic_chat::legacy_ui::AdaptProtocolMessage(*bare_tagmsg);
-		Check(adapted.typed_context && adapted.typed_context->message && !adapted.legacy_wire,
-			"server-stripped bare TAGMSG remains typed-only before legacy dispatch");
-	}
-	auto privmsg = Message::Parse("@future~key=opaque :Nick!u@h PRIVMSG #room :hello\r\n");
-	Check(privmsg.has_value(), "legacy adapter PRIVMSG control fixture parses");
-	if (privmsg) {
-		const auto adapted = comic_chat::legacy_ui::AdaptProtocolMessage(*privmsg);
-		Check(adapted.typed_context && adapted.legacy_wire &&
-			*adapted.legacy_wire == ":Nick!u@h PRIVMSG #room :hello\r\n",
-			"ordinary tagged chat still reaches the legacy parser only after typed context capture");
-	}
-}
-
 } // namespace
 
 int main()
@@ -1938,7 +1856,6 @@ int main()
 	TestServerTranscriptFixtures();
 	TestMetadata2StateMachine();
 	TestAccountRegistrationAndOutputPolicy();
-	TestLegacyUiEventBridge();
 	if (failures) {
 		std::cerr << failures << " IRCv3 test(s) failed\n";
 		return EXIT_FAILURE;

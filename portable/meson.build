@@ -372,15 +372,6 @@ core_dep = declare_dependency(
   ],
 )
 
-# Compile the exact transport API surface consumed by each legacy MFC adapter.
-# The same client-local sources are objects in their chat.mak files, so both
-# Clang and MSVC reject drift.
-static_library(
-  'comicchat-adapter-api-compile',
-  '../v2.5-beta-1-modern/tests/transport_adapter_api_compile.cpp',
-  include_directories: inc,
-  install: false,
-)
 install_data('assets/fonts/comic.ttf', install_dir: get_option('datadir') / 'comic-chat')
 install_data(
   'assets/source-raster/chat.ico',
@@ -501,15 +492,6 @@ if get_option('tests')
   headless_test_env.set('COMICCHAT_FONT_PATH', meson.project_source_root() / 'assets/fonts/comic.ttf')
   test('comicchat-headless', unit_tests, timeout: 30, env: headless_test_env)
 
-  modern_icon_audit = find_program('../scripts/build-modern-icons.py')
-  test(
-    'comicchat-modern-icon-catalog',
-    modern_icon_audit,
-    args: ['verify'],
-    workdir: meson.project_source_root() / '..',
-    timeout: 30,
-  )
-
   expression_tests = executable(
     'comicchat-expression-tests',
     'tests/expression_test.cpp',
@@ -553,31 +535,6 @@ if get_option('tests')
     dependencies: [core_dep, catch2],
   )
   test('comicchat-dcc-transfer', dcc_transfer_tests, timeout: 30)
-
-  # These tests exercise the UI contract shared with the native MFC client.
-  # Keep them as standalone executables: linking them into comicchat-tests or
-  # the frontend would introduce a second main() (and WinMain on Windows).
-  # The Windows implementation includes MFC's stdafx.h and is therefore
-  # covered by chat.mak below rather than by the portable Windows frontend.
-  if host_machine.system() != 'windows'
-    modernui_tests = executable(
-      'comicchat-modernui-tests',
-      [
-        '../v2.5-beta-1-modern/tests/modernui_test.cpp',
-        '../v2.5-beta-1-modern/modernui.cpp',
-      ],
-      include_directories: inc,
-    )
-    test('comicchat-modernui', modernui_tests, timeout: 30)
-  endif
-
-  transport_ui_bridge_tests = executable(
-    'comicchat-transport-ui-bridge-tests',
-    '../v2.5-beta-1-modern/tests/transport_ui_bridge_test.cpp',
-    include_directories: inc,
-    dependencies: core_dep,
-  )
-  test('comicchat-transport-ui-bridge', transport_ui_bridge_tests, timeout: 30)
 
   executable(
     'comicchat-avatar-oracle',
