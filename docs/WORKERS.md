@@ -111,6 +111,11 @@ Keep `src/net/` ownership-oriented and transport-independent above the socket:
 - `client.zig` is the only live composition layer; it advances registration
   from receive events and never waits synchronously for a CAP or SASL reply.
 - `sts_store.zig` owns the bounded host policy database and atomic persistence.
+- `proto/dcc.zig` owns the live comic-tag side protocols carried outside
+  `.ccc` archives: the CTCP `DCC SEND` avatar/file offer (with its CTCP
+  low-level quoting) and the stop-and-wait, ACK'd chunked transfer socket
+  state machine (`sendFile`/`receiveFile`). `client.zig`'s `offerFile` only
+  composes and sends the offer; callers drive the transfer directly.
 
 The native app opens its window before connection setup. `AsyncNetwork` polls
 the connector, performs first-contact STS TLS upgrades, and schedules jittered

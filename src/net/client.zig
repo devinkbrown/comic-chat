@@ -13,6 +13,7 @@ const policy = @import("connection_policy.zig");
 const sts_store = @import("sts_store.zig");
 const message = @import("message.zig");
 const transport = @import("transport.zig");
+const dcc = @import("../proto/dcc.zig");
 const Transport = transport.Transport;
 
 pub const Message = message.Message;
@@ -455,6 +456,17 @@ pub const Client = struct {
     /// name via `announceAvatar`/`parseAvatarAnnouncement`.
     pub fn requestAvatarInfo(self: *Client, target: []const u8) !void {
         return self.privmsg(target, "# GetCharInfo");
+    }
+
+    /// `ChatSendFile`'s offer (filesend.cpp:130-198): announce a `DCC SEND`
+    /// avatar/file offer. Only composes and sends the CTCP message; the
+    /// caller drives the actual transfer via `proto.dcc.sendFile` once the
+    /// peer connects (this port has no MFC progress-dialog/thread
+    /// equivalent to launch it automatically).
+    pub fn offerFile(self: *Client, target: []const u8, offer: dcc.SendOffer) !void {
+        const wire = try dcc.encodeSendOffer(self.gpa, offer);
+        defer self.gpa.free(wire);
+        return self.privmsg(target, wire);
     }
 
     /// `ChatSyncBackDrop` (protsupp.cpp:3432-3453): announce a channel
