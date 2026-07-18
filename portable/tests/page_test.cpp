@@ -363,12 +363,20 @@ TEST_CASE("a lone body normalizes to maxBodyHeight, not its raw body_height") {
 }
 
 // The zoom-in branch (panel.cpp:791-806) fills unused panel width once bodies
-// no longer overflow it, capped by the "don't cut at neck" head factor.
+// no longer overflow it, capped by the "don't cut at neck" head factor. It is
+// gated on !Establishing() (panel.cpp:791), so a page's opening panel is left at
+// framing scale; this drives a later, NON-establishing lone-body panel to
+// isolate the zoom step.
 TEST_CASE("a lone narrow body zooms in to fill unused panel width") {
     Page page{config(), monospace_measure(100)};  // zoom_avatars defaults true.
-    page.add_line(say_line(1, "hi"));
+    page.add_line(say_line(1, "hi"));  // panel 0: establishing (count == 1).
+    page.add_line(say_line(2, "hi"));  // panel 1: count < 2 forces a fresh panel.
+    // panel 2: speaker 2 already sits in the tail panel, so a fresh lone-body
+    // panel opens with count == 3, newed_panel == true -> NOT establishing.
+    page.add_line(say_line(2, "hi"));
 
-    const auto& body = page.panels().front().bodies.front();
+    REQUIRE(page.panels().back().bodies.size() == 1);
+    const auto& body = page.panels().back().bodies.front();
     const auto height = body.box.top - body.box.bottom;
     const auto width = body.box.right - body.box.left;
 
@@ -524,4 +532,53 @@ TEST_CASE("a composed page renders to a PNG headlessly") {
     std::error_code ec;
     CHECK(std::filesystem::file_size(out, ec) > 0);
     std::filesystem::remove(out, ec);
+}
+
+// ---------------------------------------------------------------------------
+// Part A — establishing-shot suppression (pageview.cpp:832-837, panel.cpp:791).
+// ---------------------------------------------------------------------------
+
+TEST_CASE("establishing() reproduces the Microsoft CPageView::Establishing() table") {
+    // pageview.cpp:832-837: count <= 1 || (!newed_panel && count <= 2).
+
+    // count == 1: a page's opening panel is ALWAYS an establishing shot.
+    CHECK(establishing(1, /*newed_panel=*/true));
+    CHECK(establishing(1, /*newed_panel=*/false));
+
+    // count == 2: establishing only while EXTENDING the tail (not freshly newed).
+    CHECK_FALSE(establishing(2, /*newed_panel=*/true));   // fresh second panel
+    CHECK(establishing(2, /*newed_panel=*/false));        // extended second panel
+
+    // count >= 3: never an establishing shot, regardless of newed_panel.
+    CHECK_FALSE(establishing(3, /*newed_panel=*/true));
+    CHECK_FALSE(establishing(3, /*newed_panel=*/false));
+    CHECK_FALSE(establishing(10, /*newed_panel=*/false));
+
+    // count == 0 (degenerate: no panels yet) folds into the count <= 1 arm.
+    CHECK(establishing(0, /*newed_panel=*/true));
+}
+
+TEST_CASE("an establishing opening panel is left un-zoomed while a later panel zooms") {
+    auto cfg = config();
+    Page page{cfg, monospace_measure(100)};
+
+    // panel 0: count == 1 -> establishing -> zoom suppressed.
+    page.add_line(say_line(1, "hi"));
+    // panel 1: count < 2 still forces a fresh panel (should_start_new_panel).
+    page.add_line(say_line(2, "hi"));
+    // panel 2: speaker already in the tail panel forces a fresh panel; now
+    // count == 3 with newed_panel == true, so NOT establishing -> zoom applies.
+    page.add_line(say_line(2, "hi"));
+    REQUIRE(page.panels().size() == 3);
+
+    const auto body_width = [](const Panel& panel) -> std::int32_t {
+        REQUIRE(panel.bodies.size() == 1);
+        return panel.bodies.front().box.right - panel.bodies.front().box.left;
+    };
+
+    // Same avatar geometry in both panels, so any width delta is purely the zoom
+    // the establishing gate suppresses on the opening panel.
+    const auto establishing_width = body_width(page.panels().front());
+    const auto zoomed_width = body_width(page.panels().back());
+    CHECK(zoomed_width > establishing_width);
 }

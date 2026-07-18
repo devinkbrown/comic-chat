@@ -734,6 +734,51 @@ void Canvas::render_panel(const Panel& panel, TextEngine& text, const PanelAvata
     cairo_surface_flush(impl_->surface.get());
 }
 
+void Canvas::render_page(std::span<const Panel> panels, TextEngine& text,
+                         const PanelAvatarProvider& avatars) {
+    if (panels.empty()) {
+        return;
+    }
+    auto* context = impl_->context.get();
+    const auto canvas_w = static_cast<double>(impl_->width);
+    const auto canvas_h = static_cast<double>(impl_->height);
+
+    // Whole-page bounds in panel twips (Y-up: top == 0, rows extend downward),
+    // then fit the page into the canvas centered and aspect-preserving.
+    const auto bounds = page_bounds(panels.size(), 0, 0);
+    const auto page_w = static_cast<double>(bounds.right - bounds.left);
+    const auto page_h = static_cast<double>(bounds.top - bounds.bottom);
+    const auto page_scale = std::min(canvas_w / page_w, canvas_h / page_h);
+    const auto page_origin_x = (canvas_w - page_w * page_scale) / 2.0;
+    const auto page_origin_y = (canvas_h - page_h * page_scale) / 2.0;
+
+    // render_panel always fits its 2300-twip square into the FULL canvas
+    // (fit_panel_transform), producing this device square. The per-cell transform
+    // below remaps that fixed square onto each cell's device rect, so a lone
+    // full-page cell (single-panel strip) yields the identity transform and the
+    // draw is byte-identical to render_panel.
+    const auto rp_square = std::min(canvas_w, canvas_h);
+    const auto rp_origin_x = (canvas_w - rp_square) / 2.0;
+    const auto rp_origin_y = (canvas_h - rp_square) / 2.0;
+
+    for (std::size_t i = 0; i < panels.size(); ++i) {
+        const auto cell = panel_rect(i, 0, 0);
+        const auto cell_x = page_origin_x + static_cast<double>(cell.left - bounds.left) * page_scale;
+        const auto cell_y = page_origin_y + static_cast<double>(bounds.top - cell.top) * page_scale;
+        const auto cell_w = static_cast<double>(cell.right - cell.left) * page_scale;
+        const auto cell_h = static_cast<double>(cell.top - cell.bottom) * page_scale;
+
+        cairo_save(context);
+        // Map render_panel's full-canvas 2300-square onto this cell's device rect.
+        cairo_translate(context, cell_x, cell_y);
+        cairo_scale(context, cell_w / rp_square, cell_h / rp_square);
+        cairo_translate(context, -rp_origin_x, -rp_origin_y);
+        render_panel(panels[i], text, avatars);
+        cairo_restore(context);
+    }
+    cairo_surface_flush(impl_->surface.get());
+}
+
 auto Canvas::panel_transform(const double source_units) const -> PanelTransform {
     return fit_panel_transform(impl_->width, impl_->height, source_units);
 }

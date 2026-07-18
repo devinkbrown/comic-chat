@@ -85,6 +85,20 @@ public:
     void render_panel(const Panel& panel, TextEngine& text, const PanelAvatarProvider& avatars = {},
                        BackdropCatalog* backdrop_catalog = nullptr);
 
+    // Compose a full comic STRIP: lay every assembled Panel out on the page grid
+    // (layout.cpp panel_rect/page_bounds — a 2-per-row grid with a
+    // logical_interstice gutter) and draw each one by wrapping the EXISTING
+    // render_panel under a per-cell device transform. The whole page is fit into
+    // the canvas centered and aspect-preserving; each panel's 2300-twip square
+    // maps into its cell, so the individual panels are never distorted and the
+    // gutters keep them from overlapping. A single-panel page reduces to exactly
+    // render_panel (the page bounds are one 2300-twip square, the lone cell is the
+    // whole page, and the per-cell transform is the identity), so the common live
+    // case stays byte-identical. An empty span draws nothing. Deterministic: the
+    // same panels yield a byte-identical frame.
+    void render_page(std::span<const Panel> panels, TextEngine& text,
+                     const PanelAvatarProvider& avatars = {});
+
     // The shared logical-coordinate drawing pass foundation (render-port-spec.md
     // §0). Compute the device transform that fits a `source_units`-twip square
     // panel into this canvas — the same mapping render_title_panel uses — so the

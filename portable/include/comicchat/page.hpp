@@ -119,12 +119,29 @@ struct PageConfig final {
     double text_size{};
     std::uint32_t seed{1U};
     // bZoomIn (panel.cpp:791): zoom placed bodies up to fill unused panel width
-    // once they no longer overflow it. A normal chat panel is never an
-    // "establishing shot" (Establishing() is always false for the portable
-    // conversation model, panel.cpp:791), so this is the sole gate on the zoom
-    // branch; the shrink-to-fit branch (panel.cpp:780) always runs regardless.
+    // once they no longer overflow it. The source gates this on
+    // bZoomIn && !Establishing() (panel.cpp:791): an establishing shot (a page's
+    // opening panel, see establishing()) is left at framing scale so it reads as
+    // a wide shot instead of a close-up. This flag is the master bZoomIn switch;
+    // the per-panel establishing() predicate is the additional !Establishing()
+    // gate applied in layout_panel. The shrink-to-fit branch (panel.cpp:780)
+    // always runs regardless.
     bool zoom_avatars{true};
 };
+
+// CPageView::Establishing() (pageview.cpp:832-837): whether the panel being laid
+// out is an "establishing shot" — a page's opening panel that should read as a
+// wide framing shot rather than a tight, zoomed-in close-up. True for the first
+// panel (panel_count <= 1) or the second panel while it is still being EXTENDED
+// rather than freshly opened (!newed_panel && panel_count <= 2).
+//
+// LayoutAvatars suppresses the body zoom-in on an establishing shot
+// (bZoomIn && !Establishing(), panel.cpp:791), so the opening panel keeps its
+// bodies at framing scale instead of zooming them up to fill the panel width.
+// `newed_panel` mirrors g_bNewedPanel (panel.cpp:1079,1087): true when this line
+// opened a NEW panel, false when it extended/reused the tail panel. `panel_count`
+// counts the panels on the page INCLUDING the one currently being laid out.
+[[nodiscard]] auto establishing(std::size_t panel_count, bool newed_panel) -> bool;
 
 // Per-panel provenance for tests / callers: the panel's m_seed, the element
 // (speak) order of its balloons, and the left-to-right body placement order.
@@ -176,7 +193,8 @@ private:
     };
 
     void register_avatar(const PageAvatar& selection);
-    [[nodiscard]] auto layout_panel(PanelState& draft) -> LayoutOutcome;
+    [[nodiscard]] auto layout_panel(PanelState& draft, std::size_t panel_count, bool newed_panel)
+        -> LayoutOutcome;
 
     PageConfig config_;
     TextMeasure measure_;

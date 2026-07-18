@@ -14,6 +14,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -1030,4 +1031,126 @@ TEST_CASE("page-composed balloon text stays inside the cloud outline") {
     for (const auto& balloon : panel.balloons) {
         check_text_fits_cloud(**text, balloon);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Part B — multi-panel strip composition (render_page over panel_rect cells).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// A TTF-free fixed-advance measure so the page geometry stays deterministic
+// (every byte is 100 twips wide); render only needs the composed Panel geometry.
+auto page_measure() -> comicchat::TextMeasure {
+    return [](std::string_view text) -> std::int32_t {
+        return static_cast<std::int32_t>(text.size()) * 100;
+    };
+}
+
+auto page_config(std::uint32_t seed) -> comicchat::PageConfig {
+    comicchat::PageConfig cfg{};
+    comicchat::FontMetrics font{};
+    font.line_height = 300;
+    font.base_add = 40;
+    cfg.font = font;
+    cfg.max_text_width = 1200;
+    cfg.text_size = 200;
+    cfg.seed = seed;
+    return cfg;
+}
+
+auto page_speaker(std::uint32_t id, std::uint32_t color) -> comicchat::PageAvatar {
+    comicchat::PageAvatar avatar{};
+    avatar.avatar_id = id;
+    avatar.body_width = 400;
+    avatar.body_height = 800;
+    avatar.face_fraction = 0.5;
+    avatar.color = color;
+    return avatar;
+}
+
+} // namespace
+
+TEST_CASE("render_page composes multiple panels into non-overlapping grid cells") {
+    const auto font = comicchat::find_portable_comic_font();
+    REQUIRE(font.has_value());
+    auto text = comicchat::TextEngine::create(*font);
+    REQUIRE(text.has_value());
+
+    // Two speakers, two panels (line 2 opens panel 1 because count < 2 still
+    // forces a fresh panel).
+    comicchat::Page page{page_config(7), page_measure()};
+    page.add_line({page_speaker(1, 0x2244aaU), "hi", comicchat::bm_say});
+    page.add_line({page_speaker(2, 0xaa4422U), "hi", comicchat::bm_say});
+    REQUIRE(page.panels().size() == 2);
+
+    constexpr int canvas_w = 948;
+    constexpr int canvas_h = 480;
+    comicchat::Canvas canvas{canvas_w, canvas_h};
+    canvas.clear({1.0, 1.0, 1.0, 1.0});
+    canvas.render_page(page.panels(), **text);
+
+    const auto white = std::uint32_t{0xffffffffU};
+    const auto pixel_at = [&](int x, int y) {
+        return canvas.pixels()[static_cast<std::size_t>(y) * canvas_w + static_cast<std::size_t>(x)];
+    };
+
+    // Reproduce render_page's page-fit math to locate each cell's device rect and
+    // assert the composition matches panel_rect's grid geometry.
+    const auto bounds = comicchat::page_bounds(2, 0, 0);
+    const double page_w = static_cast<double>(bounds.right - bounds.left);
+    const double page_h = static_cast<double>(bounds.top - bounds.bottom);
+    const double scale = std::min(static_cast<double>(canvas_w) / page_w,
+                                  static_cast<double>(canvas_h) / page_h);
+    const double origin_x = (static_cast<double>(canvas_w) - page_w * scale) / 2.0;
+    const double origin_y = (static_cast<double>(canvas_h) - page_h * scale) / 2.0;
+    struct Cell final { double x{}; double y{}; double w{}; double h{}; };
+    const auto cell_of = [&](std::size_t index) -> Cell {
+        const auto rect = comicchat::panel_rect(index, 0, 0);
+        return Cell{origin_x + static_cast<double>(rect.left - bounds.left) * scale,
+                    origin_y + static_cast<double>(bounds.top - rect.top) * scale,
+                    static_cast<double>(rect.right - rect.left) * scale,
+                    static_cast<double>(rect.top - rect.bottom) * scale};
+    };
+    const auto cell0 = cell_of(0);
+    const auto cell1 = cell_of(1);
+
+    // Non-overlapping: cell 0 ends left of cell 1 with a positive interstice.
+    CHECK(cell0.x + cell0.w < cell1.x);
+
+    // Each cell carries drawn content: the black panel frame at its left edge.
+    const auto frame_pixel = [&](const Cell& cell) {
+        return pixel_at(static_cast<int>(cell.x + 6.0), static_cast<int>(cell.y + cell.h / 2.0));
+    };
+    CHECK(frame_pixel(cell0) != white);
+    CHECK(frame_pixel(cell1) != white);
+
+    // The interstice gutter between the two cells stays blank (no overlap/bleed).
+    const int gutter_x = static_cast<int>((cell0.x + cell0.w + cell1.x) / 2.0);
+    const int gutter_y = static_cast<int>(cell0.y + cell0.h / 2.0);
+    CHECK(pixel_at(gutter_x, gutter_y) == white);
+}
+
+TEST_CASE("render_page of a single-panel strip is byte-identical to render_panel") {
+    const auto font = comicchat::find_portable_comic_font();
+    REQUIRE(font.has_value());
+    auto text = comicchat::TextEngine::create(*font);
+    REQUIRE(text.has_value());
+
+    comicchat::Page page{page_config(3), page_measure()};
+    page.add_line({page_speaker(1, 0x336699U), "hello", comicchat::bm_say});
+    REQUIRE(page.panels().size() == 1);
+
+    constexpr int size = 512;
+    comicchat::Canvas direct{size, size};
+    direct.clear({1.0, 1.0, 1.0, 1.0});
+    direct.render_panel(page.panels().front(), **text);
+
+    comicchat::Canvas paged{size, size};
+    paged.clear({1.0, 1.0, 1.0, 1.0});
+    paged.render_page(page.panels(), **text);
+
+    // A single-panel page is one full-page cell with the identity per-cell
+    // transform, so the two frames must be byte-for-byte equal.
+    CHECK(std::ranges::equal(direct.pixels(), paged.pixels()));
 }

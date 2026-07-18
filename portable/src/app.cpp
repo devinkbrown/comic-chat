@@ -208,7 +208,7 @@ struct Arguments final {
     std::optional<std::string> font;
     std::optional<std::string> png;
     std::optional<comicchat::ConnectionConfig> connection;
-    std::optional<ChatLine> say;  // synthetic message for headless --png demos
+    std::vector<ChatLine> says;  // synthetic messages for headless --png demos (repeatable --say)
     std::uint64_t frames{};
 };
 
@@ -236,7 +236,7 @@ auto parse_arguments(const int argc, char** argv) -> std::optional<Arguments> {
         else if (argument == "--png") result.png = argv[++index];
         else if (argument == "--say") {
             std::string nick = argv[++index];
-            result.say = ChatLine{std::move(nick), argv[++index]};
+            result.says.push_back(ChatLine{std::move(nick), argv[++index]});
         } else if (argument == "--frames") {
             const std::string_view value{argv[++index]};
             const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), result.frames);
@@ -249,7 +249,7 @@ auto parse_arguments(const int argc, char** argv) -> std::optional<Arguments> {
                 .font = std::string{},
                 .png = std::string{},
                 .connection = std::nullopt,
-                .say = std::nullopt,
+                .says = {},
                 .frames = 0,
             };
         } else if (argument == "--connect") {
@@ -531,7 +531,12 @@ auto main(const int argc, char** argv) -> int {
             canvas = std::make_unique<comicchat::Canvas>(width, height);
             canvas->clear({1.0, 1.0, 1.0, 1.0});
             if (current_panel) {
-                canvas->render_panel(*current_panel, **text, current_avatar);
+                // Compose the FULL accumulated strip (all panels on the page
+                // grid), not just the tail panel. `current_panel` still gates the
+                // idle title-card path: it is set once the first line produces a
+                // panel, so an idle connection with no lines yet holds the title
+                // card unchanged.
+                canvas->render_page(page.panels(), **text, current_avatar);
             } else {
                 canvas->render_title_panel(model(), **text);
             }
@@ -562,8 +567,8 @@ auto main(const int argc, char** argv) -> int {
         };
         // A synthetic --say line drives the same page-composition path the live
         // feed uses, so a headless --png snapshot shows a real framed comic panel.
-        if (arguments->say) {
-            feed_line(arguments->say->nick, arguments->say->text);
+        for (const auto& line : arguments->says) {
+            feed_line(line.nick, line.text);
         }
         rebuild();
         if (arguments->png && !arguments->png->empty() && !canvas->write_png(*arguments->png)) {

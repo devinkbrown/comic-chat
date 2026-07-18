@@ -362,10 +362,20 @@ auto lone_speaker_body_height(const comicchat::PageAvatar& speaker) -> std::int3
     config.font = say_font();
     config.text_size = comicchat::message_text_size;
     comicchat::Page page{config, monospace_measure(120)};
-    page.add_line(comicchat::Line{speaker, "hi", comicchat::bm_say});
+    // The zoom-in step is gated on !Establishing() (panel.cpp:791): a page's
+    // opening panel is left at framing scale. Prime two panels so the speaker's
+    // own panel is a later, NON-establishing lone-body panel where the head-cap
+    // zoom actually runs.
+    comicchat::PageAvatar filler{};
+    filler.avatar_id = 900;  // distinct from any speaker id exercised here
+    filler.body_width = comicchat::page_default_body_width;
+    filler.body_height = comicchat::page_default_body_height;
+    page.add_line(comicchat::Line{filler, "hi", comicchat::bm_say});   // panel 0 (establishing)
+    page.add_line(comicchat::Line{speaker, "hi", comicchat::bm_say});  // panel 1 (count < 2 -> fresh)
+    page.add_line(comicchat::Line{speaker, "hi", comicchat::bm_say});  // panel 2: fresh lone-body panel
     REQUIRE_FALSE(page.panels().empty());
-    REQUIRE(page.panels().front().bodies.size() == 1);
-    const auto& box = page.panels().front().bodies.front().box;
+    REQUIRE(page.panels().back().bodies.size() == 1);
+    const auto& box = page.panels().back().bodies.front().box;
     return box.top - box.bottom;
 }
 

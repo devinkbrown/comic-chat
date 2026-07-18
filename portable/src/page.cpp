@@ -220,9 +220,10 @@ struct ScaledBody final {
 
 // CUnitPanel::LayoutAvatars body scaling (panel.cpp:740,759-819): normalize
 // every placed body onto a common maxBodyHeight, then either shrink (combined
-// width overflows the panel) or zoom in (config.zoom_avatars, and the source's
-// Establishing() is always false for a chat panel) to fill unused panel width,
-// capped so a zoomed head is never cropped.
+// width overflows the panel) or zoom in (config.zoom_avatars AND this is not an
+// establishing shot, matching the source's bZoomIn && !Establishing() gate,
+// panel.cpp:791) to fill unused panel width, capped so a zoomed head is never
+// cropped.
 //
 // Head-anchoring (panel.cpp:772,787,816): top[i] is set to -unitHeight+height
 // after normalize (and recomputed after shrink), but is NOT recomputed after the
@@ -234,7 +235,8 @@ struct ScaledBody final {
 // the balloon (the "balloon covers the avatar" over-zoom).
 [[nodiscard]] auto scale_avatar_bodies(const std::vector<PlacedBody>& order_bodies,
                                        const std::map<std::uint32_t, PageAvatar>& registry,
-                                       const PageConfig& config) -> std::vector<ScaledBody> {
+                                       const PageConfig& config, const bool is_establishing)
+    -> std::vector<ScaledBody> {
     const std::size_t count = order_bodies.size();
     std::vector<ScaledBody> scaled(count);
     if (count == 0) {
@@ -302,9 +304,11 @@ struct ScaledBody final {
             width[i] = round_half(static_cast<double>(width[i]) * reduction);
             top[i] = -config.unit_height + height[i];  // panel.cpp:787 (recomputed)
         }
-    } else if (sum_width > 0 && config.zoom_avatars) {
+    } else if (sum_width > 0 && config.zoom_avatars && !is_establishing) {
         // panel.cpp:791-806: zoom every body up to fill unused panel width,
-        // capped so the tallest head isn't cropped.
+        // capped so the tallest head isn't cropped. Suppressed on an establishing
+        // shot (panel.cpp:791, bZoomIn && !Establishing()) so a page's opening
+        // panel stays a wide framing shot rather than a tight close-up.
         double zoom_factor = static_cast<double>(config.unit_width) / static_cast<double>(sum_width);
         std::int32_t max_head_height = 0;
         for (std::size_t i = 0; i < count; ++i) {
@@ -345,6 +349,11 @@ struct ScaledBody final {
 
 } // namespace
 
+// CPageView::Establishing() (pageview.cpp:832-837).
+auto establishing(const std::size_t panel_count, const bool newed_panel) -> bool {
+    return panel_count <= 1 || (!newed_panel && panel_count <= 2);
+}
+
 Page::Page(PageConfig config, TextMeasure measure)
     : config_{std::move(config)}, measure_{std::move(measure)}, seed_rng_{config_.seed} {}
 
@@ -376,6 +385,11 @@ void Page::add_line(const Line& line) {
                                       new_panel_pending_};
     const bool start_new = should_start_new_panel(split_state, speaker_in_panel, is_action);
 
+    // Panels on the page INCLUDING the one about to be laid out: a fresh panel is
+    // not yet in states_ (so +1), an extended tail already is. `start_new` is the
+    // g_bNewedPanel flag (panel.cpp:1079,1087) Establishing() consults.
+    const std::size_t panel_count = start_new ? states_.size() + 1 : states_.size();
+
     PanelState draft;
     bool replace_last = false;
     if (start_new) {
@@ -389,7 +403,7 @@ void Page::add_line(const Line& line) {
         replace_last = true;
     }
 
-    const auto outcome = layout_panel(draft);
+    const auto outcome = layout_panel(draft, panel_count, start_new);
     if (outcome.status == Fit::overflow) {
         // panel.cpp:1116-1118: delete the clone, StartNewPanel, retry this line.
         new_panel_pending_ = true;
@@ -416,8 +430,12 @@ void Page::add_line(const Line& line) {
 }
 
 // CUnitPanel::LayoutAvatars (panel.cpp:728) + LayoutBalloons (panel.cpp:858).
-auto Page::layout_panel(PanelState& draft) -> Page::LayoutOutcome {
+// `panel_count`/`newed_panel` feed Establishing() (pageview.cpp:832-837), which
+// gates the LayoutAvatars zoom-in (panel.cpp:791).
+auto Page::layout_panel(PanelState& draft, const std::size_t panel_count, const bool newed_panel)
+    -> Page::LayoutOutcome {
     // ---- LayoutAvatars: order + place the bodies. -----------------------------
+    const bool is_establishing = establishing(panel_count, newed_panel);
     const auto speakers = speak_order_of(draft.elements);
 
     std::vector<ConversationAvatar> avatars;
@@ -431,7 +449,7 @@ auto Page::layout_panel(PanelState& draft) -> Page::LayoutOutcome {
 
     // Body slots in placement order, fed the SCALED widths (panel.cpp:759-819:
     // collect raw dims, normalize onto maxBodyHeight, then shrink or zoom).
-    const auto scaled_bodies = scale_avatar_bodies(order.bodies, registry_, config_);
+    const auto scaled_bodies = scale_avatar_bodies(order.bodies, registry_, config_, is_establishing);
     std::vector<BodySlot> slots;
     slots.reserve(order.bodies.size());
     int body_width_sum = 0;
