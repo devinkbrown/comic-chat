@@ -491,7 +491,7 @@ auto main(const int argc, char** argv) -> int {
             speaker.body_height = comicchat::message_body_height;
             speaker.face_fraction = 0.5;
             speaker.color = comicchat::nick_color(nick);
-            if (auto provider = comicchat::make_nick_avatar_provider(nick)) {
+            if (auto provider = comicchat::make_nick_avatar_provider(nick, line_text)) {
                 avatar_providers[avatar_id] = std::move(provider);
             }
             page.add_line(comicchat::Line{speaker, std::string{line_text}, comicchat::bm_say});
