@@ -143,6 +143,8 @@ if host_machine.system() == 'windows'
   platform_deps += cpp.find_library('crypt32', required: true)
   platform_deps += cpp.find_library('ole32', required: true)
   platform_deps += cpp.find_library('shell32', required: true)
+  # mbedtls_platform_entropy_poll's Windows arm calls BCryptGenRandom (CNG).
+  platform_deps += cpp.find_library('bcrypt', required: true)
 endif
 
 # Keep the cryptographic implementation identical to the Windows port. The
