@@ -1,6 +1,7 @@
 #include "comicchat/comic_page.hpp"
 
 #include "comicchat/avatar_assets.hpp"
+#include "comicchat/expression.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -243,7 +244,7 @@ auto assign_avatar(const std::string_view nick, const std::span<const std::strin
     return std::string_view{names[fnv1a(nick) % names.size()]};
 }
 
-auto nick_page_avatar(const std::string_view nick) -> PageAvatar {
+auto nick_page_avatar(const std::string_view nick, const std::string_view text) -> PageAvatar {
     PageAvatar avatar;
     avatar.avatar_id = nick_avatar_id(nick);
     avatar.color = nick_color(nick);
@@ -252,11 +253,17 @@ auto nick_page_avatar(const std::string_view nick) -> PageAvatar {
     // CBody::GetDimInfo port, panel.cpp:761). Feeds LayoutAvatars the true art
     // dims + head:body ratio so the zoom cap keeps the head on panel.
     if (auto asset = load_nick_avatar_asset(nick); asset.has_value()) {
-        const auto neutral = select_avatar_expression(*asset, {0.0, 0.0});
-        if (neutral.has_value()) {
+        // Text -> emotion -> pose (expression.hpp/GetEmotionsFromString port):
+        // an empty `text` infers no rules and select_avatar_expression's
+        // SetBodyNeutral/SetFaceNeutral+SetTorsoNeutral fallback reproduces the
+        // former hardcoded neutral exactly, so a caller that has no text yet
+        // keeps today's behaviour unchanged.
+        const auto emotions = emotions_from_text(text);
+        const auto expression = select_avatar_expression(*asset, emotions);
+        if (expression.has_value()) {
             // flip == false: face_fraction is the UNFLIPPED (right-pose) column;
             // layout.cpp mirrors it to (1 - face_fraction) when a body flips.
-            const auto dim = avatar_dim_info(*asset, *neutral, /*flip=*/false);
+            const auto dim = avatar_dim_info(*asset, *expression, /*flip=*/false);
             if (dim.has_value() && dim->width > 0 && dim->height > 0) {
                 avatar.body_width = dim->width;
                 avatar.body_height = dim->height;
@@ -283,20 +290,32 @@ auto nick_page_avatar(const std::string_view nick) -> PageAvatar {
     return avatar;
 }
 
-auto make_nick_avatar_provider(const std::string_view nick) -> PanelAvatarProvider {
+auto make_nick_avatar_provider(const std::string_view nick, const std::string_view text) -> PanelAvatarProvider {
     auto asset = load_nick_avatar_asset(nick);
     if (!asset.has_value()) return {};
 
-    // Load the asset once; composite its neutral pose per body render at the
-    // exact device size render_panel asks for. Shared so the returned provider
-    // stays copyable (PanelAvatarProvider is std::function).
+    // Load the asset once; composite the text-derived pose per body render at
+    // the exact device size render_panel asks for. Shared so the returned
+    // provider stays copyable (PanelAvatarProvider is std::function).
+    //
+    // Own a copy of `text` (the caller's string_view is not guaranteed to
+    // outlive the returned std::function) so every render call can re-derive
+    // the same emotion -> pose selection. This is a pure function of
+    // (asset, text): the same nick/text pair always resolves the same
+    // AvatarSelection, so no per-nick "previous expression" state is needed
+    // for correctness here — select_avatar_expression's `previous` parameter
+    // only rotates among multiple same-emotion pose variants for visual
+    // variety across repeated calls (see select_rotating_component), which is
+    // orthogonal to picking the RIGHT expression for this line's text.
     auto shared_asset = std::make_shared<AvatarAsset>(std::move(*asset));
-    return [shared_asset](const PanelBody& body, std::int32_t target_width,
+    auto owned_text = std::make_shared<std::string>(text);
+    return [shared_asset, owned_text](const PanelBody& body, std::int32_t target_width,
                           std::int32_t target_height) -> std::optional<AvatarBitmap> {
         if (target_width <= 0 || target_height <= 0) return std::nullopt;
-        const auto neutral = select_avatar_expression(*shared_asset, {0.0, 0.0});
-        if (!neutral.has_value()) return std::nullopt;
-        auto raster = render_avatar(*shared_asset, {*neutral, target_width, target_height, body.flip, false});
+        const auto emotions = emotions_from_text(*owned_text);
+        const auto expression = select_avatar_expression(*shared_asset, emotions);
+        if (!expression.has_value()) return std::nullopt;
+        auto raster = render_avatar(*shared_asset, {*expression, target_width, target_height, body.flip, false});
         if (!raster.has_value()) return std::nullopt;
         return std::move(*raster);
     };

@@ -1,6 +1,7 @@
 #include "comicchat/avatar_assets.hpp"
 #include "comicchat/balloon.hpp"
 #include "comicchat/comic_page.hpp"
+#include "comicchat/expression.hpp"
 #include "comicchat/layout.hpp"
 #include "comicchat/page.hpp"
 #include "comicchat/text.hpp"
@@ -418,4 +419,120 @@ TEST_CASE("real avatar_dim_info dims keep a normally-proportioned lone speaker o
     const std::int32_t height = lone_speaker_body_height(speaker);
     CHECK(speaker.head_height > 0);
     CHECK(height <= comicchat::logical_panel_height);
+}
+
+// ---------------------------------------------------------------------------
+// Expression engine wiring (text -> emotion -> pose) into the live avatar
+// selection path. "Ada" deterministically resolves to mike.avb in the shipped
+// test corpus (assign_avatar's FNV-1a fold), a complex avatar whose faces and
+// torsos actually vary across the wheel + a wave gesture, so it exercises both
+// the FACE (wheel emotion) and TORSO (gesture-sentinel exact-match) branches of
+// select_avatar_expression's multi-emotion resolver.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("nick_page_avatar derives its pose (and dims) from the message text, not a hardcoded neutral") {
+    setenv("COMICCHAT_AVATAR_DIR", COMICCHAT_TEST_COMICART_DIR, 1);
+
+    // A neutral line and a smiley line for the SAME nick/avatar.
+    const auto neutral = comicchat::nick_page_avatar("Ada", "plain text, no emotion");
+    const auto happy = comicchat::nick_page_avatar("Ada", "great to see you :)");
+
+    // Recompute the expected happy-pose metric through the real pipeline the
+    // task wires up (emotions_from_text -> select_avatar_expression ->
+    // avatar_dim_info), exactly as nick_page_avatar now does internally, so
+    // the assertion is the real port, not a hand-picked number.
+    const auto directory = comicchat::find_avatar_directory();
+    REQUIRE(directory.has_value());
+    const auto names = comicchat::available_avatars(*directory);
+    const auto chosen = comicchat::assign_avatar("Ada", names);
+    REQUIRE(chosen.has_value());
+    const auto asset = comicchat::load_avatar_asset(*directory / std::string{*chosen});
+    REQUIRE(asset.has_value());
+    const auto emotions = comicchat::emotions_from_text("great to see you :)");
+    const auto expression = comicchat::select_avatar_expression(*asset, emotions);
+    REQUIRE(expression.has_value());
+    const auto dim = comicchat::avatar_dim_info(*asset, *expression, false);
+    REQUIRE(dim.has_value());
+    unsetenv("COMICCHAT_AVATAR_DIR");
+
+    CHECK(happy.body_width == dim->width);
+    CHECK(happy.body_height == dim->height);
+    CHECK(happy.head_height == dim->head_height);
+    const double expected_face_fraction =
+        static_cast<double>(dim->face_x) / static_cast<double>(dim->width);
+    CHECK(happy.face_fraction == expected_face_fraction);
+
+    // The smiley line resolved a DIFFERENT pose than the neutral line: the text
+    // is genuinely driving the selection, not always the same hardcoded body.
+    CHECK(happy.face_fraction != neutral.face_fraction);
+
+    // A caller with no text yet (the empty default) reproduces the same
+    // neutral pose as before this change: adding the parameter did not alter
+    // the fallback behaviour.
+    const auto default_text = comicchat::nick_page_avatar("Ada");
+    CHECK(default_text.face_fraction == neutral.face_fraction);
+    CHECK(default_text.body_width == neutral.body_width);
+    CHECK(default_text.head_height == neutral.head_height);
+}
+
+TEST_CASE("make_nick_avatar_provider composites the text-derived pose, not always neutral") {
+    setenv("COMICCHAT_AVATAR_DIR", COMICCHAT_TEST_COMICART_DIR, 1);
+    const auto neutral_provider = comicchat::make_nick_avatar_provider("Ada");
+    const auto happy_provider = comicchat::make_nick_avatar_provider("Ada", "great to see you :)");
+    unsetenv("COMICCHAT_AVATAR_DIR");
+    REQUIRE(static_cast<bool>(neutral_provider));
+    REQUIRE(static_cast<bool>(happy_provider));
+
+    comicchat::PanelBody body{};
+    body.avatar_id = 1;
+    body.flip = false;
+    const auto neutral_raster = neutral_provider(body, 120, 160);
+    const auto happy_raster = happy_provider(body, 120, 160);
+    REQUIRE(neutral_raster.has_value());
+    REQUIRE(happy_raster.has_value());
+    CHECK(neutral_raster->width == happy_raster->width);
+    CHECK(neutral_raster->height == happy_raster->height);
+    // Different text -> a different face composited into the same box.
+    CHECK(neutral_raster->pixels != happy_raster->pixels);
+
+    // Still deterministic per text: same nick + same text -> byte-identical
+    // raster across repeated provider constructions and render calls.
+    const auto happy_again_provider = comicchat::make_nick_avatar_provider("Ada", "great to see you :)");
+    REQUIRE(static_cast<bool>(happy_again_provider));
+    const auto happy_again = happy_again_provider(body, 120, 160);
+    REQUIRE(happy_again.has_value());
+    CHECK(happy_raster->pixels == happy_again->pixels);
+}
+
+TEST_CASE("a gesture keyword (\"Hi\" -> wave) resolves through the gesture-equality path, not nearest-angle") {
+    // emotions_from_text: "Hi" matches ID_RULE_WAVE (CheckStart, textpose.cpp),
+    // producing an out-of-band gesture-sentinel angle (> 2*pi), never a wheel
+    // angle. Composition-level assertion first (expression.hpp is asset-free).
+    const auto emotions = comicchat::emotions_from_text("Hi there, everyone!");
+    const auto wave_opt = std::find_if(emotions.opts.begin(), emotions.opts.end(),
+        [](const comicchat::EmotionOpts::Opt& opt) { return opt.angle == comicchat::emotion_wheel::wave; });
+    REQUIRE(wave_opt != emotions.opts.end());
+    CHECK(wave_opt->angle > comicchat::emotion_wheel::gesture_threshold);
+
+    // Now resolve it against Ada's real (complex) avatar asset: a gesture
+    // sentinel routes to TORSO via select_rotating_component's exact-angle
+    // branch (avatar_assets.cpp), leaving FACE at its neutral pick -- unlike
+    // the ":)" wheel emotion above, which moves FACE and leaves TORSO alone.
+    setenv("COMICCHAT_AVATAR_DIR", COMICCHAT_TEST_COMICART_DIR, 1);
+    const auto directory = comicchat::find_avatar_directory();
+    REQUIRE(directory.has_value());
+    const auto names = comicchat::available_avatars(*directory);
+    const auto chosen = comicchat::assign_avatar("Ada", names);
+    REQUIRE(chosen.has_value());
+    const auto asset = comicchat::load_avatar_asset(*directory / std::string{*chosen});
+    REQUIRE(asset.has_value());
+    unsetenv("COMICCHAT_AVATAR_DIR");
+    REQUIRE(asset->kind == comicchat::AvatarKind::complex);
+
+    const auto neutral_selection = comicchat::select_avatar_expression(*asset, comicchat::EmotionOpts{});
+    const auto wave_selection = comicchat::select_avatar_expression(*asset, emotions);
+    REQUIRE(neutral_selection.has_value());
+    REQUIRE(wave_selection.has_value());
+    CHECK(wave_selection->torso != neutral_selection->torso);
+    CHECK(wave_selection->face == neutral_selection->face);
 }

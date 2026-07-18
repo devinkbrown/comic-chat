@@ -145,12 +145,19 @@ struct MessagePanelRequest final {
     -> std::optional<std::string_view>;
 
 // Build a PanelAvatarProvider that loads the nick's deterministically assigned
-// avatar from the resolved runtime directory and composites its neutral pose at
-// the exact device size render_panel requests (honoring PanelBody::flip). The
-// avatar asset is loaded once, here, and reused per body render. Returns an empty
-// provider (nullptr) when no avatar directory/asset resolves so render_panel
-// keeps the flat color-box fallback. Never throws.
-[[nodiscard]] auto make_nick_avatar_provider(std::string_view nick) -> PanelAvatarProvider;
+// avatar from the resolved runtime directory and composites the TEXT-DERIVED
+// pose (expression.hpp's emotions_from_text over default_emotion_rules(), fed
+// through the multi-emotion select_avatar_expression) at the exact device size
+// render_panel requests (honoring PanelBody::flip). `text` is the chat line
+// this avatar is reacting to; an empty/default `text` infers no emotion rules
+// and select_avatar_expression's neutral fallback reproduces the plain neutral
+// pose. The avatar asset is loaded once, here, and reused per body render; the
+// pose is a pure function of (nick, text) so it is safely re-derived on every
+// render call with no per-nick state. Returns an empty provider (nullptr) when
+// no avatar directory/asset resolves so render_panel keeps the flat color-box
+// fallback. Never throws.
+[[nodiscard]] auto make_nick_avatar_provider(std::string_view nick, std::string_view text = {})
+    -> PanelAvatarProvider;
 
 // Resolve the nick's deterministically assigned avatar and populate a page.hpp
 // PageAvatar with the REAL per-avatar dimensions from avatar_dim_info (the
@@ -166,11 +173,19 @@ struct MessagePanelRequest final {
 // dimensions and the raster the provider composites are the SAME avatar. The
 // live page wiring feeds this PageAvatar straight into Page::add_line.
 //
+// `text` is the chat line this avatar is reacting to: it is run through
+// expression.hpp's emotions_from_text(default_emotion_rules()) and the result
+// resolves the pose via the multi-emotion select_avatar_expression, so a body
+// dimensioned for e.g. a gesture/shout pose reflects that pose's real
+// head:body ratio rather than always the neutral one. An empty/default `text`
+// infers no emotion rules, and select_avatar_expression's neutral fallback
+// reproduces the prior hardcoded-neutral behaviour exactly.
+//
 // When no avatar asset resolves (or its metric is degenerate), returns a
 // PageAvatar carrying the default body constants with head_height set to
 // body_height/2 — Microsoft's own simple-avatar head value (avatar.cpp:63) — so
 // the zoom cap stays conservative. Never a guessed sub-half fraction; never
 // throws.
-[[nodiscard]] auto nick_page_avatar(std::string_view nick) -> PageAvatar;
+[[nodiscard]] auto nick_page_avatar(std::string_view nick, std::string_view text = {}) -> PageAvatar;
 
 } // namespace comicchat
