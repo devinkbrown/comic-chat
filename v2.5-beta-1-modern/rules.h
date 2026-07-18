@@ -13,7 +13,6 @@
 #include "ccomp.h"
 #include "query.h"
 #include "userlist.h"
-#include <comicchat/net/flood.hpp>
 
 const UINT		g_uErrVersion			= (CFileException::endOfFile+1);
 const UINT		g_uErrFormat			= (g_uErrVersion+1);
@@ -158,7 +157,7 @@ typedef enum
 typedef struct tagKEPSUBS
 {
 	enumKeyEventParam	kep;
-	LPCTSTR				szSubs;	// the substitute
+	LPTSTR				szSubs;	// the substitute
 } KEPSUBS, *PKEPSUBS;
 
 
@@ -182,7 +181,7 @@ typedef enum
 typedef struct tagKAPSUBS
 {
 	enumKeyActionParam	kap;
-	LPCTSTR				szSubs;	// the substitute
+	LPTSTR				szSubs;	// the substitute
 } KAPSUBS, *PKAPSUBS;
 
 
@@ -580,7 +579,7 @@ public:
 	CCChannel() {};
 	virtual ~CCChannel() {};
 
-	BOOL	operator==(const CCChannel& channel) const;
+	BOOL	operator==(const CCChannel& channel);
 
 protected:
 	CString m_strChannelName;
@@ -711,8 +710,8 @@ public:
 	void				SetEvent(CCEvent* pEvent)	{ m_pEvent = pEvent; }
 	void				SetAction(CCAction* pAction){ m_pAction = pAction; }
 
-	void				SetEventParam(UINT uIndex, const CString& strParam);
-	void				SetActionParam(UINT uIndex, const CString& strParam) { m_rgstrActionParams[uIndex] = strParam; }
+	void				SetEventParam(UINT uIndex, CString& strParam);
+	void				SetActionParam(UINT uIndex, CString& strParam) { m_rgstrActionParams[uIndex] = strParam; }
 
 	void				SetEventKeyParam(UINT uIndex, enumKeyEventParam kep)  { m_rgkep[uIndex] = kep; }
 	enumKeyEventParam	GetEventKeyParam(UINT uIndex)	{ return m_rgkep[uIndex]; }
@@ -764,7 +763,8 @@ protected:
 	SHORT				m_nRefCount;
 	WORD				m_wFlags;
 	UCHAR				m_uDelay;
-	comicchat::net::MonotonicFloodWindow m_floodWindow;
+	USHORT				m_uPeriodStart;		// start of current flood interval
+	UCHAR				m_uOccurrences;		// number of utterances within that period (moving average)
 
 	CCDynaRules*		m_pDynaRules;
 	CCDaemonExt*		m_pDaemonExt;
@@ -869,7 +869,7 @@ public:
 							  m_uFloodOccurrences = uFloodOccurrences;
 							}
 
-	void				SetCachVariables(enumEvents eID, const CString& strIdentity, const CString& strServer, const CString& strChannel);
+	void				SetCachVariables(enumEvents eID, CString& strIdentity, CString& strServer, CString& strChannel);
 	void				SetCachRecipients(CString strRecipients) 
 							{ m_strRecipientsCach = strRecipients; }
 
@@ -923,9 +923,9 @@ public:
 	BOOL				bReplaceMessage(CCRule*	pRule);
 	BOOL				bReplaceKeyActionParams(CCRule* pRule /*, CString& strEventServer, CString& strEventIdentity, CString& strEventChannel, CString& strEventMessage*/);
 	BOOL				bReplaceKeyEventParams(CString& strEventParam);
-	BOOL				bMatchAndApplyRules(enumEvents eID, enumActions* paApprovedIDs, enumActions* paRejectedIDs, const CString& strServer, const CString& strIdentity, const CString& strChannel, const CString& strMessage);
+	BOOL				bMatchAndApplyRules(enumEvents eID, enumActions* paApprovedIDs, enumActions* paRejectedIDs, CString& strServer, CString& strIdentity, CString& strChannel, CString& strMessage);
 	BOOL				bInActionIDs(enumActions* paActions, enumActions aID);
-	INT					iGetFirstMatchingRule(PINT piRuleSet, enumEvents eID, enumActions* paApprovedIDs, enumActions* paRejectedIDs, const CString& strServer, const CString& strIdentity, const CString& strChannel, const CString& strMessage, CCRule** ppRule = NULL);
+	INT					iGetFirstMatchingRule(PINT piRuleSet, enumEvents eID, enumActions* paApprovedIDs, enumActions* paRejectedIDs, CString& strServer, CString& strIdentity, CString& strChannel, CString& strMessage, CCRule** ppRule = NULL);
 	INT					iGetNextMatchingRule(PINT piPreviousRuleSet, INT iPreviousRule, CCRule** ppRule = NULL);
 
 	BOOL				bSaveRulesToReg(/*BOOL bToHKCU = TRUE*/);
@@ -1004,3 +1004,4 @@ extern SHORT g_nDaemonsRefCount;
 
 #define __RULES_H__
 #endif __RULES_H__
+

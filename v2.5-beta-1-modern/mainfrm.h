@@ -4,10 +4,6 @@
 
 
 #include "chatbars.h"
-#include "ircv3eventbridge.h"
-
-#include <cstdint>
-#include <optional>
 
 class CMainFrame : public CMDIFrameWnd
 {
@@ -29,11 +25,6 @@ public:
 public:
 	virtual void GetMessageString( UINT nID, CString& rMessage ) const;
 	void AutoArrangeWindows();
-	void ApplyModernMetrics(UINT dpi);
-	void RefreshModernAppearance();
-	void RefreshConnectionIndicators();
-	void DrainIrcv3UiEvents();
-	const std::optional<Ircv3AdapterEvent>& LastIrcv3UiEvent() const { return m_lastIrcv3UiEvent; }
 
 // Overrides
 	// ClassWizard generated virtual function overrides
@@ -75,21 +66,14 @@ protected:
 	afx_msg void OnSize(UINT type, int cx, int cy);
 	afx_msg void OnSysColorChange();
 	afx_msg void OnMenuSelect(UINT nItemID, UINT nFlags, HMENU hSysMenu);
-	afx_msg void OnSettingChange(UINT uFlags, LPCTSTR lpszSection);
 	//}}AFX_MSG
 	afx_msg void OnClose();
-	afx_msg LRESULT OnComicChatNetworkEvent(WPARAM wParam, LPARAM lParam);
-	afx_msg LRESULT OnDpiChanged(WPARAM wParam, LPARAM lParam);
-	afx_msg LRESULT OnThemeChanged(WPARAM wParam, LPARAM lParam);
 //	afx_msg LRESULT OnSetMessageString(WPARAM wParam, LPARAM lParam);
 	DECLARE_MESSAGE_MAP()
 
 
 private:
 	BOOL m_bOleShuttingDown;
-	UINT m_uCurrentDpi;
-	CString m_modernStatusText[3];
-	std::optional<Ircv3AdapterEvent> m_lastIrcv3UiEvent;
-	std::uint64_t m_reportedDroppedIrcv3Events = 0;
 
 };
+

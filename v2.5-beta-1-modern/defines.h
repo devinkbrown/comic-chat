@@ -199,7 +199,7 @@
 #define EASTER_TIMER			81
 
 // MODE ISIRCX timeout
-#define ISIRCXTIMEOUT			5000	// 5 seconds: bounded legacy CAP/IRCX fallback
+#define ISIRCXTIMEOUT			50000	// 50 seconds
 
 // Main Menu item positions - 0 based
 #define VIEWMENUPOS				2

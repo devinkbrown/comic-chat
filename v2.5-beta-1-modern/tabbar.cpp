@@ -10,8 +10,6 @@
 #include "resource.h"
 #include "ui.h"
 #include "protsupp.h"
-#include "modernicons.h"
-#include "modernui.h"
 
 extern CChatApp theApp;
 
@@ -22,9 +20,7 @@ extern CChatApp theApp;
 CTabBar::CTabBar()
 {
 	m_bDeleteFont	= FALSE;
-	m_uDpi = 96;
-	m_nLayoutLength = 0;
-	m_lLargestTab	= comic_chat::modern_ui::Scale(64, m_uDpi);
+	m_lLargestTab	= 64L;	// magic number
 
 	LOGFONT	logFont;
 	theApp.m_fontGui.GetLogFont(&logFont);
@@ -63,8 +59,7 @@ BOOL CTabBar::OnEraseBkgnd(CDC* pDC)
 	// have a m_hWnd associated with it.  So we need to create our own.  Sigh. Investigate!
 	// Seems to happen when we hide the tab control
 //	CClientDC dc(this);
-	const auto palette = comic_chat::modern_ui::PaletteForWindow(m_hWnd);
-	DWORD clr = comic_chat::modern_ui::ToColorRef(palette.surface);
+	DWORD clr = GetSysColor(COLOR_3DFACE);
 	RECT rect;
 
 	GetClientRect(&rect);
@@ -86,6 +81,8 @@ BOOL CTabBar::OnEraseBkgnd(CDC* pDC)
 
 CSize CTabBar::CalcDynamicLayout(int nLength, DWORD dwMode)
 {
+	static int iLength = 0;
+
 //#ifdef DEBUG
 //	BOOL b = dwMode & LM_STRETCH;
 //	BOOL c = dwMode & LM_HORZ;
@@ -103,24 +100,20 @@ CSize CTabBar::CalcDynamicLayout(int nLength, DWORD dwMode)
 
 	ASSERT(pParentWnd);
 	pParentWnd->GetWindowRect(&rect);
-	const auto metrics = comic_chat::modern_ui::MetricsForDpi(m_uDpi);
-	const int trailingSpace = comic_chat::modern_ui::Scale(64, m_uDpi);
 
 	if (dwMode == LM_HORZ)
-		m_nLayoutLength = max(nLength, m_lLargestTab + trailingSpace);
+		iLength = max(nLength, m_lLargestTab + 64L);
 	else
 		if (dwMode == LM_HORZ+LM_HORZDOCK && nLength == 0)
-			m_nLayoutLength = max(m_nLayoutLength, m_lLargestTab + trailingSpace);
+			iLength = max(iLength, m_lLargestTab + 64L);
 		else
 			if (dwMode == LM_HORZ+LM_HORZDOCK && nLength == -1)
 			{
-				m_nLayoutLength = m_nLayoutLength ? m_nLayoutLength :
-					max(rect.right - rect.left - comic_chat::modern_ui::Scale(100, m_uDpi),
-						m_lLargestTab + trailingSpace);
-				return CSize(rect.right - rect.left, metrics.tab_height + metrics.border);
+				iLength = iLength ? iLength : max(rect.right - rect.left - 100, m_lLargestTab + 64L);
+				return CSize(rect.right - rect.left, 29);
 			}
 
-	return CSize(m_nLayoutLength, metrics.tab_height + metrics.border);
+	return CSize(iLength, 29);
 }
 
 
@@ -131,20 +124,16 @@ int CTabBar::OnCreate(LPCREATESTRUCT lpCreateStruct)
 
 	RECT r;
 	GetClientRect(&r);
-	m_uDpi = comic_chat::modern_ui::DpiForWindow(m_hWnd);
-	r.top = comic_chat::modern_ui::Scale(3, m_uDpi);
+	r.top = 5;
 //	r.bottom = 15;
 	
-	m_tabCtrl.Create(
-		WS_CHILD | WS_VISIBLE | WS_TABSTOP | TCS_HOTTRACK | TCS_TOOLTIPS,
-		r, this, IDC_TAB1);
-	m_tabCtrl.SetWindowText("Conversation tabs");
+	m_tabCtrl.Create(WS_CHILD | TCS_HOTTRACK/*| WS_VISIBLE | TCS_BUTTONS*/, r, this, IDC_TAB1);
 
 	if (m_bDeleteFont)
 		m_tabCtrl.SetFont(&m_font, FALSE);
 
-	ApplyModernMetrics(m_uDpi);
-	RefreshSystemAppearance();
+	m_images.Create(IDB_TABS, 16, 4, RGB(0, 255, 0));
+	m_tabCtrl.SetImageList(&m_images);
 	
 	return 0;
 }
@@ -209,7 +198,7 @@ void CTabBar::AddMDITab(const char *szChanName, CChatDoc *pDoc, BOOL bSelectIt /
 	tcItem.mask    = TCIF_TEXT | TCIF_IMAGE | TCIF_PARAM;
 	tcItem.pszText = (char*) szChanName;
 	tcItem.iImage  = pDoc->m_bStatusView ? 2 : 0; // XXX
-	tcItem.lParam  = reinterpret_cast<LPARAM>(pDoc);
+	tcItem.lParam  = (long) pDoc;
 
 	m_tabCtrl.InsertItem(iPlace, &tcItem);
 	if (bSelectIt)
@@ -269,13 +258,13 @@ void CTabBar::DelMDITab(int iTab) {
 		if (0 == nTabs)
 		{
 			m_tabCtrl.ShowWindow(SW_HIDE);	// keep invisible w/o tabs, due to refresh bug
-			m_lLargestTab = comic_chat::modern_ui::Scale(64, m_uDpi);
+			m_lLargestTab = 64L;
 		}
 		else
 			if ((rect.right - rect.left) == m_lLargestTab)
 			{
 				// largest tab was just removed
-				m_lLargestTab = comic_chat::modern_ui::Scale(64, m_uDpi);
+				m_lLargestTab = 64L;
 				for (int i = 0; i < nTabs; i++)
 				{
 					m_tabCtrl.GetItemRect(i, &rect);
@@ -284,34 +273,6 @@ void CTabBar::DelMDITab(int iTab) {
 				}
 			}
 	}
-}
-
-void CTabBar::ApplyModernMetrics(UINT dpi)
-{
-	m_uDpi = dpi ? dpi : 96;
-	const auto metrics = comic_chat::modern_ui::MetricsForDpi(m_uDpi);
-	if (HFONT font = comic_chat::modern_ui::UiFont(m_uDpi))
-		m_tabCtrl.SendMessage(WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-	// Preserve native text-derived widths; padding supplies a DPI-scaled target
-	// without the zero-width TCM_SETITEMSIZE legacy shortcut.
-	m_tabCtrl.SetPadding(CSize(metrics.tab_padding,
-		max(1, (metrics.target - metrics.icon) / 2)));
-	if (comic_chat::modern_ui::BuildStripImageList(
-			m_images, IDB_TABS, metrics.icon, 4, m_tabCtrl.m_hWnd))
-		m_tabCtrl.SetImageList(&m_images);
-	m_lLargestTab = max(m_lLargestTab, static_cast<LONG>(comic_chat::modern_ui::Scale(64, m_uDpi)));
-	m_nLayoutLength = 0;
-	Invalidate();
-}
-
-void CTabBar::RefreshSystemAppearance()
-{
-	comic_chat::modern_ui::ApplyWindowTheme(m_hWnd, true);
-	const auto metrics = comic_chat::modern_ui::MetricsForDpi(m_uDpi);
-	if (comic_chat::modern_ui::BuildStripImageList(
-			m_images, IDB_TABS, metrics.icon, 4, m_tabCtrl.m_hWnd))
-		m_tabCtrl.SetImageList(&m_images);
-	Invalidate();
 }
 
 

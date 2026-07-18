@@ -113,7 +113,8 @@ CUserInfo::CUserInfo()
 	m_uRequests		= 0;
 	m_flags			= 0;
 	m_avatarID		= 0;
-	m_floodWindow.reset();
+	m_uMsgCount		= 0;
+	m_uIntervalStart= 0;
 	m_bbValidUDI	= 0;
 }
 
@@ -122,7 +123,8 @@ CUserInfo::CUserInfo(const char *attedNick, const char *fullName) {
 	m_uRequests		= 0;
 	m_flags			= 0;
 	m_avatarID		= 0;
-	m_floodWindow.reset();
+	m_uMsgCount		= 0;
+	m_uIntervalStart= 0;
 	m_bbValidUDI	= 0;
 
 	const char *nickname = attedNick;
@@ -304,3 +306,4 @@ void CUserInfo::SelectInMemberList(CUserInfo *addressee, BOOL select, BOOL bExte
 
 	BOOL bResult = GetMembers()->m_MemberListBox.SetItemState( index, state, LVIS_SELECTED | LVIS_FOCUSED);
 }
+

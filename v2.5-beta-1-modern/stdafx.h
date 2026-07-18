@@ -13,7 +13,6 @@
 
 #define VC_EXTRALEAN		// Exclude rarely-used stuff from Windows headers
 
-#include <winsock2.h>        // Adapter error constants; libuv still owns sockets
 #include <afxwin.h>         // MFC core and standard components
 #include <afxext.h>         // MFC extensions
 #include <afxole.h>         // MFC OLE classes
@@ -21,6 +20,7 @@
 #include <afxcmn.h>			// MFC support for Windows 95 Common Controls
 #endif // _AFX_NO_AFXCMN_SUPPORT
 
+#include <afxsock.h>		// MFC socket extensions -- djk - now use chatsock
 // Unicode<==>ANSI conversion macros are in afxconv.h for MFC 4.2 on, but in
 // afxpriv.h before that.
 #if (_MFC_VER > 0x0410)
@@ -47,19 +47,3 @@ extern LOGPALETTE      *gpLogPal;
 
 #include "chicdial.h"
 #include "coolbar.h"
-
-// The original source used a private two-argument ASSERT(expression, message)
-// extension. Current MFC exposes the standard single-argument ASSERT macro,
-// and the conforming preprocessor correctly rejects the extra argument. Keep
-// the diagnostic text without relying on the legacy preprocessor extension.
-#ifdef _DEBUG
-#define CC_ASSERT(expression, message) \
-	do { \
-		if (!(expression)) { \
-			TRACE("Comic Chat assertion: %s\n", (message)); \
-			ASSERT(expression); \
-		} \
-	} while (false)
-#else
-#define CC_ASSERT(expression, message) ((void)0)
-#endif

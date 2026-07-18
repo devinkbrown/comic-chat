@@ -9,22 +9,31 @@
 
 extern BOOL bForPath(const char *szPath, BOOL soundFunc(const char *, void *), void *pvData);
 
-namespace {
 
-void SecureFreeString(LPSTR* value)
+// =================================================================================
+// Little wrappers around Winsock, the way MFC does it. MFC, oddly, does not
+// let us use its implementation. Note that we don't use this right now, but we
+// will automatically start using it should we link with the DLL version of MFC.
+
+struct WINSOCKINSTANCESTRUCT
 {
-	if (!value || !*value)
-		return;
-	volatile char* bytes = *value;
-	for (std::size_t index = 0; bytes[index] != '\0'; ++index)
-		bytes[index] = '\0';
-	free(*value);
-	*value = NULL;
-}
+	~WINSOCKINSTANCESTRUCT()
+		{ if (m_hinst) free (m_hinst); }
+	u_short (PASCAL * htons)(u_short hostshort);
+	struct hostent* (PASCAL * gethostbyname)(const char * name);
+	unsigned long (PASCAL * inet_addr) (const char FAR * cp);
+	HINSTANCE m_hinst;
+};
 
-} // namespace
+WINSOCKINSTANCESTRUCT WinSockInstance = 
+{
+	htons,
+	gethostbyname,
+	inet_addr,
+	NULL
+};
 
-
+// =================================================================================
 // CChatServer implementation
 
 CChatServer::CChatServer(
@@ -36,6 +45,7 @@ UINT   nDataLen)
 	SetDefaultSettings ();
 	if (nDataLen > 0)
 		ReadFromData (pvData, nDataLen);
+	ZeroMemory (&m_sockaddr, sizeof(m_sockaddr));
 }
 
 CChatServer::~CChatServer()
@@ -298,8 +308,45 @@ void
 CChatServer::FreeSettings()
 {
 	free (m_pszUserName);
-	SecureFreeString(&m_pszPassword);
+	free (m_pszPassword);
 	free (m_pszSecurityPackages);
+}
+
+// Resolve the socket address of a server. Returns whether a socket was available.
+
+BOOL
+CChatServer::ResolveSocketAddress()
+{
+	if (m_sockaddr.sin_family == 0)
+	{
+		CString strServer;
+		int nPort;	// Not used.
+		TranslateServerNameToServerAndPort(m_pszName, &strServer, &nPort);
+
+		ULONG ulAddr = WinSockInstance.inet_addr (strServer);
+		if (ulAddr != INADDR_NONE)
+		{
+			m_sockaddr.sin_family = AF_INET;
+			m_sockaddr.sin_addr.s_addr = ulAddr;
+			m_sockaddr.sin_port = WinSockInstance.htons ((u_short)m_nPort);
+		}
+		else
+		{
+			LPHOSTENT lphostent;
+			lphostent = WinSockInstance.gethostbyname (strServer);
+			if (lphostent != NULL)
+			{
+				m_sockaddr.sin_family = AF_INET;
+				m_sockaddr.sin_addr.s_addr = ((LPIN_ADDR)lphostent->h_addr)->s_addr;
+				m_sockaddr.sin_port = WinSockInstance.htons ((u_short)m_nPort);
+			}
+			else
+			{
+				m_sockaddr.sin_family = -1;
+			}
+		}
+	}
+	return m_sockaddr.sin_family == AF_INET;
 }
 
 // =================================================================================
@@ -886,8 +933,8 @@ CChatServiceList::GetGroupForOldServer(
 LPCSTR 	 pszServer, 
 CString& strGroupOut)
 {
-	static LPCSTR pszPrefixes[] = { NULL, "chat", NULL };
-	static LPCSTR pszSuffixes[] = { "microsoft.com", "msn.com", "msn.com" };
+	static LPSTR pszPrefixes[] = { NULL, "chat", NULL };
+	static LPSTR pszSuffixes[] = { "microsoft.com", "msn.com", "msn.com" };
 	static UINT nGroups[] = { IDS_PREDEFGROUP_MS, IDS_PREDEFGROUP_MSN, IDS_PREDEFGROUP_MS };
 
 	LPCSTR pszColon = OurMbsChr (pszServer, ':');
@@ -915,8 +962,7 @@ CString& strGroupOut)
 
 	int nLen = strServer.GetLength ();
 	int nOffset;
-	int i;
-	for (i = 0; i < _countof(pszPrefixes); i++)
+	for (int i = 0; i < _countof(pszPrefixes); i++)
 	{
 		// This is really one big if statement, broken up for clarity.
 		// The loop breaks out if the server name starts with the prefix and ends
@@ -1332,6 +1378,621 @@ Cleanup:
 	free (pszServers);
 	return bRet;
 
+}
+
+// =================================================================================
+// CChatServiceConnector implementation
+
+CChatServiceConnector::CChatServiceConnector()
+{
+	m_pSvcList 			= NULL;
+	m_pConnections	 	= NULL;
+	m_pSockets 			= NULL;
+	m_pConnectingServer	= NULL;
+	m_pConnectingGroup 	= NULL;
+	m_hThread 		    = NULL;
+	m_pCurThreadData    = NULL;
+	InitializeCriticalSection (&m_critsec);
+}
+
+CChatServiceConnector::~CChatServiceConnector()
+{
+	Cleanup ();
+	POSITION pos = m_mapDeleteableSockets.GetStartPosition ();
+	Socket* pSocket;
+	WORD w;
+	while (pos)
+	{
+		m_mapDeleteableSockets.GetNextAssoc (pos, (PVOID &)pSocket, w);
+		delete pSocket;
+	}
+}
+
+BOOL
+CChatServiceConnector::BeginConnectToService(
+LPCSTR pszSvc)
+{
+	// Avoid re-entry.
+
+	if (m_pSvcList == NULL || m_pSockets != NULL)
+	{
+		return FALSE;
+	}
+
+	int i;
+
+	// May be a retry of the same service. This is caused when we connect to
+	// a server, but then cannot finish logging in with it. In this case,
+	// proceed with the old server list.
+
+	if (pszSvc == NULL)
+	{
+		ASSERT (m_pConnections != NULL);
+		EnterCriticalSection (&m_critsec);
+		for (i = 0; i < m_nServers; i++)
+		{
+			if (m_pConnections[i].byStatus == srvconnNotAttempted || 
+					m_pConnections[i].byStatus == srvconnUnresolved)
+				break;
+		}
+		LeaveCriticalSection (&m_critsec);
+		if (i == m_nServers)
+		{
+			// No servers left to try!
+			return FALSE;
+		}
+	}
+	else
+	{
+		Cleanup ();	// Make sure old server list is gone.
+
+		m_strSvc = pszSvc;
+		CChatService svcTemp (pszSvc);
+	
+		// Build the array of servers to which we should try to connect.
+	
+		CChatServerGroup* pGroup;
+		CChatServer*      pServer;
+		if (svcTemp.GetServer () != NULL)
+		{
+			// Connect to a specific server.
+			LPCSTR pszGroup = svcTemp.GetGroup () != NULL ? svcTemp.GetGroup () : UNASSOCIATED_GROUP;
+			pGroup = m_pSvcList->FindGroup (pszGroup);
+			if (pGroup == NULL)
+			{
+				TRY
+				{
+					pGroup = m_pSvcList->CreateGroup (pszGroup);
+				}
+				CATCH_ALL(e)
+				{
+				}
+				END_CATCH_ALL
+				if (pGroup == NULL)
+				{
+					return FALSE;
+				}
+			}
+			m_pConnectingGroup = pGroup;
+			pServer = pGroup->FindServer (svcTemp.GetServer ());
+			if (pServer == NULL)
+			{
+				CString strServer;
+				int nPort;
+				TranslateServerNameToServerAndPort(svcTemp.GetServer (), &strServer, &nPort);
+				pServer = pGroup->CreateServer (svcTemp.GetServer (), nPort);
+				if (pServer == NULL)
+				{
+					return FALSE;
+				}
+			}
+			m_pConnections = (SrvConnection *)malloc (sizeof(*m_pConnections));
+			if (m_pConnections == NULL)
+				return FALSE;
+			m_pConnections[0].pServer = pServer;
+			m_pConnections[0].byStatus = srvconnUnresolved;
+			m_nServers = 1;
+		}
+		else
+		{
+			pGroup = m_pSvcList->FindGroup (svcTemp.GetGroup ());
+			m_pConnectingGroup = pGroup;
+			if (pGroup == NULL)
+				return FALSE;
+			m_nServers = pGroup->GetServerCount ();
+			if (m_nServers == 0)
+				return FALSE;
+			m_pConnections = (SrvConnection *)malloc (sizeof(*m_pConnections) * m_nServers);
+			if (m_pConnections == NULL)
+				return FALSE;
+			ZeroMemory (m_pConnections, sizeof(*m_pConnections) * m_nServers);
+	
+			// Go through the list of servers, adding each to a random place in
+			// the array. Make sure the last accessed server is placed in the first
+			// slot.
+			pServer = NULL;
+			int iOrigSlot, iSlot;
+			srand ((UINT)GetTickCount ());
+			while (pGroup->EnumServers (pServer))
+			{
+				if (m_nServers == 1 /*|| (m_pConnections[0].pServer == NULL && !lstrcmpi (pServer->m_pszName, pGroup->m_pszLastServer))*/)
+				{
+					m_pConnections[0].pServer = pServer;
+				}
+				else
+				{
+					iOrigSlot = iSlot = rand () % (m_nServers - 1) + 1;
+					while (m_pConnections[iSlot].pServer != NULL)
+					{
+						iSlot++;
+						if (iSlot == m_nServers)
+							iSlot = 1;
+						if (iSlot == iOrigSlot) // Can only happen if out of slots and invalid "last server"
+						{
+							iSlot = 0;
+							ASSERT (m_pConnections[0].pServer == NULL);
+							break;
+						}
+					}
+					m_pConnections[iSlot].pServer = pServer;
+				}
+			}
+		}
+
+		// Create the thread which will resolve DNS addresses.
+
+		m_pCurThreadData = (ThreadData*)malloc (sizeof(*m_pCurThreadData));
+		if (m_pCurThreadData == NULL)
+		{
+			Cleanup ();
+			return FALSE;
+		}
+		m_pCurThreadData->pThis = this;
+		m_pCurThreadData->bTerminate = FALSE;
+		CWinThread* pThread = AfxBeginThread (ResolverThreadProc, m_pCurThreadData,
+									THREAD_PRIORITY_NORMAL, 0, CREATE_SUSPENDED);
+		if (pThread == NULL)
+		{
+			free (m_pCurThreadData);
+			m_pCurThreadData = NULL;
+			Cleanup ();
+			return FALSE;
+		}
+
+		DuplicateHandle (GetCurrentProcess (), pThread->m_hThread,
+   						 GetCurrentProcess (), &m_hThread,
+						 0, FALSE, DUPLICATE_SAME_ACCESS);
+
+		pThread->m_bAutoDelete = TRUE;
+		ResumeThread (m_hThread);
+	}
+
+	// Create a place to hold a small number of socket objects, but no more than the 
+	// number of server.
+
+	m_nSockets = min (5, m_nServers);
+	m_pSockets = (Socket * *)malloc (sizeof(Socket *) * m_nSockets);
+	if (m_pSockets == NULL)
+	{
+		Cleanup ();
+		return FALSE;
+	}
+	ZeroMemory (m_pSockets, sizeof(Socket *) * m_nSockets);
+
+	// Create the sockets.
+
+	TRY
+	{
+		for (i = 0; i < m_nSockets; i++)
+		{
+			m_pSockets[i] = new Socket (this, i);
+			if (!m_pSockets[i]->Create ())
+			{
+				::AfxThrowUserException ();
+			}
+		}
+	}
+	CATCH_ALL(e)
+	{
+		Cleanup ();
+		return FALSE;
+	}
+	END_CATCH_ALL
+
+	m_nActiveSockets = 0;
+
+	return TRUE;
+}
+
+// Called periodically to assign the socket to the next available server.
+// A return value of 0 indicates failure, 1 indicates success, and -1 indicates
+// that the socket can't be assigned right now, and should be retried later.
+
+int
+CChatServiceConnector::AssignSocket(
+int nSocket)
+{
+	// Make sure that we are in mid-connection, and that the socket is
+	// not already busy.
+
+	if (m_pSockets == NULL || nSocket >= m_nSockets || m_pSockets[nSocket]->m_bConnecting)
+		return 1; // Acts like a success, so that the caller can blissfully continue.
+
+	if (!AssignSocketToNewServer (nSocket))
+	{
+		Cleanup ();
+		return 0;
+	}
+
+	// It's possible that the socket wasn't actually assigned to a server, because
+	// no servers are currently available. 
+
+	return m_pSockets[nSocket]->m_bConnecting ? 1 : -1;
+}
+
+BOOL
+CChatServiceConnector::AssignSocketToNewServer(
+int nSocket)
+{
+	if (m_pConnections == NULL)
+		return FALSE;
+
+	// Find next available connection.
+
+	int nCurServer;
+	BOOL bAnyUnresolved = FALSE;
+	EnterCriticalSection (&m_critsec);
+	for (nCurServer = 0; nCurServer < m_nServers; nCurServer++)
+	{
+		if (m_pConnections[nCurServer].byStatus == srvconnNotAttempted)
+		{
+			break;
+		}
+		else if (m_pConnections[nCurServer].byStatus == srvconnUnresolved)
+		{
+			bAnyUnresolved = TRUE;
+		}
+	}
+	LeaveCriticalSection (&m_critsec);
+
+	if (nCurServer == m_nServers)
+	{
+		// No more servers. If there are no more active sockets left,
+		// return a FALSE here so that an error message is shown.
+		// Otherwise, just silently return TRUE, so it can be tried later.
+		return m_nActiveSockets != 0 || bAnyUnresolved;
+	}
+
+	// Sanity check, should never happen, but let's be safe.
+	if (m_pSockets == NULL || nSocket >= m_nSockets || m_pSockets[nSocket] == NULL)
+	{
+		ASSERT (FALSE);
+		return FALSE;
+	}
+
+	if (!m_pSockets[nSocket]->Connect (nCurServer))
+	{
+		// Try the next server.
+		EnterCriticalSection (&m_critsec);
+		m_pConnections[nCurServer].byStatus = srvconnFailed;
+		LeaveCriticalSection (&m_critsec);
+		return AssignSocketToNewServer (nSocket);
+	}
+	EnterCriticalSection (&m_critsec);
+	m_pConnections[nCurServer].byStatus = srvconnAttempting;
+	LeaveCriticalSection (&m_critsec);
+	m_nActiveSockets++;
+	return TRUE;
+}
+
+void
+CChatServiceConnector::Cleanup(
+BOOL bCleanupServerList)
+{
+	if (m_pSockets != NULL)
+	{
+		int i;
+		for (i = 0; i < m_nSockets; i++)
+		{
+			if (m_pSockets[i] != NULL)
+			{
+				// We can't delete the socket here because of rogue
+				// OnConnect messages that can possibly come through.
+				// So, we just tell the socket to go away when connected.
+				if (m_pSockets[i]->m_hSocket != INVALID_SOCKET && m_pSockets[i]->m_bConnecting)
+				{
+					m_mapDeleteableSockets.SetAt (m_pSockets[i], 0);
+					m_pSockets[i]->m_nID = -1;
+				}
+				else
+				{
+					delete m_pSockets[i];
+				}
+			}
+		}
+		free (m_pSockets);
+		m_pSockets = NULL;
+	}
+
+	if (bCleanupServerList)
+	{
+		if (m_hThread != NULL)
+		{
+			// If the thread has exited by itself, it will have freed the
+			// thread data passed to it, and set m_pCurThreadData to NULL.
+			// If it is still running, we can set bTerminate in the thread
+			// data to TRUE. Then, the thread will exit, free the thread
+			// data, but NOT set m_pCurThreadData to NULL. This lets 
+			// orphaned threads go away at their own leisure.
+			EnterCriticalSection (&m_critsec);
+			if (m_pCurThreadData != NULL)
+			{
+				// Thread has not finished yet, tell it to finish.
+				m_pCurThreadData->bTerminate = TRUE;
+			}
+			LeaveCriticalSection (&m_critsec);
+			m_pCurThreadData = NULL;
+
+			#if 0  // Why make the user wait when she doesn't have to, huh?
+			// Wait for a while for the thread to finish. No big deal if it
+			// doesn't, since the thread is now orphaned.
+			HCURSOR hcurPrev = ::SetCursor (::LoadCursor (NULL, IDC_WAIT));
+			WaitForSingleObject (m_hThread, 5000);
+			::SetCursor (hcurPrev);
+			#endif
+
+			CloseHandle (m_hThread);
+			m_hThread = NULL;
+		}
+
+		if (m_pConnections != NULL)
+		{
+			free (m_pConnections);
+			m_pConnections = NULL;
+		}
+	}
+}
+
+CChatServiceConnector::Socket::Socket(
+CChatServiceConnector* pParent,
+int					   nID)
+{
+	m_pParent     = pParent;
+	m_nID         = nID;
+	m_nServer 	  = -1;
+	m_bConnecting = FALSE;
+}
+
+BOOL
+CChatServiceConnector::Socket::Connect(
+int			 nServer)
+{
+	m_nServer = nServer;
+
+	CString strServer;
+	int		nPort;
+	CChatServer* pServer = m_pParent->m_pConnections[nServer].pServer;
+	TranslateServerNameToServerAndPort (pServer->m_pszName, &strServer, &nPort);
+	nPort = pServer->m_nPort;	// Ignore port in name.
+	TRACE("Socket %d (%d) handling server %s, port %d\n", m_nID, m_hSocket, (LPCSTR)strServer, nPort);
+	BOOL b = CAsyncSocket::Connect ((const SOCKADDR*)&pServer->m_sockaddr, sizeof(pServer->m_sockaddr)) || GetLastError () == WSAEWOULDBLOCK;
+	if (b)
+		m_bConnecting = TRUE;
+	return b;
+}
+
+void 
+CChatServiceConnector::Socket::OnConnect(
+int nErrorCode)
+{
+	if (m_nID == -1)
+	{
+		// This socket should be closed.
+		TRACE ("Closing socket handle %x\n", m_hSocket);
+		m_pParent->m_mapDeleteableSockets.RemoveKey ((PVOID)this);
+		LINGER lingerInfo;
+		lingerInfo.l_onoff = 1;
+		lingerInfo.l_linger = 0;
+		SetSockOpt (SO_LINGER, &lingerInfo, sizeof(lingerInfo));
+		delete this;
+		return;
+	}
+
+	m_pParent->m_nActiveSockets--;
+	m_bConnecting = FALSE;
+	if (nErrorCode == 0)
+	{
+		TRACE("Socket %d connected\n", m_nID);
+		CChatServer* pServer = m_pParent->m_pConnections[m_nServer].pServer;
+
+		::AfxGetMainWnd ()->SendMessage (WM_COMMAND, ID_CONNECT_CONNECTED);
+
+		EnterCriticalSection (&m_pParent->m_critsec);
+		m_pParent->m_pConnections[m_nServer].byStatus = srvconnConnected;
+		LeaveCriticalSection (&m_pParent->m_critsec);
+		m_pParent->m_pConnectingServer = pServer;
+
+		// The connection succeeded.
+		serverConn.SetAuthentication (pServer->m_nAuthenticationType, 
+			pServer->m_pszUserName, pServer->m_pszPassword, pServer->m_pszSecurityPackages);
+
+		// Attach the socket to the global socket we use. When we stop using 
+		// a global socket, we can eliminate this code.
+		ReattachTo (&serverConn);
+
+		// Call the global socket's OnConnect to finish the work.
+		serverConn.OnConnect (0);
+
+		// Clean up the connector. IMPORTANT: When this call returns, the this handle will be
+		// invalid!
+		m_pParent->Cleanup (FALSE);
+	}
+	else
+	{
+		TRACE("Socket %d returned failure, trying next server\n", m_nID);
+
+		EnterCriticalSection (&m_pParent->m_critsec);
+		m_pParent->m_pConnections[m_nServer].byStatus = srvconnFailed;
+		LeaveCriticalSection (&m_pParent->m_critsec);
+
+	}
+}
+
+// Function that reattaches current socket handle to another MFC CAsyncSocket,
+// freeing ourselves of the responsibility for this socket. This is not a
+// very simple thing, for the following reasons:
+// 1. Detach and Attach won't work, because Detach calls into WinSock and sets
+// 	  the notification window to NULL, so we may miss events in the process.
+// 2. DetachHandle and AttachHandle won't work, because if the socket is the
+//    last one around, DetachHandle destroys the notification window, letting
+//	  AttachHandle create another, so we'd lose ALL subsequent events.
+// So the solution is to sort of duplicate the AttachHandle/DetachHandle code
+// without doing anything of the nasty sort described above.
+
+// AAARGH - The Alpha compiles use MFC 4.0 libraries with MFC 4.1 includes.
+// So do this stuff in a different way.
+
+#ifdef _M_ALPHA
+
+class _AFX_SOCK_THREAD_STATE : public CNoTrackObject
+{
+public:
+	// WinSock specific thread state
+	HWND m_hSocketWindow;
+	CMapPtrToPtr m_mapSocketHandle;
+	CMapPtrToPtr m_mapDeadSockets;
+	CPtrList m_listSocketNotifications;
+
+	virtual ~_AFX_SOCK_THREAD_STATE();
+};
+
+EXTERN_THREAD_LOCAL(_AFX_SOCK_THREAD_STATE, _afxSockThreadState)
+
+#endif
+
+void 
+CChatServiceConnector::Socket::ReattachTo(
+CAsyncSocket* pOtherSocket)
+{
+	SOCKET hSocket = m_hSocket;
+	ASSERT(hSocket != INVALID_SOCKET);
+	ASSERT(pOtherSocket->m_hSocket == INVALID_SOCKET);
+	
+	#ifdef _M_ALPHA
+	_AFX_SOCK_THREAD_STATE* pState = _afxSockThreadState;
+	pState->m_mapSocketHandle.SetAt ((void*)hSocket, pOtherSocket);
+	m_hSocket = INVALID_SOCKET;
+	pOtherSocket->m_hSocket = hSocket;
+	#else
+	// Modern MFC keeps the socket-handle map internal to CAsyncSocket.
+	// Transfer ownership using its protected handle-map helpers.
+	DetachHandle (hSocket, FALSE);
+	m_hSocket = INVALID_SOCKET;
+	pOtherSocket->m_hSocket = hSocket;
+	AttachHandle (hSocket, pOtherSocket, FALSE);
+	#endif
+}
+
+// Thread procedure to resolve DNS names in the background.
+
+UINT 
+CChatServiceConnector::ResolverThreadProc(
+PVOID pvParam)
+{
+	ThreadData* pData = (ThreadData*)pvParam;
+	CChatServiceConnector * pThis = pData->pThis;
+	CChatServer svrCopy ("");
+
+	// First, go through every connection, marking all servers whose DNS addresses
+	// we already have as being successful. Servers with DNS addresses marked as
+	// errors are reset.
+
+	int nConnections;
+	int i;
+
+	EnterCriticalSection (&pThis->m_critsec);
+	if (pData->bTerminate)
+		goto AbnormalTermination;
+	nConnections = pThis->m_nServers;
+	for (i = 0; i < nConnections; i++)
+	{
+		if (pThis->m_pConnections[i].pServer->m_sockaddr.sin_family == AF_INET)
+			pThis->m_pConnections[i].byStatus = srvconnNotAttempted;
+		else if (pThis->m_pConnections[i].pServer->m_sockaddr.sin_family == -1)
+			pThis->m_pConnections[i].pServer->m_sockaddr.sin_family = 0;
+	}
+	LeaveCriticalSection (&pThis->m_critsec);
+
+	// Now, go through every connection again, resolving addresses of servers
+	// which we haven't handled. We have to do this very carefully, because the
+	// parent object could tell us to go away at any time. We do this by making
+	// a copy of the server we are resolving. (Well, not exactly - we only copy
+	// the name and port, since we don't need anything else).
+
+	CChatServer * pServer;
+	BOOL bNeedResolving;
+	BOOL bOK;
+	for (i = 0; i < nConnections; i++)
+	{
+		// Make a copy of the server.
+		EnterCriticalSection (&pThis->m_critsec);
+		if (pData->bTerminate)
+			goto AbnormalTermination;
+		bNeedResolving = pThis->m_pConnections[i].byStatus == srvconnUnresolved;
+		if (bNeedResolving)
+		{
+			pServer = pThis->m_pConnections[i].pServer;
+			free (svrCopy.m_pszName);
+			svrCopy.m_pszName = strdup (pServer->m_pszName);
+			svrCopy.m_nPort = pServer->m_nPort;
+			svrCopy.m_sockaddr.sin_family = 0;
+		}
+		LeaveCriticalSection (&pThis->m_critsec);
+
+		if (bNeedResolving)
+		{
+			// Resolve the DNS.
+			TRACE("Resolving Socket Address for %s\n", svrCopy.m_pszName);
+			bOK = svrCopy.ResolveSocketAddress ();
+			
+			EnterCriticalSection (&pThis->m_critsec);
+			if (pData->bTerminate)
+				goto AbnormalTermination;
+
+			// Set the server's status depending on the result code.
+			if (bOK)
+			{
+				TRACE0("Address resolution succeeded\n");
+				pServer->m_sockaddr = svrCopy.m_sockaddr;
+				pThis->m_pConnections[i].byStatus = srvconnNotAttempted;
+			}
+			else
+			{
+				TRACE0("Address resolution failed\n");
+				pThis->m_pConnections[i].byStatus = srvconnFailed;
+			}
+			LeaveCriticalSection (&pThis->m_critsec);
+		}
+	}
+
+	// We're all done. Now, enter a critical section and fall through to 
+	// the termination code.
+
+	EnterCriticalSection (&pThis->m_critsec);
+
+AbnormalTermination:
+	// We are being told by the parent to go away quietly. Note that this piece
+	// of code is always entered while we own the critical section.
+
+	if (!pData->bTerminate)
+	{
+		// We haven't been orphaned yet, so set the variable in the parent.
+		pThis->m_pCurThreadData = NULL;
+	}
+	free (pData);
+	LeaveCriticalSection (&pThis->m_critsec);
+	TRACE0("Resolver thread exiting\n");
+	return 0;
 }
 
 // =================================================================================
@@ -2111,7 +2772,7 @@ CChatServiceUI::ObjArray::ObjArray()
 
 UINT 
 CChatServiceUI::ObjArray::Add(
-const CString &str)
+CString &str)
 {
 	ASSERT(!str.IsEmpty ());
 	int n;

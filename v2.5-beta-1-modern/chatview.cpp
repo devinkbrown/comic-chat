@@ -22,8 +22,6 @@
 #include "ui.h"
 #include "memblst.h"
 #include "protsupp.h"
-#include "ircsock.h"
-#include "ircproto.h"
 #include <imm.h>
 
 #ifdef _DEBUG
@@ -53,7 +51,6 @@ BEGIN_MESSAGE_MAP(CChatView, CView)
 	ON_COMMAND(ID_FILE_PRINT_DIRECT, CView::OnFilePrint)
 	ON_COMMAND(ID_FILE_PRINT_PREVIEW, CView::OnFilePrintPreview)
 	ON_MESSAGE(WM_LOGINDLG, OnLoginDlg)
-	ON_MESSAGE(WM_COMICCHAT_IRCV3_EVENT, OnIrcv3Event)
 END_MESSAGE_MAP()
 
 /////////////////////////////////////////////////////////////////////////////
@@ -81,128 +78,6 @@ CChatView::~CChatView()
 		doc->m_client = NULL;
 		doc->m_bodyCam = NULL;
 	}
-}
-
-LRESULT CChatView::OnIrcv3Event(WPARAM wParam, LPARAM lParam)
-{
-	if (!lParam)
-		return 0;
-	const auto* adapter = reinterpret_cast<const Ircv3AdapterEvent*>(lParam);
-	if (wParam != static_cast<WPARAM>(adapter->event.type))
-		return 0;
-	CChatDoc* doc = GetDocument();
-	if (!doc)
-		return 0;
-
-	// WM_COMICCHAT_IRCV3_EVENT is synchronously broadcast by CMainFrame only
-	// after its UI-thread network drain. Resolve against this view's document so
-	// rooms never share CUserInfo pointers or mutate MFC state on the worker.
-	const auto findUser = [doc](std::string_view nickname) -> CUserInfo* {
-		const std::string ownedNickname(nickname);
-		return LookupPui(ownedNickname.c_str(), doc);
-	};
-	const auto applyMutation = [doc](CUserInfo& user,
-		const comic_chat::legacy_ui::Ircv3UserMutation& mutation) {
-		switch (mutation.kind) {
-		case comic_chat::legacy_ui::Ircv3UserMutationKind::account:
-			user.SetAccount(CString(mutation.value.data(),
-				static_cast<int>(mutation.value.size())));
-			break;
-		case comic_chat::legacy_ui::Ircv3UserMutationKind::away:
-			// Preserve Microsoft's remove/mutate/reinsert path so the member
-			// list immediately repaints its away/back icon.
-			DoUserAway(doc, &user, mutation.active ? TRUE : FALSE);
-			break;
-		case comic_chat::legacy_ui::Ircv3UserMutationKind::host: {
-			CString identity(mutation.value.data(), static_cast<int>(mutation.value.size()));
-			identity += '@';
-			identity += CString(mutation.secondary.data(),
-				static_cast<int>(mutation.secondary.size()));
-			user.SetFullName(identity);
-			break;
-		}
-		case comic_chat::legacy_ui::Ircv3UserMutationKind::realname:
-			user.SetRealName(CString(mutation.value.data(),
-				static_cast<int>(mutation.value.size())));
-			break;
-		case comic_chat::legacy_ui::Ircv3UserMutationKind::none:
-			break;
-		}
-	};
-
-	const auto result = comic_chat::legacy_ui::ConsumeUserMutation(adapter->event,
-		findUser, applyMutation);
-	if (result == comic_chat::legacy_ui::Ircv3UserMutationResult::applied)
-		return 1;
-
-	// userhost-in-names splits nick!user@host out of 353 before the legacy parser
-	// reads the reply, so the hostmask arrives here instead. CMainFrame drains
-	// this event only after that reply's legacy wire already created the members,
-	// so the users resolve. Each identity is the same host mutation as chghost.
-	const auto names = comic_chat::legacy_ui::ConsumeNamesIdentities(adapter->event,
-		findUser, applyMutation);
-	if (names.applied != 0)
-		return 1;
-
-	const auto rename = comic_chat::legacy_ui::ClassifyChannelRename(adapter->event);
-	if (rename) {
-		const std::string previousBytes(rename->previous);
-		const std::string currentBytes(rename->current);
-		// A conforming server prevents collisions, but do not create two local
-		// live documents with the same target if a stale or malicious event does.
-		CChatDoc* collision = LookupDoc(currentBytes.c_str());
-		if (!collision || collision == doc) {
-			const auto renamed = comic_chat::legacy_ui::ConsumeChannelRename(adapter->event,
-				[doc](std::string_view previous) {
-					if (!doc->m_proto) return false;
-					const CString owned(previous.data(), static_cast<int>(previous.size()));
-					return doc->m_proto->m_strChannel.CompareNoCase(owned) == 0;
-				},
-				[doc, &previousBytes, &currentBytes](const comic_chat::legacy_ui::Ircv3ChannelRename&) {
-					const CString previous(previousBytes.c_str());
-					const CString current(currentBytes.c_str());
-					const CString pretty(DecodeChan(currentBytes.c_str()));
-					serverConn.m_queries.RenameChannelReferences(previous, current);
-					INT roomIndex = -1;
-					CRoomInfo* pending = theApp.GetRoomInfoFromName(previous, &roomIndex,
-						FALSE, TRUE);
-					if (pending && pending != doc->m_proto) {
-						pending->m_strChannel = current;
-						pending->m_strPrettyChannel = pretty;
-					}
-					doc->m_proto->m_strChannel = current;
-					doc->m_proto->m_strPrettyChannel = pretty;
-					doc->SetLegalPath(pretty, FALSE);
-					doc->m_proto->SetConnectionStatus(CX_INCHANNEL);
-				});
-			if (renamed == comic_chat::legacy_ui::Ircv3ChannelRenameResult::applied) {
-				if (GetFocusedDoc() == doc) {
-					const auto line = comic_chat::legacy_ui::FormatChannelRenameStatus(*rename);
-					CIrcPrint print;
-					print.SetFormat(PT_WHOLESTRING, line.c_str(), RGB(0, 92, 184), 0, TRUE);
-					AddToStatus(print, line.c_str());
-				}
-				return 1;
-			}
-		}
-	}
-
-	// Microsoft's numeric-error path wrote human-readable failures into the
-	// shared status view. Keep that behavior for IRCv3 FAIL/WARN/NOTE, but only
-	// let the focused document render a session-global event so multiple open
-	// room views cannot duplicate it.
-	const auto status = comic_chat::legacy_ui::ClassifyStandardReply(adapter->event);
-	if (!status || GetFocusedDoc() != doc)
-		return 0;
-	COLORREF color = RGB(0, 92, 184);
-	if (status->severity == comic_chat::legacy_ui::Ircv3StatusSeverity::error)
-		color = RGB(220, 53, 69);
-	else if (status->severity == comic_chat::legacy_ui::Ircv3StatusSeverity::warning)
-		color = RGB(184, 115, 0);
-	CIrcPrint print;
-	print.SetFormat(PT_WHOLESTRING, status->text.c_str(), color, 0, TRUE);
-	AddToStatus(print, status->text.c_str());
-	return 1;
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -823,3 +698,4 @@ LRESULT CChatView::OnLoginDlg(WPARAM wParam, LPARAM lParam)
 
 	return 0;
 }
+

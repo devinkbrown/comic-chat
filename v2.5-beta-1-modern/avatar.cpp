@@ -219,7 +219,7 @@ void CAvatarX::GetScreenName(const char **screenName) {
 	*screenName = (LPCTSTR) pui->GetScreenName();
 }
 
-CBody *CAvatarSimple::GetBodyFromEmotion(const CEmotion &emotion) {
+CBody *CAvatarSimple::GetBodyFromEmotion(CEmotion &emotion) {
 	CBodySingle *body = new CBodySingle(m_avatarID);
 
 	// Distance metric needs rethinking!
@@ -249,7 +249,7 @@ CBody *CAvatarSimple::GetBodyFromEmotion(const CEmotion &emotion) {
 }
 
 
-CBody *CAvatarComplex::GetBodyFromEmotion(const CEmotion &emotion) {
+CBody *CAvatarComplex::GetBodyFromEmotion(CEmotion &emotion) {
 	CBodyDouble *body = new CBodyDouble(m_avatarID);
 
 	// Distance metric needs rethinking!
@@ -257,8 +257,7 @@ CBody *CAvatarComplex::GetBodyFromEmotion(const CEmotion &emotion) {
 	double intensityOfNearest = 2.0;
 	int nearestI;
 
-	int i;
-	for (i = 0; i < nFaces; i++) {
+	for (int i = 0; i < nFaces; i++) {
 		double thisAngle = fabs(subtract_angles(fRec[i].emotion, emotion.m_emotion));
 		if (thisAngle <= nearestAngle) {
 			double delta_i = fabs(emotion.m_intensity - fRec[i].intensity);
@@ -470,8 +469,7 @@ void CAvatarComplex::SetNeutral() {
 }
 
 void CAvatarSimple::SetNeutral() {
-	CEmotion neutral(0.0, 0.0);
-	CBody *body = GetBodyFromEmotion(neutral); // creates the only body that's known...
+	CBody *body = GetBodyFromEmotion(CEmotion(0.0, 0.0)); // creates the only body that's known...
 //	body->m_requested = FALSE;
 	UpdateBody(body);
 }

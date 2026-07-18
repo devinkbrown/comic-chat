@@ -26,9 +26,6 @@
 #include <math.h>
 #include <tchar.h>
 #include <winnls.h>
-#include <limits>
-#include <memory>
-#include <string>
 
 extern CChatApp theApp;
 
@@ -75,19 +72,6 @@ extern "C" BOOL FindSubStringForINTLThatFits(
 #define SMALLDELTA			150
 #define MINTAILHEIGHT		100
 #define BORDERFUDGE			400		// Yum fudge!
-
-namespace
-{
-	struct CFreeDeleter
-	{
-		void operator()(char* ptr) const noexcept
-		{
-			free(ptr);
-		}
-	};
-
-	using CMallocString = std::unique_ptr<char, CFreeDeleter>;
-}
 
 // REGISB; not used anymore
 //#define NODESCENDERS(x)		((x) == ANSI_CHARSET || (x) == GREEK_CHARSET || (x) == RUSSIAN_CHARSET \
@@ -532,8 +516,7 @@ int PermuteFilters(CFontInfo& fontI, RANGE lFilters[], RANGE rFilters[], int nLF
 {
 	int baseY = 0;
 	int lastX = LARGEINTEGER;
-	int i;
-	for (i = 0; i < nLFilters; i++) {
+	for (int i = 0; i < nLFilters; i++) {
 		lFilters[i].x -= XBORDER;
 		if (i == 0)
 			lFilters[i].y = baseY + TOPBORDER + YBORDER + fontI.m_topOffset;
@@ -743,12 +726,12 @@ int CLabel::WidestWord()
 	
 	while (TRUE)
 	{
-		while (*szStart && !cc_isprint(*szStart))		// szStart points to next printable character
+		while (*szStart && !isprint(*szStart))			// szStart points to next printable character
 			szStart = CharNext(szStart);
 		if (!*szStart)
 			break;
 		szEnd = szStart;
-		while(cc_isprint(*szEnd))
+		while(isprint(*szEnd))
 			szEnd = CharNext(szEnd);
 		// REGISB: original: sizeExtent = pdc->GetTextExtent(szStart, szEnd - szStart + 1);
 		prgdwPulledFormatting = PullFormattingOffsets(m_prgdwFormatting, szStart - m_str);
@@ -794,34 +777,23 @@ void CLabel::ShiftLines(CFormatInfo &fInfo)
 char* CLabel::SplitHeight(int iHeight, CDWordArray **pprgdwRestFormatting, char **pszURLStartInRest)
 {
 	ASSERT(pprgdwRestFormatting);
-	if (!pprgdwRestFormatting)
-		return NULL;
-
-	*pprgdwRestFormatting = NULL;
-	if (pszURLStartInRest)
-		*pszURLStartInRest = NULL;
-
-	if (!m_str || !m_fontI || m_fontI->m_lineHeight <= 0)
-		return NULL;
 
 	int				rgiLengths[MAXLINES], rgiWidths[MAXLINES], /* rgiHeights[MAXLINES], */ iWidthD = 0, iHeightD = 0;
 	char*			rgszStarts[MAXLINES];
 	CClientDC*		pdc = GetClientDC();
 	CDWordArray*	prgdwFormatting = NULL;
-	if (!pdc)
-		return NULL;
 
 	CFont*			pOldFont = pdc->SelectObject(m_fontI->m_font);
 
-	const int		iDesiredWidth = m_bbox.Right - m_bbox.Left;
-	int				iMaxLines;
-	const int		nLines = ::BreakIntoLines(pdc, iDesiredWidth, m_str, m_prgdwFormatting, rgszStarts, rgiLengths, rgiWidths /*, rgiHeights */);
+	int				iDesiredWidth = m_bbox.Right - m_bbox.Left;
+	int				iCumulHeight = 0, iMaxLines, nLines = ::BreakIntoLines(pdc, iDesiredWidth, m_str, m_prgdwFormatting, rgszStarts, rgiLengths, rgiWidths /*, rgiHeights */);
+
+	*pprgdwRestFormatting = NULL;
+
+	if (pszURLStartInRest)
+		*pszURLStartInRest = NULL;
 
 	iMaxLines = iHeight / m_fontI->m_lineHeight;
-	if (iMaxLines < 1)
-		iMaxLines = 1;
-	if (iMaxLines > MAXLINES)
-		iMaxLines = MAXLINES;
 
 	//for (iMaxLines = 0; iMaxLines < MAXLINES; iMaxLines++)
 	//{
@@ -831,72 +803,28 @@ char* CLabel::SplitHeight(int iHeight, CDWordArray **pprgdwRestFormatting, char 
 	//}
 
 	if (nLines < iMaxLines)
-	{
-		pdc->SelectObject(pOldFont);
 		return NULL;	// no rest, there is room enough...
-	}
-
-	const size_t sourceLength = strlen(m_str);
-	if (!rgszStarts[iMaxLines - 1] || rgszStarts[iMaxLines - 1] < m_str ||
-		rgszStarts[iMaxLines - 1] > m_str + sourceLength)
-	{
-		pdc->SelectObject(pOldFont);
-		return NULL;
-	}
 
 	prgdwFormatting = PullFormattingOffsets(m_prgdwFormatting, rgszStarts[iMaxLines - 1] - m_str);
 
 	char*			szEnd = FindFurthestLineBreak(pdc, m_bbox.Right - m_bbox.Left - m_fontI->m_continuationWidth,
 												  rgszStarts[iMaxLines - 1], prgdwFormatting, iWidthD, iHeightD);
+	int				nToCopy = szEnd - m_str;
+	char*			szNewStr = (char*) malloc(nToCopy + strlen(szContinuationStr1) + 1);
+
 	FreeAndNullFormatting(&prgdwFormatting);
 
-	if (!szEnd || szEnd < m_str || szEnd > m_str + sourceLength)
-	{
-		pdc->SelectObject(pOldFont);
-		return NULL;
-	}
-
-	size_t copyLength = static_cast<size_t>(szEnd - m_str);
-	const size_t continuation1Length = strlen(szContinuationStr1);
-	const size_t continuation2Length = strlen(szContinuationStr2);
-	if (copyLength > static_cast<size_t>((std::numeric_limits<int>::max)()) ||
-		continuation2Length > static_cast<size_t>((std::numeric_limits<int>::max)()) ||
-		copyLength > (std::numeric_limits<size_t>::max)() - continuation1Length - 1)
-	{
-		pdc->SelectObject(pOldFont);
-		return NULL;
-	}
-
-	CMallocString szNewStr(static_cast<char*>(malloc(copyLength + continuation1Length + 1)));
-	if (!szNewStr)
-	{
-		pdc->SelectObject(pOldFont);
-		return NULL;
-	}
-	memcpy(szNewStr.get(), m_str, copyLength);
-	memcpy(szNewStr.get() + copyLength, szContinuationStr1, continuation1Length + 1);
-
-	char *szRestStart = m_str + copyLength;
-	const size_t restLength = strlen(szRestStart);
-	if (restLength > (std::numeric_limits<size_t>::max)() - continuation2Length - 1)
-	{
-		pdc->SelectObject(pOldFont);
-		return NULL;
-	}
-	CMallocString szRest(static_cast<char*>(malloc(continuation2Length + restLength + 1)));
-	if (!szRest)
-	{
-		pdc->SelectObject(pOldFont);
-		return NULL;
-	}
-	memcpy(szRest.get(), szContinuationStr2, continuation2Length);
-	memcpy(szRest.get() + continuation2Length, szRestStart, restLength + 1);
-	const int nToCopy = static_cast<int>(copyLength);
+	strncpy(szNewStr, m_str, nToCopy);
+	strcpy(szNewStr + nToCopy, szContinuationStr1);
+	char *szRestStart = m_str + nToCopy;
+	char *szRest = (char*) malloc(strlen(szRestStart) + strlen(szContinuationStr2) + 1);
+	strcpy(szRest, szContinuationStr2);
+	strcat(szRest, szRestStart);
 
 	*pprgdwRestFormatting = PullFormattingOffsets(m_prgdwFormatting, szRestStart - m_str);
 
 	free(m_str);
-	m_str = szNewStr.release();
+	m_str = szNewStr;
 
 	// adjust m_prgdwFormatting if necessary
 	if (m_prgdwFormatting)
@@ -914,10 +842,10 @@ char* CLabel::SplitHeight(int iHeight, CDWordArray **pprgdwRestFormatting, char 
 		}
 	}
 
-	PushFormattingOffsets(*pprgdwRestFormatting, static_cast<int>(continuation2Length));	// add offset of ...
+	PushFormattingOffsets(*pprgdwRestFormatting, strlen(szContinuationStr2));	// add offset of ...
 
 	pdc->SelectObject(pOldFont);
-	return szRest.release();
+	return szRest;
 }
 
 
@@ -1606,25 +1534,16 @@ char* CBWoodringNormal::SplitHeight(int iHeight, CDWordArray **pprgdwRestFormatt
 {
 	ASSERT(pprgdwRestFormatting);
 	ASSERT(pszURLStartInRest);
-	if (!pprgdwRestFormatting || !pszURLStartInRest)
-		return NULL;
-
-	*pprgdwRestFormatting = NULL;
-	*pszURLStartInRest = NULL;
-
-	if (!m_str || !m_fontI || m_fontI->m_lineHeight <= 0 || !m_fInfo)
-		return NULL;
 
 	CDWordArray*	prgdwFormatting = NULL;
 	CClientDC*		pdc = GetClientDC();
 	CFont*			pOldFont = NULL;
-	int				iMaxLines, iWidthD = 0, iHeightD = 0;  // dummy params
-	if (!pdc)
-		return NULL;
+	int				iMaxLines, iCumulHeight = 0, iWidthD = 0, iHeightD = 0;  // dummy params
+
+	*pprgdwRestFormatting = NULL;
+	*pszURLStartInRest = NULL;
 
 	iMaxLines = (iHeight - BORDERFUDGE) / m_fontI->m_lineHeight;
-	if (iMaxLines < 1)
-		iMaxLines = 1;
 
 	
 	//for (iMaxLines = 0; iMaxLines < MAXLINES; iMaxLines++)
@@ -1634,14 +1553,7 @@ char* CBWoodringNormal::SplitHeight(int iHeight, CDWordArray **pprgdwRestFormatt
 	//	iCumulHeight += m_fInfo->m_rgiHeights[iMaxLines];
 	//}
 
-	const int originalLineCount = m_fInfo->m_nLines;
-	if (originalLineCount <= 0 || iMaxLines >= originalLineCount)
-		return NULL;
-
-	const size_t sourceLength = strlen(m_str);
-	if (!m_fInfo->m_rgszStarts[iMaxLines - 1] ||
-		m_fInfo->m_rgszStarts[iMaxLines - 1] < m_str ||
-		m_fInfo->m_rgszStarts[iMaxLines - 1] > m_str + sourceLength)
+	if (iMaxLines >= m_fInfo->m_nLines)
 		return NULL;
 
 	// OK, we really have to do the split...
@@ -1652,78 +1564,36 @@ char* CBWoodringNormal::SplitHeight(int iHeight, CDWordArray **pprgdwRestFormatt
 	prgdwFormatting = PullFormattingOffsets(m_prgdwFormatting, m_fInfo->m_rgszStarts[iMaxLines - 1] - m_str);
 
 	char *szEnd = FindFurthestLineBreak(pdc, m_fInfo->m_bbox.Right - m_fInfo->m_bbox.Left - m_fontI->m_continuationWidth,
-											m_fInfo->m_rgszStarts[iMaxLines - 1], prgdwFormatting, iWidthD, iHeightD);
+										m_fInfo->m_rgszStarts[iMaxLines - 1], prgdwFormatting, iWidthD, iHeightD);
 	FreeAndNullFormatting(&prgdwFormatting);
 
-	if (!szEnd || szEnd < m_str || szEnd > m_str + sourceLength)
-	{
-		m_fInfo->m_nLines = originalLineCount;
-		pdc->SelectObject(pOldFont);
-		return NULL;
-	}
-
-	size_t copyLength = static_cast<size_t>(szEnd - m_str);
-	const size_t continuation1Length = strlen(szContinuationStr1);
-	const size_t continuation2Length = strlen(szContinuationStr2);
+	int		nToCopy = szEnd - m_str;
+	int contStr1Len = strlen(szContinuationStr1);
 
 	// ensure that a line contains more than just continuation characters
-	if (copyLength <= continuation1Length &&
-		sourceLength > continuation1Length &&
-		strncmp(m_str, szContinuationStr1, continuation1Length) == 0)
-	{
-		copyLength = continuation1Length + 1;
+	if (nToCopy <= contStr1Len && strncmp(m_str, szContinuationStr1, contStr1Len) == 0 && m_str[contStr1Len]) {
+		nToCopy = contStr1Len+1;
+		szEnd = m_str + nToCopy;
 	}
-	if (copyLength > sourceLength ||
-		copyLength > static_cast<size_t>((std::numeric_limits<int>::max)() - 1) ||
-		continuation2Length > static_cast<size_t>((std::numeric_limits<int>::max)()) ||
-		copyLength > (std::numeric_limits<size_t>::max)() - continuation1Length - 1)
-	{
-		m_fInfo->m_nLines = originalLineCount;
-		pdc->SelectObject(pOldFont);
-		return NULL;
-	}
-
-	char* szRestStart = GetNextStart(m_str + copyLength);
-	if (!szRestStart || szRestStart < m_str || szRestStart > m_str + sourceLength)
-	{
-		m_fInfo->m_nLines = originalLineCount;
-		pdc->SelectObject(pOldFont);
-		return NULL;
-	}
-
-	const size_t restLength = strlen(szRestStart);
-	if (restLength > (std::numeric_limits<size_t>::max)() - continuation2Length - 1)
-	{
-		m_fInfo->m_nLines = originalLineCount;
-		pdc->SelectObject(pOldFont);
-		return NULL;
-	}
-
-	CMallocString szNewStr(static_cast<char*>(malloc(copyLength + continuation1Length + 1)));
-	CMallocString szRest(static_cast<char*>(malloc(continuation2Length + restLength + 1)));
-	if (!szNewStr || !szRest)
-	{
-		m_fInfo->m_nLines = originalLineCount;
-		pdc->SelectObject(pOldFont);
-		return NULL;
-	}
-
-	memcpy(szNewStr.get(), m_str, copyLength);
-	memcpy(szNewStr.get() + copyLength, szContinuationStr1, continuation1Length + 1);
-	memcpy(szRest.get(), szContinuationStr2, continuation2Length);
-	memcpy(szRest.get() + continuation2Length, szRestStart, restLength + 1);
-	const int nToCopy = static_cast<int>(copyLength);
+		
+	char	*szNewStr = (char*) malloc(nToCopy + contStr1Len + 1);
+	strncpy(szNewStr, m_str, nToCopy);
+	strcpy(szNewStr+nToCopy, szContinuationStr1);
+	char	*szRestStart = GetNextStart(m_str + nToCopy);
+	char	*szRest = (char*) malloc(strlen(szRestStart) + strlen(szContinuationStr2) + 1);
+	strcpy(szRest, szContinuationStr2);
+	strcat(szRest, szRestStart);
 
 	*pprgdwRestFormatting = PullFormattingOffsets(m_prgdwFormatting, szRestStart - m_str);
 
 	free(m_str);
-	m_str = szNewStr.release();
+	m_str = szNewStr;
 
 	// adjust m_prgdwFormatting if necessary
 	if (m_prgdwFormatting)
 	{
 		DWORD	dwLastElement;
-		BOOL	bFirstRestCharNotURL = FALSE;
+		BOOL	bFirstRestCharNotURL;
 		// is the first character of szRest starting a non-URL substring?
 		m_prgdwFormatting = CutFormattingArray(m_prgdwFormatting, nToCopy+1);
 		if (m_prgdwFormatting)
@@ -1743,9 +1613,13 @@ char* CBWoodringNormal::SplitHeight(int iHeight, CDWordArray **pprgdwRestFormatt
 				// get the correct URL
 				ASSERT(m_prgszURLs);
 
-				DWORD	dwLastURLStart = 0, dwElement;
+				DWORD	dwLastURLStart, dwFirstURLEnd, dwElement;
 				BOOL	bInURL = FALSE;
-				BOOL	bFoundURLStart = FALSE;
+				char	*szURL, *szTmp;
+
+				if (!(szURL = (char*) new char[serverConn.m_nMaxMsgLength]))	// more than enough
+					return NULL;
+				ZeroMemory(szURL, serverConn.m_nMaxMsgLength);
 
 				for (int iFormatIndex = 0; iFormatIndex <= m_prgdwFormatting->GetUpperBound(); iFormatIndex++)
 				{
@@ -1753,7 +1627,6 @@ char* CBWoodringNormal::SplitHeight(int iHeight, CDWordArray **pprgdwRestFormatt
 					if (!bInURL && (LOWORD(dwElement) & wLink))
 					{
 						bInURL = TRUE;
-						bFoundURLStart = TRUE;
 						dwLastURLStart = dwElement;
 					}
 					else
@@ -1761,59 +1634,47 @@ char* CBWoodringNormal::SplitHeight(int iHeight, CDWordArray **pprgdwRestFormatt
 							bInURL = FALSE;
 				}
 
-				const size_t urlStartOffset = HIWORD(dwLastURLStart);
-				if (m_prgszURLs && bFoundURLStart && urlStartOffset <= strlen(m_str) && *pprgdwRestFormatting)
-				{
-					std::string splitURL(m_str + urlStartOffset);
-					if (splitURL.size() >= continuation1Length &&
-						splitURL.compare(splitURL.size() - continuation1Length, continuation1Length, szContinuationStr1) == 0)
-						splitURL.resize(splitURL.size() - continuation1Length);
+				strcpy(szURL, m_str + HIWORD(dwLastURLStart));
+				szURL[strlen(szURL) - strlen(szContinuationStr1)] = '\0';
 
-					// Append only the link-formatted prefix of the next balloon.
-					size_t restURLLength = 0;
-					BOOL bSawLink = FALSE;
-					for (int iFormatIndex = 0; iFormatIndex <= (*pprgdwRestFormatting)->GetUpperBound(); iFormatIndex++)
+				if (*pprgdwRestFormatting)
+				{
+					// try to find the end of the URL 
+					for (iFormatIndex = 0; iFormatIndex <= (*pprgdwRestFormatting)->GetUpperBound(); iFormatIndex++)
 					{
 						dwElement = (*pprgdwRestFormatting)->GetAt(iFormatIndex);
-						if (LOWORD(dwElement) & wLink)
-							bSawLink = TRUE;
 						if (!(LOWORD(dwElement) & wLink))
 						{
-							restURLLength = HIWORD(dwElement);
+							dwFirstURLEnd = dwElement;
 							break;
 						}
 					}
-					const char* restPayload = szRest.get() + continuation2Length;
-					const size_t restPayloadLength = strlen(restPayload);
-					if (bSawLink)
+					if (iFormatIndex != 0)
 					{
-						if (restURLLength == 0 || restURLLength > restPayloadLength)
-							restURLLength = restPayloadLength;
-						splitURL.append(restPayload, restURLLength);
-						Capitalize(splitURL.data());
+						strncat(szURL, szRest + strlen(szContinuationStr2), HIWORD(dwFirstURLEnd));
 
-						const char* matchedURL = NULL;
 						for (int i = 0; i < MAX_URL_INTEXT; i++)
-						{
 							if (m_prgszURLs[i])
 							{
-								std::string candidate(m_prgszURLs[i]);
-								Capitalize(candidate.data());
-								if (!splitURL.empty() && candidate.find(splitURL) != std::string::npos)
+								if (szTmp = strdup(m_prgszURLs[i]))
 								{
-									matchedURL = m_prgszURLs[i];
-									break;
+									Capitalize(szTmp);
+									if (strstr(szTmp, szURL))
+									{
+										free(szTmp);
+										break;
+									}
+									free(szTmp);
 								}
 							}
-						}
-						if (matchedURL)
-						{
-							const size_t matchedLength = strlen(matchedURL);
-							*pszURLStartInRest = new char[matchedLength + 1];
-							memcpy(*pszURLStartInRest, matchedURL, matchedLength + 1);
-						}
+						ASSERT(i < MAX_URL_INTEXT && m_prgszURLs[i]);
+						*pszURLStartInRest = new char[strlen(m_prgszURLs[i])+1];
+						if (*pszURLStartInRest)
+							strcpy(*pszURLStartInRest, m_prgszURLs[i]);
 					}
 				}
+				ASSERT(szURL);
+				delete [] szURL;
 			}
 
 			// add an element with wFormat = 0 for the szContinuationStr1
@@ -1821,7 +1682,7 @@ char* CBWoodringNormal::SplitHeight(int iHeight, CDWordArray **pprgdwRestFormatt
 		}
 	}
 
-	PushFormattingOffsets(*pprgdwRestFormatting, static_cast<int>(continuation2Length));	// add offset of ...
+	PushFormattingOffsets(*pprgdwRestFormatting, strlen(szContinuationStr2));	// add offset of ...
 
 	// recompute m_fInfo...  Keep in mind that m_bbox has been offset by trueBox
 	//    since original call to SetBBox, so we must compensate.  Also, value isn't
@@ -1832,7 +1693,7 @@ char* CBWoodringNormal::SplitHeight(int iHeight, CDWordArray **pprgdwRestFormatt
 			m_bbox.Right + m_trueBox.Left, m_bbox.Top + m_trueBox.Top);
 
 	pdc->SelectObject(pOldFont);
-	return szRest.release();
+	return szRest;
 }
 
 
@@ -1845,8 +1706,7 @@ CSpline* CBWoodringNormal::CreateBalloonSpline(CFormatInfo& fInfo)
 	GetFilters(fInfo, lFilters, rFilters, nLFilters, nRFilters);
 	lastY = finalY = PermuteFilters(*m_fontI, lFilters, rFilters, nLFilters, nRFilters);
 	// fill pts vector w/ corners of tightly-binding text box
-	int i;
-	for (i = 0; i < nLFilters; i++) {
+	for (int i = 0; i < nLFilters; i++) {
 		thisPoint.x = nextPoint.x = lFilters[i].x;
 		thisPoint.y = lFilters[i].y;
 		if (i > 0) AddWavies(pts[nPts-1], thisPoint, pts, nPts, HWAVEHEIGHT, HWAVEINTERVAL);

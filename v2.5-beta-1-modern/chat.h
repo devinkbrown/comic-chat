@@ -93,6 +93,7 @@ public:
 	RECT			m_rectWhisper;
 	RECT			m_rectNotifs;
 	CChatServiceList m_listChatServices;
+	CChatServiceConnector m_SrvConnector;
 	CString			m_strConnectedService;
 	CString			m_strConnectedServer;
 	BOOL			m_bSaveViewMode;
@@ -264,7 +265,6 @@ public:
 	BOOL		ProcessShellCommand(CCommandLineInfo &cmdLine);
 	void		InitializeFonts();
 	void		InitializeComicsFonts();
-	void		InitStatusIcons(UINT dpi = 0, HWND themedWindow = NULL);
 	CString		GetDesktopOrFavorites(BOOL bDesktop);
 	HRESULT		HrAllocBuffer(SHORT nMaxMsgLength);
 	BOOL		SaveToReg(BOOL bShort);
@@ -279,12 +279,15 @@ public:
 	INT			AddRoomInfo(CRoomInfo* pEnterInfo);
 	void		RemoveRoomInfo(INT iIndex);
 	void		CleanRoomInfos();
+	void		ContinueConnection();
+	void		ResumeConnection();
 	void		CompleteConnection();
 	void		IsIrcXTimeout();
 	void		DoOptionsDialog(BOOL bComicsView, UINT nInitialPageID = 0);
 
 private:
 	void		SetBaseDir(const char *fullpath);
+	void		InitStatusIcons();
 	void		ParseCommandLine(CCommandLineInfo& rCmdInfo);  // use our own  -- old sometimes gets corrupted (which used?)
 	BOOL		LoadFromReg();
 	void		InitVals();
@@ -300,7 +303,7 @@ public:
 extern CChatApp theApp;
 
 BOOL ChatInitialize(SHORT *pnCXKeepServer, BOOL *pbCXPrompt);
-void ChatPreSendText(const CString& str, int avID = 0);
+void ChatPreSendText(CString & str, int avID = 0);
 void SetMyAvatar(UINT avatarID, BOOL bBroadcast = TRUE);
 BOOL SetMyAvatar(const char *avName, BOOL bBroadcast = TRUE);
 void StartNewPanel();

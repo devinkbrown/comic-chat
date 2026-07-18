@@ -58,7 +58,7 @@ public:
 	CCNotif(CCNotif* pNotif);
 	virtual ~CCNotif();
 
-	BOOL				operator==(const CCNotif& notif) const;
+	BOOL				operator==(const CCNotif& notif);
 
 	void				AddRef();
 	void				Release();
@@ -206,3 +206,4 @@ extern SHORT g_nNotificationsRefCount;
 
 #define __NOTIF_H__
 #endif __NOTIF_H__
+

@@ -40,7 +40,7 @@ CCNotif::CCNotif()
 
 CCNotif::CCNotif(CCNotif* pNotif)
 {
-	CC_ASSERT(pNotif, "pNotif is NULL in CCNotif::CCNotif");
+	ASSERT(pNotif, "pNotif is NULL in CCNotif::CCNotif");
 	m_nRefCount = 1;
 	#ifdef DEBUG
 		g_nNotifsRefCount++;
@@ -55,7 +55,7 @@ CCNotif::CCNotif(CCNotif* pNotif)
 }
 
 
-BOOL CCNotif::operator==(const CCNotif& notif) const
+BOOL CCNotif::operator==(const CCNotif& notif)
 {
 	UCHAR uParam;
 
@@ -79,7 +79,7 @@ BOOL CCNotif::operator==(const CCNotif& notif) const
 void CCNotif::CopyNotif(CCNotif* pNotif)
 {
 	// Copy of all parameters that can change in the EditNotif dialog
-	CC_ASSERT(pNotif, "pNotif is NULL in CCNotif::CopyNotif");
+	ASSERT(pNotif, "pNotif is NULL in CCNotif::CopyNotif");
 
 	m_wFlags		= pNotif->m_wFlags;
 
@@ -114,11 +114,11 @@ void CCNotif::AddRef()
 void CCNotif::Release()
 {
 	#ifdef DEBUG
-		CC_ASSERT(g_nNotifsRefCount > 0, "m_nRefCount <= 0 in CCNotif::Release");
+		ASSERT(g_nNotifsRefCount > 0, "m_nRefCount <= 0 in CCNotif::Release");
 		g_nNotifsRefCount--;
 	#endif
 
-	CC_ASSERT(m_nRefCount > 0, "m_nRefCount <= 0 in CCNotif::Release");
+	ASSERT(m_nRefCount > 0, "m_nRefCount <= 0 in CCNotif::Release");
 
 	if (--m_nRefCount == 0)
 		delete this;	
@@ -131,7 +131,7 @@ INT	CCNotif::Serialize(LPTSTR szBuff, INT cbBuffLen)
 	UINT	uIndex;
 	UINT	rguParamLen[g_uNotifParamNum];
 
-	CC_ASSERT(szBuff, "szBuff is NULL in CCNotif::Serialize");
+	ASSERT(szBuff, "szBuff is NULL in CCNotif::Serialize");
 
 	// 1 byte for notif version
 	// 2 bytes for notif status
@@ -147,7 +147,7 @@ INT	CCNotif::Serialize(LPTSTR szBuff, INT cbBuffLen)
 			cbTotal += (rguParamLen[uIndex] = m_strParams[uIndex].GetLength() + 1);  // +1 for terminating NULL
 	
 	strAny.LoadString(IDS_KEY_EVENT_PARAM0 + (UINT) kepAny);
-	CC_ASSERT(!strAny.IsEmpty(), "strAny.IsEmpty() in CCNotif::Serialize");
+	ASSERT(!strAny.IsEmpty(), "strAny.IsEmpty() in CCNotif::Serialize");
 
 	if (0 == strAny.CompareNoCase(m_strParams[g_uNetName]))
 		cbTotal += (rguParamLen[g_uNetName] = 1);	// we'll just write a 0x00
@@ -156,7 +156,7 @@ INT	CCNotif::Serialize(LPTSTR szBuff, INT cbBuffLen)
 
 	if (cbTotal > cbBuffLen)
 	{
-		CC_ASSERT(FALSE, "buffer too small in CCNotif::Serialize");
+		ASSERT(FALSE, "buffer too small in CCNotif::Serialize");
 		return -1;
 	}
 
@@ -191,14 +191,14 @@ INT	CCNotif::Serialize(LPTSTR szBuff, INT cbBuffLen)
 		strncpy(szTmp, m_strParams[g_uNetName], rguParamLen[g_uNetName]);
 	szTmp += rguParamLen[g_uNetName];
 
-	CC_ASSERT(cbTotal == (szTmp-szBuff), "cbTotal != (szTmp-szBuff) in CCNotif::Serialize");
+	ASSERT(cbTotal == (szTmp-szBuff), "cbTotal != (szTmp-szBuff) in CCNotif::Serialize");
 	return cbTotal;
 }
 
 
 INT	CCNotif::UnSerialize(LPBYTE pbBuff, INT cbBuffLen)
 {
-	CC_ASSERT(pbBuff, "pbBuff is NULL in CCNotif::UnSerialize");
+	ASSERT(pbBuff, "pbBuff is NULL in CCNotif::UnSerialize");
 
 	UINT	uIndex;
 	LPBYTE	pbTmp = pbBuff;
@@ -270,14 +270,14 @@ INT	CCNotif::UnSerialize(LPBYTE pbBuff, INT cbBuffLen)
 	{
 		CString strAny;
 		strAny.LoadString(IDS_KEY_EVENT_PARAM0 + (UINT) kepAny);
-		CC_ASSERT(!strAny.IsEmpty(), "strAny.IsEmpty() in CCNotif::UnSerialize");
+		ASSERT(!strAny.IsEmpty(), "strAny.IsEmpty() in CCNotif::UnSerialize");
 		m_strParams[g_uNetName] = strAny;
 	}
 	else
 		m_strParams[g_uNetName] = (LPTSTR) pbTmp;
 	cbLeft -= cbLen+1;
 
-	CC_ASSERT(!m_pDaemonExt, "m_pDaemonExt is NOT NULL in CCNotif::UnSerialize");
+	ASSERT(!m_pDaemonExt, "m_pDaemonExt is NOT NULL in CCNotif::UnSerialize");
 
 	bUpdateDaemonExt(TRUE);
 
@@ -336,7 +336,7 @@ BOOL CCNotif::bDaemonNeeded()
 	CString strAny;
 	
 	strAny.LoadString(IDS_KEY_EVENT_PARAM0 + (UINT) kepAny);
-	CC_ASSERT(!strAny.IsEmpty(), "strAny.IsEmpty() in CCNotif::bDaemonNeeded");
+	ASSERT(!strAny.IsEmpty(), "strAny.IsEmpty() in CCNotif::bDaemonNeeded");
 
 	if (0 == strAny.CompareNoCase(m_strParams[g_uNetName]))
 		return TRUE;
@@ -381,7 +381,7 @@ const CCDynaNotifs& CCDynaNotifs::operator=(const CCDynaNotifs& dynaNotifs)
 	for (iIndex = 0; iIndex < iNotifs; iIndex++)
 	{
 		pNotif = (CCNotif*) dynaNotifs.m_rgpNotifs.GetAt(iIndex);
-		CC_ASSERT(pNotif, "pNotif is NULL in CCDynaNotifs::operator=");
+		ASSERT(pNotif, "pNotif is NULL in CCDynaNotifs::operator=");
 		if (pNotifCopy = new CCNotif(pNotif/*, this*/))
 			m_rgpNotifs.Add((void*) pNotifCopy);
 	}
@@ -410,7 +410,7 @@ void CCDynaNotifs::CleanUpNotifsArray()
 		for (iIndex = 0; iIndex < iNotifs; iIndex++)
 		{
 			pNotif = (CCNotif*) m_rgpNotifs.GetAt(iIndex);
-			CC_ASSERT(pNotif, "pNotif is NULL in CCDynaNotifs::CleanUpNotifsArray");
+			ASSERT(pNotif, "pNotif is NULL in CCDynaNotifs::CleanUpNotifsArray");
 			pNotif->Release();
 		}
 		m_rgpNotifs.RemoveAll();
@@ -433,7 +433,7 @@ BOOL CCDynaNotifs::bRemoveUsersWithoutFlag(WORD wFlag)
 	for (iIndex = 0; iIndex < iUsers; iIndex++)
 	{
 		pUser = (CUser*) m_rgpNotifUsers.GetAt(iIndex);
-		CC_ASSERT(pUser, "pUser is NULL in CCDynaNotifs::bRemoveUsersWithoutFlag");
+		ASSERT(pUser, "pUser is NULL in CCDynaNotifs::bRemoveUsersWithoutFlag");
 		if (!(pUser->GetFlags() & wFlag))
 		{
 			m_rgpNotifUsers.RemoveAt(iIndex);
@@ -453,7 +453,7 @@ BOOL CCDynaNotifs::bRemoveFlagsFromAllUsers(WORD wFlags)
 	for (iIndex = 0; iIndex < iUsers; iIndex++)
 	{
 		pUser = (CUser*) m_rgpNotifUsers.GetAt(iIndex);
-		CC_ASSERT(pUser, "pUser is NULL in CCDynaNotifs::bRemoveFlagsFromAllUsers");
+		ASSERT(pUser, "pUser is NULL in CCDynaNotifs::bRemoveFlagsFromAllUsers");
 		pUser->SetFlags(pUser->GetFlags() & ~wFlags);
 	}
 	return TRUE;
@@ -488,7 +488,7 @@ BOOL CCDynaNotifs::bUpdateNotifsDaemonExt(BOOL bResetItemLists)
 	for (iIndex = 0; iIndex < iNotifs; iIndex++)
 	{
 		pNotif = (CCNotif*) m_rgpNotifs.GetAt(iIndex);
-		CC_ASSERT(pNotif, "pNotif is NULL in CCDynaNotifs::bUpdateDaemonExt");
+		ASSERT(pNotif, "pNotif is NULL in CCDynaNotifs::bUpdateDaemonExt");
 		bRet &= pNotif->bUpdateDaemonExt(bResetItemLists);
 	}
 
@@ -498,7 +498,7 @@ BOOL CCDynaNotifs::bUpdateNotifsDaemonExt(BOOL bResetItemLists)
 
 BOOL CCDynaNotifs::bNotifExists(CCNotif* pNotif)
 {
-	CC_ASSERT(pNotif, "pNotif is NULL in CCDynaNotifs::bNotifExists");
+	ASSERT(pNotif, "pNotif is NULL in CCDynaNotifs::bNotifExists");
 
 	CCNotif*	pNotifTmp;
 	INT			iIndex, iNotifs = m_rgpNotifs.GetSize();
@@ -506,8 +506,8 @@ BOOL CCDynaNotifs::bNotifExists(CCNotif* pNotif)
 	for (iIndex = 0; iIndex < iNotifs; iIndex++)
 	{
 		pNotifTmp = (CCNotif*) m_rgpNotifs.GetAt(iIndex);
-		CC_ASSERT(pNotifTmp, "pNotifTmp is NULL in CCDynaNotifs::bNotifExists");
-		if (pNotifTmp->operator==(*pNotif))
+		ASSERT(pNotifTmp, "pNotifTmp is NULL in CCDynaNotifs::bNotifExists");
+		if (*pNotifTmp == *pNotif)
 			return TRUE;
 	}
 	return FALSE;
@@ -516,7 +516,7 @@ BOOL CCDynaNotifs::bNotifExists(CCNotif* pNotif)
 
 BOOL CCDynaNotifs::bAddNotif(CCNotif* pNotif, INT iIndex /* = -1 */)
 {
-	CC_ASSERT(pNotif, "pNotif is NULL in CCDynaNotifs::bAddNotif");
+	ASSERT(pNotif, "pNotif is NULL in CCDynaNotifs::bAddNotif");
 
 	if (iIndex < 0)
 		m_rgpNotifs.Add((void*) pNotif);				// Append notif at the end of the array
@@ -530,7 +530,7 @@ BOOL CCDynaNotifs::bRemoveNotif(CCNotif* pNotif, INT iIndex /* = -1 */)
 {
 	INT	iIndexTmp, iNotifs;
 
-	CC_ASSERT(pNotif || iIndex >= 0, "pNotif is NULL and iIndex < 0 in CCDynaNotifs::bRemoveNotif");
+	ASSERT(pNotif || iIndex >= 0, "pNotif is NULL and iIndex < 0 in CCDynaNotifs::bRemoveNotif");
 
 	if (iIndex < 0)
 	{
@@ -546,9 +546,9 @@ BOOL CCDynaNotifs::bRemoveNotif(CCNotif* pNotif, INT iIndex /* = -1 */)
 	else
 	{
 		iIndexTmp = iIndex;
-		CC_ASSERT(iIndexTmp < m_rgpNotifs.GetSize(), "iIndexTmp >= m_rgpNotifs.GetSize() in CCDynaNotifs::bRemoveNotif");
+		ASSERT(iIndexTmp < m_rgpNotifs.GetSize(), "iIndexTmp >= m_rgpNotifs.GetSize() in CCDynaNotifs::bRemoveNotif");
 		pNotif = (CCNotif*) m_rgpNotifs.GetAt(iIndexTmp);
-		CC_ASSERT(pNotif, "pNotif is NULL in CCDynaNotifs::bRemoveNotif");
+		ASSERT(pNotif, "pNotif is NULL in CCDynaNotifs::bRemoveNotif");
 	}
 
 	pNotif->Desactivate();
@@ -583,7 +583,7 @@ BOOL CCDynaNotifs::bSortNotifs()
 			for (iIndex = 0; iIndex < iNotif; iIndex++)
 			{
 				pNotif2 = (CCNotif*) m_rgpNotifs.GetAt(iIndex);
-				CC_ASSERT(pNotif2, "pNotif2 is NULL in CCDynaNotifs::bSortNotifs");
+				ASSERT(pNotif2, "pNotif2 is NULL in CCDynaNotifs::bSortNotifs");
 				iOrder = pNotif->GetParam(uSortColumn).CompareNoCase(pNotif2->GetParam(uSortColumn));
 				if ((iOrder <= 0 && bSortAscending) || (iOrder >= 0 && !bSortAscending))
 					break;
@@ -612,7 +612,7 @@ BOOL CCDynaNotifs::bSaveNotifsToReg()
 					   0, (LPTSTR) g_szNotificationsClass, REG_OPTION_NON_VOLATILE,
 					   KEY_ALL_ACCESS, NULL, &hKey, NULL) == ERROR_SUCCESS)
 	{
-		CC_ASSERT(hKey, "hKey is NULL in CCDynaNotifs::bSaveNotifsToReg");
+		ASSERT(hKey, "hKey is NULL in CCDynaNotifs::bSaveNotifsToReg");
 		iNotifs = m_rgpNotifs.GetSize();
 
 		if (ERROR_SUCCESS == RegQueryInfoKey(hKey, 
@@ -639,7 +639,7 @@ BOOL CCDynaNotifs::bSaveNotifsToReg()
 			{
 				strRegName.Format("%d", iIndexNotif);
 				pNotif = (CCNotif*) m_rgpNotifs.GetAt(iIndexNotif);
-				CC_ASSERT(pNotif, "pNotif is NULL in CCDynaNotifs::bSaveNotifsToReg");
+				ASSERT(pNotif, "pNotif is NULL in CCDynaNotifs::bSaveNotifsToReg");
 				if ((cbNotif = pNotif->Serialize(szBuff, g_uMaxSerializedNotif)) > 0)
 					RegSetValueEx(hKey, strRegName, 0, REG_BINARY, (const unsigned char*)(LPCTSTR) szBuff, cbNotif);
 			}
@@ -648,7 +648,7 @@ BOOL CCDynaNotifs::bSaveNotifsToReg()
 	}
 	else
 	{
-		CC_ASSERT(FALSE, "Couldn't open regkey for notifications in CCDynaNotifs::bSaveNotifsToReg");
+		ASSERT(FALSE, "Couldn't open regkey for notifications in CCDynaNotifs::bSaveNotifsToReg");
 		return FALSE;
 	}
 }
@@ -719,7 +719,7 @@ BOOL CCDynaNotifs::bDaemonNeeded()
 	while (iIndex < iNotifs)
 	{
 		pNotif = (CCNotif*) m_rgpNotifs.GetAt(iIndex);
-		CC_ASSERT(pNotif, "pNotif is NULL in CCDynaNotifs::bDaemonNeeded");
+		ASSERT(pNotif, "pNotif is NULL in CCDynaNotifs::bDaemonNeeded");
 		if (pNotif->bDaemonNeeded())
 			return TRUE;
 		else
@@ -734,14 +734,14 @@ BOOL CCDynaNotifs::bStartNotifsDaemon(UINT uNotifsDaemonElapse, BOOL bForceReset
 	if (m_bDaemonRunning && !bForceReset)
 		return TRUE;
 
-	CC_ASSERT(GetFrame(), "GetFrame() return NULL in CCDynaNotifs::bStartNotifsDaemon");
+	ASSERT(GetFrame(), "GetFrame() return NULL in CCDynaNotifs::bStartNotifsDaemon");
 
 	bStopNotifsDaemon();
 
 	if (GetFrame())
 		m_bDaemonRunning = (g_uNotifsDaemonTimer == GetFrame()->SetTimer(g_uNotifsDaemonTimer, 1000 * uNotifsDaemonElapse + 60, NULL));
 
-	CC_ASSERT(m_bDaemonRunning, "m_bDaemonRunning is FALSE in CCDynaNotifs::bStartNotifsDaemon()");
+	ASSERT(m_bDaemonRunning, "m_bDaemonRunning is FALSE in CCDynaNotifs::bStartNotifsDaemon()");
 
 	return m_bDaemonRunning;
 }
@@ -770,7 +770,7 @@ void CCDynaNotifs::OnNotifsDaemonTimer()
 	OutputDebugThreadIdString("CCDynaNotifs::OnNotifsDaemonTimer - Enter\n");
 
 	// Switch to the long period
-	CC_ASSERT(m_bDaemonRunning, "m_bDaemonRunning is FALSE in CCDynaNotifs::OnNotifsDaemonTimer");
+	ASSERT(m_bDaemonRunning, "m_bDaemonRunning is FALSE in CCDynaNotifs::OnNotifsDaemonTimer");
 	bStartNotifsDaemon(g_uNotifsDaemonLongElapse, TRUE);
 
 	if (0 == m_uWhosCount)	// we don't want to overload the server - natural previous WHOs request are not completed yet
@@ -778,16 +778,16 @@ void CCDynaNotifs::OnNotifsDaemonTimer()
 		while (iIndex < iNotifs)
 		{
 			pNotif = (CCNotif*) m_rgpNotifs.GetAt(iIndex);
-			CC_ASSERT(pNotif, "pNotif is NULL in CCDynaNotifs::OnNotifsDaemonTimer");
+			ASSERT(pNotif, "pNotif is NULL in CCDynaNotifs::OnNotifsDaemonTimer");
 			if (pNotif->bDaemonNeeded() && pNotif->m_pDaemonExt)
 			{
 				bPass = TRUE;	// Once Network/Servers combo is functional, make sure the current server/network matches properly
 
-				CC_ASSERT(m_pfDaemonQuery, "m_pfDaemonQuery is NULL in CCDynaNotifs::OnNotifsDaemonTimer");
+				ASSERT(m_pfDaemonQuery, "m_pfDaemonQuery is NULL in CCDynaNotifs::OnNotifsDaemonTimer");
 				if (bPass)
 				{
 					BOOL bRet = m_pfDaemonQuery(pNotif);
-					CC_ASSERT(bRet, "m_pfDaemonQuery call failed in CCDynaNotifs::OnNotifsDaemonTimer");
+					ASSERT(bRet, "m_pfDaemonQuery call failed in CCDynaNotifs::OnNotifsDaemonTimer");
 					if (bRet)
 						m_uWhosCount++;
 				}
@@ -800,7 +800,7 @@ void CCDynaNotifs::OnNotifsDaemonTimer()
 
 INT CCDynaNotifs::iFindUserIndex(CUser* pUser)
 {
-	CC_ASSERT(pUser, "pUser is NULL in CCDynaNotifs::iFindUserIndex");
+	ASSERT(pUser, "pUser is NULL in CCDynaNotifs::iFindUserIndex");
 
 	INT		iIndex, iUsers = m_rgpNotifUsers.GetSize();
 	CUser*	pUserTmp;
@@ -808,7 +808,7 @@ INT CCDynaNotifs::iFindUserIndex(CUser* pUser)
 	for (iIndex = 0; iIndex < iUsers; iIndex++)
 	{
 		pUserTmp = (CUser*) m_rgpNotifUsers.GetAt(iIndex);
-		CC_ASSERT(pUserTmp, "pUserTmp is NULL in CCDynaNotifs::iFindUserIndex");
+		ASSERT(pUserTmp, "pUserTmp is NULL in CCDynaNotifs::iFindUserIndex");
 		if (pUser->m_strNickname == pUserTmp->m_strNickname &&
 			pUser->m_strIdentity == pUserTmp->m_strIdentity)
 			return iIndex;
@@ -819,7 +819,7 @@ INT CCDynaNotifs::iFindUserIndex(CUser* pUser)
 
 BOOL CCDynaNotifs::bAddNotificationUser(CUser* pUser)
 {
-	CC_ASSERT(pUser, "pUser is NULL in CCDynaNotifs::bAddNotificationUser");
+	ASSERT(pUser, "pUser is NULL in CCDynaNotifs::bAddNotificationUser");
 
 	// Maybe find a match
 	INT iIndex = iFindUserIndex(pUser);
@@ -835,14 +835,14 @@ BOOL CCDynaNotifs::bAddNotificationUser(CUser* pUser)
 		return TRUE;
 	}
 
-	CC_ASSERT(FALSE, "Couldn't add user in CCDynaNotifs::bAddNotificationUser");
+	ASSERT(FALSE, "Couldn't add user in CCDynaNotifs::bAddNotificationUser");
 	return FALSE;
 }
 
 
 BOOL CCDynaNotifs::bModifyNotificationUser(CUser* pUser, WORD wAddFlags, WORD wRemoveFlags, INT iIndex)
 {
-	CC_ASSERT(pUser, "pUser is NULL in CCDynaNotifs::bModifyNotificationUser");
+	ASSERT(pUser, "pUser is NULL in CCDynaNotifs::bModifyNotificationUser");
 
 	// Find a match
 	INT iIndexTmp;
@@ -857,11 +857,11 @@ BOOL CCDynaNotifs::bModifyNotificationUser(CUser* pUser, WORD wAddFlags, WORD wR
 	else
 		iIndexTmp = iIndex;
 
-	CC_ASSERT(iIndexTmp < m_rgpNotifUsers.GetSize(), "Unexpected iIndexTmp value in CCDynaNotifs::bModifyNotificationUser");
+	ASSERT(iIndexTmp < m_rgpNotifUsers.GetSize(), "Unexpected iIndexTmp value in CCDynaNotifs::bModifyNotificationUser");
 
 	// Get the stored user
 	CUser*	pUserTmp = (CUser*) m_rgpNotifUsers.GetAt(iIndexTmp);
-	CC_ASSERT(pUserTmp, "pUserTmp is NULL in CCDynaNotifs::bModifyNotificationUser");
+	ASSERT(pUserTmp, "pUserTmp is NULL in CCDynaNotifs::bModifyNotificationUser");
 
 	// Update the user flags
 	WORD	wFlags = pUserTmp->GetFlags();
@@ -893,7 +893,8 @@ BOOL CCDynaNotifs::bModifyNotificationUser(CUser* pUser, WORD wAddFlags, WORD wR
 	}
 	else
 	{
-		CC_ASSERT(FALSE, "Couldn't move user in CCDynaNotifs::bModifyNotificationUser");
+		ASSERT(FALSE, "Couldn't move user in CCDynaNotifs::bModifyNotificationUser");
 		return FALSE;
 	}
 }
+

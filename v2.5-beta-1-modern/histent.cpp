@@ -1006,7 +1006,7 @@ BOOL UnQuoteReturns(const char **str) {
 }
 
 #ifdef DECODE_HOLIDAY
-static const char *g_mesgs[] = {
+static char *g_mesgs[] = {
 	"h\tabab\tHUGH\tEASTER EGG: YOU'VE FOUND IT!!!",
 	"b\tFIELD",
 	"j\tdjk",
@@ -1097,7 +1097,7 @@ static const char *g_mesgs[] = {
 #endif DECODE_HOLIDAY
 
 #ifndef DECODE_HOLIDAY
-static const char *g_mesgs [] = {
+static char *g_mesgs [] = {
 	"\202\343\213\210\213\210\343\242\277\255\242\343\257\253\271\276\257\270\312\257\255\255\320\312\263\245\277\315\274\257\312\254\245\277\244\256\312\243\276\313\313\313",
 	"\210\343\254\243\257\246\256",
 	"\200\343\216\200\201",
@@ -1187,7 +1187,7 @@ static const char *g_mesgs [] = {
 };
 #endif !def DECODE_HOLIDAY
 
-static const char **g_nextLine = NULL;
+static char **g_nextLine = NULL;
 extern CChatDoc *g_easterDoc = NULL;
 
 #ifdef DECODE_HOLIDAY
@@ -1198,7 +1198,7 @@ void DoEncode() {
 	g_nextLine = g_mesgs;
 	while (*g_nextLine) {
 		fprintf(fp, "\t\"");
-		const char *bptr = *g_nextLine;
+		char *bptr = *g_nextLine;
 		while (*bptr != '\0') {
 			unsigned char c = (*bptr ^ 0xea) & 0xff;
 			fprintf(fp, "\\%03o", c);

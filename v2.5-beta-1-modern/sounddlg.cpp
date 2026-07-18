@@ -10,7 +10,6 @@
 #include "saywnd.h"
 #include "ui.h"
 #include "format.h"
-#include <comicchat/sound.hpp>
 
 #include <tchar.h>
 #include "resource.h"
@@ -264,20 +263,20 @@ struct PLAYSOUNDSTRUCT
 BOOL bTryToPlaySound(const char *szPath, void *szSound) {
 	PLAYSOUNDSTRUCT * pPlaySound = (PLAYSOUNDSTRUCT *)szSound;
 	const char *szFilename = pPlaySound->pszSound;
-	const auto resolved = comicchat::sound::resolve(szPath, szFilename);
-	if (!resolved)
-		return FALSE;
-	const std::string completeFile = resolved->path.string();
+	CString strCompleteFile(szPath);
+	// 03/09/98 ShankuN - don't add slash for paths like C:\ (Bugfix #1279)
+	MaybeAddSlash (strCompleteFile);
+	strCompleteFile += szFilename;
 	UINT flags = SND_ASYNC | SND_NODEFAULT;
 	if (!pPlaySound->bStopSound)
 		flags |= SND_NOSTOP;
 	BOOL bRet;
-	if (GetFileAttributes (completeFile.c_str()) != (DWORD)-1L)
+	if (GetFileAttributes (strCompleteFile) != (DWORD)-1L)
 	{
 		switch (pPlaySound->nType)
 		{
 			case SOUNDTYPE_WAV:
-				bRet = sndPlaySound (completeFile.c_str(), flags);
+				bRet = sndPlaySound (strCompleteFile, flags);
 				break;
 			case SOUNDTYPE_MID:
 			case SOUNDTYPE_RMI:
@@ -286,7 +285,7 @@ BOOL bTryToPlaySound(const char *szPath, void *szSound) {
 					flags |= SND_SEMISYNC;
 					flags &= ~SND_ASYNC;
 				}
-				bRet = sndPlayMidiSound (completeFile.c_str(), flags);
+				bRet = sndPlayMidiSound (strCompleteFile, flags);
 				break;
 			default:
 				// Not supported, abort.
@@ -307,7 +306,7 @@ BOOL bForPath(const char *szPath, BOOL soundFunc(const char *, void *), void *pv
 		while (my_isspace(*szPath)) szPath++;
 		if (!*szPath) return FALSE;
 		if (*szPath == '"') {
-			szEndStr = _tcschr(szPath + 1, '"');
+			szEndStr = _tcschr(szPath, '"');
 			if (!szEndStr) break;
 			CString strEntry(szPath+1, szEndStr-szPath-1);
 			if (soundFunc(strEntry, pvData)) return TRUE;
@@ -335,19 +334,17 @@ FILEENUMSTRUCT * pfileenum)
 
 
 BOOL bFindAndPlaySound(const char *szSound, BOOL bStopSound, BOOL bSemiSync)  {
-	const auto validated = comicchat::sound::validate_name(szSound ? szSound : "");
-	if (!validated)
+	if (OurMbsStr (szSound, "..") || OurMbsPbrk (szSound, "\\:"))
 		return FALSE;
 
 	PLAYSOUNDSTRUCT playsound;
-	playsound.pszSound = validated->value.c_str();
+	playsound.pszSound = szSound;
 	char szExt[_MAX_EXT];
 	LPSTR pszExt;
 	_splitpath(szSound, NULL, NULL, NULL, szExt);
 	pszExt = *szExt ? szExt + 1 : szExt;
 	LPCSTR* pSupportedSoundTypes = GetSupportedSoundTypes ();
-	int i;
-	for (i = 0; pSupportedSoundTypes[i] != NULL; i++)
+	for (int i = 0; pSupportedSoundTypes[i] != NULL; i++)
 	{
 		if (!lstrcmpi (pszExt, pSupportedSoundTypes[i]))
 			break;

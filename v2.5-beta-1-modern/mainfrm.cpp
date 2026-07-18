@@ -6,7 +6,6 @@
 
 #include "userinfo.h"	// required by chatprot.h
 #include "chatprot.h"	// for tabbar (required by chatdoc)
-#include "ircproto.h"
 #include "binddoc.h"	// for tabbar
 #include "chatdoc.h"	// for tabbar
 #include "tabbar.h"
@@ -20,9 +19,6 @@
 #include "ui.h"
 #include <afxpriv.h>
 #include "memblst.h"
-#include "filesend.h"
-#include "modernui.h"
-#include "transportuibridge.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -54,52 +50,15 @@ BEGIN_MESSAGE_MAP(CMainFrame, CMDIFrameWnd)
 	ON_WM_PALETTECHANGED()
 	ON_WM_SYSCOLORCHANGE()
 	ON_WM_MENUSELECT()
-	ON_WM_SETTINGCHANGE()
 	//}}AFX_MSG_MAP
 	ON_WM_CLOSE()
-	ON_MESSAGE(WM_COMICCHAT_NETWORK_EVENT, OnComicChatNetworkEvent)
-	ON_MESSAGE(WM_DPICHANGED, OnDpiChanged)
-	ON_MESSAGE(WM_THEMECHANGED, OnThemeChanged)
 //	ON_MESSAGE(WM_SETMESSAGESTRING, OnSetMessageString)
 END_MESSAGE_MAP()
 
-LRESULT CMainFrame::OnComicChatNetworkEvent(WPARAM, LPARAM lParam)
-{
-	// The transport thread posts only a wakeup. Immutable, generation-tagged
-	// events are drained and converted into MFC state here on the UI thread.
-	serverConn.PollNetworkEvents(lParam);
-	DrainIrcv3UiEvents();
-	RefreshConnectionIndicators();
-	return 0;
-}
-
-void CMainFrame::DrainIrcv3UiEvents()
-{
-	const auto result = comic_chat::legacy_ui::DrainIrcv3EventsForUi(serverConn,
-		[this](Ircv3AdapterEvent event) {
-			m_lastIrcv3UiEvent = std::move(event);
-			// Descendant handlers must copy any state they retain. Delivery is
-			// synchronous, so the complete tagged MessageContext remains valid.
-			SendMessageToAllChildWindows(WM_COMICCHAT_IRCV3_EVENT,
-				static_cast<WPARAM>(m_lastIrcv3UiEvent->event.type),
-				reinterpret_cast<LPARAM>(&*m_lastIrcv3UiEvent));
-		});
-	if (result.rejected != 0)
-		TRACE("IRCv3 UI bridge rejected %zu event(s).\n", result.rejected);
-	if (result.dropped_before_delivery != m_reportedDroppedIrcv3Events) {
-		TRACE("IRCv3 adapter dropped %llu event(s) before UI delivery.\n",
-			static_cast<unsigned long long>(result.dropped_before_delivery));
-		m_reportedDroppedIrcv3Events = result.dropped_before_delivery;
-	}
-}
-
 static UINT indicators[] =
 {
-	ID_SEPARATOR,           // room/action status
-	ID_SEPARATOR,			// member count
-	ID_SEPARATOR,			// transport/reconnect state
-	ID_SEPARATOR,			// TLS verification state
-	ID_SEPARATOR,			// SASL/account state
+	ID_SEPARATOR,           // connected/disconnected
+	ID_SEPARATOR			// # users
 };
 
 /////////////////////////////////////////////////////////////////////////////
@@ -112,7 +71,6 @@ CMainFrame::CMainFrame()
 
 
 	m_bOleShuttingDown = FALSE;
-	m_uCurrentDpi = 96;
 
 
 }
@@ -186,11 +144,6 @@ int CMainFrame::OnCreate(LPCREATESTRUCT lpCreateStruct)
 	DockControlBar(&m_wndTabBar, AFX_IDW_DOCKBAR_TOP);
 	cui.m_pvTabBar = &m_wndTabBar;
 	if (theApp.m_bDoCB32 || !(theApp.m_flags1 & F1_SHOWTABBAR)) m_wndTabBar.ShowWindow(SW_HIDE);
-
-	m_uCurrentDpi = comic_chat::modern_ui::DpiForWindow(m_hWnd);
-	ApplyModernMetrics(m_uCurrentDpi);
-	RefreshModernAppearance();
-	RefreshConnectionIndicators();
 
 	return 0;
 }
@@ -370,6 +323,9 @@ void CMainFrame::OnTimer(UINT nIDEvent)
 	case g_uDelayedRulesTimer:
 		theApp.m_delayedRules.bExecuteActions();
 		break;
+	case ID_CONNECT_TRY:
+		theApp.ContinueConnection ();
+		break;
 	case ID_ISIRCXTIMEOUT:
 		theApp.IsIrcXTimeout();
 		break;
@@ -379,129 +335,6 @@ void CMainFrame::OnTimer(UINT nIDEvent)
 	}
 
 	CMDIFrameWnd::OnTimer(nIDEvent);
-	DrainIrcv3UiEvents();
-	RefreshConnectionIndicators();
-}
-
-void CMainFrame::ApplyModernMetrics(UINT dpi)
-{
-	m_uCurrentDpi = dpi ? dpi : 96;
-	g_screenDpi = static_cast<int>(m_uCurrentDpi); // compatibility for legacy pixel surfaces
-	const auto metrics = comic_chat::modern_ui::MetricsForDpi(m_uCurrentDpi);
-	if (HFONT font = comic_chat::modern_ui::UiFont(m_uCurrentDpi))
-		m_wndStatusBar.SendMessage(WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-
-	UINT id = 0;
-	UINT style = 0;
-	int width = 0;
-	m_wndStatusBar.GetPaneInfo(0, id, style, width);
-	m_wndStatusBar.SetPaneInfo(0, id, style | SBPS_STRETCH, comic_chat::modern_ui::Scale(160, m_uCurrentDpi));
-	CString memberWidth;
-	memberWidth.LoadString(IDS_MEMBER_COUNT_WIDTH);
-	m_wndStatusBar.GetPaneInfo(1, id, style, width);
-	m_wndStatusBar.SetPaneInfo(1, id, style & ~SBPS_STRETCH,
-		comic_chat::modern_ui::Scale(atoi(memberWidth), m_uCurrentDpi));
-	const int semanticWidths[] = {
-		comic_chat::modern_ui::Scale(152, m_uCurrentDpi),
-		comic_chat::modern_ui::Scale(112, m_uCurrentDpi),
-		comic_chat::modern_ui::Scale(112, m_uCurrentDpi),
-	};
-	for (int pane = 2; pane < 5; ++pane) {
-		m_wndStatusBar.GetPaneInfo(pane, id, style, width);
-		m_wndStatusBar.SetPaneInfo(pane, id, style & ~SBPS_STRETCH, semanticWidths[pane - 2]);
-	}
-	m_wndStatusBar.GetStatusBarCtrl().SetMinHeight(metrics.status_height);
-	theApp.InitStatusIcons(m_uCurrentDpi, m_hWnd);
-	if (m_wndToolBar.GetSafeHwnd())
-		m_wndToolBar.RefreshModernImages(m_uCurrentDpi);
-	m_wndTabBar.ApplyModernMetrics(m_uCurrentDpi);
-	RecalcLayout();
-}
-
-void CMainFrame::RefreshModernAppearance()
-{
-	comic_chat::modern_ui::ApplyWindowTheme(m_hWnd, false);
-	comic_chat::modern_ui::ApplyWindowTheme(m_wndStatusBar.m_hWnd, false);
-	m_wndTabBar.RefreshSystemAppearance();
-	if (m_wndToolBar.GetSafeHwnd())
-	{
-		comic_chat::modern_ui::ApplyWindowTheme(m_wndToolBar.m_hWnd, true);
-		m_wndToolBar.RefreshModernImages(m_uCurrentDpi);
-	}
-	SendMessageToAllChildWindows(WM_THEMECHANGED, 0, 0);
-	RedrawWindow(NULL, NULL, RDW_INVALIDATE | RDW_FRAME | RDW_ALLCHILDREN);
-}
-
-void CMainFrame::RefreshConnectionIndicators()
-{
-	comic_chat::modern_ui::ConnectionState state;
-	state.transport = comic_chat::modern_ui::TransportStateFor(serverConn.GetTransportState());
-	state.secure = serverConn.IsSecureTransport() != FALSE;
-	state.registration_finished = serverConn.RegistrationFinished();
-	state.sasl_succeeded = serverConn.SaslSucceeded();
-	const auto labels = comic_chat::modern_ui::LabelsFor(state);
-	std::string transportLabel = labels.transport;
-	const auto transfers = GetFileTransferSnapshots();
-	std::size_t activeTransfers = 0;
-	bool transferNeedsAttention = false;
-	for (const auto& transfer : transfers) {
-		switch (transfer.state) {
-		case FileTransferPhase::awaiting_peer:
-		case FileTransferPhase::connecting:
-		case FileTransferPhase::transferring:
-			++activeTransfers;
-			break;
-		case FileTransferPhase::failed:
-		case FileTransferPhase::timed_out:
-			transferNeedsAttention = true;
-			break;
-		default:
-			break;
-		}
-	}
-	if (transferNeedsAttention)
-		transportLabel += " | File transfer failed";
-	else if (activeTransfers == 1)
-		transportLabel += " | 1 file transfer";
-	else if (activeTransfers > 1)
-		transportLabel += " | " + std::to_string(activeTransfers) + " file transfers";
-	const char* values[] = {
-		transportLabel.c_str(), labels.security.c_str(), labels.authentication.c_str()};
-	for (int index = 0; index < 3; ++index) {
-		if (m_modernStatusText[index] == values[index]) continue;
-		m_modernStatusText[index] = values[index];
-		m_wndStatusBar.SetPaneText(index + 2, m_modernStatusText[index]);
-	}
-}
-
-LRESULT CMainFrame::OnDpiChanged(WPARAM wParam, LPARAM lParam)
-{
-	const UINT dpi = HIWORD(wParam) ? HIWORD(wParam) : LOWORD(wParam);
-	if (const RECT* suggested = reinterpret_cast<const RECT*>(lParam)) {
-		SetWindowPos(NULL, suggested->left, suggested->top,
-			suggested->right - suggested->left, suggested->bottom - suggested->top,
-			SWP_NOACTIVATE | SWP_NOZORDER);
-	}
-	ApplyModernMetrics(dpi);
-	// Child MFC views do not receive top-level WM_DPICHANGED automatically.
-	// Recompute per-instance pixel surfaces (notably bodycams) from 96-DPI
-	// constants without forwarding the top-level suggested rectangle.
-	SendMessageToAllChildWindows(WM_DPICHANGED, MAKEWPARAM(dpi, dpi), 0);
-	RefreshModernAppearance();
-	return 0;
-}
-
-LRESULT CMainFrame::OnThemeChanged(WPARAM, LPARAM)
-{
-	RefreshModernAppearance();
-	RefreshConnectionIndicators();
-	return 0;
-}
-
-void CMainFrame::OnSettingChange(UINT uFlags, LPCTSTR lpszSection)
-{
-	CMDIFrameWnd::OnSettingChange(uFlags, lpszSection);
-	RefreshModernAppearance();
 }
 
 BOOL CMainFrame::OnBarCheck(UINT nID)
@@ -627,5 +460,5 @@ CMainFrame::OnSysColorChange()
 {
 	SendMessageToAllChildWindows (WM_SYSCOLORCHANGE);
 	CMDIFrameWnd::OnSysColorChange();
-	RefreshModernAppearance();
 }
+

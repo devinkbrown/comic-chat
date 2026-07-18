@@ -8,8 +8,6 @@
 
 #include "stdafx.h"
 #include "dib.h"
-#include <limits>
-#include <memory>
 
 #ifdef _DEBUG
 #undef THIS_FILE
@@ -887,225 +885,142 @@ BOOL CDIB::Save(LPCSTR pszFileName)
 }
 
 
-namespace
-{
-	constexpr size_t kMaximumDecodedDibBytes = 64U * 1024U * 1024U;
+void CDIB::Convert8ToNonRLE() {
+	BITMAPINFOHEADER* pBI = (BITMAPINFOHEADER*) m_pBMI;
+	if (pBI->biCompression != BI_RLE8) return;
+	BYTE *bptr = m_pBits;
+	BYTE *end = m_pBits + pBI->biSizeImage;
+	int scanLength = (GetWidth() + 3) & ~3;  // scanlength must be on 4 byte boundary
+	int scanHeight = GetHeight();
+	int newSize = scanLength * scanHeight;
+	BYTE *newBits = (BYTE *) malloc (newSize);
+	BYTE *myImg = newBits;
+	BYTE *myEnd = newBits + newSize;
+	int ln = 0;	
 
-	struct CDibBufferDeleter
-	{
-		void operator()(BYTE* ptr) const noexcept { free(ptr); }
-	};
-
-	using CDibBuffer = std::unique_ptr<BYTE, CDibBufferDeleter>;
-}
-
-BOOL CDIB::Convert8ToNonRLE()
-{
-	BITMAPINFOHEADER* pBI = reinterpret_cast<BITMAPINFOHEADER*>(m_pBMI);
-	if (!pBI || !m_pBits || pBI->biCompression != BI_RLE8 || pBI->biBitCount != 8 ||
-		pBI->biWidth <= 0 || pBI->biHeight <= 0 || pBI->biWidth > 32768 || pBI->biHeight > 32768 ||
-		pBI->biSizeImage < 2 || pBI->biSizeImage > kMaximumDecodedDibBytes)
-		return FALSE;
-
-	const size_t width = static_cast<size_t>(pBI->biWidth);
-	const size_t height = static_cast<size_t>(pBI->biHeight);
-	const size_t stride = (width + 3U) & ~size_t{3U};
-	if (height > kMaximumDecodedDibBytes / stride)
-		return FALSE;
-	const size_t decodedSize = stride * height;
-	CDibBuffer decoded(static_cast<BYTE*>(calloc(decodedSize, 1)));
-	if (!decoded)
-		return FALSE;
-
-	const BYTE* current = m_pBits;
-	const BYTE* const end = m_pBits + pBI->biSizeImage;
-	size_t x = 0;
-	size_t y = 0;
-	BOOL complete = FALSE;
-	while (current < end && !complete)
-	{
-		if (static_cast<size_t>(end - current) < 2)
-			return FALSE;
-		const BYTE count = *current++;
-		const BYTE value = *current++;
-		if (count != 0)
-		{
-			if (y >= height || count > width - x)
-				return FALSE;
-			memset(decoded.get() + y * stride + x, value, count);
-			x += count;
-			continue;
-		}
-
-		if (value == 0)
-		{
-			x = 0;
-			++y;
-			complete = y == height;
-		}
-		else if (value == 1)
-		{
-			complete = TRUE;
-		}
-		else if (value == 2)
-		{
-			if (static_cast<size_t>(end - current) < 2)
-				return FALSE;
-			const size_t dx = *current++;
-			const size_t dy = *current++;
-			if (dx > width - x || dy >= height - y)
-				return FALSE;
-			x += dx;
-			y += dy;
-		}
-		else
-		{
-			const size_t literalCount = value;
-			const size_t paddedCount = literalCount + (literalCount & 1U);
-			if (y >= height || literalCount > width - x ||
-				static_cast<size_t>(end - current) < paddedCount)
-				return FALSE;
-			memcpy(decoded.get() + y * stride + x, current, literalCount);
-			current += paddedCount;
-			x += literalCount;
+	while (bptr < end) {
+		BYTE thisVal = *bptr++;
+		if (thisVal > 0) {
+//			TRACE("Got %d of %d\n", thisVal, *bptr);
+			while (thisVal--) 
+				*myImg++ = *bptr;
+			bptr++;
+		} else {
+			thisVal = *bptr++;
+			if (thisVal >= 3) {
+				while (thisVal--)
+					*myImg++ = *bptr++;
+				if ((long)bptr & 0x1) bptr++;	// must end on word boundary
+			} else if (thisVal == 0) {
+				myImg = (BYTE *)(((long)myImg + 3) & ~3);  // force to start of next word
+//				TRACE("New Line %d\n", ++ln);
+			} else if (thisVal == 2) {		// advance delta, filling interim w/ zeros
+				int x = *bptr++;
+				int y = *bptr++;
+				int skip = x + y*scanLength - 1;
+				while (skip--) *myImg++ = (BYTE)255;
+			} else if (thisVal == 1) {
+//				ASSERT(myImg == myEnd);     // Got the whole thing?
+				break;
+			}
 		}
 	}
-	if (!complete)
-		return FALSE;
-
-	if (m_bMyBits)
-		free(m_pBits);
-	m_pBits = decoded.release();
-	m_bMyBits = TRUE;
+	free(m_pBits);
+	m_pBits = newBits;
 	pBI->biCompression = BI_RGB;
-	pBI->biSizeImage = static_cast<DWORD>(decodedSize);
-	return TRUE;
+	pBI->biSizeImage = newSize;
 }
 
-BOOL CDIB::Convert4ToNonRLE()
+void MyWrite(BYTE* & myImg, BYTE* & bptr, BOOL &highRead, BOOL &highWrite, BOOL advance)
 {
-	BITMAPINFOHEADER* pBI = reinterpret_cast<BITMAPINFOHEADER*>(m_pBMI);
-	if (!pBI || !m_pBits || pBI->biCompression != BI_RLE4 || pBI->biBitCount != 4 ||
-		pBI->biWidth <= 0 || pBI->biHeight <= 0 || pBI->biWidth > 32768 || pBI->biHeight > 32768 ||
-		pBI->biSizeImage < 2 || pBI->biSizeImage > kMaximumDecodedDibBytes)
-		return FALSE;
+	USHORT val;
+	if (highRead)
+		val = *bptr >> 4;
+	else {
+		val = *bptr & 0x0f;
+		if (advance) bptr++;
+	}
+	if (highWrite)
+		*myImg = (val << 4);
+	else {
+		 *myImg++ |= val;
+	}
+	highRead = !highRead;
+	highWrite = !highWrite;
+}
 
-	const size_t width = static_cast<size_t>(pBI->biWidth);
-	const size_t height = static_cast<size_t>(pBI->biHeight);
-	const size_t packedWidth = (width + 1U) / 2U;
-	const size_t stride = (packedWidth + 3U) & ~size_t{3U};
-	if (height > kMaximumDecodedDibBytes / stride)
-		return FALSE;
-	const size_t decodedSize = stride * height;
-	CDibBuffer decoded(static_cast<BYTE*>(calloc(decodedSize, 1)));
-	if (!decoded)
-		return FALSE;
 
-	const BYTE* current = m_pBits;
-	const BYTE* const end = m_pBits + pBI->biSizeImage;
-	size_t x = 0;
-	size_t y = 0;
-	BOOL complete = FALSE;
-	auto writePixel = [&](const BYTE pixel) -> BOOL {
-		if (x >= width || y >= height)
-			return FALSE;
-		BYTE& target = decoded.get()[y * stride + x / 2U];
-		if ((x & 1U) == 0)
-			target = static_cast<BYTE>((target & 0x0fU) | ((pixel & 0x0fU) << 4U));
-		else
-			target = static_cast<BYTE>((target & 0xf0U) | (pixel & 0x0fU));
-		++x;
-		return TRUE;
-	};
+void CDIB::Convert4ToNonRLE() {
+	BITMAPINFOHEADER* pBI = (BITMAPINFOHEADER*) m_pBMI;
+	if (pBI->biCompression != BI_RLE4) return;
+	BYTE *bptr = m_pBits;
+	BYTE *end = m_pBits + pBI->biSizeImage;
+	int scanLength = GetWidth() / 2;
+	if (GetWidth() & 0x1) scanLength++;
+	scanLength = (scanLength + 3) & ~3;  // scanlength must be on 4 byte boundary
+	int scanHeight = GetHeight();
+	int newSize = scanLength * scanHeight;
+	BYTE *newBits = (BYTE *) malloc (newSize);
+	BYTE *myImg = newBits;
+	BYTE *myEnd = newBits + newSize;
+	int ln = 0;
+	int highRead = TRUE, highWrite = TRUE;	
 
-	while (current < end && !complete)
-	{
-		if (static_cast<size_t>(end - current) < 2)
-			return FALSE;
-		const BYTE count = *current++;
-		const BYTE value = *current++;
-		if (count != 0)
-		{
-			if (y >= height || count > width - x)
-				return FALSE;
-			for (size_t i = 0; i < count; ++i)
-			{
-				const BYTE pixel = (i & 1U) == 0 ? static_cast<BYTE>(value >> 4U)
-					: static_cast<BYTE>(value & 0x0fU);
-				if (!writePixel(pixel))
-					return FALSE;
+	while (bptr < end) {
+		BYTE thisVal = *bptr++;
+		if (thisVal > 0) {
+//			TRACE("Got %d of %d\n", thisVal, *bptr);
+			while (thisVal--) {			// do a run
+				// *myImg++ = *bptr;
+				MyWrite(myImg, bptr, highRead, highWrite, FALSE);
+				if (!thisVal--) break;
+				MyWrite(myImg, bptr, highRead, highWrite, FALSE);
 			}
-			continue;
-		}
-
-		if (value == 0)
-		{
-			x = 0;
-			++y;
-			complete = y == height;
-		}
-		else if (value == 1)
-		{
-			complete = TRUE;
-		}
-		else if (value == 2)
-		{
-			if (static_cast<size_t>(end - current) < 2)
-				return FALSE;
-			const size_t dx = *current++;
-			const size_t dy = *current++;
-			if (dx > width - x || dy >= height - y)
-				return FALSE;
-			x += dx;
-			y += dy;
-		}
-		else
-		{
-			const size_t pixelCount = value;
-			const size_t byteCount = (pixelCount + 1U) / 2U;
-			const size_t paddedCount = byteCount + (byteCount & 1U);
-			if (y >= height || pixelCount > width - x ||
-				static_cast<size_t>(end - current) < paddedCount)
-				return FALSE;
-			for (size_t i = 0; i < pixelCount; ++i)
-			{
-				const BYTE packed = current[i / 2U];
-				const BYTE pixel = (i & 1U) == 0 ? static_cast<BYTE>(packed >> 4U)
-					: static_cast<BYTE>(packed & 0x0fU);
-				if (!writePixel(pixel))
-					return FALSE;
+			bptr++;
+			highRead = TRUE;
+		} else {
+			thisVal = *bptr++;
+			if (thisVal >= 3) {			// do absolute
+				while (thisVal--) {
+					MyWrite(myImg, bptr, highRead, highWrite, TRUE);
+					if (!thisVal--) break;
+					MyWrite(myImg, bptr, highRead, highWrite, TRUE);
+					// *myImg++ = *bptr++;
+				}
+				if ((long)bptr & 0x1) bptr++;	// must end on word boundary
+				highRead = TRUE;
+			} else if (thisVal == 0) {
+				if (!highWrite) myImg++;     // halfwritten bytes are still written
+				myImg = (BYTE *)(((long)myImg + 3) & ~3);  // force to start on next 4 byte boundary
+				highWrite = TRUE;
+//				TRACE("New Line %d\n", ++ln);
+			} else if (thisVal == 2) {		// advance delta, filling interim w/ zeros
+				ASSERT(0); // can't handle images w/ skips yet
+				int x = *bptr++;
+				int y = *bptr++;
+				int skip = x + y*scanLength - 1;
+				while (skip--) *myImg++ = (BYTE)255;
+			} else if (thisVal == 1) {
+//				ASSERT(myImg == myEnd);     // Got the whole thing?
+				break;
 			}
-			current += paddedCount;
 		}
 	}
-	if (!complete)
-		return FALSE;
-
-	if (m_bMyBits)
-		free(m_pBits);
-	m_pBits = decoded.release();
-	m_bMyBits = TRUE;
+	free(m_pBits);
+	m_pBits = newBits;
 	pBI->biCompression = BI_RGB;
-	pBI->biSizeImage = static_cast<DWORD>(decodedSize);
-	return TRUE;
+	pBI->biSizeImage = newSize;
 }
 
-BOOL CDIB::ConvertToNonRLE()
-{
-	if (!m_pBMI || !m_pBits)
-		return FALSE;
-	const BITMAPINFOHEADER* pBI = reinterpret_cast<const BITMAPINFOHEADER*>(m_pBMI);
-	switch (pBI->biCompression)
-	{
-		case BI_RGB:
-		case BI_BITFIELDS:
-			return TRUE;
-		case BI_RLE4:
-			return Convert4ToNonRLE();
-		case BI_RLE8:
-			return Convert8ToNonRLE();
-		default:
-			return FALSE;
+void CDIB::ConvertToNonRLE() {
+	BITMAPINFOHEADER* pBI = (BITMAPINFOHEADER*) m_pBMI;
+	switch (pBI->biCompression) {
+	case BI_RGB:
+		break;
+	case BI_RLE4: Convert4ToNonRLE();
+		break;
+	case BI_RLE8: Convert8ToNonRLE();
+		break;
 	}
 }
 
@@ -1120,3 +1035,4 @@ UINT nBitCount)
 
 	return (((nWidth * nBitCount) / 8) + 3) & ~3;
 }
+

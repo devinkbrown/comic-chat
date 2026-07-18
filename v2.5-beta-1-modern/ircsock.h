@@ -3,23 +3,9 @@
 
 #include "UserInfo.H"
 #include "ChatProt.H"
+#include "CSSPI.H"
 #include "Query.H"
 #include "Resource.H"
-#include "comicchat/memory.hpp"
-#include "comicchat/net/connection_engine.hpp"
-#include "comicchat/net/ircv3.hpp"
-#include "comicchat/net/private_config.hpp"
-#include "comicchat/net/sts_session.hpp"
-#include "ircv3eventbridge.h"
-
-#include <atomic>
-#include <deque>
-#include <memory>
-#include <new>
-#include <optional>
-#include <string>
-#include <string_view>
-#include <vector>
 
 ///////////////////////////////////////////////////////////////////////////////
 // Constants declaration
@@ -190,10 +176,10 @@ const INT ERR_PASSWDMISMATCH			= 464;
 const INT ERR_YOUREBANNEDCREEP			= 465;
 const INT ERR_YOUWILLBEBANNED			= 466;
 // Nicks
-const INT ERR_NOSUCHNICK				= 401;
+const INT ERR_NOSUCHNICK				= 401;	
 const INT ERR_NONICKNAMEGIVEN			= 431;
 const INT ERR_ERRONEUSNICKNAME			= 432;
-const INT ERR_NICKNAMEINUSE				= 433;
+const INT ERR_NICKNAMEINUSE				= 433; 
 const INT ERR_NICKCOLLISION				= 436;
 const INT ERR_NICKTOOFAST				= 438;
 const INT ERR_NICKNOCHANGE				= 439;
@@ -317,7 +303,7 @@ typedef struct tagMODECACH
 
 typedef struct tagPRIRCCMD
 {
-	LPCSTR	szCmd;		// the command
+	CHAR	*szCmd;		// the command
 	INT		cb;			// and its length
 	UCHAR	uFlags;		// command flags: show Status Window | must be connected
 	UCHAR	uMinArg;	// minimum number of arguments for this command
@@ -413,7 +399,7 @@ const SYNTAX	g_rgSyntax[] = {
 	{ cmdidList,	0, 1, { AT_CHANNEL|AT_OPTIONAL|AT_COMMAMULTIPLE, AT_NONE, AT_NONE, AT_NONE, AT_NONE, AT_NONE } },
 	{ cmdidKick,	IDS_KICKMSG_SYNTAX, 3, { AT_CHANNEL, AT_NICKNAME, AT_REASON|AT_OPTIONAL|AT_COLON, AT_NONE, AT_NONE, AT_NONE } },
 	{ cmdidKill,	IDS_KILLMSG_SYNTAX, 2, { AT_CHANNEL|AT_NICKNAME, AT_REASON|AT_OPTIONAL|AT_COLON, AT_NONE, AT_NONE, AT_NONE, AT_NONE } },
-	{ cmdidMe,		IDS_ME_SYNTAX, 1, { AT_MESSAGE, AT_NONE, AT_NONE, AT_NONE, AT_NONE, AT_NONE } },
+	{ cmdidMe,		IDS_ME_SYNTAX, 1, { AT_MESSAGE, AT_NONE, AT_NONE, AT_NONE, AT_NONE, AT_NONE } }, 
 	{ cmdidMsg,		0, 2, { AT_CHANNEL|AT_NICKNAME|AT_COMMAMULTIPLE, AT_MESSAGE, AT_NONE, AT_NONE, AT_NONE, AT_NONE } },
 	{ cmdidMode,	0, 6, { AT_CHANNEL, AT_CHANNELFLAGS|AT_OPTIONAL, AT_MAXMEMBER|AT_OPTIONAL, AT_NICKNAME|AT_OPTIONAL, AT_NICKMASK|AT_OPTIONAL, AT_PASSWORD|AT_OPTIONAL } },
 	{ cmdidMode,	0, 2, { AT_NICKNAME, AT_USERFLAGS|AT_OPTIONAL, AT_NONE, AT_NONE, AT_NONE, AT_NONE } },
@@ -449,61 +435,58 @@ public:
 };
 
 
-constexpr UINT WM_COMICCHAT_NETWORK_EVENT = WM_APP + 0x17C;
-// Synchronous UI-thread broadcast. LPARAM points to an Ircv3AdapterEvent and
-// is valid only for the duration of the message handler.
-constexpr UINT WM_COMICCHAT_IRCV3_EVENT = WM_APP + 0x17D;
-
-class CIrcSocket {
+class CIrcSocket : public CAsyncSocket {
 public:
-	CIrcSocket();
-	~CIrcSocket();
+	CIrcSocket::CIrcSocket(void);
+	CIrcSocket::~CIrcSocket(void);
 
 	HRESULT			HrInitAlloc(SHORT nMaxIOBuff);
 	HRESULT			HrModeIsIrcXFailure();
 	HRESULT			HrIrcXLogin(BOOL bForceNextPackage);
-	HRESULT			HrIrcLogin(BOOL bIRCX, LPCSTR szNickname, LPCSTR szUserName, LPCSTR szRealName, LPCSTR szPassword, BOOL bPromptForPassword = TRUE);
-	HRESULT			HrIrcSetOper(LPCSTR szUserName, LPCSTR szPassword);
+	HRESULT			HrIrcLogin(BOOL bIRCX, CHAR *szNickname, CHAR *szUserName, CHAR *szRealName, CHAR *szPassword, BOOL bPromptForPassword = TRUE);
+	HRESULT			HrIrcSetOper(CHAR *szUserName, CHAR *szRealName);
+	HRESULT			HrAuthenticate(CHAR *szUserName, CHAR *szPassword, CHAR *szSecurityPackage);
+	HRESULT			HrGenerateAndSendAuthMsg(CHAR *szBlob, CHAR *szSecurityPackage);
 	BOOL			PromptForPassword(LPCSTR pszUserName, BOOL bSaveInSettings);
 	BOOL			bFreeModeCell(LPCTSTR szChannel, LPCTSTR szNickname);
 	void			Reset(void);
+	void			CloseSSPI(void);
 	void 			SetAuthentication(UINT nType, LPCSTR pszUserName = NULL, LPCSTR pszPassword = NULL, LPCSTR pszCustomPkg = NULL);
-	BOOL			Connect(LPCSTR pszServer, UINT nPort, BOOL bSecure);
-	void			Close();
-	BOOL			IsOpen() const;
-	const std::string& GetLocalAddress() const { return m_localAddress; }
-	BOOL			IsSecureTransport() const { return m_bSecureTransport; }
-	BOOL			SaslSucceeded() const { return m_ircEngine.SaslSucceeded(); }
-	BOOL			RegistrationFinished() const { return m_ircEngine.RegistrationFinished(); }
-	comicchat::net::State GetTransportState() const { return m_transportState; }
-	int			Send(void* pData, int nBytes);
-	void			PollNetworkEvents(LPARAM wakeupCookie);
-	// UI-thread-only bounded handoff of typed IRCv3 state and tag context.
-	std::vector<Ircv3AdapterEvent> PollIrcv3Events(std::size_t maximum = 128);
-	std::uint64_t DroppedIrcv3Events() const noexcept { return m_droppedIrcv3Events; }
-	const comic_chat::ircv3::ServerIdentity& GetServerIdentity() const { return m_ircEngine.Identity(); }
-	std::optional<std::size_t> GetTargetLimit(std::string_view command) const {
-		return m_ircEngine.TargetLimit(command);
-	}
-	BOOL			FormatOutput(LPCSTR pszFormat, ...);
-	CHAR*			GetOutput();
 
-	void			OnConnect(int nErrorCode);
-	void			OnClose(int nErrorCode);
-	void			ProcessMessage(char *);
-	void			HandleCommand(CString& strLine, char *szLine, PIRCPARSE pParse, CIrcPrint *pIrcPrint);
-	void			HandleResultCode(CString& strLine, char *szLine, PIRCPARSE pParse, CIrcPrint *pIrcPrint);
-	void			HandleErrorCode(char *szLine, PIRCPARSE pParse, CIrcPrint *pIrcPrint);
+	virtual void	OnConnect(int nErrorCode);
+	virtual void	OnClose(int nErrorCode);
+	virtual void	OnReceive(int nErrorCode);
+	virtual void	OnOutOfBandData(int nErrorCode) { TRACE("Out of Band socket on error %d.\n", nErrorCode); }
+	virtual void	ProcessMessage(char *);
+	virtual void	HandleCommand(CString& strLine, char *szLine, PIRCPARSE pParse, CIrcPrint *pIrcPrint);
+	virtual void	HandleResultCode(CString& strLine, char *szLine, PIRCPARSE pParse, CIrcPrint *pIrcPrint);
+	virtual void	HandleErrorCode(char *szLine, PIRCPARSE pParse, CIrcPrint *pIrcPrint);
 
 	CString			m_strMOTD;
 	CString			m_strLUSER;
 
+	CStringArray	m_rgszSvrSecuPack;
+	CStringArray	m_rgszUsrSecuPack;
+	LPSTR   		m_pszUserName;
+	LPSTR    		m_pszPassword;
 	BOOL			m_bAnonAllowed;
 	UINT			m_nAuthenticationType;
 	BOOL			m_bIrcXServer;
 	BOOL			m_bRegistered;
 	BOOL			m_bJustSentModeIsIrcX;
 	SHORT			m_nMaxMsgLength;
+	SHORT			m_nSecuPackIndex;
+	CHAR			*m_szInput;
+	CHAR			*m_szOutput2;
+	CHAR			*m_szMessage;
+
+    CredHandle		m_hCredential;			// SSPI Security related
+    CtxtHandle		m_hContext;				// attributes
+	PSecurityFunctionTable m_pFuncTbl;
+    HINSTANCE		m_hSecLib;
+	BOOL			m_bCredential;
+	BOOL			m_bContext;
+	BOOL			m_bAuthFailed;
 	INT				m_iConnected;
 
 	CQueryPtrList	m_queries;
@@ -515,55 +498,12 @@ public:
 		authtypeServerPackages = 2,
 		authtypeCustomPackages = 3,
 	};
-
-private:
-	struct WakeupState {
-		std::atomic<HWND> hwnd{NULL};
-		std::atomic<bool> pending{false};
-		std::atomic<DWORD> cookie{0};
-	};
-
-	enum class AdapterError { not_open, invalid_line, line_too_long, transport_error };
-	std::expected<comicchat::net::GenerationId, AdapterError> StartConnection(
-		LPCSTR pszServer, UINT nPort, BOOL bSecure);
-	std::expected<comicchat::net::SendId, AdapterError> QueueProtocolLine(std::string_view wire);
-	void DispatchProtocolMessage(const comic_chat::ircv3::Message& message);
-	void DispatchProtocolEvent(comic_chat::ircv3::Event event,
-		std::optional<comic_chat::ircv3::Message> message = std::nullopt);
-	BOOL StorePassword(std::string_view password);
-	BOOL CopyPassword(std::string* password) const;
-	BOOL HasPassword() const;
-	BOOL EnsureStsPolicyLoaded();
-	BOOL FinishStsTransport(comicchat::net::GenerationId generation, BOOL retainForRetry);
-
-	comicchat::net::ConnectionEngine m_connection;
-	std::optional<comicchat::net::StsSessionPolicy> m_stsSession;
-	std::shared_ptr<WakeupState> m_wakeupState;
-	comic_chat::ircv3::Engine m_ircEngine;
-	comic_chat::ircv3::LineFramer m_lineFramer;
-	comic_chat::legacy_ui::IrcTransportIngressGate m_ingressGate;
-	comicchat::net::GenerationId m_generation = 0;
-	comicchat::net::SendId m_nextSendId = 1;
-	std::vector<char> m_outputBuffer;
-	std::string m_serverHost;
-	std::string m_localAddress;
-	std::string m_userName;
-	// Automatic reconnect intentionally retains the account credential, but
-	// only in OS-locked, non-dumpable storage. SetAuthentication and object
-	// destruction are the explicit lifetime boundaries.
-	comicchat::LockedSecret m_password;
-	comicchat::net::State m_transportState = comicchat::net::State::stopped;
-	BOOL m_bTransportOpen = FALSE;
-	BOOL m_bSecureTransport = FALSE;
-	BOOL m_bLoginPending = FALSE;
-	std::deque<Ircv3AdapterEvent> m_ircv3Events;
-	std::uint64_t m_droppedIrcv3Events = 0;
 };
 
 
 extern PRIRCCMD	g_rgIrcCmd[];
 extern void		ParseIt(const char *szMessage, PIRCPARSE pParse, BOOL bDoubleQuotes = FALSE);
 extern void		FreeParse(PIRCPARSE pParse);
-extern SHORT	NGetCmd(LPCSTR szCmd);
+extern SHORT	NGetCmd(CHAR* szCmd);
 
 #endif // __IRCSOCK_H__

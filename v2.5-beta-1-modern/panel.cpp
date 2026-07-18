@@ -173,8 +173,7 @@ BOOL GetInterveningBBox(CBalloon *balloons[], int index, RECT &freeRect, RECT &i
 	// find region between all routeRgns, above toPtX
 	mostLeft = freeRect.left;
 	mostRight = freeRect.right;
-	int i;
-	for (i = 0; i < index; i++) {
+	for (int i = 0; i < index; i++) {
 		balloons[i]->QueryRouteRgn(toPtX, leftAllowance, rightAllowance);
 		mostLeft = max(leftAllowance, mostLeft);
 		mostRight = min(rightAllowance, mostRight);
@@ -365,8 +364,7 @@ int EvalPlacement(CPtrArray &bdyArray, int nPlaced, CBodyRecord &bdy, int index,
 
 	bdy.m_body->m_flip = FALSE;
 
-	int i;
-	for (i = 0; i <= nPlaced; i++) {
+	for (int i = 0; i <= nPlaced; i++) {
 		CBodyRecord *rec1 = (CBodyRecord *) (bdyArray[i]);
 		for (int j = i+1; j <= nPlaced; j++) {
 			CBodyRecord *rec2 = (CBodyRecord *) bdyArray[j];
@@ -755,8 +753,7 @@ void CUnitPanel::LayoutAvatars() {
 	OrderAvatars(bRecs, bdyCount, placed);
 	ASSERT(bdyCount > 0);
 
-	int i;
-	for (i = 0; i < bdyCount; i++) {
+	for (int i = 0; i < bdyCount; i++) {
 		CBody *b = ((CBodyRecord *)(placed[i]))->m_body;
 		b->GetDimInfo(width[i], height[i], normHeight[i], headHeight[i], bitArrowX);
 		arrowX[i] = ((double) bitArrowX) / width[i];					// initially store arrows as percentage of width from left
@@ -1395,6 +1392,8 @@ void CUnitPanelPage::AddStars(CUnitPanel *panel, int topY) {
 	CPtrArray stars;
 	CPtrArray sLabels;
 	if (MyAvatarID() == 0) return;	// not registered yet
+	CAvatarX *myAv = MyAvatar();
+	int GetAvatarUpperBound();
 	CString avatarCredit;
 
 //	avatarCredit.LoadString(ID_AVATAR_CREDIT);
@@ -1432,12 +1431,13 @@ void CUnitPanelPage::AddStars(CUnitPanel *panel, int topY) {
 	int iconVdisp = (rowHeight - ICONSIZE)/2;			// center text or icon vertically in row
 	int textVdisp = (rowHeight - lineHeight)/2;
 
-	for (int i = 0; i < nStars; i++)
+	for (i = 0; i < nStars; i++)
 	{
 		((CStarLabel*) sLabels[i])->m_format |= FT_LEFT_JUSTIFY;
 		CBodyUnary *b = new CBodyUnary(((CAvatarX*) stars[i])->m_avatarID);
 		b->m_bodyID = ((CAvatarX*) stars[i])->m_icon;
-		b->SetBBox(iconOffset, topY+iconVdisp, iconOffset+ICONSIZE, topY+ICONSIZE+iconVdisp);
+		int vertOffset = 
+			b->SetBBox(iconOffset, topY+iconVdisp, iconOffset+ICONSIZE, topY+ICONSIZE+iconVdisp);
 		panel->m_elements.AddTail(b);
 		((CStarLabel*) sLabels[i])->SetBBox(textOffset, topY+textVdisp, m_unitWidth, topY+lineHeight+textVdisp);
 		panel->m_elements.AddTail((CStarLabel*) sLabels[i]);
@@ -1580,3 +1580,4 @@ void DrawLines(CDC *dc) {
 //{
 //*pszRest = pLabel->SplitHeight(rcFreeRect.top - rcFreeRect.bottom, pprgdwRestFormatting);
 //}
+

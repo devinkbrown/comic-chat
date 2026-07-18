@@ -50,7 +50,7 @@ public:
 
 // List of backdrop filetypes. To get the search mask use the BACKDROPTYPE_SEARCHMASK macro.
 // To get the actual file extension (with the .) use the BACKDROPTYPE_FILEEXT macro.
-extern const char * pszBackdropTypes[];
+extern char * pszBackdropTypes[];
 extern const int NUMBACKDROPTYPES;
 #define BACKDROPTYPE_SEARCHMASK(nType) (pszBackdropTypes[nType])
 #define BACKDROPTYPE_FILEEXT(nType) (pszBackdropTypes[nType] + 2)

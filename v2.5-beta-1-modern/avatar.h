@@ -220,7 +220,7 @@ public:
 	CAvatarX(const CAvatarX &);
 	void Initialize();
 	virtual ~CAvatarX();
-	virtual CBody *GetBodyFromEmotion(const CEmotion &) = 0;
+	virtual CBody *GetBodyFromEmotion(CEmotion &) = 0;
 	virtual CBody *GetBodyFromEmotion(CEmotionOpts &) = 0;
 	virtual void DifferentTorso(int torsoIndex) {}; // Dummy version by default
 	virtual void SetNeutral() = 0;
@@ -265,7 +265,7 @@ public:
 	CAvatarSimple() { m_lastBody = -1; }
 	CAvatarSimple(const CAvatarSimple &);
 	void SetBody(CBodySingle *body, int tIndex) { body->m_bodyRec = bRec + tIndex; }
-	virtual CBody *GetBodyFromEmotion(const CEmotion &);
+	virtual CBody *GetBodyFromEmotion(CEmotion &);
 	virtual CBody *GetBodyFromEmotion(CEmotionOpts &);
 	virtual ~CAvatarSimple();
 	void GetBodyIndexFromEmotion(CEmotion &emotion, int& bIndex);
@@ -299,7 +299,7 @@ public:
 	CAvatarComplex() { m_lastFace = m_lastTorso = -1; }
 	CAvatarComplex(const CAvatarComplex &);
 	virtual ~CAvatarComplex();
-	virtual CBody *GetBodyFromEmotion(const CEmotion &);
+	virtual CBody *GetBodyFromEmotion(CEmotion &);
 	virtual CBody *GetBodyFromEmotion(CEmotionOpts &);
 	void GetHeadAndBodyFromEmotion(CEmotion &emotion, int& fIndex, int& tIndex);
 	virtual void DifferentTorso(int torsoIndex);

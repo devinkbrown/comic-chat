@@ -338,8 +338,7 @@ UINT nDecryptedSize)
 		
 	// Calculate seed time again.
     DWORD dwTime;
-	UINT i;
-	for (dwTime = *(PDWORD)pbDataIn ^ dwChecksum, i = 0;
+    for (dwTime = *(PDWORD)pbDataIn ^ dwChecksum, i = 0;
          i < nDecryptedSize;
          dwTime = dwTime - 3495364871, i++);
 
@@ -420,7 +419,7 @@ DWORD dwAdditionalStyles)
     // Verify that the window is, indeed, a combobox.
 	char szClass[32];
 	::GetClassName (pOrigCombo->m_hWnd, szClass, sizeof(szClass));
-	CC_ASSERT(!lstrcmpi (szClass, "combobox"));
+	ASSERT(!lstrcmpi (szClass, "combobox"));
    #endif
    
 	DWORD dwOrigStyle, dwOrigStyleEx;
@@ -1699,8 +1698,8 @@ AdjustResizeableDlgCtls(
 CWnd* pWnd,
 RESIZEABLEDLGCTL* pCtls, 
 UINT nNumCtls, 
-const CSize& sizeOld,
-const CSize& sizeNew)
+CSize& sizeOld, 
+CSize& sizeNew)
 {
 	ASSERT_VALID(pWnd);
 	ASSERT(pCtls != NULL && nNumCtls > 0);

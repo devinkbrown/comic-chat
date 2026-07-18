@@ -84,8 +84,8 @@ protected:
 	CSayCtrl	m_wndSayCtrl;
 	CSayToolBar 	m_wndSayBar;
 	CFont*		m_fontText;
-	CImageList	m_sayBarImages;		// DPI/theme-specific 32-bit alpha glyph strip
-	UINT		m_uDpi;
+	CBitmap		m_sayBarBmp;		// DPI-stretched say-bar button bitmap (high-DPI only)
+	CImageList	m_sayBarImages;		// image list backing the stretched say-bar buttons
 	static DWORD	m_dwDefaultButtons;			// buttons to be created by default for the class
 
 public:
@@ -102,7 +102,6 @@ public:
 	CFont*		GetFont()		{ return m_fontText; }
 	COLORREF	GetTextColor()	{ return m_wndSayCtrl.m_crTextColor; }
 	void		SetToolBarInfo(BOOL bWhisperSay, DWORD dwButtons);
-	void		RefreshModernImages(UINT dpi = 0);
 	static void SetDefaultButtons(DWORD dwDefaultButtons) { m_dwDefaultButtons = dwDefaultButtons; }
 	void		SetFormattingToolBarInfo(CToolBarCtrl *pTBCtrl, INT nBoldID, INT nItalicID, INT nUnderlineID, INT nFixedPitchID, INT nSymbolID);
 
@@ -143,9 +142,6 @@ public:
 	afx_msg void OnPlaySound();
 	afx_msg void OnSetFocus(CWnd* pOldWnd);
 	afx_msg LRESULT OnScrollKey(WPARAM wParam, LPARAM lParam);
-	afx_msg LRESULT OnDpiChanged(WPARAM wParam, LPARAM lParam);
-	afx_msg LRESULT OnThemeChanged(WPARAM wParam, LPARAM lParam);
-	afx_msg void OnSettingChange(UINT uFlags, LPCTSTR lpszSection);
 	//}}AFX_MSG
 	DECLARE_MESSAGE_MAP()
 };

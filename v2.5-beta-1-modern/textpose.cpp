@@ -26,8 +26,8 @@ static float ruleEMs[] = {EM_SHOUT, EM_LAUGH, EM_HAPPY, EM_SAD,
 BOOL CheckForUppers(const char *buff) {
 	int nUppers = 0;
 	while (*buff != '\0') {
-		if (cc_islower(*buff)) return FALSE;
-		if (cc_isupper(*buff++)) nUppers++;
+		if (islower(*buff)) return FALSE;
+		if (isupper(*buff++)) nUppers++;
 	}
 	if (nUppers > 1)			// only bother if there's more than one upper char
 		return TRUE;
@@ -37,10 +37,10 @@ BOOL CheckForUppers(const char *buff) {
 int CheckWord(const char *buff, const char *substr) {
 	const char *loc = buff;
 	while (loc = (char *)strstr(loc, substr)) {													// it is a substring
-		if ((loc == buff) || cc_isspace(*(loc-1))) {			// that starts a word
+		if ((loc == buff) || isspace(*(loc-1))) {				// that starts a word
 			int len = strlen(substr);
 			char after = loc[len];
-			if (!after || cc_isspace(after) || cc_ispunct(after))	// that is a word
+			if (!after || isspace(after) || ispunct(after))		// that is a word
 				return TRUE;
 		}
 		loc++;
@@ -66,7 +66,7 @@ void CheckForPoints(const char *buff, CEmotionOpts &emOpts) {
 }
 
 int StartCompare(const char *sent, char *substring, int len) {
-	return (strnicmp(sent, substring, len) == 0 && !cc_isalnum(sent[len]));
+	return (strnicmp(sent, substring, len) == 0 && !isalnum(sent[len]));
 }
 
 void CheckStarts(const char *sent, CEmotionOpts &emOpts) {
@@ -82,12 +82,12 @@ void CheckStarts(const char *sent, CEmotionOpts &emOpts) {
 
 #endif
 
-static const char *sentenceTerminator = ".!?";
+static char *sentenceTerminator = ".!?";
 
 #if 0
 void ForSentenceStarts(const char *buff, CEmotionOpts &emOpts, void func(const char *, CEmotionOpts &)) {
 	while (TRUE) {
-		while (cc_ispunct(*buff) || cc_isspace(*buff)) buff++;
+		while (ispunct(*buff) || isspace(*buff)) buff++;
 		if (!(*buff)) return;
 		(*func)(buff, emOpts);
 		buff = strpbrk(buff, sentenceTerminator);
@@ -99,7 +99,7 @@ void ForSentenceStarts(const char *buff, CEmotionOpts &emOpts, void func(const c
 const char *GetNextSentenceStart(const char *buff) {
 	buff = strpbrk(buff, sentenceTerminator); // else, return first word after sentence terminator
 	if (!buff) return NULL;
-	while (cc_ispunct(*buff) || cc_isspace(*buff)) buff++;
+	while (ispunct(*buff) || isspace(*buff)) buff++;
 	return buff;
 }
 
@@ -107,7 +107,7 @@ char *ToLower(const char *buff) {
 	char *newStr = strdup(buff);
 	char *sptr = newStr;
 	while (*sptr) {
-		if (cc_isupper(*sptr)) *sptr = static_cast<char>(cc_tolower(*sptr));
+		if (isupper(*sptr)) *sptr = tolower(*sptr);
 		sptr++;
 	}
 	return newStr;
@@ -116,8 +116,8 @@ char *ToLower(const char *buff) {
 
 CEmotionOpts emo;
 
-void ChatPreSendText(const CString& str, int avID) {
-	void GetEmotionsFromString(const CString& str, CEmotionOpts& emOpts);
+void ChatPreSendText(CString &str, int avID) {
+	void GetEmotionsFromString(CString &str, CEmotionOpts &emOpts);
 
 	if (!GetChatDoc() || !GetChatDoc()->m_bComicView) return;
 
@@ -175,7 +175,7 @@ BOOL LoadSingleRule(float emotion, const char *start, const char **end) {
 	const char *sptr = start;
 	void RegisterRule(float, const char *, const char *, int);
 
-	while(!cc_isprint(*sptr) && *sptr) sptr++;   // proceed to start...
+	while(!isprint(*sptr) && *sptr) sptr++;   // proceed to start...
 
 	// parse keyword
 	if (!*sptr) return FALSE;
@@ -194,7 +194,7 @@ BOOL LoadSingleRule(float emotion, const char *start, const char **end) {
 	sptr++;			// increment past ;
 	char *strPtr = strengthStr;
 	while (*sptr != '\n' && *sptr)
-		if (cc_isdigit(*sptr)) *strPtr++ = *sptr++;
+		if (isdigit(*sptr)) *strPtr++ = *sptr++;
 	*strPtr = '\0';
 	int strength = atoi(strengthStr);
 	while(*sptr == '\n') sptr++;
@@ -265,10 +265,10 @@ void RegisterRule(float emotion, const char *function, const char *arg, int stre
 }
 
 int StartCompare2(const char *sent, const char *substring, int len) {
-	return (strncmp(sent, substring, len) == 0 && !cc_isalnum(sent[len]));
+	return (strncmp(sent, substring, len) == 0 && !isalnum(sent[len]));
 }
 
-void GetEmotionsFromString(const CString& str, CEmotionOpts& emOpts) {
+void GetEmotionsFromString(CString &str, CEmotionOpts &emOpts) {
 	const char *buff = (LPCTSTR) str;
 	char *lower = ToLower(buff);
 	emOpts.m_nOpts = 0;
@@ -298,7 +298,7 @@ void GetEmotionsFromString(const CString& str, CEmotionOpts& emOpts) {
 
 	// check sentences
 	const char *bptr = buff;
-	while (cc_isspace(*bptr)) bptr++;				  // prune off leading white space
+	while (isspace(*bptr)) bptr++;					  // prune off leading white space
 	while (bptr && *bptr) {
 		char *lptr = lower + (bptr - buff);
 		pos = sentenceRules.GetHeadPosition();
@@ -330,3 +330,5 @@ void DestroyEmotionRules() {
 	DestroyEmotionList(wordRules);
 	DestroyEmotionList(sentenceRules);
 }
+
+

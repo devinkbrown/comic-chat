@@ -19,16 +19,7 @@
 #include "colordlg.h"
 #include "protsupp.h"
 #include "whisprbx.h"
-#include "modernicons.h"
-#include "modernui.h"
 #include <imm.h>
-
-#ifndef ECM_FIRST
-#define ECM_FIRST 0x1500
-#endif
-#ifndef EM_SETCUEBANNER
-#define EM_SETCUEBANNER (ECM_FIRST + 1)
-#endif
 
 #ifdef _DEBUG
 #undef THIS_FILE
@@ -360,7 +351,6 @@ CSayWnd::CSayWnd()
 {
 	m_bWhisperSay	= FALSE;
 	m_fontText		= NULL;
-	m_uDpi			= 96;
 
 	SetToolBarInfo(FALSE, m_dwDefaultButtons);
 
@@ -374,7 +364,6 @@ CSayWnd::CSayWnd(BOOL bWhisperSay, DWORD dwButtons)
 	m_wndSayCtrl.m_bWhisperSay	= bWhisperSay;
 	m_wndSayCtrl.SetDosKey(bWhisperSay ? &theApp.m_doskeyWhisper : &theApp.m_doskeyMain);
 	m_fontText					= NULL;
-	m_uDpi						= 96;
 
 	SetToolBarInfo(bWhisperSay, dwButtons);
 }
@@ -406,22 +395,6 @@ void CSayWnd::SetToolBarInfo(BOOL bWhisperSay, DWORD dwButtons)
 	m_cxSayBar = m_cntBalloons * BUTTONSIZE;
 }
 
-void CSayWnd::RefreshModernImages(UINT dpi)
-{
-	if (!m_wndSayBar.GetSafeHwnd()) return;
-	m_uDpi = dpi ? dpi : comic_chat::modern_ui::DpiForWindow(m_hWnd);
-	const auto metrics = comic_chat::modern_ui::MetricsForDpi(m_uDpi);
-	if (comic_chat::modern_ui::BuildStripImageList(
-			m_sayBarImages, IDB_SAY_BAR, metrics.icon, SAYNBUTTONS, m_wndSayBar.m_hWnd))
-		m_wndSayBar.GetToolBarCtrl().SetImageList(&m_sayBarImages);
-	const int extra = comic_chat::modern_ui::Scale(m_bWhisperSay ? 4 : 2, m_uDpi);
-	m_wndSayBar.SetSizes(
-		CSize(metrics.target + extra, metrics.target + extra),
-		CSize(metrics.icon, metrics.icon));
-	m_cxSayBar = m_cntBalloons * (metrics.target + extra);
-	m_wndSayBar.Invalidate(FALSE);
-}
-
 
 void CSayWnd::SetFormattingToolBarInfo(CToolBarCtrl *pTBCtrl, INT nBoldID, INT nItalicID, INT nUnderlineID, INT nFixedPitchID, INT nSymbolID)
 {
@@ -450,34 +423,7 @@ BEGIN_MESSAGE_MAP(CSayWnd, CFrameWnd)
 	ON_MESSAGE(WM_SAYSCROLLKEY, OnScrollKey)
 	ON_WM_SETFOCUS()
 	//}}AFX_MSG_MAP
-	ON_MESSAGE(WM_DPICHANGED, OnDpiChanged)
-	ON_MESSAGE(WM_THEMECHANGED, OnThemeChanged)
-	ON_WM_SETTINGCHANGE()
 END_MESSAGE_MAP()
-
-
-LRESULT CSayWnd::OnDpiChanged(WPARAM wParam, LPARAM)
-{
-	const UINT dpi = HIWORD(wParam) ? HIWORD(wParam) : LOWORD(wParam);
-	RefreshModernImages(dpi);
-	CRect client;
-	GetClientRect(&client);
-	OnSize(SIZE_RESTORED, client.Width(), client.Height());
-	return 0;
-}
-
-LRESULT CSayWnd::OnThemeChanged(WPARAM, LPARAM)
-{
-	comic_chat::modern_ui::ApplyWindowTheme(m_hWnd, true);
-	RefreshModernImages(m_uDpi);
-	return 0;
-}
-
-void CSayWnd::OnSettingChange(UINT uFlags, LPCTSTR lpszSection)
-{
-	CFrameWnd::OnSettingChange(uFlags, lpszSection);
-	OnThemeChanged(0, 0);
-}
 
 
 /////////////////////////////////////////////////////////////////////////////
@@ -593,7 +539,6 @@ BOOL CSayWnd::OnCreateClient(LPCREATESTRUCT lpcs, CCreateContext* pContext)
 
 	// create log window (don't worry about size)
 	dwStyle = 	WS_VISIBLE 		| 
-				WS_TABSTOP		|
 				WS_CLIPSIBLINGS	|
 				ES_MULTILINE 	| 
 				ES_AUTOVSCROLL  |
@@ -625,25 +570,55 @@ BOOL CSayWnd::OnCreateClient(LPCREATESTRUCT lpcs, CCreateContext* pContext)
 	// set max chars
 	// REGISB: this needs to be changed: need to limit in function of the server's limit!
 	m_wndSayCtrl.LimitText(MAX_INPUTLEN);		// reasonable message size
-	m_wndSayCtrl.SendMessage(
-		EM_SETCUEBANNER, TRUE,
-		reinterpret_cast<LPARAM>(m_bWhisperSay ? L"Type a private message" : L"Type a message"));
 
 	// force focus here
 	m_wndSayCtrl.SetFocus();
 
 	// create toolbars
+	CSize sizeButton(cxToolBar+7, cyToolBar+6+(m_bWhisperSay?3:0));
+	CSize sizeImage(cxToolBar, cyToolBar);
+
 	// Create say/think/emote bar
 	if (m_cntBalloons) {
 		if (!m_wndSayBar.Create(this, WS_CHILD | WS_VISIBLE | CBRS_TOP | CBRS_NOALIGN, 1) ||
+			!m_wndSayBar.LoadBitmap(IDB_SAY_BAR) ||
 			!m_wndSayBar.SetButtons(NULL, m_cntBalloons))  {
 			TRACE0("Failed to create balloons toolbar\n");
 			return -1;      // fail to create
 		}
 
 		//m_wndSayBar.ModifyStyle(0, TBSTYLE_FLAT); // make it flat
-		RefreshModernImages(comic_chat::modern_ui::DpiForWindow(m_hWnd));
-		m_wndSayBar.SetWindowText("Message actions");
+		m_wndSayBar.SetSizes(sizeButton, sizeImage);
+
+		// On high-DPI displays the 17px say-bar glyphs (say / think / whisper / send)
+		// are tiny.  Stretch the button bitmap into a DPI-scaled image list so the
+		// action buttons match the rest of the scaled UI.  No-op at 96 DPI.
+		if (g_screenDpi > 96) {
+			int cell  = DpiScale(cxToolBar);
+			int cellH = DpiScale(cyToolBar);
+			CBitmap orig;
+			if (orig.LoadBitmap(IDB_SAY_BAR)) {
+				BITMAP bm;
+				orig.GetBitmap(&bm);
+				int nBtns = bm.bmWidth / cxToolBar;
+				if (nBtns < 1) nBtns = 1;
+				CClientDC dc(this);
+				CDC srcDC, dstDC;
+				srcDC.CreateCompatibleDC(&dc);
+				dstDC.CreateCompatibleDC(&dc);
+				m_sayBarBmp.CreateCompatibleBitmap(&dc, nBtns * cell, cellH);
+				CBitmap *oS = srcDC.SelectObject(&orig);
+				CBitmap *oD = dstDC.SelectObject(&m_sayBarBmp);
+				dstDC.SetStretchBltMode(COLORONCOLOR);
+				dstDC.StretchBlt(0, 0, nBtns * cell, cellH, &srcDC, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
+				srcDC.SelectObject(oS);
+				dstDC.SelectObject(oD);
+				m_sayBarImages.Create(cell, cellH, ILC_COLOR24 | ILC_MASK, nBtns, 0);
+				m_sayBarImages.Add(&m_sayBarBmp, RGB(192, 192, 192));	// light-gray = transparent
+				m_wndSayBar.GetToolBarCtrl().SetImageList(&m_sayBarImages);
+				m_wndSayBar.SetSizes(CSize(cell + DpiScale(7), cellH + DpiScale(6)), CSize(cell, cellH));
+			}
+		}
 
 		int buttonPos = 0;
 		for (int i = 0; i < SAYNBUTTONS; i++) {

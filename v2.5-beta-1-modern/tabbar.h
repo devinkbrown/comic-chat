@@ -29,8 +29,6 @@ public:
 	BOOL			m_bDeleteFont;
 	CFont			m_font;
 	LONG			m_lLargestTab;
-	int				m_nLayoutLength;
-	UINT			m_uDpi;
 
 // Operations
 public:
@@ -43,8 +41,6 @@ public:
 	int FindTabNum(CChatDoc *);
 	CChatDoc *GetTabDoc(int index);
 	void SetTabIcon(int tabNum, int iIcon);
-	void ApplyModernMetrics(UINT dpi);
-	void RefreshSystemAppearance();
 
 // Overrides
 	// ClassWizard generated virtual function overrides

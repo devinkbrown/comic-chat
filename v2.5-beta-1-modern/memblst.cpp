@@ -17,7 +17,6 @@
 #include "textcore.h"
 #include "textview.h"
 #include "protsupp.h"
-#include "modernui.h"
 
 
 extern CChatApp theApp;
@@ -51,9 +50,8 @@ END_MESSAGE_MAP()
 // CMemberListCtrl message handlers
 void CMemberListCtrl::OnSize(UINT nType, int cx, int cy) 
 {
+	SetColumnWidth(0, cx);
 	CListCtrl::OnSize(nType, cx, cy);
-	if (GetSafeHwnd() && GetHeaderCtrl() && GetHeaderCtrl()->GetItemCount() > 0)
-		SetColumnWidth(0, max(0, cx));
 }
 
 
@@ -66,21 +64,10 @@ void CMemberListCtrl::OnChar(UINT nChar, UINT nRepCnt, UINT nFlags)
 
 void ForwardToSayWnd(UINT nChar)
 {
-	CChatDoc *doc = GetChatDoc();
-	if (!doc || !doc->m_sayWnd)
-		return;
+	GetChatDoc()->SetFocusToSayWnd();
 
-	// The old code converted the character back to a virtual key and injected it
-	// globally with keybd_event().  Besides losing keyboard-layout/dead-key data,
-	// that could deliver input to another process if focus changed.  Deliver the
-	// already-decoded WM_CHAR directly to this room's composer instead.
-	CSayWnd *say = static_cast<CSayWnd *>(doc->m_sayWnd);
-	HWND sayEdit = say->GetSayEdit();
-	if (!::IsWindow(sayEdit))
-		return;
-
-	::SetFocus(sayEdit);
-	::PostMessage(sayEdit, WM_CHAR, static_cast<WPARAM>(nChar), 1);
+	BYTE vKey = VkKeyScan(nChar) & 0xff;
+	keybd_event(vKey, 0, 0, 0);
 }
 
 
@@ -103,10 +90,7 @@ BEGIN_MESSAGE_MAP(CMemberList, CFrameWnd)
 	//{{AFX_MSG_MAP(CMemberList)
 	ON_WM_CONTEXTMENU()
 	ON_WM_CHAR()
-	ON_WM_SYSCOLORCHANGE()
-	ON_WM_SETTINGCHANGE()
 	//}}AFX_MSG_MAP
-	ON_MESSAGE(WM_DPICHANGED, OnDpiChanged)
 	ON_WM_SIZE()
 	ON_NOTIFY(NM_KILLFOCUS,1,OnLVKillFocus)
 	ON_NOTIFY(NM_DBLCLK,1,OnDblClick)
@@ -119,74 +103,21 @@ END_MESSAGE_MAP()
 
 BOOL CMemberList::OnCreateClient(LPCREATESTRUCT lpcs, CCreateContext* pContext) 
 {
-	DWORD dwStyle = WS_CHILD | WS_VISIBLE | WS_TABSTOP | LVS_ICON | LVS_NOCOLUMNHEADER |
+	// TODO: Add your specialized code here and/or call the base class
+	DWORD dwStyle = WS_CHILD | WS_VISIBLE | LVS_ICON | LVS_NOCOLUMNHEADER |
 					   LVS_AUTOARRANGE | /*LVS_SORTASCENDING | */ LVS_SHOWSELALWAYS | LVS_SHAREIMAGELISTS;
-	if (!m_MemberListBox.Create(dwStyle, CRect(0, 0, 100, 100), this, 1))
-		return FALSE;
-
+	m_MemberListBox.Create(dwStyle, CRect(0, 0, 100, 100), this, 1);
 	m_MemberListBox.SetFont(&theApp.m_fontGui);
-	m_MemberListBox.SetExtendedStyle(m_MemberListBox.GetExtendedStyle() |
-		LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP | LVS_EX_FULLROWSELECT);
-	RefreshSystemAppearance();
+	m_MemberListBox.SetBkColor(COLORREF(RGB(255,255,255)));
+	m_MemberListBox.SetTextBkColor(COLORREF(RGB(255,255,255)));
 	m_MemberListBox.SetImageList(&theApp.m_ImageList,LVSIL_NORMAL);
 	m_MemberListBox.SetImageList(&theApp.m_StatusIcons, LVSIL_SMALL);
 //	m_MemberListBox.SetImageList(&theApp.m_StatusIcons, LVSIL_STATE); // set in OnViewIcon
-	CString membersLabel;
-	if (!membersLabel.LoadString(ID_RL_NUSERS_LABEL))
-		membersLabel = "Members";
-	m_MemberListBox.SetWindowText(membersLabel);
-	m_MemberListBox.InsertColumn(0, membersLabel, LVCFMT_LEFT, 100);
-	UINT mask = m_MemberListBox.GetCallbackMask();
+	m_MemberListBox.InsertColumn(0, "FOO", LVCFMT_LEFT, 100);
+	UINT mask = m_MemberListBox.GetCallbackMask();;
 	m_MemberListBox.SetCallbackMask(mask /*| LVIS_OVERLAYMASK*/ | LVIS_STATEIMAGEMASK);
-	ApplyModernMetrics(comic_chat::modern_ui::DpiForWindow(m_hWnd));
 
 	return CFrameWnd::OnCreateClient(lpcs, pContext);
-}
-
-void CMemberList::ApplyModernMetrics(UINT dpi)
-{
-	if (!m_MemberListBox.GetSafeHwnd()) return;
-	if (HFONT font = comic_chat::modern_ui::UiFont(dpi))
-		m_MemberListBox.SendMessage(WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-	m_MemberListBox.SetImageList(&theApp.m_StatusIcons, LVSIL_SMALL);
-	if ((m_MemberListBox.GetStyle() & LVS_TYPEMASK) == LVS_ICON)
-		m_MemberListBox.SetImageList(&theApp.m_StatusIcons, LVSIL_STATE);
-	m_MemberListBox.SetIconSpacing(
-		comic_chat::modern_ui::Scale(88, dpi), comic_chat::modern_ui::Scale(64, dpi));
-	m_MemberListBox.Invalidate(FALSE);
-}
-
-LRESULT CMemberList::OnDpiChanged(WPARAM wParam, LPARAM)
-{
-	const UINT dpi = HIWORD(wParam) ? HIWORD(wParam) : LOWORD(wParam);
-	ApplyModernMetrics(dpi);
-	RecalcLayout();
-	return 0;
-}
-
-void CMemberList::RefreshSystemAppearance()
-{
-	if (!m_MemberListBox.GetSafeHwnd())
-		return;
-
-	const auto palette = comic_chat::modern_ui::PaletteForWindow(m_MemberListBox.m_hWnd);
-	const COLORREF background = comic_chat::modern_ui::ToColorRef(palette.paper);
-	m_MemberListBox.SetBkColor(background);
-	m_MemberListBox.SetTextBkColor(background);
-	m_MemberListBox.SetTextColor(comic_chat::modern_ui::ToColorRef(palette.ink));
-	m_MemberListBox.Invalidate(FALSE);
-}
-
-void CMemberList::OnSysColorChange()
-{
-	CFrameWnd::OnSysColorChange();
-	RefreshSystemAppearance();
-}
-
-void CMemberList::OnSettingChange(UINT uFlags, LPCTSTR lpszSection)
-{
-	CFrameWnd::OnSettingChange(uFlags, lpszSection);
-	RefreshSystemAppearance();
 }
 
 void CMemberList::RecalcLayout(BOOL bNotify) 
@@ -512,10 +443,10 @@ void CMemberList::OnChar(UINT nChar, UINT nRepCnt, UINT nFlags)
 void UpdateSpectators(CChatDoc *doc, BOOL moderated) {
 	CMemberListCtrl *members = &((CMemberList *)doc->m_memberList)->m_MemberListBox;
 	int count = members->GetItemCount();
-	int i;
-	for (i = 0; i < count; i++) {
+	for (int i = 0; i < count; i++) {
 		CUserInfo *pui = (CUserInfo *) members->GetItemData(i);
 		pui->SetFlag(UF_SPECTATOR, !pui->IsOperator() && moderated && !pui->CheckFlag(UF_HASVOICE));
 	}
 	if (count > 0) members->RedrawItems(0, i-1);
 }
+

@@ -19,7 +19,6 @@
 #include "cdebug.h"
 #include "protsupp.h"
 #include "whisprbx.h"
-#include "modernicons.h"
 
 
 // for ASSERT and FAIL
@@ -34,7 +33,7 @@ extern CChatApp theApp;
 
 CAutomationPage::CAutomationPage() : CCSPropertyPage(CAutomationPage::IDD)
 {
-	CC_ASSERT(!m_rtfGreetingMesg.m_prgdwFormatting, "m_rtfGreetingMesg.m_prgdwFormatting not NULL in CAutomationPage::CAutomationPage");
+	ASSERT(!m_rtfGreetingMesg.m_prgdwFormatting, "m_rtfGreetingMesg.m_prgdwFormatting not NULL in CAutomationPage::CAutomationPage");
 	//{{AFX_DATA_INIT(CAutomationPage)
 	m_bOKing = FALSE;
 	m_bSetActiveNeverCalled = TRUE;
@@ -186,7 +185,7 @@ void CAutomationPage::OnFilterGreetingMesg(NMHDR *pNotifyStruct, LRESULT *plResu
 {
 	MSGFILTER*	pMSGFILTER = (MSGFILTER*) pNotifyStruct;
 
-	CC_ASSERT(pNotifyStruct, "pNotifyStruct NULL in CAutomationPage::OnFilterGreetingMesg");
+	ASSERT(pNotifyStruct, "pNotifyStruct NULL in CAutomationPage::OnFilterGreetingMesg");
 
 	if((pNotifyStruct->code == EN_MSGFILTER) && (pMSGFILTER->msg == WM_RBUTTONDOWN))
 		m_rtfGreetingMesg.ShowFormattingPopUp(LOWORD(pMSGFILTER->lParam), HIWORD(pMSGFILTER->lParam));
@@ -199,7 +198,7 @@ void CAutomationPage::OnFilterMacro(NMHDR *pNotifyStruct, LRESULT *plResult)
 {
 	MSGFILTER*	pMSGFILTER = (MSGFILTER*) pNotifyStruct;
 
-	CC_ASSERT(pNotifyStruct, "pNotifyStruct NULL in CAutomationPage::OnFilterMacro");
+	ASSERT(pNotifyStruct, "pNotifyStruct NULL in CAutomationPage::OnFilterMacro");
 
 	if((pNotifyStruct->code == EN_MSGFILTER) && (pMSGFILTER->msg == WM_RBUTTONDOWN))
 		m_rtfMacro.ShowFormattingPopUp(LOWORD(pMSGFILTER->lParam), HIWORD(pMSGFILTER->lParam));
@@ -465,14 +464,14 @@ void CAutomationPage::OnMesgCountChg()
 	CString strMC;
 	UINT	uMC;
 
-	CC_ASSERT(pEdit, "pEdit NULL in CAutomationPage::OnMesgCountChg");
+	ASSERT(pEdit, "pEdit NULL in CAutomationPage::OnMesgCountChg");
 
 	pEdit->GetWindowText(strMC);
 	uMC = atoi(strMC);
 
 	if (uMC < 1 || uMC > 255)
 	{
-		CC_ASSERT(!m_strMesgCnt.IsEmpty(), "m_strMesgCnt empty in CAutomationPage::OnMesgCountChg");
+		ASSERT(!m_strMesgCnt.IsEmpty(), "m_strMesgCnt empty in CAutomationPage::OnMesgCountChg");
 		pEdit->SetWindowText(m_strMesgCnt);
 		pEdit->SetSel(0, -1);
 	}
@@ -489,14 +488,14 @@ void CAutomationPage::OnIntervalChg()
 	CString strI;
 	UINT	uI;
 
-	CC_ASSERT(pEdit, "pEdit NULL in CAutomationPage::OnIntervalChg");
+	ASSERT(pEdit, "pEdit NULL in CAutomationPage::OnIntervalChg");
 
 	pEdit->GetWindowText(strI);
 	uI = atoi(strI);
 
 	if (uI < 1 || uI > 255)
 	{
-		CC_ASSERT(!m_strInterval.IsEmpty(), "m_strInterval empty in CAutomationPage::OnIntervalChg");
+		ASSERT(!m_strInterval.IsEmpty(), "m_strInterval empty in CAutomationPage::OnIntervalChg");
 		pEdit->SetWindowText(m_strInterval);
 		pEdit->SetSel(0, -1);
 	}
@@ -581,8 +580,8 @@ BOOL CRuleSetsPage::bFillRuleSets()
 	for (INT iIndexSet = 0; iIndexSet < iRuleSets && bRet; iIndexSet++)
 	{
 		pRuleSet = (CCRuleSet*) pRuleSetsArray->GetAt(iIndexSet);
-		CC_ASSERT(pRuleSet, "pRuleSet is NULL in CRuleSetsPage::bFillRuleSets");
-		CC_ASSERT(!pRuleSet->GetName().IsEmpty(), "pRuleSet->GetName().IsEmpty() in CRuleSetsPage::bFillRuleSets");
+		ASSERT(pRuleSet, "pRuleSet is NULL in CRuleSetsPage::bFillRuleSets");
+		ASSERT(!pRuleSet->GetName().IsEmpty(), "pRuleSet->GetName().IsEmpty() in CRuleSetsPage::bFillRuleSets");
 
 		if ((iIndex = m_lstSets.AddString(pRuleSet->GetName())) >= 0)
 		{
@@ -593,12 +592,12 @@ BOOL CRuleSetsPage::bFillRuleSets()
 		}
 		else
 		{
-			CC_ASSERT(FALSE, "AddString failed in CRuleSetsPage::bFillRuleSets");
+			ASSERT(FALSE, "AddString failed in CRuleSetsPage::bFillRuleSets");
 			bRet = FALSE;
 		}
 	}
 
-	CC_ASSERT(bRet, "bRet is FALSE in CRuleSetsPage::bFillRuleSets");
+	ASSERT(bRet, "bRet is FALSE in CRuleSetsPage::bFillRuleSets");
 
 	return bRet;
 }
@@ -627,7 +626,7 @@ void CRuleSetsPage::UpdateButtonsStatus()
 	if (bSetSelected)
 	{
 		iIndex = m_lstSets.GetCurSel();
-		CC_ASSERT(iIndex >= 0, "iIndex < 0 in CRuleSetsPage::UpdateButtonsStatus");
+		ASSERT(iIndex >= 0, "iIndex < 0 in CRuleSetsPage::UpdateButtonsStatus");
 		bMoveUp = iIndex > 0;
 		bMoveDown = iIndex < m_lstSets.GetCount()-1;
 	}
@@ -643,7 +642,7 @@ BOOL CRuleSetsPage::OnSetActive()
 {
 	// OutputDebugString("CRuleSetsPage::OnSetActive - Enter\n");
 
-	CC_ASSERT(m_pDynaCopy, "m_pDynaCopy is NULL in CRuleSetsPage::OnSetActive");
+	ASSERT(m_pDynaCopy, "m_pDynaCopy is NULL in CRuleSetsPage::OnSetActive");
 
 	bFillRuleSets();
 	UpdateButtonsStatus();
@@ -656,7 +655,7 @@ void CRuleSetsPage::OnOK()
 {
 	// OutputDebugString("CRuleSetsPage::OnOK - Enter\n");
 
-	CC_ASSERT(m_pDynaCopy, "m_pDynaCopy is NULL in CRuleSetsPage::OnOK");
+	ASSERT(m_pDynaCopy, "m_pDynaCopy is NULL in CRuleSetsPage::OnOK");
 
 	// save the changes made to the rule sets...
 	theApp.m_dynaRules = *m_pDynaCopy;
@@ -683,10 +682,10 @@ void CRuleSetsPage::OnCreateRuleSet()
 	{
 		CString strSetName = csDlg.m_strSetName;
 
-		CC_ASSERT(!strSetName.IsEmpty(), "strSetName.IsEmpty() in CRuleSetsPage::OnCreateRuleSet");
+		ASSERT(!strSetName.IsEmpty(), "strSetName.IsEmpty() in CRuleSetsPage::OnCreateRuleSet");
 
 		// Make sure this set doesn't already exist
-		CC_ASSERT(LB_ERR == m_lstSets.FindStringExact(-1, (LPCTSTR) strSetName), "Rule Set name existing in CRuleSetsPage::OnCreateRuleSet");
+		ASSERT(LB_ERR == m_lstSets.FindStringExact(-1, (LPCTSTR) strSetName), "Rule Set name existing in CRuleSetsPage::OnCreateRuleSet");
 
 		CCRuleSet*	pRuleSet = (CCRuleSet*) new CCRuleSet(m_pDynaCopy);
 
@@ -705,7 +704,7 @@ void CRuleSetsPage::OnCreateRuleSet()
 		}
 		else
 		{
-			CC_ASSERT(FALSE, "AddString failed in CRuleSetsPage::OnCreateRuleSet");
+			ASSERT(FALSE, "AddString failed in CRuleSetsPage::OnCreateRuleSet");
 			delete pRuleSet;
 		}
 
@@ -722,9 +721,9 @@ void CRuleSetsPage::OnRenameRuleSet()
 	CCRuleSet*	pRuleSet = m_pDynaCopy->GetSelectedRuleSet();
 	INT			iIndex = m_lstSets.GetCurSel();
 
-	CC_ASSERT(iIndex >= 0, "iIndex < 0 in CRuleSetsPage::OnRenameRuleSet");
-	CC_ASSERT(pRuleSet, "pRuleSet is NULL in CRuleSetsPage::OnRenameRuleSet");
-	CC_ASSERT(pRuleSet == (CCRuleSet*) m_lstSets.GetItemDataPtr(iIndex), "pRuleSet != m_lstSets.GetItemDataPtr(iIndex) in CRuleSetsPage::OnRenameRuleSet");
+	ASSERT(iIndex >= 0, "iIndex < 0 in CRuleSetsPage::OnRenameRuleSet");
+	ASSERT(pRuleSet, "pRuleSet is NULL in CRuleSetsPage::OnRenameRuleSet");
+	ASSERT(pRuleSet == (CCRuleSet*) m_lstSets.GetItemDataPtr(iIndex), "pRuleSet != m_lstSets.GetItemDataPtr(iIndex) in CRuleSetsPage::OnRenameRuleSet");
 
 	CRenameSet rsDlg(pRuleSet, &m_lstSets);
 
@@ -744,9 +743,9 @@ void CRuleSetsPage::OnDeleteRuleSet()
 	CCRuleSet*	pRuleSet = m_pDynaCopy->GetSelectedRuleSet();
 	INT			iIndex = m_lstSets.GetCurSel(), iCount;
 
-	CC_ASSERT(iIndex >= 0, "iIndex < 0 in CRuleSetsPage::OnDeleteRuleSet");
-	CC_ASSERT(pRuleSet, "pRuleSet is NULL in CRuleSetsPage::OnDeleteRuleSet");
-	CC_ASSERT(pRuleSet == (CCRuleSet*) m_lstSets.GetItemDataPtr(iIndex), "pRuleSet != m_lstSets.GetItemDataPtr(iIndex) in CRuleSetsPage::OnDeleteRuleSet");
+	ASSERT(iIndex >= 0, "iIndex < 0 in CRuleSetsPage::OnDeleteRuleSet");
+	ASSERT(pRuleSet, "pRuleSet is NULL in CRuleSetsPage::OnDeleteRuleSet");
+	ASSERT(pRuleSet == (CCRuleSet*) m_lstSets.GetItemDataPtr(iIndex), "pRuleSet != m_lstSets.GetItemDataPtr(iIndex) in CRuleSetsPage::OnDeleteRuleSet");
 
 	m_lstSets.DeleteString(iIndex);	// Remove rule set from the list box
 	
@@ -770,9 +769,9 @@ void CRuleSetsPage::OnMoveUpRuleSet()
 	CCRuleSet*	pRuleSet = m_pDynaCopy->GetSelectedRuleSet();
 	INT			iIndex = m_lstSets.GetCurSel();
 
-	CC_ASSERT(iIndex >= 1, "iIndex < 1 in CRuleSetsPage::OnMoveUpRuleSet");
-	CC_ASSERT(pRuleSet, "pRuleSet is NULL in CRuleSetsPage::OnMoveUpRuleSet");
-	CC_ASSERT(pRuleSet == (CCRuleSet*) m_lstSets.GetItemDataPtr(iIndex), "pRuleSet != m_lstSets.GetItemDataPtr(iIndex) in CRuleSetsPage::OnMoveUpRuleSet");
+	ASSERT(iIndex >= 1, "iIndex < 1 in CRuleSetsPage::OnMoveUpRuleSet");
+	ASSERT(pRuleSet, "pRuleSet is NULL in CRuleSetsPage::OnMoveUpRuleSet");
+	ASSERT(pRuleSet == (CCRuleSet*) m_lstSets.GetItemDataPtr(iIndex), "pRuleSet != m_lstSets.GetItemDataPtr(iIndex) in CRuleSetsPage::OnMoveUpRuleSet");
 
 	m_pDynaCopy->bUpRuleSet(NULL, iIndex);
 	m_lstSets.DeleteString(iIndex);
@@ -794,10 +793,10 @@ void CRuleSetsPage::OnMoveDownRuleSet()
 	CCRuleSet*	pRuleSet = m_pDynaCopy->GetSelectedRuleSet();
 	INT			iIndex = m_lstSets.GetCurSel();
 
-	CC_ASSERT(iIndex >= 0, "iIndex < 0 in CRuleSetsPage::OnMoveDownRuleSet");
-	CC_ASSERT(iIndex < m_lstSets.GetCount()-1, "iIndex >= m_lstSets.GetCount()-1 in CRuleSetsPage::OnMoveDownRuleSet");
-	CC_ASSERT(pRuleSet, "pRuleSet is NULL in CRuleSetsPage::OnMoveDownRuleSet");
-	CC_ASSERT(pRuleSet == (CCRuleSet*) m_lstSets.GetItemDataPtr(iIndex), "pRuleSet != m_lstSets.GetItemDataPtr(iIndex) in CRuleSetsPage::OnMoveDownRuleSet");
+	ASSERT(iIndex >= 0, "iIndex < 0 in CRuleSetsPage::OnMoveDownRuleSet");
+	ASSERT(iIndex < m_lstSets.GetCount()-1, "iIndex >= m_lstSets.GetCount()-1 in CRuleSetsPage::OnMoveDownRuleSet");
+	ASSERT(pRuleSet, "pRuleSet is NULL in CRuleSetsPage::OnMoveDownRuleSet");
+	ASSERT(pRuleSet == (CCRuleSet*) m_lstSets.GetItemDataPtr(iIndex), "pRuleSet != m_lstSets.GetItemDataPtr(iIndex) in CRuleSetsPage::OnMoveDownRuleSet");
 
 	m_pDynaCopy->bDownRuleSet(NULL, iIndex);
 	m_lstSets.DeleteString(iIndex);
@@ -880,7 +879,7 @@ void CRuleSetsPage::OnLoadRuleSet()
 	return;
 
 add:
-	CC_ASSERT(pNewRuleSet, "pNewRuleSet is NULL in CRuleSetsPage::OnLoadRuleSet");
+	ASSERT(pNewRuleSet, "pNewRuleSet is NULL in CRuleSetsPage::OnLoadRuleSet");
 	if ((iIndex = m_lstSets.AddString(pNewRuleSet->GetName())) >= 0)
 	{
 		m_lstSets.SetItemDataPtr(iIndex, (void*) pNewRuleSet);
@@ -890,7 +889,7 @@ add:
 	}
 	else
 	{
-		CC_ASSERT(FALSE, "AddString failed in CRuleSetsPage::OnLoadRuleSet");
+		ASSERT(FALSE, "AddString failed in CRuleSetsPage::OnLoadRuleSet");
 		delete pNewRuleSet;
 	}
 	UpdateButtonsStatus();
@@ -903,10 +902,10 @@ void CRuleSetsPage::OnSaveRuleSet()
 	INT			iIndex = m_lstSets.GetCurSel();
 	UINT		uError;
 
-	CC_ASSERT(iIndex >= 0, "iIndex < 0 in CRuleSetsPage::OnSaveRuleSet");
-	CC_ASSERT(iIndex < m_lstSets.GetCount(), "iIndex >= m_lstSets.GetCount()-1 in CRuleSetsPage::OnSaveRuleSet");
-	CC_ASSERT(pRuleSet, "pRuleSet is NULL in CRuleSetsPage::OnSaveRuleSet");
-	CC_ASSERT(pRuleSet == (CCRuleSet*) m_lstSets.GetItemDataPtr(iIndex), "pRuleSet != m_lstSets.GetItemDataPtr(iIndex) in CRuleSetsPage::OnSaveRuleSet");
+	ASSERT(iIndex >= 0, "iIndex < 0 in CRuleSetsPage::OnSaveRuleSet");
+	ASSERT(iIndex < m_lstSets.GetCount(), "iIndex >= m_lstSets.GetCount()-1 in CRuleSetsPage::OnSaveRuleSet");
+	ASSERT(pRuleSet, "pRuleSet is NULL in CRuleSetsPage::OnSaveRuleSet");
+	ASSERT(pRuleSet == (CCRuleSet*) m_lstSets.GetItemDataPtr(iIndex), "pRuleSet != m_lstSets.GetItemDataPtr(iIndex) in CRuleSetsPage::OnSaveRuleSet");
 
 	if (!pRuleSet->bSaveToFile(&uError, (CWnd*) this))
 	{
@@ -966,10 +965,18 @@ CRulesPage::CRulesPage() : CCSPropertyPage(CRulesPage::IDD)
 	//}}AFX_DATA_INIT
 	m_bRulesColumnSet = FALSE;
 
-	// Rule model semantics: 0 = inactive, 1 = active, 2 = stopped.
-	const UINT statusResources[] = {IDB_INACTIVE, IDB_ACTIVE, IDB_STOPPED};
-	comic_chat::modern_ui::BuildOrderedImageList(
-		m_ilActiveStatus, statusResources, 3, 16, nullptr);
+	m_ilActiveStatus.Create(IDB_INACTIVE, 16, 1, RGB(0, 0, 255));
+	CBitmap	bmp;
+	if (bmp.LoadBitmap(IDB_ACTIVE))
+	{
+		m_ilActiveStatus.Add(&bmp, RGB(0, 0, 255));
+		bmp.DeleteObject();
+	}
+	if (bmp.LoadBitmap(IDB_STOPPED))
+	{
+		m_ilActiveStatus.Add(&bmp, RGB(0, 0, 128));
+		bmp.DeleteObject();
+	}
 }
 
 
@@ -1021,8 +1028,8 @@ BOOL CRulesPage::bFillRuleSets()
 	for (INT iIndexSet = 0; iIndexSet < iRuleSets && bRet; iIndexSet++)
 	{
 		pRuleSet = (CCRuleSet*) pRuleSetsArray->GetAt(iIndexSet);
-		CC_ASSERT(pRuleSet, "pRuleSet is NULL in CRulesPage::bFillRuleSets");
-		CC_ASSERT(!pRuleSet->GetName().IsEmpty(), "pRuleSet->GetName().IsEmpty() in CRulesPage::bFillRuleSets");
+		ASSERT(pRuleSet, "pRuleSet is NULL in CRulesPage::bFillRuleSets");
+		ASSERT(!pRuleSet->GetName().IsEmpty(), "pRuleSet->GetName().IsEmpty() in CRulesPage::bFillRuleSets");
 
 		if ((iIndex = m_lstSets.AddString(pRuleSet->GetName())) >= 0)
 		{
@@ -1033,12 +1040,12 @@ BOOL CRulesPage::bFillRuleSets()
 		}
 		else
 		{
-			CC_ASSERT(FALSE, "AddString failed in CRulesPage::bFillRuleSets");
+			ASSERT(FALSE, "AddString failed in CRulesPage::bFillRuleSets");
 			bRet = FALSE;
 		}
 	}
 
-	CC_ASSERT(bRet, "bRet is FALSE in CRulesPage::bFillRuleSets");
+	ASSERT(bRet, "bRet is FALSE in CRulesPage::bFillRuleSets");
 
 	return bRet;
 }
@@ -1070,7 +1077,7 @@ void CRulesPage::UpdateButtonsStatus()
 	if (bRuleSelected)
 	{
 		iIndex = m_lstRules.iGetSelectedRule(NULL);
-		CC_ASSERT(iIndex >= 0, "iIndex < 0 in CRulesPage::UpdateButtonsStatus");
+		ASSERT(iIndex >= 0, "iIndex < 0 in CRulesPage::UpdateButtonsStatus");
 		bMoveUp = iIndex > 0;
 		bMoveDown = iIndex < m_lstRules.GetItemCount()-1;
 	}
@@ -1086,7 +1093,7 @@ BOOL CRulesPage::OnSetActive()
 {
 	// OutputDebugString("CRulesPage::OnSetActive - Enter\n");
 
-	CC_ASSERT(m_pDynaCopy, "m_pDynaCopy is NULL in CRulesPage::OnSetActive");
+	ASSERT(m_pDynaCopy, "m_pDynaCopy is NULL in CRulesPage::OnSetActive");
 
 	if (!m_bRulesColumnSet)
 	{
@@ -1119,7 +1126,7 @@ void CRulesPage::OnOK()
 {
 	// OutputDebugString("CRulesPage::OnOK - Enter\n");
 
-	CC_ASSERT(m_pDynaCopy, "m_pDynaCopy is NULL in CRulesPage::OnOK");
+	ASSERT(m_pDynaCopy, "m_pDynaCopy is NULL in CRulesPage::OnOK");
 
 	// save the changes made to the rules...
 	theApp.m_dynaRules = *m_pDynaCopy;
@@ -1163,13 +1170,13 @@ void CRulesPage::OnAddRule()
 
 	if (!(pRuleSet = m_pDynaCopy->GetSelectedRuleSet()))
 	{
-		CC_ASSERT(FALSE, "GetSelectedRuleSet failed in CRulesPage::OnAddRule");
+		ASSERT(FALSE, "GetSelectedRuleSet failed in CRulesPage::OnAddRule");
 		return;
 	}
 
 	if (!(pRule = new CCRule(m_pDynaCopy)))
 	{
-		CC_ASSERT(FALSE, "OOM in CRulesPage::OnAddRule");
+		ASSERT(FALSE, "OOM in CRulesPage::OnAddRule");
 		return;
 	}
 
@@ -1193,13 +1200,13 @@ void CRulesPage::OnAddRule()
 
 void CRulesPage::OnEditRule()
 {
-	CC_ASSERT(m_lstRules.GetSelectedCount() == 1, "m_lstRules.GetSelectedCount() != 1 in CRulesPage::OnEditRule");
+	ASSERT(m_lstRules.GetSelectedCount() == 1, "m_lstRules.GetSelectedCount() != 1 in CRulesPage::OnEditRule");
 
 	CCRule*	pRule;
 	INT		iIndex = m_lstRules.iGetSelectedRule(&pRule);
 
-	CC_ASSERT(iIndex >= 0, "iIndex < 0 in CRulesPage::OnEditRule");
-	CC_ASSERT(pRule, "pRule is NULL in CRulesPage::OnEditRule");
+	ASSERT(iIndex >= 0, "iIndex < 0 in CRulesPage::OnEditRule");
+	ASSERT(pRule, "pRule is NULL in CRulesPage::OnEditRule");
 
 	CEditRule	erDlg;
 	CCRule*		pRuleCopy = (CCRule*) new CCRule(pRule, m_pDynaCopy);
@@ -1207,7 +1214,7 @@ void CRulesPage::OnEditRule()
 
 	if (!(pRuleSet = m_pDynaCopy->GetSelectedRuleSet()))
 	{
-		CC_ASSERT(FALSE, "GetSelectedRuleSet failed in CRulesPage::OnEditRule");
+		ASSERT(FALSE, "GetSelectedRuleSet failed in CRulesPage::OnEditRule");
 		return;
 	}
 
@@ -1216,7 +1223,7 @@ void CRulesPage::OnEditRule()
 
 	if (!pRuleCopy)
 	{
-		CC_ASSERT(FALSE, "OOM in CRulesPage::OnEditRule");
+		ASSERT(FALSE, "OOM in CRulesPage::OnEditRule");
 		return;
 	}
 
@@ -1237,16 +1244,16 @@ void CRulesPage::OnEditRule()
 
 void CRulesPage::OnDeleteRule()
 {
-	CC_ASSERT(m_lstRules.GetSelectedCount() == 1, "m_lstRules.GetSelectedCount() != 1 in CRulesPage::OnDeleteRule");
+	ASSERT(m_lstRules.GetSelectedCount() == 1, "m_lstRules.GetSelectedCount() != 1 in CRulesPage::OnDeleteRule");
 
 	CCRuleSet*	pRuleSet;
 	INT			iIndex = m_lstRules.iGetSelectedRule(NULL);
 
-	CC_ASSERT(iIndex >= 0, "iIndex < 0 in CRulesPage::OnDeleteRule");
+	ASSERT(iIndex >= 0, "iIndex < 0 in CRulesPage::OnDeleteRule");
 
 	if (!(pRuleSet = m_pDynaCopy->GetSelectedRuleSet()))
 	{
-		CC_ASSERT(FALSE, "GetSelectedRuleSet failed in CRulesPage::OnDeleteRule");
+		ASSERT(FALSE, "GetSelectedRuleSet failed in CRulesPage::OnDeleteRule");
 		return;
 	}
 
@@ -1265,23 +1272,23 @@ void CRulesPage::OnDeleteRule()
 
 void CRulesPage::OnDuplicateRule()
 {
-	CC_ASSERT(m_lstRules.GetSelectedCount() == 1, "m_lstRules.GetSelectedCount() != 1 in CRulesPage::OnDuplicateRule");
+	ASSERT(m_lstRules.GetSelectedCount() == 1, "m_lstRules.GetSelectedCount() != 1 in CRulesPage::OnDuplicateRule");
 
 	CCRule*		pRule;
 	CCRuleSet*	pRuleSet;
 	INT			iIndex = m_lstRules.iGetSelectedRule(NULL);
 
-	CC_ASSERT(iIndex >= 0, "iIndex < 0 in CRulesPage::OnDuplicateRule");
+	ASSERT(iIndex >= 0, "iIndex < 0 in CRulesPage::OnDuplicateRule");
 
 	if (!(pRuleSet = m_pDynaCopy->GetSelectedRuleSet()))
 	{
-		CC_ASSERT(FALSE, "GetSelectedRuleSet failed in CRulesPage::OnDuplicateRule");
+		ASSERT(FALSE, "GetSelectedRuleSet failed in CRulesPage::OnDuplicateRule");
 		return;
 	}
 
 	if (pRuleSet->bDuplicateRule(iIndex, &pRule))
 	{
-		CC_ASSERT(pRule, "pRule is NULL in CRulesPage::OnDuplicateRule");
+		ASSERT(pRule, "pRule is NULL in CRulesPage::OnDuplicateRule");
 		// pRuleSet->SetModified();
 		m_lstRules.bAddRule(pRule, iIndex + 1);
 		SetModified(TRUE);
@@ -1291,18 +1298,18 @@ void CRulesPage::OnDuplicateRule()
 
 void CRulesPage::OnMoveUpRule()
 {
-	CC_ASSERT(m_lstRules.GetSelectedCount() == 1, "m_lstRules.GetSelectedCount() != 1 in CRulesPage::OnMoveUpRule");
+	ASSERT(m_lstRules.GetSelectedCount() == 1, "m_lstRules.GetSelectedCount() != 1 in CRulesPage::OnMoveUpRule");
 
 	CCRuleSet*	pRuleSet;
 	CCRule*		pRule;
 	INT			iIndex = m_lstRules.iGetSelectedRule(&pRule);
 
-	CC_ASSERT(iIndex >= 1, "iIndex < 1 in CRulesPage::OnMoveUpRule");
-	CC_ASSERT(pRule, "pRule is NULL in CRulesPage::OnMoveUpRule");
+	ASSERT(iIndex >= 1, "iIndex < 1 in CRulesPage::OnMoveUpRule");
+	ASSERT(pRule, "pRule is NULL in CRulesPage::OnMoveUpRule");
 
 	if (!(pRuleSet = m_pDynaCopy->GetSelectedRuleSet()))
 	{
-		CC_ASSERT(FALSE, "GetSelectedRuleSet failed in CRulesPage::OnMoveUpRule");
+		ASSERT(FALSE, "GetSelectedRuleSet failed in CRulesPage::OnMoveUpRule");
 		return;
 	}
 
@@ -1321,19 +1328,19 @@ void CRulesPage::OnMoveUpRule()
 
 void CRulesPage::OnMoveDownRule()
 {
-	CC_ASSERT(m_lstRules.GetSelectedCount() == 1, "m_lstRules.GetSelectedCount() != 1 in CRulesPage::OnMoveDownRule");
+	ASSERT(m_lstRules.GetSelectedCount() == 1, "m_lstRules.GetSelectedCount() != 1 in CRulesPage::OnMoveDownRule");
 
 	CCRuleSet*	pRuleSet;
 	CCRule*		pRule;
 	INT			iIndex = m_lstRules.iGetSelectedRule(&pRule);
 
-	CC_ASSERT(iIndex >= 0, "iIndex < 0 in CRulesPage::OnMoveDownRule");
-	CC_ASSERT(iIndex < m_lstRules.GetItemCount()-1, "iIndex >= m_lstRules.GetItemCount()-1 in CRulesPage::OnMoveDownRule");
-	CC_ASSERT(pRule, "pRule is NULL in CRulesPage::OnMoveDownRule");
+	ASSERT(iIndex >= 0, "iIndex < 0 in CRulesPage::OnMoveDownRule");
+	ASSERT(iIndex < m_lstRules.GetItemCount()-1, "iIndex >= m_lstRules.GetItemCount()-1 in CRulesPage::OnMoveDownRule");
+	ASSERT(pRule, "pRule is NULL in CRulesPage::OnMoveDownRule");
 
 	if (!(pRuleSet = m_pDynaCopy->GetSelectedRuleSet()))
 	{
-		CC_ASSERT(FALSE, "GetSelectedRuleSet failed in CRulesPage::OnMoveDownRule");
+		ASSERT(FALSE, "GetSelectedRuleSet failed in CRulesPage::OnMoveDownRule");
 		return;
 	}
 
@@ -1356,12 +1363,12 @@ void CRulesPage::OnAddToRuleSets()
 	INT			iIndex = m_lstRules.iGetSelectedRule(&pRule);
 	CCDynaRules	m_dynaCopy;
 
-	CC_ASSERT(iIndex >= 0, "iIndex < 0 in CRulesPage::OnAddToRuleSets");
-	CC_ASSERT(pRule, "pRule is NULL in CRulesPage::OnAddToRuleSets");
+	ASSERT(iIndex >= 0, "iIndex < 0 in CRulesPage::OnAddToRuleSets");
+	ASSERT(pRule, "pRule is NULL in CRulesPage::OnAddToRuleSets");
 
 	m_dynaCopy = *m_pDynaCopy;
 
-	CC_ASSERT(m_dynaCopy.GetSelectedRuleSet(), "m_dynaCopy.GetSelectedRuleSet() is NULL in CRulesPage::OnAddToRuleSets");
+	ASSERT(m_dynaCopy.GetSelectedRuleSet(), "m_dynaCopy.GetSelectedRuleSet() is NULL in CRulesPage::OnAddToRuleSets");
 
 	CAddToSets	atsDlg(&m_dynaCopy, m_dynaCopy.GetSelectedRuleSet(), pRule);
 	
@@ -1379,7 +1386,7 @@ void CRulesPage::OnAddToRuleSets()
 
 void CRulesPage::OnAdvancedRuleSettings()
 {
-	CC_ASSERT(m_pDynaCopy, "m_pDynaCopy is NULL in CRulesPage::OnAdvancedRuleSettings");
+	ASSERT(m_pDynaCopy, "m_pDynaCopy is NULL in CRulesPage::OnAdvancedRuleSettings");
 
 	CAdvancedRuleSettings arsDlg(m_pDynaCopy->GetFloodingOccurrences(), m_pDynaCopy->GetFloodingInterval());
 
@@ -1417,26 +1424,18 @@ const DWORD CRulesPage::m_nHelpIDs[] =
 // CRuleIcons
 CRuleIcons::CRuleIcons()
 {
-	// Rule-set list semantics: 0 = inactive, 1 = active. Keep this explicit;
-	// the legacy IDs happen to be contiguous but the model must not depend on it.
-	const UINT statusResources[] = {IDB_INACTIVE, IDB_ACTIVE};
-	comic_chat::modern_ui::BuildOrderedImageList(
-		m_icons, statusResources, g_nIconCount, g_nIconWidth, nullptr);
+	// 0 - Inactive
+	// 1 - Active
+	for (SHORT nCnt = 0; nCnt < g_nIconCount; nCnt++)
+		m_hbmpIcon[nCnt] = LoadBitmap(AfxGetResourceHandle(), MAKEINTRESOURCE(IDB_INACTIVE+nCnt));
 }
 
 
 CRuleIcons::~CRuleIcons()
 {
-	m_icons.DeleteImageList();
-}
-
-
-BOOL CRuleIcons::Draw(HDC hdc, SHORT nIndex, CPoint point)
-{
-	const HIMAGELIST imageList = m_icons.GetSafeHandle();
-	if (!imageList || nIndex < 0 || nIndex >= g_nIconCount) return FALSE;
-	return ::ImageList_Draw(
-		imageList, nIndex, hdc, point.x, point.y, ILD_TRANSPARENT);
+	for (SHORT nCnt = 0; nCnt < g_nIconCount; nCnt++)
+		if (m_hbmpIcon[nCnt])
+			DeleteObject((HBITMAP) m_hbmpIcon[nCnt]);
 }
 
 
@@ -1453,12 +1452,14 @@ END_MESSAGE_MAP()
 
 void CRuleSetsListBox::DrawItem(LPDRAWITEMSTRUCT lpDrawItemStruct)
 {
-	CC_ASSERT(lpDrawItemStruct, "lpDrawItemStruct is NULL in CRuleSetsListBox::DrawItem");
+	ASSERT(lpDrawItemStruct, "lpDrawItemStruct is NULL in CRuleSetsListBox::DrawItem");
 
 	DWORD		rgbSelOld;
 	DWORD		rgbSelTextOld;
 	DWORD		rgbSel;
 	DWORD		rgbSelText;
+	HDC			hdcBitmap;
+	HBITMAP		hbmpOld;
 	HBRUSH		hbrush;
 	CCRuleSet*	pRuleSet;
 
@@ -1484,19 +1485,20 @@ void CRuleSetsListBox::DrawItem(LPDRAWITEMSTRUCT lpDrawItemStruct)
 		pRuleSet = (CCRuleSet*) lpDrawItemStruct->itemData;
 		if (!pRuleSet)
 		{
-			CC_ASSERT(FALSE, "pRuleSet is NULL in CRuleSetsListBox::DrawItem");
+			ASSERT(FALSE, "pRuleSet is NULL in CRuleSetsListBox::DrawItem");
 			return;
 		}
 
-		m_icons.Draw(
-			lpDrawItemStruct->hDC,
-			pRuleSet->bActive() ? g_nActiveIndex : g_nInactiveIndex,
-			CPoint(g_nIconMargin, lpDrawItemStruct->rcItem.top + 1));
+		hdcBitmap = CreateCompatibleDC(lpDrawItemStruct->hDC);
+		hbmpOld = (HBITMAP) SelectObject(hdcBitmap, m_icons.GetIcon(pRuleSet->bActive() ? g_nActiveIndex : g_nInactiveIndex));
+		BitBlt(lpDrawItemStruct->hDC, g_nIconMargin, lpDrawItemStruct->rcItem.top+1, g_nIconWidth, g_nIconHeight, hdcBitmap, 0, 0, SRCCOPY);
 
 		rgbSelTextOld = SetTextColor(lpDrawItemStruct->hDC, rgbSelText);
 		rgbSelOld = SetBkColor(lpDrawItemStruct->hDC, rgbSel);
 		TextOut(lpDrawItemStruct->hDC, g_nIconWidth+2*g_nIconMargin, lpDrawItemStruct->rcItem.top+1, pRuleSet->GetName(), pRuleSet->GetName().GetLength());
 
+		SelectObject(hdcBitmap, hbmpOld);
+		DeleteDC(hdcBitmap);
 	}
 
 	if (lpDrawItemStruct->itemState & ODS_FOCUS)
@@ -1511,7 +1513,7 @@ void CRuleSetsListBox::DrawItem(LPDRAWITEMSTRUCT lpDrawItemStruct)
 void CRuleSetsListBox::SwitchActivation(INT iIndex)
 {
 	CCRuleSet* pRuleSet = (CCRuleSet*) GetItemDataPtr(iIndex);
-	CC_ASSERT((LONG) pRuleSet != -1, "pRuleSet == -1 in CRuleSetsListBox::SwitchActivation");
+	ASSERT((LONG) pRuleSet != -1, "pRuleSet == -1 in CRuleSetsListBox::SwitchActivation");
 	if (pRuleSet->bActive())
 		pRuleSet->Desactivate();
 	else
@@ -1578,7 +1580,7 @@ void CTabButton::OnKeyDown(UINT nChar, UINT nRepCnt, UINT nFlags)
 	{
 		// OutputDebugString("CTabButton::OnKeyDown - Tab\n");
 		CEditRule* per = (CEditRule*) GetParent();
-		CC_ASSERT(per, "per is NULL CTabButton::OnKeyDown");
+		ASSERT(per, "per is NULL CTabButton::OnKeyDown");
 		per->Tab(this, !(GetKeyState(VK_SHIFT) & 0x8000));
 		return;
 	}
@@ -1609,7 +1611,7 @@ void CTabEdit::OnKeyDown(UINT nChar, UINT nRepCnt, UINT nFlags)
 	{
 		// OutputDebugString("CTabEdit::OnKeyDown - Tab\n");
 		CEditRule* per = (CEditRule*) GetParent();
-		CC_ASSERT(per, "per is NULL CTabEdit::OnKeyDown");
+		ASSERT(per, "per is NULL CTabEdit::OnKeyDown");
 		per->Tab(this, !(GetKeyState(VK_SHIFT) & 0x8000));
 		MSG msg;
 		while (PeekMessage(&msg, m_hWnd, WM_CHAR, WM_CHAR, PM_REMOVE));
@@ -1654,10 +1656,10 @@ INT CRulesListCtrl::iGetSelectedRule(CCRule **ppRule)
 void CRulesListCtrl::SwitchActivation(INT iIndex)
 {
 	CCRule*	pRule = (CCRule*) GetItemData(iIndex);
-	CC_ASSERT(pRule, "pRule is NULL in CRulesListCtrl::SwitchActivation");
+	ASSERT(pRule, "pRule is NULL in CRulesListCtrl::SwitchActivation");
 	if (pRule->bStopped())
 	{
-		CC_ASSERT(pRule->bActive(), "pRule not activated in CRulesListCtrl::SwitchActivation");
+		ASSERT(pRule->bActive(), "pRule not activated in CRulesListCtrl::SwitchActivation");
 		pRule->SetFlags(pRule->wGetFlags() & ~g_wStopped);
 	}
 	else
@@ -1665,7 +1667,7 @@ void CRulesListCtrl::SwitchActivation(INT iIndex)
 			pRule->Desactivate();
 		else
 			pRule->Activate();
-	CC_ASSERT(m_pRuleSet, "m_pRuleSet is NULL in CRulesListCtrl::SwitchActivation");
+	ASSERT(m_pRuleSet, "m_pRuleSet is NULL in CRulesListCtrl::SwitchActivation");
 	// m_pRuleSet->SetModified();
 	((CRulesPage*) GetParent())->SetModified(TRUE);
 	RedrawItems(iIndex, iIndex);
@@ -1678,10 +1680,10 @@ void CRulesListCtrl::OnGetdispinfo(NMHDR* pNMHDR, LRESULT* pResult)
 {
 	LV_DISPINFO*	pDispInfo = (LV_DISPINFO*) pNMHDR;
 	LV_ITEM*		pItem = &pDispInfo->item;
-	CC_ASSERT(pItem, "pItem is NULL in CRulesListCtrl::OnGetdispinfo");
+	ASSERT(pItem, "pItem is NULL in CRulesListCtrl::OnGetdispinfo");
 
 	CCRule*			pRule = (CCRule*) pItem->lParam;
-	CC_ASSERT(pRule, "pRule is NULL in CRulesListCtrl::OnGetdispinfo");
+	ASSERT(pRule, "pRule is NULL in CRulesListCtrl::OnGetdispinfo");
 
 	if (pItem->mask & LVIF_TEXT)
 	{
@@ -1733,7 +1735,7 @@ BOOL CRulesListCtrl::bFill(CCDynaRules* pDynaRules)
 	INT			iRules;
 	CPtrArray*	pRulesArray;
 
-	CC_ASSERT(pDynaRules, "pDynaRules is NULL in CRulesListCtrl::bFill");
+	ASSERT(pDynaRules, "pDynaRules is NULL in CRulesListCtrl::bFill");
 
 	DeleteAllItems();
 
@@ -1746,7 +1748,7 @@ BOOL CRulesListCtrl::bFill(CCDynaRules* pDynaRules)
 	for (INT iIndex = 0; iIndex < iRules && bRet; iIndex++)
 		bRet = bAddRule((CCRule*) pRulesArray->GetAt(iIndex), iIndex);
 
-	CC_ASSERT(bRet, "bRet is FALSE in CRulesListCtrl::bFill");
+	ASSERT(bRet, "bRet is FALSE in CRulesListCtrl::bFill");
 
 	return bRet;
 }
@@ -1754,7 +1756,7 @@ BOOL CRulesListCtrl::bFill(CCDynaRules* pDynaRules)
 
 BOOL CRulesListCtrl::bAddRule(CCRule* pRule, INT iIndex /* = -1 */)
 {
-	CC_ASSERT(pRule, "pRule is NULL in CRulesListCtrl::bAddRule");
+	ASSERT(pRule, "pRule is NULL in CRulesListCtrl::bAddRule");
 
 	LV_ITEM item;
 	BOOL	bRet;
@@ -1774,7 +1776,7 @@ BOOL CRulesListCtrl::bAddRule(CCRule* pRule, INT iIndex /* = -1 */)
 	item.pszText = LPSTR_TEXTCALLBACK;
 	bRet &= (SetItem(&item) != -1);
 
-	CC_ASSERT(bRet, "bRet is FALSE in CRulesListCtrl::bAddRule");
+	ASSERT(bRet, "bRet is FALSE in CRulesListCtrl::bAddRule");
 
 	return bRet;
 }
@@ -1787,8 +1789,8 @@ void CALLBACK AddSoundToComboBox(LPARAM lParam, LPCSTR pszPath, LPCSTR pszFile, 
 {
 	CSoundComboBox* pCmbSnd = (CSoundComboBox*) lParam;
 
-	CC_ASSERT(pCmbSnd, "pCmbSnd is NULL in AddSoundToComboBox");
-	CC_ASSERT(pszFile, "pszFile is NULL in AddSoundToComboBox");
+	ASSERT(pCmbSnd, "pCmbSnd is NULL in AddSoundToComboBox");
+	ASSERT(pszFile, "pszFile is NULL in AddSoundToComboBox");
 
 	int iIndex = pCmbSnd->AddString(pszFile);
 
@@ -1803,8 +1805,8 @@ void CALLBACK AddTextFileToComboBox(LPARAM lParam, LPCSTR pszPath, LPCSTR pszFil
 {
 	CComboBox* pCmb = (CComboBox*) lParam;
 
-	CC_ASSERT(pCmb, "pCmb is NULL in AddTextFileToComboBox");
-	CC_ASSERT(pszFile, "pszFile is NULL in AddTextFileToComboBox");
+	ASSERT(pCmb, "pCmb is NULL in AddTextFileToComboBox");
+	ASSERT(pszFile, "pszFile is NULL in AddTextFileToComboBox");
 
 	CString strRelPath = pszPath;
 	CHAR	szAllFiles[128];
@@ -1934,7 +1936,7 @@ END_MESSAGE_MAP()
 
 HICON CSoundComboBox::GetIcon(UINT nIndex, LPCSTR pszString, DWORD dwItemData)
 {
-	CC_ASSERT(dwItemData < SOUNDTYPES, "dwItemData out of range in CSoundComboBox::GetIcon");
+	ASSERT(dwItemData < SOUNDTYPES, "dwItemData out of range in CSoundComboBox::GetIcon");
 	return m_hIcons[dwItemData];
 }
 
@@ -1952,7 +1954,7 @@ void CSoundComboBox::OnKeyDown(UINT nChar, UINT nRepCnt, UINT nFlags)
 	{
 		// OutputDebugString("CSoundComboBox::OnKeyDown - Tab\n");
 		CEditRule* per = (CEditRule*) GetParent();
-		CC_ASSERT(per, "per is NULL in CSoundComboBox::OnKeyDown");
+		ASSERT(per, "per is NULL in CSoundComboBox::OnKeyDown");
 		per->Tab(this, !(GetKeyState(VK_SHIFT) & 0x8000));
 		return;
 	}
@@ -2013,8 +2015,7 @@ void CEditRule::DoDataExchange(CDataExchange* pDX)
 	DDX_Control(pDX, IDC_CMBACTIONS, m_cmbActions);
 	DDX_Control(pDX, IDC_LBLPARAMDESC, m_lblParamDesc);
 
-	UINT uIndex;
-	for (uIndex = 0; uIndex < g_uMaxEventParams; uIndex++)
+	for (UINT uIndex = 0; uIndex < g_uMaxEventParams; uIndex++)
 	{
 		DDX_Control(pDX, IDC_LBLEP0+2*uIndex, m_lblEventParams[uIndex]);
 		DDX_Control(pDX, IDC_CMBEP0+2*uIndex, m_cmbEventParams[uIndex]);
@@ -2062,8 +2063,8 @@ END_MESSAGE_MAP()
 
 void CEditRule::Tab(CWnd* pWnd, BOOL bForward)
 {
-	CC_ASSERT(pWnd, "pWnd is NULL in CEditRule::Tab");
-	CC_ASSERT(m_pRule, "m_pRule is NULL in CEditRule::Tab");
+	ASSERT(pWnd, "pWnd is NULL in CEditRule::Tab");
+	ASSERT(m_pRule, "m_pRule is NULL in CEditRule::Tab");
 
 	UINT uIndex, uActionParams = m_pRule->GetAction()->GetParamNum();
 
@@ -2081,7 +2082,7 @@ void CEditRule::Tab(CWnd* pWnd, BOOL bForward)
 					default:
 						if (m_cmbActionParams[0].bGetRtfMode())
 						{
-							CC_ASSERT(m_cmbActionParams[0].GetRtfCmbEdit(), "m_cmbActionParams[0].GetRtfCmbEdit() is NULL in CEditRule::Tab");
+							ASSERT(m_cmbActionParams[0].GetRtfCmbEdit(), "m_cmbActionParams[0].GetRtfCmbEdit() is NULL in CEditRule::Tab");
 							GotoDlgCtrl(m_cmbActionParams[0].GetRtfCmbEdit());
 						}
 						else
@@ -2128,7 +2129,7 @@ void CEditRule::Tab(CWnd* pWnd, BOOL bForward)
 					default:
 						if (m_cmbActionParams[uActionParams-1].bGetRtfMode())
 						{
-							CC_ASSERT(m_cmbActionParams[uActionParams-1].GetRtfCmbEdit(), "m_cmbActionParams[uActionParams-1].GetRtfCmbEdit() is NULL in CEditRule::Tab");
+							ASSERT(m_cmbActionParams[uActionParams-1].GetRtfCmbEdit(), "m_cmbActionParams[uActionParams-1].GetRtfCmbEdit() is NULL in CEditRule::Tab");
 							GotoDlgCtrl(m_cmbActionParams[uActionParams-1].GetRtfCmbEdit());
 						}
 						else
@@ -2200,7 +2201,7 @@ void CEditRule::Tab(CWnd* pWnd, BOOL bForward)
 			}
 			else
 			{
-				CC_ASSERT(uIndex == uActionParams-1, "uIndex != uActionParams-1 in CEditRule::Tab");
+				ASSERT(uIndex == uActionParams-1, "uIndex != uActionParams-1 in CEditRule::Tab");
 				if (m_editDelay.IsWindowEnabled())
 					GotoDlgCtrl(&m_editDelay);
 				else
@@ -2219,7 +2220,7 @@ void CEditRule::Tab(CWnd* pWnd, BOOL bForward)
 			}
 			else
 			{
-				CC_ASSERT(uIndex == 0, "uIndex != 0 in CEditRule::Tab");
+				ASSERT(uIndex == 0, "uIndex != 0 in CEditRule::Tab");
 				GotoDlgCtrl(&m_cmbActions);
 			}
 			return;
@@ -2235,8 +2236,8 @@ void CEditRule::Tab(CWnd* pWnd, BOOL bForward)
 
 void CEditRule::UseRule(CCRule* pRule, CCDynaRules* pDynaRules)
 {
-	CC_ASSERT(pRule, "pRule is NULL in CEditRule::UseRule");
-	CC_ASSERT(pDynaRules, "pDynaRules is NULL in CEditRule::UseRule");
+	ASSERT(pRule, "pRule is NULL in CEditRule::UseRule");
+	ASSERT(pDynaRules, "pDynaRules is NULL in CEditRule::UseRule");
 
 	m_pRule = pRule;
 	m_pDynaRules = pDynaRules;
@@ -2245,8 +2246,8 @@ void CEditRule::UseRule(CCRule* pRule, CCDynaRules* pDynaRules)
 
 BOOL CEditRule::bFillActionsFromEvent(BOOL* pbActionChanged)
 {
-	CC_ASSERT(m_pRule, "m_pRule is NULL in CEditRule::bFillActionsFromEvent");
-	CC_ASSERT(m_pRule->GetEvent(), "m_pRule->m_pEvent is NULL in CEditRule::bFillActionsFromEvent");
+	ASSERT(m_pRule, "m_pRule is NULL in CEditRule::bFillActionsFromEvent");
+	ASSERT(m_pRule->GetEvent(), "m_pRule->m_pEvent is NULL in CEditRule::bFillActionsFromEvent");
 
 	m_cmbActions.ResetContent();
 
@@ -2265,7 +2266,7 @@ BOOL CEditRule::bFillActionsFromEvent(BOOL* pbActionChanged)
 			if ((iIndex = m_cmbActions.AddString(pAction->GetLongDesc())) < 0)
 			{
 				m_cmbActions.ResetContent();
-				CC_ASSERT(FALSE, "AddString failed in CEditRule::bFillActionsFromEvent");
+				ASSERT(FALSE, "AddString failed in CEditRule::bFillActionsFromEvent");
 				return FALSE;
 			}
 			else
@@ -2301,7 +2302,7 @@ void CEditRule::FillParamLabels(BOOL bEvents, BOOL bActions)
 
 	if (bEvents)
 	{
-		CC_ASSERT(m_pRule->GetEvent(), "m_pRule->GetEvent() is NULL in CEditRule::FillParamLabels");
+		ASSERT(m_pRule->GetEvent(), "m_pRule->GetEvent() is NULL in CEditRule::FillParamLabels");
 		bNSPresent = FALSE;
 		uParamNum = m_pRule->GetEvent()->GetParamNum();
 		for (uIndex = 0; uIndex < uParamNum; uIndex++)
@@ -2345,7 +2346,7 @@ void CEditRule::FillParamLabels(BOOL bEvents, BOOL bActions)
 
 	if (bActions)
 	{
-		CC_ASSERT(m_pRule->GetAction(), "m_pRule->GetAction() is NULL in CEditRule::FillParamLabels");
+		ASSERT(m_pRule->GetAction(), "m_pRule->GetAction() is NULL in CEditRule::FillParamLabels");
 		bSDPresent = bNSPresent = FALSE;
 		uParamNum = m_pRule->GetAction()->GetParamNum();
 		for (uIndex = 0; uIndex < uParamNum; uIndex++)
@@ -2407,7 +2408,7 @@ BOOL CEditRule::bFillParamsFromRule(BOOL bEvents, BOOL bActions)
 
 	if (pEvent)
 	{
-		CC_ASSERT(pAction, "pAction is NULL in CEditRule::bFillParamsFromRule");
+		ASSERT(pAction, "pAction is NULL in CEditRule::bFillParamsFromRule");
 
 		UINT	uIndex, uIndexKey, uKeyParam, uKeyParamBit;
 
@@ -2445,7 +2446,7 @@ BOOL CEditRule::bFillParamsFromRule(BOOL bEvents, BOOL bActions)
 				enumParamType ptActionParam = pAction->GetParamType(uIndex);
 				if (RTFParam(ptActionParam, pAction->GetID()) && m_prgdwActionParamFormatting[ptActionParam])
 				{
-					CC_ASSERT(m_cmbActionParams[uIndex].GetRtfCmbEdit(), "m_cmbActionParams[uIndex].GetRtfCmbEdit() is NULL in CEditRule::bFillParamsFromRule");
+					ASSERT(m_cmbActionParams[uIndex].GetRtfCmbEdit(), "m_cmbActionParams[uIndex].GetRtfCmbEdit() is NULL in CEditRule::bFillParamsFromRule");
 					m_cmbActionParams[uIndex].GetRtfCmbEdit()->bSetWindowFormattedText(m_rgstrActionParams[ptActionParam], m_prgdwActionParamFormatting[ptActionParam]);
 					m_cmbActionParams[uIndex].GetRtfCmbEdit()->SetSel(0, 0);
 				}
@@ -2484,14 +2485,14 @@ BOOL CEditRule::bFillParamsFromRule(BOOL bEvents, BOOL bActions)
 					}
 					case ptRuleSetName:
 					{
-						CC_ASSERT(m_pDynaRules, "m_pDynaRules is NULL in CEditRule::bFillParamsFromRule");
+						ASSERT(m_pDynaRules, "m_pDynaRules is NULL in CEditRule::bFillParamsFromRule");
 						INT			iRuleSets = m_pDynaRules->GetRuleSetsArray().GetSize(), iIndex;
 						CCRuleSet*	pRuleSet;
 
 						for (iIndex = 0; iIndex < iRuleSets; iIndex++)
 						{
 							pRuleSet = (CCRuleSet*) m_pDynaRules->GetRuleSetsArray().GetAt(iIndex);
-							CC_ASSERT(pRuleSet, "pRuleSet is NULL in CEditRule::bFillParamsFromRule");
+							ASSERT(pRuleSet, "pRuleSet is NULL in CEditRule::bFillParamsFromRule");
 							m_cmbActionParams[uIndex].AddString(pRuleSet->GetName());
 						}
 						break;
@@ -2554,7 +2555,7 @@ BOOL CEditRule::bFillParamsFromRule(BOOL bEvents, BOOL bActions)
 			else
 			{
 				// treat potential exception
-				CC_ASSERT(pAction, "pAction is NULL in CEditRule::bFillParamsFromRule");
+				ASSERT(pAction, "pAction is NULL in CEditRule::bFillParamsFromRule");
 
 				DWORD	dwCurrentRange = m_spinDelay.GetRange();
 				BOOL	bException = FALSE;
@@ -2595,8 +2596,8 @@ BOOL CEditRule::bFillParamsFromRule(BOOL bEvents, BOOL bActions)
 
 BOOL CEditRule::bCorrectActionKeys()
 {
-	CC_ASSERT(m_pRule->GetEvent(),  "m_pRule->GetEvent()  is NULL in CEditRule::bCorrectActionKeys");
-	CC_ASSERT(m_pRule->GetAction(), "m_pRule->GetAction() is NULL in CEditRule::bCorrectActionKeys");
+	ASSERT(m_pRule->GetEvent(),  "m_pRule->GetEvent()  is NULL in CEditRule::bCorrectActionKeys");
+	ASSERT(m_pRule->GetAction(), "m_pRule->GetAction() is NULL in CEditRule::bCorrectActionKeys");
 
 	UINT	uIndex, uIndexKey, uKeyParam, uKeyParamBit;
 	DWORD	dwActionKeysExposed = m_pRule->GetEvent()->GetActionKeysExposed();
@@ -2639,11 +2640,11 @@ void CEditRule::SaveComboParams(BOOL bEvents, BOOL bActions)
 {
 	UINT iParam;
 
-	CC_ASSERT(m_pRule, "m_pRule is NULL in CEditRule::SaveComboParams");
+	ASSERT(m_pRule, "m_pRule is NULL in CEditRule::SaveComboParams");
 
 	if (bEvents)
 	{
-		CC_ASSERT(m_pRule->GetEvent(), "m_pRule->GetEvent() is NULL in CEditRule::SaveComboParams");
+		ASSERT(m_pRule->GetEvent(), "m_pRule->GetEvent() is NULL in CEditRule::SaveComboParams");
 		CCEvent* pEvent = (CCEvent*) m_pRule->GetEvent();
 		for (iParam = 0; iParam < pEvent->GetParamNum(); iParam++)
 		{
@@ -2657,7 +2658,7 @@ void CEditRule::SaveComboParams(BOOL bEvents, BOOL bActions)
 
 	if (bActions)
 	{
-		CC_ASSERT(m_pRule->GetAction(), "m_pRule->GetAction() is NULL in CEditRule::SaveComboParams");
+		ASSERT(m_pRule->GetAction(), "m_pRule->GetAction() is NULL in CEditRule::SaveComboParams");
 		CCAction* pAction = (CCAction*) m_pRule->GetAction();
 		for (iParam = 0; iParam < pAction->GetParamNum(); iParam++)
 		{
@@ -2675,7 +2676,7 @@ void CEditRule::SaveComboParams(BOOL bEvents, BOOL bActions)
 			}
 			if (RTFParam(ptActionParam, pAction->GetID()))
 			{
-				CC_ASSERT(m_cmbActionParams[iParam].GetRtfCmbEdit(), "m_cmbActionParams[iParam].GetRtfCmbEdit() is NULL in CEditRule::SaveComboParams");
+				ASSERT(m_cmbActionParams[iParam].GetRtfCmbEdit(), "m_cmbActionParams[iParam].GetRtfCmbEdit() is NULL in CEditRule::SaveComboParams");
 				FreeAndNullFormatting(&(m_prgdwActionParamFormatting[ptActionParam]));
 				m_prgdwActionParamFormatting[ptActionParam] = PRGDWGetFormatting((CRichEditCtrl*) m_cmbActionParams[iParam].GetRtfCmbEdit(), m_cmbActionParams[iParam].GetRtfCmbEdit()->m_pFont, m_cmbActionParams[iParam].GetRtfCmbEdit()->m_crTextColor);
 			}
@@ -2686,12 +2687,11 @@ void CEditRule::SaveComboParams(BOOL bEvents, BOOL bActions)
 
 void CEditRule::SaveRuleParams()
 {
-	CC_ASSERT(m_pRule->GetEvent(), "m_pRule->GetEvent() is NULL in CEditRule::SaveRuleParams");
-	CC_ASSERT(m_pRule->GetAction(), "m_pRule->GetAction() is NULL in CEditRule::SaveRuleParams");
+	ASSERT(m_pRule->GetEvent(), "m_pRule->GetEvent() is NULL in CEditRule::SaveRuleParams");
+	ASSERT(m_pRule->GetAction(), "m_pRule->GetAction() is NULL in CEditRule::SaveRuleParams");
 
-	UINT iParam;
 	CCEvent* pEvent = (CCEvent*) m_pRule->GetEvent();
-	for (iParam = 0; iParam < pEvent->GetParamNum(); iParam++)
+	for (UINT iParam = 0; iParam < pEvent->GetParamNum(); iParam++)
 		m_rgstrEventParams[pEvent->GetParamType(iParam)] = m_pRule->GetEventParam(iParam);
 
 	CCAction* pAction = (CCAction*) m_pRule->GetAction();
@@ -2721,7 +2721,7 @@ void CEditRule::SaveRuleParams()
 		else
 			if (RTFParam(ptActionParam, pAction->GetID()))
 			{
-				CC_ASSERT(!m_prgdwActionParamFormatting[ptActionParam], "m_prgdwActionParamFormatting[ptActionParam] is NOT NULL in CEditRule::SaveRuleParams");
+				ASSERT(!m_prgdwActionParamFormatting[ptActionParam], "m_prgdwActionParamFormatting[ptActionParam] is NOT NULL in CEditRule::SaveRuleParams");
 				m_prgdwActionParamFormatting[ptActionParam] = CopyFormatting(m_pRule->GetMsgFormatting());
 			}
 	}
@@ -2730,7 +2730,7 @@ void CEditRule::SaveRuleParams()
 
 void CEditRule::UpdateAdvancedControls()
 {
-	CC_ASSERT(m_pRule->GetEvent(), "m_pRule->GetEvent() is NULL in CEditRule::UpdateAdvancedControls");
+	ASSERT(m_pRule->GetEvent(), "m_pRule->GetEvent() is NULL in CEditRule::UpdateAdvancedControls");
 
 	BOOL		bShow = FALSE;
 	CCEvent*	pEvent = (CCEvent*) m_pRule->GetEvent();
@@ -2757,7 +2757,7 @@ BOOL CEditRule::OnInitDialog()
 
 	CCSDialog::OnInitDialog();
 
-	CC_ASSERT(m_pRule, "m_pRule is NULL in CEditRule::OnInitDialog");
+	ASSERT(m_pRule, "m_pRule is NULL in CEditRule::OnInitDialog");
 
 	m_uDelay = m_pRule->GetDelay();
 	CString strDelay;
@@ -2833,8 +2833,8 @@ void CEditRule::OnOK()
 	CCEvent*	pEvent = m_pRule->GetEvent();
 	CCAction*	pAction = m_pRule->GetAction();
 
-	CC_ASSERT(pEvent, "pEvent is NULL in CEditRule::OnOK");
-	CC_ASSERT(pAction, "pAction is NULL in CEditRule::OnOK");
+	ASSERT(pEvent, "pEvent is NULL in CEditRule::OnOK");
+	ASSERT(pAction, "pAction is NULL in CEditRule::OnOK");
 
 	// Check for event param validity
 	for (uIndex = 0; uIndex < pEvent->GetParamNum(); uIndex++)
@@ -2867,7 +2867,7 @@ void CEditRule::OnOK()
 				m_pRule->SetEventParam(uIndex, strParam);
 				if (!m_pRule->bValidateRuleEvent(uIndex, strParam, &uErrorIDS))
 				{
-					CC_ASSERT(uErrorIDS, "uErrorIDS is 0 in CEditRule::OnOK");
+					ASSERT(uErrorIDS, "uErrorIDS is 0 in CEditRule::OnOK");
 					AfxMessageBox(uErrorIDS);
 					return;
 				}
@@ -2891,7 +2891,7 @@ void CEditRule::OnOK()
 				if (CB_ERR != (iCurSel = m_cmbActionSndParam.GetCurSel()))
 					nType = m_cmbActionSndParam.GetItemData(iCurSel);
 
-				CC_ASSERT(nType < SOUNDTYPES, "nType out of range in CEditRule::OnOK");
+				ASSERT(nType < SOUNDTYPES, "nType out of range in CEditRule::OnOK");
 
 				m_cmbActionSndParam.GetWindowText(strParam);
 
@@ -2925,7 +2925,7 @@ void CEditRule::OnOK()
 				m_pRule->SetActionParam(uIndex, strParam);
 				if (!m_pRule->bValidateRuleAction(uIndex, strParam, &uErrorIDS))
 				{
-					CC_ASSERT(uErrorIDS, "uErrorIDS is 0 in CEditRule::OnOK");
+					ASSERT(uErrorIDS, "uErrorIDS is 0 in CEditRule::OnOK");
 					AfxMessageBox(uErrorIDS);
 					return;
 				}
@@ -2933,7 +2933,7 @@ void CEditRule::OnOK()
 
 			if (RTFParam(pAction->GetParamType(uIndex), pAction->GetID()))
 			{
-				CC_ASSERT(m_cmbActionParams[uIndex].GetRtfCmbEdit(), "m_cmbActionParams[uIndex].GetRtfCmbEdit() is NULL in CEditRule::OnOK");
+				ASSERT(m_cmbActionParams[uIndex].GetRtfCmbEdit(), "m_cmbActionParams[uIndex].GetRtfCmbEdit() is NULL in CEditRule::OnOK");
 				CDWordArray* prgdwMsgFormatting = PRGDWGetFormatting((CRichEditCtrl*) m_cmbActionParams[uIndex].GetRtfCmbEdit(), m_cmbActionParams[uIndex].GetRtfCmbEdit()->m_pFont, m_cmbActionParams[uIndex].GetRtfCmbEdit()->m_crTextColor);
 				m_pRule->SetMsgFormatting(prgdwMsgFormatting, FALSE /*bMakeCopy*/);
 			}
@@ -2952,8 +2952,8 @@ void CEditRule::OnEventChanged()
 	UINT	uIndex = m_cmbEvents.GetCurSel();
 	BOOL	bActionChanged;
 		
-	CC_ASSERT(CB_ERR != uIndex, "uIndex == CB_ERR in CEditRule::OnEventChanged");
-	CC_ASSERT(m_pRule, "m_pRule is NULL in CEditRule::OnEventChanged");
+	ASSERT(CB_ERR != uIndex, "uIndex == CB_ERR in CEditRule::OnEventChanged");
+	ASSERT(m_pRule, "m_pRule is NULL in CEditRule::OnEventChanged");
 
 	SaveComboParams(TRUE /* bEvents */, TRUE /* bActions */);
 
@@ -2977,8 +2977,8 @@ void CEditRule::OnActionChanged()
 {
 	UINT	uIndex = m_cmbActions.GetCurSel();
 		
-	CC_ASSERT(CB_ERR != uIndex, "uIndex == CB_ERR in CEditRule::OnActionChanged");
-	CC_ASSERT(m_pRule, "m_pRule is NULL in CEditRule::OnActionChanged");
+	ASSERT(CB_ERR != uIndex, "uIndex == CB_ERR in CEditRule::OnActionChanged");
+	ASSERT(m_pRule, "m_pRule is NULL in CEditRule::OnActionChanged");
 
 	SaveComboParams(FALSE /* bEvents */, TRUE /* bActions */);
 
@@ -2994,9 +2994,9 @@ void CEditRule::OnEventParamSetFocus(UINT uID)
 {
 	INT iIndex = (uID - IDC_CMBEP0) / 2;
 
-	CC_ASSERT(m_pRule, "m_pRule is NULL in CEditRule::OnEventParamSetFocus");
-	CC_ASSERT(m_pRule->GetEvent(), "m_pRule->GetEvent() is NULL in CEditRule::OnEventParamSetFocus");
-	CC_ASSERT(iIndex >= 0 && iIndex < m_pRule->GetEvent()->GetParamNum(), "iIndex out of range in CEditRule::OnEventParamSetFocus");
+	ASSERT(m_pRule, "m_pRule is NULL in CEditRule::OnEventParamSetFocus");
+	ASSERT(m_pRule->GetEvent(), "m_pRule->GetEvent() is NULL in CEditRule::OnEventParamSetFocus");
+	ASSERT(iIndex >= 0 && iIndex < m_pRule->GetEvent()->GetParamNum(), "iIndex out of range in CEditRule::OnEventParamSetFocus");
 
 	m_lblParamDesc.SetWindowText(m_pRule->GetEvent()->GetParamDesc(iIndex));
 	UpdateAdvancedControls();
@@ -3006,16 +3006,14 @@ void CEditRule::OnEventParamSetFocus(UINT uID)
 void CEditRule::OnEventNetParamSetFocus()
 {
 	CCEvent* pEvent = m_pRule->GetEvent();
-	INT iIndex = 0;
 
-	CC_ASSERT(pEvent, "pEvent is NULL in CEditRule::OnEventNetParamSetFocus");
+	ASSERT(pEvent, "pEvent is NULL in CEditRule::OnEventNetParamSetFocus");
 
-	for (; iIndex < pEvent->GetParamNum(); iIndex++)
+	for (INT iIndex = 0; iIndex < pEvent->GetParamNum(); iIndex++)
 		if (ptServerName == pEvent->GetParamType(iIndex))
 			break;
 
-	if (iIndex < pEvent->GetParamNum())
-		m_lblParamDesc.SetWindowText(pEvent->GetParamDesc(iIndex));
+	m_lblParamDesc.SetWindowText(pEvent->GetParamDesc(iIndex));
 }
 
 
@@ -3023,9 +3021,9 @@ void CEditRule::OnEventParamKillFocus(UINT uID)
 {
 	INT iIndex = (uID - IDC_CMBEP0) / 2;
 
-	CC_ASSERT(m_pRule, "m_pRule is NULL in CEditRule::OnEventParamKillFocus");
-	CC_ASSERT(m_pRule->GetEvent(), "m_pRule->GetEvent() is NULL in CEditRule::OnEventParamKillFocus");
-	CC_ASSERT(iIndex >= 0 && iIndex < m_pRule->GetEvent()->GetParamNum(), "iIndex out of range in CEditRule::OnEventParamKillFocus");
+	ASSERT(m_pRule, "m_pRule is NULL in CEditRule::OnEventParamKillFocus");
+	ASSERT(m_pRule->GetEvent(), "m_pRule->GetEvent() is NULL in CEditRule::OnEventParamKillFocus");
+	ASSERT(iIndex >= 0 && iIndex < m_pRule->GetEvent()->GetParamNum(), "iIndex out of range in CEditRule::OnEventParamKillFocus");
 
 	m_lblParamDesc.SetWindowText("");
 }
@@ -3040,9 +3038,9 @@ void CEditRule::OnActionParamSetFocus(UINT uID)
 	if (iIndex < 0 || iIndex >= m_pRule->GetAction()->GetParamNum())
 		iIndex = uID - IDC_RTFAP0;
 
-	CC_ASSERT(m_pRule, "m_pRule is NULL in CEditRule::OnActionParamSetFocus");
-	CC_ASSERT(m_pRule->GetAction(), "m_pRule->GetAction() is NULL in CEditRule::OnActionParamSetFocus");
-	CC_ASSERT(iIndex >= 0 && iIndex < m_pRule->GetAction()->GetParamNum(), "iIndex out of range in CEditRule::OnActionParamSetFocus");
+	ASSERT(m_pRule, "m_pRule is NULL in CEditRule::OnActionParamSetFocus");
+	ASSERT(m_pRule->GetAction(), "m_pRule->GetAction() is NULL in CEditRule::OnActionParamSetFocus");
+	ASSERT(iIndex >= 0 && iIndex < m_pRule->GetAction()->GetParamNum(), "iIndex out of range in CEditRule::OnActionParamSetFocus");
 
 	m_lblParamDesc.SetWindowText(m_pRule->GetAction()->GetParamDesc(iIndex));
 }
@@ -3051,32 +3049,28 @@ void CEditRule::OnActionParamSetFocus(UINT uID)
 void CEditRule::OnActionNetParamSetFocus()
 {
 	CCAction* pAction = m_pRule->GetAction();
-	INT iIndex = 0;
 
-	CC_ASSERT(pAction, "pAction is NULL in CEditRule::OnActionNetParamSetFocus");
+	ASSERT(pAction, "pAction is NULL in CEditRule::OnActionNetParamSetFocus");
 
-	for (; iIndex < pAction->GetParamNum(); iIndex++)
+	for (INT iIndex = 0; iIndex < pAction->GetParamNum(); iIndex++)
 		if (ptServerName == pAction->GetParamType(iIndex))
 			break;
 
-	if (iIndex < pAction->GetParamNum())
-		m_lblParamDesc.SetWindowText(pAction->GetParamDesc(iIndex));
+	m_lblParamDesc.SetWindowText(pAction->GetParamDesc(iIndex));
 }
 
 
 void CEditRule::OnActionSndParamSetFocus()
 {
 	CCAction* pAction = m_pRule->GetAction();
-	INT iIndex = 0;
 
-	CC_ASSERT(pAction, "pAction is NULL in CEditRule::OnActionSndParamSetFocus");
+	ASSERT(pAction, "pAction is NULL in CEditRule::OnActionSndParamSetFocus");
 
-	for (; iIndex < pAction->GetParamNum(); iIndex++)
+	for (INT iIndex = 0; iIndex < pAction->GetParamNum(); iIndex++)
 		if (ptSoundFileName == pAction->GetParamType(iIndex))
 			break;
 
-	if (iIndex < pAction->GetParamNum())
-		m_lblParamDesc.SetWindowText(pAction->GetParamDesc(iIndex));
+	m_lblParamDesc.SetWindowText(pAction->GetParamDesc(iIndex));
 }
 
 
@@ -3105,9 +3099,9 @@ void CEditRule::OnActionParamKillFocus(UINT uID)
 		if (iIndex < 0 || iIndex >= m_pRule->GetAction()->GetParamNum())
 			iIndex = uID - IDC_RTFAP0;
 
-		CC_ASSERT(m_pRule, "m_pRule is NULL in CEditRule::OnActionParamKillFocus");
-		CC_ASSERT(m_pRule->GetAction(), "m_pRule->GetAction() is NULL in CEditRule::OnActionParamKillFocus");
-		CC_ASSERT(iIndex >= 0 && iIndex < m_pRule->GetAction()->GetParamNum(), "iIndex out of range in CEditRule::OnActionParamKillFocus");
+		ASSERT(m_pRule, "m_pRule is NULL in CEditRule::OnActionParamKillFocus");
+		ASSERT(m_pRule->GetAction(), "m_pRule->GetAction() is NULL in CEditRule::OnActionParamKillFocus");
+		ASSERT(iIndex >= 0 && iIndex < m_pRule->GetAction()->GetParamNum(), "iIndex out of range in CEditRule::OnActionParamKillFocus");
 	#endif // DEBUG
 
 	if (bTab)
@@ -3142,7 +3136,7 @@ void CEditRule::OnActionParamFilter(UINT uID, NMHDR *pNotifyStruct, LRESULT *plR
 {
 	MSGFILTER*	pMSGFILTER = (MSGFILTER*) pNotifyStruct;
 
-	CC_ASSERT(pNotifyStruct, "pNotifyStruct is NULL in CEditRule::OnActionParamFilter");
+	ASSERT(pNotifyStruct, "pNotifyStruct is NULL in CEditRule::OnActionParamFilter");
 
 	if (pNotifyStruct->code == EN_MSGFILTER &&
 		pMSGFILTER->msg == WM_RBUTTONDOWN &&
@@ -3155,7 +3149,7 @@ void CEditRule::OnActionParamFilter(UINT uID, NMHDR *pNotifyStruct, LRESULT *plR
 
 void CEditRule::OnFlagsCheckClick()
 {
-	CC_ASSERT(m_pRule, "m_pRule is NULL in CEditRule::OnFlagsCheckClick");
+	ASSERT(m_pRule, "m_pRule is NULL in CEditRule::OnFlagsCheckClick");
 
 	WORD wFlags = m_pRule->wGetFlags();
 
@@ -3170,7 +3164,7 @@ void CEditRule::OnFlagsCheckClick()
 
 void CEditRule::OnAdvancedClick()
 {
-	CC_ASSERT(m_pRule, "m_pRule is NULL in CEditRule::OnAdvancedClick");
+	ASSERT(m_pRule, "m_pRule is NULL in CEditRule::OnAdvancedClick");
 
 	WORD					wOldFlags = m_pRule->wGetFlags();
 	CAdvancedEventParams	aepDlg(wOldFlags & (g_wMatchCase | g_wMatchWord));
@@ -3220,9 +3214,9 @@ CAddToSets::CAddToSets(CCDynaRules* pDynaCopy, CCRuleSet* pRuleSet, CCRule* pRul
 {
 	//{{AFX_DATA_INIT(CAddToSets)
 	//}}AFX_DATA_INIT
-	CC_ASSERT(pDynaCopy, "pDynaCopy is NULL CAddToSets::CAddToSets");
-	CC_ASSERT(pRuleSet, "pRuleSet is NULL CAddToSets::CAddToSets");
-	CC_ASSERT(pRule, "pRule is NULL CAddToSets::CAddToSets");
+	ASSERT(pDynaCopy, "pDynaCopy is NULL CAddToSets::CAddToSets");
+	ASSERT(pRuleSet, "pRuleSet is NULL CAddToSets::CAddToSets");
+	ASSERT(pRule, "pRule is NULL CAddToSets::CAddToSets");
 
 	m_pRule		= pRule;
 	m_pRuleSet	= pRuleSet;
@@ -3260,8 +3254,8 @@ BOOL CAddToSets::bFillRuleSets()
 	for (INT iIndexSet = 0; iIndexSet < iRuleSets && bRet; iIndexSet++)
 	{
 		pRuleSet = (CCRuleSet*) pRuleSetsArray->GetAt(iIndexSet);
-		CC_ASSERT(pRuleSet, "pRuleSet is NULL in CAddToSets::bFillRuleSets");
-		CC_ASSERT(!pRuleSet->GetName().IsEmpty(), "pRuleSet->GetName().IsEmpty() in CAddToSets::bFillRuleSets");
+		ASSERT(pRuleSet, "pRuleSet is NULL in CAddToSets::bFillRuleSets");
+		ASSERT(!pRuleSet->GetName().IsEmpty(), "pRuleSet->GetName().IsEmpty() in CAddToSets::bFillRuleSets");
 
 		if (pRuleSet != m_pRuleSet)
 		{
@@ -3269,13 +3263,13 @@ BOOL CAddToSets::bFillRuleSets()
 				m_lstSets.SetItemDataPtr(iIndex, (void*) pRuleSet);
 			else
 			{
-				CC_ASSERT(FALSE, "AddString failed in CAddToSets::bFillRuleSets");
+				ASSERT(FALSE, "AddString failed in CAddToSets::bFillRuleSets");
 				bRet = FALSE;
 			}
 		}
 	}
 
-	CC_ASSERT(bRet, "bRet is FALSE in CAddToSets::bFillRuleSets");
+	ASSERT(bRet, "bRet is FALSE in CAddToSets::bFillRuleSets");
 
 	return bRet;
 }
@@ -3288,7 +3282,7 @@ BOOL CAddToSets::bAddToSets()
 	CCRule*		pRule;
 	BOOL		bRet = FALSE;
 
-	CC_ASSERT(m_pRule, "m_pRule is NULL in CAddToSets::bAddToSets");
+	ASSERT(m_pRule, "m_pRule is NULL in CAddToSets::bAddToSets");
 
 	if (!iSets || !(prgIndex = new INT[iSets]))
 		return FALSE;
@@ -3296,15 +3290,15 @@ BOOL CAddToSets::bAddToSets()
 	iSelected = m_lstSets.GetSelItems(iSets, prgIndex);
 	for (iIndex = 0; iIndex < iSelected; iIndex++)
 	{
-		CC_ASSERT(prgIndex[iIndex] >= 0 && prgIndex[iIndex] < iSets, "prgIndex[iIndex] out of range in CAddToSets::bAddToSets");
+		ASSERT(prgIndex[iIndex] >= 0 && prgIndex[iIndex] < iSets, "prgIndex[iIndex] out of range in CAddToSets::bAddToSets");
 		pRuleSet = (CCRuleSet*) m_lstSets.GetItemDataPtr(prgIndex[iIndex]);
-		CC_ASSERT((LONG) pRuleSet != -1, "pRuleSet == -1 in CAddToSets::bAddToSets");
-		CC_ASSERT(!pRuleSet->GetName().IsEmpty(), "pRuleSet->GetName().IsEmpty() in CAddToSets::bAddToSets");
+		ASSERT((LONG) pRuleSet != -1, "pRuleSet == -1 in CAddToSets::bAddToSets");
+		ASSERT(!pRuleSet->GetName().IsEmpty(), "pRuleSet->GetName().IsEmpty() in CAddToSets::bAddToSets");
 
 		if (pRule = new CCRule(m_pRule, pRuleSet->GetDynaRules()))
 		{
 			bRet |= pRuleSet->bAddRule(pRule);
-			CC_ASSERT(bRet, "bAddRule failed in CAddToSets::bAddToSets");
+			ASSERT(bRet, "bAddRule failed in CAddToSets::bAddToSets");
 			// pRuleSet->SetModified();
 		}
 	}
@@ -3376,8 +3370,8 @@ CSetNameConflict::CSetNameConflict(CString strSetName, CRuleSetsListBox* plstSet
 {
 	//{{AFX_DATA_INIT(CSetNameConflict)
 	//}}AFX_DATA_INIT
-	CC_ASSERT(!strSetName.IsEmpty(), "strSetName.IsEmpty() in CSetNameConflict::CSetNameConflict");
-	CC_ASSERT(plstSets, "plstSets is NULL in CSetNameConflict::CSetNameConflict");
+	ASSERT(!strSetName.IsEmpty(), "strSetName.IsEmpty() in CSetNameConflict::CSetNameConflict");
+	ASSERT(plstSets, "plstSets is NULL in CSetNameConflict::CSetNameConflict");
 
 	m_editSetName.SetFilter(FILTEREDIT_NOCHARS, "/\\:*?\"<>|");
 	m_strSetName = strSetName;
@@ -3430,7 +3424,7 @@ void CSetNameConflict::OnRenameRuleSetClick()
 	GetDlgItem(IDC_RENAMEDRULESET)->GetWindowText(strSetName);
 	strSetName.TrimLeft();
 	strSetName.TrimRight();
-	CC_ASSERT(!strSetName.IsEmpty(), "strSetName.IsEmpty() in CSetNameConflict::OnRenameRuleSetClick");
+	ASSERT(!strSetName.IsEmpty(), "strSetName.IsEmpty() in CSetNameConflict::OnRenameRuleSetClick");
 	if (LB_ERR != m_plstSets->FindStringExact(-1, (LPCTSTR) strSetName))
 	{
 		CString strConflict, strFmt;
@@ -3468,7 +3462,7 @@ CCreateSet::CCreateSet(CRuleSetsListBox* plstSets, CWnd* pwndParent /*=NULL*/)
 {
 	//{{AFX_DATA_INIT(CCreateSet)
 	//}}AFX_DATA_INIT
-	CC_ASSERT(plstSets, "plstSets is NULL in CCreateSet::CCreateSet");
+	ASSERT(plstSets, "plstSets is NULL in CCreateSet::CCreateSet");
 
 	m_editSetName.SetFilter(FILTEREDIT_NOCHARS, "/\\:*?\"<>|");
 	m_plstSets = plstSets;
@@ -3509,7 +3503,7 @@ void CCreateSet::OnOK()
 	GetDlgItem(IDC_CREATEDSET)->GetWindowText(strSetName);
 	strSetName.TrimLeft();
 	strSetName.TrimRight();
-	CC_ASSERT(!strSetName.IsEmpty(), "strSetName.IsEmpty() in CCreateSet::OnOK");
+	ASSERT(!strSetName.IsEmpty(), "strSetName.IsEmpty() in CCreateSet::OnOK");
 	if (LB_ERR != m_plstSets->FindStringExact(-1, (LPCTSTR) strSetName))
 	{
 		CString strConflict, strFmt;
@@ -3537,8 +3531,8 @@ CRenameSet::CRenameSet(CCRuleSet* pRuleSet, CRuleSetsListBox* plstSets, CWnd* pw
 {
 	//{{AFX_DATA_INIT(CRenameSet)
 	//}}AFX_DATA_INIT
-	CC_ASSERT(pRuleSet, "pRuleSet is NULL in CRenameSet::CRenameSet");
-	CC_ASSERT(plstSets, "plstSets is NULL in CRenameSet::CRenameSet");
+	ASSERT(pRuleSet, "pRuleSet is NULL in CRenameSet::CRenameSet");
+	ASSERT(plstSets, "plstSets is NULL in CRenameSet::CRenameSet");
 
 	m_editSetName.SetFilter(FILTEREDIT_NOCHARS, "/\\:*?\"<>|");
 	m_strSetName = pRuleSet->GetName();

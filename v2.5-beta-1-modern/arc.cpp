@@ -176,9 +176,10 @@ void DashArc2(DASHINFO &d, POINT& start, POINT& end, int altitude) {
 			step = trueAngle;
 		}
 		POINT M = point_add(dpoint_to_point(C), absCenter);
-		DashSeg(M, d);
+		DashSeg(point_add(dpoint_to_point(C), absCenter), d);
 		if (doExit) break;
 		A = C;
 		trueAngle -= SAMPLESTEP;
 	}
 }
+

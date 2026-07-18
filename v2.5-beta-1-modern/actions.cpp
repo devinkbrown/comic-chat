@@ -15,7 +15,6 @@
 #include "notipage.h"
 #include "whisprbx.h"
 #include "sounddlg.h"
-#include "modernicons.h"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -33,16 +32,16 @@ extern char*		GetNextStart(char *szString);
 
 BOOL bGetNextRange(LPTSTR *pszStr, UINT *puMin, UINT *puMax)
 {
-	ASSERT(pszStr != nullptr);
-	ASSERT(*pszStr != nullptr);
-	ASSERT(puMin != nullptr);
-	ASSERT(puMax != nullptr);
+	ASSERT(pszStr, "pszStr is NULL in bGetNextRange");
+	ASSERT(*pszStr, "*pszStr is NULL in bGetNextRange");
+	ASSERT(puMin, "puMin is NULL in bGetNextRange");
+	ASSERT(puMax, "puMax is NULL in bGetNextRange");
 
 	LPTSTR	szTmp = *pszStr, szStart;
 	TCHAR	chTmp;
 
 	szTmp = GetNextStart(szTmp);	// read uMinLine
-	if (!cc_isdigit(*szTmp))
+	if (!isdigit(*szTmp))
 	{
 		#ifdef DEBUG
 			if (*szTmp)	TRACE("Bad file line interval in bGetNextRange\n");
@@ -50,7 +49,7 @@ BOOL bGetNextRange(LPTSTR *pszStr, UINT *puMin, UINT *puMax)
 		goto exit;
 	}
 	szStart = szTmp;
-	while (*szTmp && cc_isdigit(*szTmp))
+	while (*szTmp && isdigit(*szTmp))
 		szTmp++;
 	chTmp = *szTmp;
 	*szTmp = g_chEOS;
@@ -67,13 +66,13 @@ BOOL bGetNextRange(LPTSTR *pszStr, UINT *puMin, UINT *puMax)
 	case g_chDash:				// read uMaxLine
 		szTmp++;
 		szTmp = GetNextStart(szTmp);
-		if (!cc_isdigit(*szTmp))
+		if (!isdigit(*szTmp))
 		{
 			TRACE("Bad file line interval in bGetNextRange\n");
 			goto exit;
 		}
 		szStart = szTmp;
-		while (*szTmp && cc_isdigit(*szTmp))
+		while (*szTmp && isdigit(*szTmp))
 			szTmp++;
 		chTmp = *szTmp;
 		*szTmp = g_chEOS;
@@ -418,7 +417,7 @@ CString	StrGetKeyActionParam(enumKeyActionParam kap,
 }
 
 
-BOOL bBeep(const CString& strBeepCount)
+BOOL bBeep(CString& strBeepCount)
 {
 	INT		iBeepCount = atoi(strBeepCount);
 	BOOL	bRet = TRUE;
@@ -434,7 +433,7 @@ BOOL bBeep(const CString& strBeepCount)
 }
 
 
-BOOL bInvite(const CString& strNickname, const CString& strChannel)
+BOOL bInvite(CString& strNickname, CString& strChannel)
 {
 	if (0 == strNickname.CompareNoCase(GetMyNickName()))	// We don't want to invite ourselves
 		return TRUE;
@@ -451,7 +450,7 @@ BOOL bInvite(const CString& strNickname, const CString& strChannel)
 }
 
 
-BOOL bExecuteMacro(const CString& strMacroName, const CString& strEncodedChannelName, CUserInfo* pUI)
+BOOL bExecuteMacro(CString& strMacroName, CString& strEncodedChannelName, CUserInfo* pUI)
 {
 	for (INT iMacroNum = 0; iMacroNum < NMACROS; iMacroNum++)
 		if (theApp.m_macros[iMacroNum].m_bDefined && 0 == strMacroName.Compare(theApp.m_macros[iMacroNum].m_strName))
@@ -1087,8 +1086,12 @@ CNotificationUsers* CreateNotificationBox()
 		delete pNotifBox;
 		return NULL;
 	}
-	comic_chat::modern_ui::ApplyDpiAwareWindowIcons(
-		*pNotifBox, IDI_NOTIF, pNotifBox->m_windowIcons);
+	HICON hIcon = theApp.LoadIcon(IDI_NOTIF);
+	if (hIcon)
+	{
+		pNotifBox->SetIcon(hIcon, TRUE);
+		pNotifBox->SetIcon(hIcon, FALSE);
+	}
 	pNotifBox->SetPostCreate(TRUE);
 	if (!IsRectEmpty (&theApp.m_rectNotifs))
 	{
@@ -1176,3 +1179,5 @@ BOOL bReportRuleFailure(CCRuleSet* pRuleSet, CCRule* pRule, UINT uErrorCode)
 	
 	return TRUE;
 }
+
+

@@ -40,15 +40,15 @@ void DrawBalloon(CDC *dc, RECT *loc) {
 // return the first non-punctuation character after the stream of white space
 // (or terminating null char)
 char *GetNextStart(char *str) {
-	while (cc_isspace(*str)) str++;
+	while (isspace(*str)) str++;
 	return str;
 }
 
 // return the first whitespace char starting at str
 // (or the terminating null) after any initial run of whitespace
 char *GetNextEnd(char *str) {
-	while (*str && cc_isspace(*str)) str++;
-	while (*str && !cc_isspace(*str)) str++;
+	while (*str && isspace(*str)) str++;
+	while (*str && !isspace(*str)) str++;
 	return str;
 }
 
@@ -939,6 +939,7 @@ CFontInfo::CFontInfo(CFont *font, int leading, int baseAdd) {
 	m_lineHeight = (short)(tm.tmHeight + leading);
 	dc->SelectObject(oldFont);
 }
+
 
 
 

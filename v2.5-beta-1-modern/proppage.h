@@ -34,6 +34,7 @@ public:
 	BOOL	m_bShowArrivals;
 	CString	m_strSoundPath;
 	BOOL	m_bAllowInvites;
+	BOOL	m_bAcceptNMCalls;
 	BOOL	m_bPlaySounds;
 	BOOL	m_bShowIdentity;
 	BOOL	m_bAllowFileTX;
@@ -68,6 +69,7 @@ protected:
 	afx_msg void OnShowarrivals();
 	afx_msg void OnChangeSoundpath();
 	afx_msg void OnAllowinvites();
+	afx_msg void OnAcceptNMCalls();
 	afx_msg void OnPlaysounds();
 	afx_msg void OnShowidentity();
 	afx_msg void OnAllowFiletx();

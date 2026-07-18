@@ -69,7 +69,7 @@ void CDosKey::SeekToEnd()
 
 CString CDosKey::StrGetNextEntry(CDWordArray** pprgdwFormatting)
 {
-	CC_ASSERT(pprgdwFormatting, "pprgdwFormatting is NULL in CDosKey::StrGetNextEntry");
+	ASSERT(pprgdwFormatting, "pprgdwFormatting is NULL in CDosKey::StrGetNextEntry");
 
 	INT	iIndex = (m_iCurIndex + 1) % m_uMaxSize;
 
@@ -82,7 +82,7 @@ CString CDosKey::StrGetNextEntry(CDWordArray** pprgdwFormatting)
 	}
 	else
 	{
-		CC_ASSERT(iIndex < m_rgstrEntries.GetSize(), "iIndex >= m_rgstrEntries.GetSize() in CDosKey::StrGetNextEntry");
+		ASSERT(iIndex < m_rgstrEntries.GetSize(), "iIndex >= m_rgstrEntries.GetSize() in CDosKey::StrGetNextEntry");
 		m_iCurIndex = iIndex;
 		m_bEndReached = FALSE;
 		*pprgdwFormatting = (CDWordArray*) m_rgpFormatting.GetAt(iIndex);
@@ -93,12 +93,12 @@ CString CDosKey::StrGetNextEntry(CDWordArray** pprgdwFormatting)
 
 CString CDosKey::StrGetPrevEntry(CDWordArray** pprgdwFormatting)
 {
-	CC_ASSERT(pprgdwFormatting, "pprgdwFormatting is NULL in CDosKey::StrGetPrevEntry");
+	ASSERT(pprgdwFormatting, "pprgdwFormatting is NULL in CDosKey::StrGetPrevEntry");
 
 	if (m_iCurIndex == m_iStartIndex && !m_bEndReached)
 	{
-		CC_ASSERT(m_iStartIndex >= 0 && m_iStartIndex < m_rgstrEntries.GetSize(), "m_iStartIndex < 0 || m_iStartIndex >= m_rgstrEntries.GetSize() in CDosKey::StrGetPrevEntry");
-		CC_ASSERT(m_iStartIndex >= 0 && m_iStartIndex < m_rgpFormatting.GetSize(), "m_iStartIndex < 0 || m_iStartIndex >= m_rgpFormatting.GetSize() in CDosKey::StrGetPrevEntry");
+		ASSERT(m_iStartIndex >= 0 && m_iStartIndex < m_rgstrEntries.GetSize(), "m_iStartIndex < 0 || m_iStartIndex >= m_rgstrEntries.GetSize() in CDosKey::StrGetPrevEntry");
+		ASSERT(m_iStartIndex >= 0 && m_iStartIndex < m_rgpFormatting.GetSize(), "m_iStartIndex < 0 || m_iStartIndex >= m_rgpFormatting.GetSize() in CDosKey::StrGetPrevEntry");
 		*pprgdwFormatting = (CDWordArray*) m_rgpFormatting.GetAt(m_iStartIndex);
 		return m_rgstrEntries.GetAt(m_iStartIndex);
 	}
@@ -114,8 +114,8 @@ CString CDosKey::StrGetPrevEntry(CDWordArray** pprgdwFormatting)
 
 		m_iCurIndex = iIndex;
 		m_bEndReached = FALSE;
-		CC_ASSERT(iIndex >= 0 && iIndex < m_rgstrEntries.GetSize(), "iIndex < 0 || iIndex >= m_rgstrEntries.GetSize() in CDosKey::StrGetPrevEntry");
-		CC_ASSERT(iIndex >= 0 && iIndex < m_rgpFormatting.GetSize(), "iIndex < 0 || iIndex >= m_rgpFormatting.GetSize() in CDosKey::StrGetPrevEntry");
+		ASSERT(iIndex >= 0 && iIndex < m_rgstrEntries.GetSize(), "iIndex < 0 || iIndex >= m_rgstrEntries.GetSize() in CDosKey::StrGetPrevEntry");
+		ASSERT(iIndex >= 0 && iIndex < m_rgpFormatting.GetSize(), "iIndex < 0 || iIndex >= m_rgpFormatting.GetSize() in CDosKey::StrGetPrevEntry");
 		*pprgdwFormatting = (CDWordArray*) m_rgpFormatting.GetAt(iIndex);
 		return m_rgstrEntries.GetAt(iIndex);
 	}
@@ -127,17 +127,17 @@ BOOL CDosKey::bAppendEntry(CString strEntry, CDWordArray* prgdwFormatting)
 	if (m_rgstrEntries.GetSize() < m_uMaxSize)
 	{
 		INT iNewEntry = m_rgstrEntries.Add(strEntry);
-		CC_ASSERT(m_iEndIndex == iNewEntry, "m_iEndIndex != iNewEntry in CDosKey::bAppendEntry");
+		ASSERT(m_iEndIndex == iNewEntry, "m_iEndIndex != iNewEntry in CDosKey::bAppendEntry");
 		iNewEntry = m_rgpFormatting.Add((PVOID) CopyFormatting(prgdwFormatting));
-		CC_ASSERT(m_iEndIndex == iNewEntry, "m_iEndIndex != iNewEntry in CDosKey::bAppendEntry");
+		ASSERT(m_iEndIndex == iNewEntry, "m_iEndIndex != iNewEntry in CDosKey::bAppendEntry");
 		if (m_iStartIndex < 0)
 			m_iStartIndex = 0;
 	}
 	else
 	{
-		CC_ASSERT(m_rgstrEntries.GetSize() == m_uMaxSize, "m_rgstrEntries.GetSize() != m_uMaxSize in CDosKey::bAppendEntry");
-		CC_ASSERT(m_iEndIndex >= 0, "m_iEndIndex < 0 in CDosKey::bAppendEntry");
-		CC_ASSERT(m_iEndIndex < m_uMaxSize, "m_iEndIndex >= m_uMaxSize in CDosKey::bAppendEntry");
+		ASSERT(m_rgstrEntries.GetSize() == m_uMaxSize, "m_rgstrEntries.GetSize() != m_uMaxSize in CDosKey::bAppendEntry");
+		ASSERT(m_iEndIndex >= 0, "m_iEndIndex < 0 in CDosKey::bAppendEntry");
+		ASSERT(m_iEndIndex < m_uMaxSize, "m_iEndIndex >= m_uMaxSize in CDosKey::bAppendEntry");
 
 		m_rgstrEntries.SetAt(m_iEndIndex, strEntry);
 		

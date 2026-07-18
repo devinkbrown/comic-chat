@@ -231,8 +231,7 @@ void CChatDoc::InitMyDocument() {
 
 char *CChatDoc::GetComicsTitle() {
 	char *GetRandomTitle();
-	static char emptyTitle[] = "";
-	char *title = m_bComicView ? m_comicsTitle : emptyTitle;
+	char *title = m_bComicView ? m_comicsTitle : "";
 	if (!title) title = m_comicsTitle = GetRandomTitle();
 	return title;
 }
@@ -390,7 +389,7 @@ void FindAttribution(const char *words, void *userInfo, const char **mesgPtr, UI
 	*id = 0;
 	const char *sptr = words;
 	while (sptr < angle) {
-		if (cc_isdigit(*sptr))
+		if (isdigit(*sptr))
 			*id = 10 * *id + (*sptr - '0');
 		else {
 			*id = userInfo ? ExtractAvatarID(userInfo) : MyAvatarID();
@@ -413,15 +412,15 @@ void FindPose(UINT speakerID, const char *words, const char **mesgPtr) {
 
 	// fill up addressee array
 	const char *sptr = words;
-	while (cc_isspace(*sptr) && sptr < colon) sptr++;
+	while (isspace(*sptr) && sptr < colon) sptr++;
 	while (sptr < colon) {
 		id = 0;
-		while (cc_isdigit(*sptr)) {
+		while (isdigit(*sptr)) {
 			id = 10 * id + (*sptr - '0');
 			sptr++;
 		}
-		while (cc_isspace(*sptr) && sptr < colon) sptr++;
-		if (!cc_isdigit(*sptr) && sptr != colon) {
+		while (isspace(*sptr) && sptr < colon) sptr++;
+		if (!isdigit(*sptr) && sptr != colon) {
 			// bogus entry -- don't change talkto, and return string as part of message
 			*mesgPtr = words;
 			return;
@@ -1495,8 +1494,7 @@ CMenu* pMenu)
 
 	// The item always comes after the Get Profile and Get Identity menu items. Try
 	// to find those, and get the next item.
-	int nPos;
-	for (nPos = pMenu->GetMenuItemCount () - 1; nPos >= 0; nPos--) {
+	for (int nPos = pMenu->GetMenuItemCount () - 1; nPos >= 0; nPos--) {
 		int nID = pMenu->GetMenuItemID (nPos);
 		if (nID == ID_GETIDENTITY || nID == ID_MEMBER_GETINFO) {
 			nPos = (nPos == pMenu->GetMenuItemCount () - 1) ? -1 : nPos + 1;

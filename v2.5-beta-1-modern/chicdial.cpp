@@ -70,8 +70,7 @@ LONG CCSDialog::OnHelpContextMenu(UINT wParam, LONG)
 BOOL CCSDialog::OnInitDialog() 
 {
 	CDialog::OnInitDialog();
-	if ((GetStyle() & WS_CHILD) == 0)
-		ModifyStyle(0, WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, SWP_FRAMECHANGED);
+	ModifyStyleEx(0, WS_EX_CONTEXTHELP);		
 	return TRUE;  // return TRUE unless you set the focus to a control
 	              // EXCEPTION: OCX Property Pages should return FALSE
 }
@@ -234,15 +233,12 @@ BOOL CCSPropertySheet::PreCreateWindow(CREATESTRUCT& cs)
 
 BOOL CCSPropertySheet::OnNcCreate(LPCREATESTRUCT lpCreateStruct) 
 {
-	// Native system chrome supplies Close/Alt+F4 and a real minimize action.
-	// WS_EX_CONTEXTHELP is intentionally omitted because Windows documents it
-	// as incompatible with WS_MINIMIZEBOX; page-level F1/context help remains.
-	lpCreateStruct->style |= WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
-	lpCreateStruct->dwExStyle &= ~WS_EX_CONTEXTHELP;
+	lpCreateStruct->dwExStyle |= WS_EX_CONTEXTHELP;
 	if (!CPropertySheet::OnNcCreate(lpCreateStruct))
 		return FALSE;
-	ModifyStyle(0, WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, SWP_FRAMECHANGED);
-	ModifyStyleEx(WS_EX_CONTEXTHELP, 0, SWP_FRAMECHANGED);
+	
+	lpCreateStruct->dwExStyle |= WS_EX_CONTEXTHELP;
+	ModifyStyleEx(0, WS_EX_CONTEXTHELP);
 	
 	return TRUE;
 }
@@ -252,4 +248,5 @@ CCSPropertySheet::OnQueryNewPalette()
 {
 	return theApp.QueryNewPaletteCommon (this);
 }
+
 

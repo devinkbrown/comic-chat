@@ -43,8 +43,6 @@
 #include "format.h"
 #include "actions.h"
 #include "whisprbx.h"
-#include "modernui.h"
-#include "modernicons.h"
 #include <direct.h>
 #include <winreg.h>
 #include <io.h>
@@ -271,6 +269,8 @@ CChatApp::CChatApp()
 	m_pWndHiddenInThread = NULL;
 	m_pbCoolBarState = NULL;
 
+	m_SrvConnector.SetServiceList (&m_listChatServices);
+
 	m_hNotificationThread = NULL;
 	m_hShutdownEvent = NULL;
 }
@@ -344,14 +344,8 @@ HRESULT CChatApp::HrAllocBuffer(SHORT nMaxMsgLength)
 }
 
 
-void CChatApp::InitStatusIcons(UINT dpi, HWND themedWindow) {
-	const auto metrics = comic_chat::modern_ui::MetricsForDpi(
-		dpi ? dpi : comic_chat::modern_ui::SystemDpi());
-	if (!comic_chat::modern_ui::BuildStripImageList(
-			m_StatusIcons, IDB_MEMBER, metrics.icon, 5, themedWindow)) {
-		m_StatusIcons.DeleteImageList();
-		m_StatusIcons.Create(IDB_MEMBER, 16, 5, RGB(0, 0, 255));
-	}
+void CChatApp::InitStatusIcons() {
+	m_StatusIcons.Create(IDB_MEMBER, 16, 5, RGB(0, 0, 255));
 }
 
 
@@ -455,11 +449,11 @@ BOOL CChatApp::InitInstance()
 	_CrtSetReportHook2(_CRT_RPTHOOK_INSTALL, ChatSuppressAssertHook);
 #endif
 
-	// Establish per-monitor-v2 awareness before MFC creates any HWND. The comic
-	// page remains TWIP-based; window chrome and pixel UI use the owning HWND's
-	// current DPI and rebuild their metrics on WM_DPICHANGED.
-	(void)comic_chat::modern_ui::EnablePerMonitorV2DpiAwareness();
-	g_screenDpi = static_cast<int>(comic_chat::modern_ui::SystemDpi());
+	// Run DPI-UNAWARE: we deliberately do NOT call SetProcessDPIAware(). On a
+	// high-DPI display Windows then bitmap-scales the whole window uniformly
+	// (toolbar, status bar, every font, the comic view) instead of us scaling a
+	// handful of surfaces and leaving the rest tiny. g_screenDpi stays 96, so the
+	// DpiScale() helper is a no-op everywhere.
 
 	/*
 		There are three paths in NM that can launch CChat. Two of them use CreateProcess and
@@ -970,7 +964,7 @@ void CDUpOne(const char *fullpath) {
 void CChatApp::SetBaseDir(const char *fullpath) {
 	CString path(fullpath);
 	int slash = path.ReverseFind('\\');
-	m_strBaseDir = slash >= 0 ? path.Left(slash) : CString(".");
+	m_strBaseDir = slash >= 0 ? path.Left(slash) : ".";
 }
 
 
@@ -1852,7 +1846,7 @@ CRoomInfo* CChatApp::GetRoomInfoFromName(CString strChannelName, PINT piIndex, B
 				{
 					INT iIndex = strUpperEnterRoom.GetLength();
 					INT iMax = strUpperChannelName.GetLength();
-					while (iIndex < iMax && cc_isdigit(strUpperChannelName[iIndex]))
+					while (iIndex < iMax && isdigit(strUpperChannelName[iIndex]))
 						iIndex++;
 					if (iIndex == iMax)
 						// found a clone
@@ -2524,10 +2518,6 @@ BOOL bIsPropSheet)
 		pParentWnd = NULL;
 	}
 
-	// Theme only native dialog chrome/common controls as they are created. The
-	// hook deliberately leaves RichEdit, comic preview, and document fonts alone.
-	comic_chat::modern_ui::ScopedDialogTheme dialogTheme;
-
 	// Do the dialog.
 	m_pWndActiveDialog = pDlgOrPropSheet;
 
@@ -2547,6 +2537,7 @@ BOOL bIsPropSheet)
 void
 CChatApp::OnConnectError()
 {
+	::AfxGetMainWnd ()->KillTimer (ID_CONNECT_TRY);
 	GetIrcProto()->SetConnectionStatus(CX_DISCONNECTED);
 	CString strMesg;
 	strMesg.LoadString(ID_ERR_CONNECT);
@@ -2559,13 +2550,46 @@ CChatApp::OnConnectError()
 void 
 CChatApp::OnConnectConnected()
 {
+	::AfxGetMainWnd ()->KillTimer (ID_CONNECT_TRY);
 	::AfxGetMainWnd ()->KillTimer (ID_ISIRCXTIMEOUT);
 }
 
-void CChatApp::CompleteConnection()
+void
+CChatApp::ContinueConnection()
 {
-	// The shared transport selects and records the endpoint before it starts.
-	// No MFC socket handle or resolver state is transferred at login time.
+	int nNumSockets = m_SrvConnector.GetNumSockets ();
+	int nRet = 1;
+	for (int i = 0; nRet == 1 && i < nNumSockets; i++)
+	{
+		nRet = m_SrvConnector.AssignSocket (i);
+		// A return code of 0 means error, which breaks out of the loop
+		// and does the Connect Error stuff below. A code of 1 means
+		// success and continues the loop. A code of -1 means that 
+		// no servers are available (their addresses are still being
+		// resolved), which breaks out of the loop and returns quietly.
+	}
+	if (nRet == 0)
+	{
+		OnConnectError ();
+	}
+}
+
+void
+CChatApp::ResumeConnection()
+{
+	if (m_SrvConnector.BeginConnectToService (NULL))
+		::AfxGetMainWnd ()->SetTimer (ID_CONNECT_TRY, 50, NULL);
+	else
+		::AfxGetMainWnd ()->PostMessage (WM_COMMAND, ID_CONNECT_ERROR);
+}
+
+void
+CChatApp::CompleteConnection()
+{
+	m_SrvConnector.Cleanup ();
+	m_strConnectedService = m_SrvConnector.m_strSvc;
+	m_strConnectedServer = m_SrvConnector.GetConnectingServer ()->m_pszName;
+	m_SrvConnector.GetConnectingServerGroup ()->SetLastAccessedServer (m_SrvConnector.GetConnectingServer ());
 }
 
 void

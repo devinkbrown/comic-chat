@@ -8,8 +8,6 @@
 #include "dib.h"
 #include "avatar.h"
 #include "bodycam.h"
-#include "modernicons.h"
-#include "modernui.h"
 
 #include "saywnd.h"
 #include "userinfo.h"
@@ -95,12 +93,16 @@ CBodyCam::CBodyCam()
 	m_palette = NULL;
 	m_mouseDown = FALSE;
 
-	// Keep immutable 96-DPI source metrics and derive per-instance values. This
-	// avoids compounding transforms and lets each bodycam follow its own monitor.
-	m_dpi = 96;
-	m_cursorRadius = 5;
-	m_iconWidth = LG_ICON_WIDTH;
-	m_iconHeight = LG_ICON_HEIGHT;
+	// Scale the (96-DPI) emotion-wheel pixel metrics to the display DPI once, so the
+	// wheel and its face icons stay proportional to the rest of the UI on high-DPI
+	// screens.  Guarded because these are shared statics across all bodycams.
+	static BOOL s_dpiScaled = FALSE;
+	if (!s_dpiScaled) {
+		m_cursorRadius = (short)DpiScale(m_cursorRadius);
+		m_iconWidth    = (short)DpiScale(m_iconWidth);
+		m_iconHeight   = (short)DpiScale(m_iconHeight);
+		s_dpiScaled = TRUE;
+	}
 	m_forcedDelete = TRUE;		// indicates bodycam must be deleted in OnNCDestroy
 	m_emotion.Set(0.0, 0.0);	// start off neutral
 	m_retDib = NULL;			// allocated later by CreateRetainedBitmap
@@ -145,8 +147,6 @@ BEGIN_MESSAGE_MAP(CBodyCam, CWnd)
 	ON_WM_MENUSELECT()
 	ON_WM_ENTERIDLE()
 	//}}AFX_MSG_MAP
-	ON_MESSAGE(WM_DPICHANGED, OnDpiChanged)
-	ON_MESSAGE(WM_THEMECHANGED, OnThemeChanged)
 END_MESSAGE_MAP()
 
 
@@ -157,11 +157,7 @@ BOOL CBodyCam::Create(LPCTSTR lpszClassName, LPCTSTR lpszWindowName, DWORD dwSty
 {
 	dwStyle &= ~WS_BORDER;
 
-	const BOOL created = CWnd::Create(
-		lpszClassName, lpszWindowName, dwStyle, rect, pParentWnd, nID, pContext);
-	if (created)
-		UpdateDpiMetrics(comic_chat::modern_ui::DpiForWindow(m_hWnd));
-	return created;
+	return CWnd::Create(lpszClassName, lpszWindowName, dwStyle, rect, pParentWnd, nID, pContext);
 }
 
 
@@ -222,8 +218,8 @@ void CBodyCam::OnPaint()
 // sets m_bullSide and m_bullDisabled
 void CBodyCam::CacheBullSide(int width)
 {
-	m_bullSide = min(width, comic_chat::modern_ui::Scale(MAXBULL, m_dpi));
-	if (m_bullSide < comic_chat::modern_ui::Scale(MINBULL, m_dpi)) {
+	m_bullSide = min(width, DpiScale(MAXBULL));
+	if (m_bullSide < DpiScale(MINBULL)) {
 		m_bullDisabled = TRUE;
 		//m_bullSide = MINBULL;
 		m_bullSide = 0;
@@ -267,14 +263,7 @@ RECT CBodyCam::GetIconRect(int i) const {
 void CBodyCam::DrawBullsEyeCons(CDC *dc, RECT &rect) {
 	for (int i = 0; i < NEMOTIONS; i++) {
 		RECT iconRect = GetIconRect(i);
-		// iconRect is vertically flipped for the legacy hit-test convention. Draw
-		// from its visual top-left while using the same DPI-scaled dimensions as
-		// layout/hit-testing so the original face artwork stays aligned.
-		if (m_emotionImages.GetSafeHandle())
-			m_emotionImages.Draw(dc, i, CPoint(iconRect.left, iconRect.bottom), ILD_TRANSPARENT);
-		else
-			Icons.GetIcon (i)->Draw(dc, iconRect.left, iconRect.bottom,
-				m_iconWidth, m_iconHeight);
+		Icons.GetIcon (i)->Draw(dc, iconRect.left, iconRect.bottom); // iconRect is flipped to support hit-testing
 	}
 }
 
@@ -588,8 +577,7 @@ RECT CBodyDouble::DrawBody(CDC *dc, RECT &clientRect, BOOL drawNimbus) {
 
 void CBodyDouble::Draw(CDC *dc, POINT *ul, RECT *dmgRect) {
 	// for now, ignore ul and dmgRect
-	RECT bodyRect = SRECTToRECT(m_bbox);
-	DrawBody(dc, bodyRect, TRUE);
+	DrawBody(dc, SRECTToRECT(m_bbox), TRUE);
 }
 
 void CBodySingle::FlipBodyBox(RECT &fullBox) {
@@ -624,8 +612,7 @@ RECT CBodySingle::DrawBody(CDC *dc, RECT &clientRect, BOOL drawNimbus) {
 }
 
 void CBodySingle::Draw(CDC *dc, POINT *ul, RECT *dmgRect) {
-	RECT bodyRect = SRECTToRECT(m_bbox);
-	DrawBody(dc, bodyRect, TRUE);
+	DrawBody(dc, SRECTToRECT(m_bbox), TRUE);
 }
 
 
@@ -711,6 +698,11 @@ BOOL CBodySingle::IsSame(CBody *other) {
 void CBodyCam::EraseRect(CDC *dc, RECT *rect) {
 	dc->FillSolidRect(rect, RGB(255, 255, 255));
 }
+
+short CBodyCam::m_cursorRadius = 5;
+short CBodyCam::m_iconWidth = LG_ICON_WIDTH;
+short CBodyCam::m_iconHeight = LG_ICON_HEIGHT;
+
 
 extern int testbody;
 
@@ -859,8 +851,7 @@ void CBodyCam::OnKeyDown(UINT nChar, UINT nRepCnt, UINT nFlags)
 		}
 		if (ptOld.x != ptCur.x || ptOld.y != ptCur.y)
 		{
-			CEmotion emotion = GetEmotionFromPoint (ptCur);
-			UpdateEmotion (emotion);
+			UpdateEmotion (GetEmotionFromPoint (ptCur));
 		}
 	}
 }
@@ -1079,9 +1070,6 @@ void CBodyCam::OnBodycontextSendexpression()
 
 void CBodyCam::OnSize(UINT nType, int cx, int cy) 
 {
-	const UINT dpi = comic_chat::modern_ui::DpiForWindow(m_hWnd);
-	if (dpi != m_dpi)
-		UpdateDpiMetrics(dpi);
 	CacheBullSide(cx);							// necessary for accurate RecalcRetainedBMP
 	RecalcRetainedBMP();
 
@@ -1090,39 +1078,6 @@ void CBodyCam::OnSize(UINT nType, int cx, int cy)
 	m_bodyRect.bottom = cy;
 
 	CWnd::OnSize(nType, cx, cy);
-}
-
-void CBodyCam::UpdateDpiMetrics(UINT dpi)
-{
-	m_dpi = dpi ? dpi : 96;
-	m_cursorRadius = static_cast<short>(comic_chat::modern_ui::Scale(5, m_dpi));
-	const CSize faceSize = comic_chat::modern_ui::ExpressionFaceSizeForDpi(m_dpi);
-	m_iconWidth = static_cast<short>(faceSize.cx);
-	m_iconHeight = static_cast<short>(faceSize.cy);
-	if (GetSafeHwnd()) {
-		comic_chat::modern_ui::BuildExpressionImageList(
-			m_emotionImages, faceSize, m_hWnd);
-		Invalidate(FALSE);
-	}
-}
-
-LRESULT CBodyCam::OnDpiChanged(WPARAM wParam, LPARAM)
-{
-	const UINT dpi = HIWORD(wParam) ? HIWORD(wParam) : LOWORD(wParam);
-	UpdateDpiMetrics(dpi);
-	CRect client;
-	GetClientRect(&client);
-	CacheBullSide(client.Width());
-	RecalcRetainedBMP();
-	return 0;
-}
-
-LRESULT CBodyCam::OnThemeChanged(WPARAM, LPARAM)
-{
-	comic_chat::modern_ui::BuildExpressionImageList(
-		m_emotionImages, CSize(m_iconWidth, m_iconHeight), m_hWnd);
-	Invalidate(FALSE);
-	return 0;
 }
 
 void CBodyCam::RecalcRetainedBMP() {		

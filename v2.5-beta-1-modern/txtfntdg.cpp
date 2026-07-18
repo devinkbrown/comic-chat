@@ -484,8 +484,7 @@ void CMyFontDialog::SyncFontControls (SELCHANGE *lpSelChange)
 
 	if (dwMaskConsistent & CFM_COLOR)
 	{
-		int i;
-		for (i = clrCombo->GetCount () - 1; i >= 0; i--)
+		for (int i = clrCombo->GetCount () - 1; i >= 0; i--)
 		{
 			if (clrCombo->GetItemData (i) == cf.crTextColor)
 			{

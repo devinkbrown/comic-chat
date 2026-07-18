@@ -14,7 +14,6 @@
 #include "format.h"
 #include "setupdlg.h"
 #include "protsupp.h"
-#include "modernicons.h"
 #include <mmsystem.h>
 
 extern CChatApp theApp;
@@ -194,8 +193,12 @@ CWhisperBox *CreateWhisperBox()
 	CWnd *parent = CWnd::GetDesktopWindow();
 	VERIFY(wbox->Create(IDD_WHISPERBOX, parent));
 	wbox->m_bPostCreate = TRUE;
-	comic_chat::modern_ui::ApplyDpiAwareWindowIcons(
-		*wbox, IDI_WHISPER, wbox->m_windowIcons);
+	HICON hIcon = theApp.LoadIcon(IDI_WHISPER);
+	if (hIcon)
+	{
+		wbox->SetIcon(hIcon, TRUE);
+		wbox->SetIcon(hIcon, FALSE);
+	}
 	if (!IsRectEmpty (&theApp.m_rectWhisper))
 	{
 		MakeRectVisibleOnScreen (&theApp.m_rectWhisper);
@@ -257,7 +260,6 @@ CWhisperLeaf::~CWhisperLeaf()
 
 CWhisperBox::~CWhisperBox()
 {
-	comic_chat::modern_ui::ReleaseDpiAwareWindowIcons(*this, m_windowIcons);
 	FreeLeaves();
 }
 
