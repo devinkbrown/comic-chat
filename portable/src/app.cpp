@@ -460,7 +460,7 @@ auto main(const int argc, char** argv) -> int {
         // LayoutBalloons expert placement and emits framed comic Panels. The live
         // view shows the tail (current) panel; empty until the first line, so the
         // title card holds on an idle connection.
-        const auto page_font = comicchat::build_font_metrics(**text, comicchat::message_text_size, 0, 0);
+        const auto page_font = comicchat::build_say_font_metrics(**text);
         comicchat::PageConfig page_config;
         page_config.font = page_font.value_or(comicchat::FontMetrics{});
         page_config.text_size = comicchat::message_text_size;

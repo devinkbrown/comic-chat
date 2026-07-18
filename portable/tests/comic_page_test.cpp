@@ -171,9 +171,12 @@ TEST_CASE("build_say_panel applies the CBWoodringNormal kern (doVKern=1), not th
 
     const auto kerned = comicchat::build_font_metrics(**engine, comicchat::message_text_size,
                                                       n_leading, n_base_add);
+    const auto derived = comicchat::build_say_font_metrics(**engine);
     const auto shout0 = comicchat::build_font_metrics(**engine, comicchat::message_text_size, 0, 0);
     REQUIRE(kerned.has_value());
+    REQUIRE(derived.has_value());
     REQUIRE(shout0.has_value());
+    CHECK(*derived == *kerned);
     // A non-zero raw n_leading suppresses the far-east top offset (balloon.cpp:635-638):
     // the say balloon keys top_offset to 0, unlike the retired (0,0) which kept 50.
     CHECK(kerned->top_offset == 0);

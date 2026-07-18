@@ -114,6 +114,16 @@ auto message_seed(const std::string_view nick, const std::string_view text) noex
     return fnv1a(nick) * 16777619U ^ fnv1a(text);
 }
 
+auto build_say_font_metrics(TextEngine& engine) -> std::expected<FontMetrics, TextError> {
+    const double reduction = message_text_size / woodring_kern_reference_height;
+    const int do_vkern = face_is_comic_sans(engine) ? 1 : 0;
+    const auto n_leading =
+        static_cast<std::int32_t>(woodring_leading_kern * reduction * do_vkern);
+    const auto n_base_add =
+        static_cast<std::int32_t>(woodring_base_add_kern * reduction * do_vkern);
+    return build_font_metrics(engine, message_text_size, n_leading, n_base_add);
+}
+
 auto build_message_panel(const MessagePanelRequest& request, const TextMeasure& measure) -> Panel {
     Panel panel;
     panel.seed = request.seed;
@@ -181,13 +191,7 @@ auto build_say_panel(TextEngine& engine, const std::string_view nick, const std:
     // (int) casts truncate toward zero, matching MS. (These are NOT the Shout
     // font's (0, 0); with a non-zero raw n_leading the say balloon's m_topOffset
     // correctly keys to 0 rather than FAREAST_TOPOFFSET, balloon.cpp:635-638.)
-    const double reduction = message_text_size / woodring_kern_reference_height;
-    const int do_vkern = face_is_comic_sans(engine) ? 1 : 0;
-    const auto n_leading =
-        static_cast<std::int32_t>(woodring_leading_kern * reduction * do_vkern);
-    const auto n_base_add =
-        static_cast<std::int32_t>(woodring_base_add_kern * reduction * do_vkern);
-    const auto metrics = build_font_metrics(engine, message_text_size, n_leading, n_base_add);
+    const auto metrics = build_say_font_metrics(engine);
 
     MessagePanelRequest request{};
     request.nick = std::string{nick};

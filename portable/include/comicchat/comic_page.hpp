@@ -8,6 +8,7 @@
 #include "comicchat/text.hpp"
 
 #include <cstdint>
+#include <expected>
 #include <filesystem>
 #include <optional>
 #include <span>
@@ -99,6 +100,12 @@ struct MessagePanelRequest final {
 // Deterministic per-message panel seed (the CPanel::m_seed analogue). Stored on
 // the Panel; a Phase 2.5b RNG-driven cloud_estimate placement would consume it.
 [[nodiscard]] auto message_seed(std::string_view nick, std::string_view text) noexcept -> std::uint32_t;
+
+// Build the source CBWoodringNormal say-balloon metrics at message_text_size.
+// fonts.cpp:82-83,89 applies (-40*reduction, +30*reduction) vertical kern only
+// when the resolved family is Comic Sans MS; every live Page and convenience
+// panel must share this derivation so layout and rendering use identical metrics.
+[[nodiscard]] auto build_say_font_metrics(TextEngine& engine) -> std::expected<FontMetrics, TextError>;
 
 // Assemble a single-speaker, single-panel comic Panel from one chat line.
 //

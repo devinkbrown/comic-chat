@@ -774,6 +774,116 @@ TEST_CASE("balloon text stays inside the cloud outline (no overflow)") {
     }
 }
 
+TEST_CASE("open cloud and text rasterize inside a say balloon") {
+    const auto font = comicchat::find_portable_comic_font();
+    REQUIRE(font.has_value());
+    auto text = comicchat::TextEngine::create(*font);
+    REQUIRE(text.has_value());
+
+    const auto metrics = comicchat::build_say_font_metrics(**text);
+    REQUIRE(metrics.has_value());
+    comicchat::PageConfig config;
+    config.font = *metrics;
+    config.text_size = comicchat::message_text_size;
+    config.max_text_width = comicchat::message_balloon_max_width;
+    comicchat::Page page{config, comicchat::measure_text_width(**text, comicchat::message_text_size)};
+    comicchat::PageAvatar speaker;
+    speaker.avatar_id = comicchat::nick_avatar_id("Ada");
+    speaker.body_width = comicchat::message_body_width;
+    speaker.body_height = comicchat::message_body_height;
+    speaker.face_fraction = 0.5;
+    speaker.color = comicchat::nick_color("Ada");
+    page.add_line(comicchat::Line{speaker, "hello comic world", comicchat::bm_say});
+    REQUIRE_FALSE(page.panels().empty());
+    CHECK(page.panels().size() == 1);
+    REQUIRE_FALSE(page.panels().front().balloons.empty());
+    CAPTURE(page.panels().size(), page.panels().front().balloons.front().text,
+            page.panels().front().balloons.front().lines.size());
+    const auto& panel = page.panels().back();
+    REQUIRE(panel.balloons.size() == 1);
+    const auto& balloon = panel.balloons.front();
+    REQUIRE_FALSE(balloon.lines.empty());
+    REQUIRE(balloon.outline_open.size() >= 4);
+    CHECK(balloon.tail.altitude > 0);
+
+    // BreakSpline replaces only the short tail-throat run. Its OPEN spline must
+    // still traverse the full cloud and terminate at the two real gap points.
+    CHECK(balloon.outline_open.front() == balloon.tail_gap_right);
+    CHECK(balloon.outline_open.back() == balloon.tail_gap_left);
+    const auto [closed_min_x, closed_max_x] = outline_x_span(balloon);
+    const auto [open_min_it, open_max_it] = std::ranges::minmax_element(
+        balloon.outline_open, {}, &comicchat::BalloonPoint::x);
+    REQUIRE(open_min_it != balloon.outline_open.end());
+    REQUIRE(open_max_it != balloon.outline_open.end());
+    CAPTURE(balloon.lines.size(), balloon.bbox.left, balloon.bbox.right, balloon.bbox.top,
+            balloon.bbox.bottom, balloon.route_region.left, balloon.route_region.right,
+            balloon.route_region.top, balloon.route_region.bottom, balloon.line_height,
+            balloon.text_size, balloon.lines.front().text, balloon.lines.front().width,
+            closed_min_x, closed_max_x, open_min_it->x, open_max_it->x);
+    CHECK(open_min_it->x <= closed_min_x + comicchat::balloon_xborder);
+    CHECK(open_max_it->x >= closed_max_x - comicchat::balloon_xborder);
+
+    comicchat::Canvas canvas{760, 760};
+    canvas.clear({1.0, 1.0, 1.0, 1.0});
+    canvas.render_panel(panel, **text);
+
+    // The text is drawn inside this source text cell, away from the cloud edge
+    // and tail. Dark pixels here therefore prove that the Cairo path pass left a
+    // usable context and DrawText reached the raster, not merely that the avatar
+    // or panel border contributed ink elsewhere in the frame.
+    const auto transform = canvas.panel_transform();
+    const auto gap_left = transform.to_device(comicchat::LogicalPoint{
+        static_cast<double>(balloon.tail_gap_left.x), static_cast<double>(balloon.tail_gap_left.y)});
+    const auto gap_right = transform.to_device(comicchat::LogicalPoint{
+        static_cast<double>(balloon.tail_gap_right.x), static_cast<double>(balloon.tail_gap_right.y)});
+    std::size_t dark_throat_samples{};
+    for (int step = 4; step <= 16; ++step) {
+        const double alpha = static_cast<double>(step) / 20.0;
+        const auto x = std::clamp(static_cast<int>(std::lround(
+                                      gap_left.x + alpha * (gap_right.x - gap_left.x))),
+                                  1, 758);
+        const auto y = std::clamp(static_cast<int>(std::lround(
+                                      gap_left.y + alpha * (gap_right.y - gap_left.y))),
+                                  1, 758);
+        bool dark_sample = false;
+        for (int dy = -1; dy <= 1; ++dy) {
+            for (int dx = -1; dx <= 1; ++dx) {
+                const auto pixel = canvas.pixels()[static_cast<std::size_t>(y + dy) * 760U +
+                                                   static_cast<std::size_t>(x + dx)];
+                const auto red = (pixel >> 16U) & 0xffU;
+                const auto green = (pixel >> 8U) & 0xffU;
+                const auto blue = pixel & 0xffU;
+                dark_sample = dark_sample || (red < 96U && green < 96U && blue < 96U);
+            }
+        }
+        if (dark_sample) ++dark_throat_samples;
+    }
+    // A reverted closed cloud would stroke a black line across nearly every
+    // sample. The open cloud plus bowed arcs leaves the throat interior white.
+    CHECK(dark_throat_samples <= 2);
+
+    const auto text_top_left = transform.to_device(comicchat::LogicalPoint{
+        static_cast<double>(balloon.bbox.left), static_cast<double>(balloon.bbox.top)});
+    const auto text_bottom_right = transform.to_device(comicchat::LogicalPoint{
+        static_cast<double>(balloon.bbox.left + comicchat::widest_line_width(balloon.lines)),
+        static_cast<double>(balloon.bbox.top - balloon.line_height * static_cast<int>(balloon.lines.size()))});
+    const auto x0 = std::clamp(static_cast<int>(std::floor(text_top_left.x)), 0, 759);
+    const auto y0 = std::clamp(static_cast<int>(std::floor(text_top_left.y)), 0, 759);
+    const auto x1 = std::clamp(static_cast<int>(std::ceil(text_bottom_right.x)), x0 + 1, 760);
+    const auto y1 = std::clamp(static_cast<int>(std::ceil(text_bottom_right.y)), y0 + 1, 760);
+    std::size_t dark_text_pixels{};
+    for (int y = y0; y < y1; ++y) {
+        for (int x = x0; x < x1; ++x) {
+            const auto pixel = canvas.pixels()[static_cast<std::size_t>(y) * 760U + static_cast<std::size_t>(x)];
+            const auto red = (pixel >> 16U) & 0xffU;
+            const auto green = (pixel >> 8U) & 0xffU;
+            const auto blue = pixel & 0xffU;
+            if (red < 96U && green < 96U && blue < 96U) ++dark_text_pixels;
+        }
+    }
+    CHECK(dark_text_pixels > 100);
+}
+
 TEST_CASE("page-composed balloon text stays inside the cloud outline") {
     using namespace comicchat;
     const auto font = find_portable_comic_font();

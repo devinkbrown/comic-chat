@@ -552,7 +552,13 @@ auto Page::layout_panel(PanelState& draft) -> Page::LayoutOutcome {
                 Balloon forced = force_fit_split(req, free_rect, leftover);
                 forced.text_size = config_.text_size;
                 draft.rendered.balloons.push_back(std::move(forced));
-                return {Fit::fit_with_leftover, leftover};
+                // CLabel::SplitHeight returns NULL when the forced balloon did
+                // not actually split (balloon.cpp:1556), and AddLine recurses
+                // only for a non-NULL remainder (panel.cpp:1128). Preserve that
+                // distinction: an empty portable remainder completes this panel
+                // instead of manufacturing a second, empty balloon panel.
+                const auto status = leftover.empty() ? Fit::fit : Fit::fit_with_leftover;
+                return {status, std::move(leftover)};
             }
             return {Fit::overflow, {}};
         }
