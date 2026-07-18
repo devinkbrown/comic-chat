@@ -1,6 +1,8 @@
+#include "comicchat/avatar_assets.hpp"
 #include "comicchat/balloon.hpp"
 #include "comicchat/comic_page.hpp"
 #include "comicchat/layout.hpp"
+#include "comicchat/page.hpp"
 #include "comicchat/text.hpp"
 
 #include <algorithm>
@@ -150,6 +152,58 @@ TEST_CASE("build_say_panel builds a say panel from a live font engine") {
     CHECK(panel.bodies.front().color == comicchat::nick_color("Ada"));
 }
 
+TEST_CASE("build_say_panel applies the CBWoodringNormal kern (doVKern=1), not the shout (0,0)") {
+    // The bundled comic.ttf resolves to the "Comic Sans MS" family, so the
+    // say balloon's doVKern is 1 (fonts.cpp:82-83) and m_fiWNormal carries the
+    // Woodring vertical kern (fonts.cpp:89): (int)(-40*r), (int)(30*r) with
+    // r = message_text_size/180. At 240 twips that truncates to (-53, +40).
+    const auto font = comicchat::find_portable_comic_font();
+    REQUIRE(font.has_value());
+    auto engine = comicchat::TextEngine::create(*font);
+    REQUIRE(engine.has_value());
+
+    const double reduction = comicchat::message_text_size / 180.0;
+    const auto n_leading = static_cast<std::int32_t>(-40.0 * reduction);
+    const auto n_base_add = static_cast<std::int32_t>(30.0 * reduction);
+    REQUIRE(n_leading == -53);  // (int) truncation toward zero, as MS
+    REQUIRE(n_base_add == 40);
+
+    const auto kerned = comicchat::build_font_metrics(**engine, comicchat::message_text_size,
+                                                      n_leading, n_base_add);
+    const auto shout0 = comicchat::build_font_metrics(**engine, comicchat::message_text_size, 0, 0);
+    REQUIRE(kerned.has_value());
+    REQUIRE(shout0.has_value());
+    // A non-zero raw n_leading suppresses the far-east top offset (balloon.cpp:635-638):
+    // the say balloon keys top_offset to 0, unlike the retired (0,0) which kept 50.
+    CHECK(kerned->top_offset == 0);
+    CHECK(shout0->top_offset == comicchat::far_east_top_offset);
+    CHECK(*kerned != *shout0);
+
+    // Prove build_say_panel actually laid the balloon with the kerned metrics:
+    // the same request built explicitly from *kerned reproduces its bbox, and the
+    // (0,0) shout metrics would NOT (different line_height / base_add).
+    const auto say = comicchat::build_say_panel(**engine, "Ada", "hi");
+    REQUIRE(say.balloons.size() == 1);
+
+    comicchat::MessagePanelRequest request{};
+    request.nick = "Ada";
+    request.text = "hi";
+    request.mode = comicchat::BalloonMode::say;
+    request.font = *kerned;
+    request.body.avatar_id = comicchat::nick_avatar_id("Ada");
+    request.body.color = comicchat::nick_color("Ada");
+    request.seed = comicchat::message_seed("Ada", "hi");
+    const auto measure = comicchat::measure_text_width(**engine, comicchat::message_text_size);
+    const auto expected = comicchat::build_message_panel(request, measure);
+    REQUIRE(expected.balloons.size() == 1);
+    CHECK(say.balloons.front().bbox == expected.balloons.front().bbox);
+
+    request.font = *shout0;
+    const auto shout_panel = comicchat::build_message_panel(request, measure);
+    REQUIRE(shout_panel.balloons.size() == 1);
+    CHECK(say.balloons.front().bbox != shout_panel.balloons.front().bbox);
+}
+
 // ---------------------------------------------------------------------------
 // Phase 2.5b — nick->avatar provisioning + assignment.
 // ---------------------------------------------------------------------------
@@ -235,4 +289,133 @@ TEST_CASE("make_nick_avatar_provider is empty when no avatar set resolves") {
     } else {
         SUCCEED("an install/source avatar dir is present; fallback resolved");
     }
+}
+
+// ---------------------------------------------------------------------------
+// FIX 3 — real per-avatar dims from avatar_dim_info (kills the head over-zoom).
+// ---------------------------------------------------------------------------
+
+TEST_CASE("nick_page_avatar populates head_height from avatar_dim_info, not a fraction") {
+    setenv("COMICCHAT_AVATAR_DIR", COMICCHAT_TEST_COMICART_DIR, 1);
+    const auto avatar = comicchat::nick_page_avatar("Ada");
+
+    // Recompute the expected metric through the SAME deterministic assignment so
+    // the assertion is the real GetDimInfo port, not a hand-picked number.
+    const auto directory = comicchat::find_avatar_directory();
+    REQUIRE(directory.has_value());
+    const auto names = comicchat::available_avatars(*directory);
+    const auto chosen = comicchat::assign_avatar("Ada", names);
+    REQUIRE(chosen.has_value());
+    const auto asset = comicchat::load_avatar_asset(*directory / std::string{*chosen});
+    REQUIRE(asset.has_value());
+    const auto neutral = comicchat::select_avatar_expression(*asset, {0.0, 0.0});
+    REQUIRE(neutral.has_value());
+    const auto dim = comicchat::avatar_dim_info(*asset, *neutral, false);
+    REQUIRE(dim.has_value());
+    unsetenv("COMICCHAT_AVATAR_DIR");
+
+    CHECK(avatar.avatar_id == comicchat::nick_avatar_id("Ada"));
+    CHECK(avatar.body_width == dim->width);
+    CHECK(avatar.body_height == dim->height);
+    CHECK(avatar.norm_height == dim->height);  // standing height
+    CHECK(avatar.head_height == dim->head_height);
+    // The head is a real span, NOT the retired guessed 0.32*body_height fraction.
+    const auto guessed = static_cast<std::int32_t>(
+        static_cast<double>(avatar.body_height) * 0.32 + 0.5);
+    CHECK(avatar.head_height != guessed);
+    CHECK(avatar.head_height > 0);
+    const double expected_face_fraction =
+        static_cast<double>(dim->face_x) / static_cast<double>(dim->width);
+    CHECK(avatar.face_fraction == expected_face_fraction);
+}
+
+TEST_CASE("nick_page_avatar falls back to body_height/2 (not a guessed fraction) with no asset") {
+    setenv("COMICCHAT_AVATAR_DIR", "/nonexistent/comicchat/avatars", 1);
+    const auto resolvable = comicchat::find_avatar_directory().has_value();
+    const auto avatar = comicchat::nick_page_avatar("Ada");
+    unsetenv("COMICCHAT_AVATAR_DIR");
+
+    if (resolvable) {
+        SUCCEED("an install/source avatar dir is present; real metric resolved");
+        return;
+    }
+    // MS's own simple-avatar head value is body_height/2 (avatar.cpp:63), NOT the
+    // retired 0.32 fraction that let a lone speaker over-zoom off panel.
+    CHECK(avatar.head_height == avatar.body_height / 2);
+    CHECK(avatar.norm_height == avatar.body_height);
+    CHECK(avatar.face_fraction == 0.5);
+    const auto guessed = static_cast<std::int32_t>(
+        static_cast<double>(avatar.body_height) * 0.32 + 0.5);
+    CHECK(avatar.head_height != guessed);
+}
+
+namespace {
+
+// Drive one lone-speaker line through the real page-composition path
+// (LayoutAvatars zoom cap) and return the placed body's scaled height.
+auto lone_speaker_body_height(const comicchat::PageAvatar& speaker) -> std::int32_t {
+    comicchat::PageConfig config{};
+    config.font = say_font();
+    config.text_size = comicchat::message_text_size;
+    comicchat::Page page{config, monospace_measure(120)};
+    page.add_line(comicchat::Line{speaker, "hi", comicchat::bm_say});
+    REQUIRE_FALSE(page.panels().empty());
+    REQUIRE(page.panels().front().bodies.size() == 1);
+    const auto& box = page.panels().front().bodies.front().box;
+    return box.top - box.bottom;
+}
+
+} // namespace
+
+TEST_CASE("body_height/2 head caps the zoom so a lone speaker fits; the 0.32 guess over-zooms") {
+    // Same body dims for both, isolating the head-fraction effect on the
+    // LayoutAvatars "don't cut at neck" zoom cap (panel.cpp:797).
+    comicchat::PageAvatar fixed{};
+    fixed.avatar_id = 1;
+    fixed.body_width = comicchat::page_default_body_width;    // 800
+    fixed.body_height = comicchat::page_default_body_height;  // 840
+    fixed.norm_height = fixed.body_height;
+    fixed.head_height = fixed.body_height / 2;  // avatar.cpp:63 / nick_page_avatar fallback
+
+    // head_height == 0 exercises page.cpp's retired 0.32*body_height fallback.
+    comicchat::PageAvatar guessed = fixed;
+    guessed.avatar_id = 2;
+    guessed.head_height = 0;
+
+    const std::int32_t fixed_height = lone_speaker_body_height(fixed);
+    const std::int32_t guessed_height = lone_speaker_body_height(guessed);
+
+    // The realistic body_height/2 head fraction keeps the scaled body within the
+    // panel (feet on the floor, head on panel), where the smaller guessed head
+    // fraction let the zoom run past the panel height.
+    CHECK(fixed_height <= comicchat::logical_panel_height);
+    CHECK(guessed_height > fixed_height);
+}
+
+TEST_CASE("real avatar_dim_info dims keep a normally-proportioned lone speaker on panel") {
+    // Load a known well-proportioned avatar directly (jordan.avb: a simple avatar
+    // whose head is body_height/2, matching MS's CBodySingle value avatar.cpp:63)
+    // and dimension a PageAvatar from the real GetDimInfo port, exactly as
+    // nick_page_avatar does for whichever asset a nick resolves to.
+    const std::filesystem::path avb{std::filesystem::path{COMICCHAT_TEST_COMICART_DIR} / "jordan.avb"};
+    const auto asset = comicchat::load_avatar_asset(avb);
+    REQUIRE(asset.has_value());
+    const auto neutral = comicchat::select_avatar_expression(*asset, {0.0, 0.0});
+    REQUIRE(neutral.has_value());
+    const auto dim = comicchat::avatar_dim_info(*asset, *neutral, false);
+    REQUIRE(dim.has_value());
+
+    comicchat::PageAvatar speaker{};
+    speaker.avatar_id = 7;
+    speaker.body_width = dim->width;
+    speaker.body_height = dim->height;
+    speaker.norm_height = dim->height;
+    speaker.head_height = dim->head_height;
+    speaker.face_fraction = static_cast<double>(dim->face_x) / static_cast<double>(dim->width);
+
+    // Feet on the floor, head on panel: the true head:body ratio caps the zoom so
+    // the scaled body fits the panel height.
+    const std::int32_t height = lone_speaker_body_height(speaker);
+    CHECK(speaker.head_height > 0);
+    CHECK(height <= comicchat::logical_panel_height);
 }

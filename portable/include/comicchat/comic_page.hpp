@@ -3,6 +3,7 @@
 #include "comicchat/balloon.hpp"
 #include "comicchat/cpp26.hpp"
 #include "comicchat/layout.hpp"
+#include "comicchat/page.hpp"
 #include "comicchat/render.hpp"
 #include "comicchat/text.hpp"
 
@@ -49,7 +50,12 @@ inline constexpr std::int32_t message_edge_margin = balloon_xborder;  // keep-in
 // panel geometry uses. build_font_metrics/measure_text_width are evaluated at
 // this size so the wrapped line widths and line_height are self-consistent with
 // message_balloon_max_width above.
-inline constexpr double message_text_size = 220.0;
+//
+// Microsoft's default balloon font is PointsToTwips(12) = 12 * 20 = 240 twips
+// (chat.cpp:387, chat.rc IDS_DFLT_COMICSPNTSIZE "12"; the pageview.cpp:174-183
+// DPI terms cancel to points*20). This is a FIXED twip size: unlike the Title /
+// Shout fonts it is NOT scaled by the m_unitWidth/4860 reduction (fonts.cpp:102).
+inline constexpr double message_text_size = 240.0;
 
 // ------------------------------------------------------------------------
 // One placed speaker body. The defaults produce a centred, right-facing slot;
@@ -145,5 +151,26 @@ struct MessagePanelRequest final {
 // provider (nullptr) when no avatar directory/asset resolves so render_panel
 // keeps the flat color-box fallback. Never throws.
 [[nodiscard]] auto make_nick_avatar_provider(std::string_view nick) -> PanelAvatarProvider;
+
+// Resolve the nick's deterministically assigned avatar and populate a page.hpp
+// PageAvatar with the REAL per-avatar dimensions from avatar_dim_info (the
+// CBody::GetDimInfo port, panel.cpp:761): body_width / body_height (the art dims
+// LayoutAvatars normalizes onto maxBodyHeight), norm_height (the standing height
+// it normalizes by), head_height (the true head-pixel span the "don't cut at
+// neck" zoom cap consults, panel.cpp:797), and face_fraction (the tail column).
+// Feeding the real head:body ratio is what keeps a lone speaker's head on panel
+// instead of the over-zoom a guessed head fraction permits.
+//
+// This is the avatar-selection path that resolves the nick's AvatarAsset (the
+// same deterministic assignment make_nick_avatar_provider uses), so the body it
+// dimensions and the raster the provider composites are the SAME avatar. The
+// live page wiring feeds this PageAvatar straight into Page::add_line.
+//
+// When no avatar asset resolves (or its metric is degenerate), returns a
+// PageAvatar carrying the default body constants with head_height set to
+// body_height/2 — Microsoft's own simple-avatar head value (avatar.cpp:63) — so
+// the zoom cap stays conservative. Never a guessed sub-half fraction; never
+// throws.
+[[nodiscard]] auto nick_page_avatar(std::string_view nick) -> PageAvatar;
 
 } // namespace comicchat

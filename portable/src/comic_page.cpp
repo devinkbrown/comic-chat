@@ -2,6 +2,9 @@
 
 #include "comicchat/avatar_assets.hpp"
 
+#include <ft2build.h>
+#include FT_FREETYPE_H
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -9,6 +12,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
+#include <optional>
+#include <string_view>
 #include <system_error>
 
 namespace comicchat {
@@ -47,6 +52,43 @@ namespace {
         if (entry.is_regular_file(file_error) && entry.path().extension() == ".avb") return true;
     }
     return false;
+}
+
+// --- CBWoodringNormal say-balloon kern derivation (fonts.cpp:82-83,89) --------
+// The say balloon is MS CBWoodringNormal, built from m_fiWNormal whose CFontInfo
+// vertical kern offsets are (int)(-40*reduction*doVKern), (int)(30*reduction*
+// doVKern) with reduction = abs(lfHeight)/180.0 and doVKern = 1 IFF the resolved
+// balloon face family is "Comic Sans MS" (fonts.cpp:82-83). These offsets map to
+// build_font_metrics' (n_leading, n_base_add) arguments respectively.
+inline constexpr double woodring_kern_reference_height = 180.0;  // fonts.cpp reduction denom
+inline constexpr double woodring_leading_kern = -40.0;           // n_leading base (fonts.cpp:89)
+inline constexpr double woodring_base_add_kern = 30.0;           // n_base_add base (fonts.cpp:89)
+
+// doVKern (fonts.cpp:82-83): the CBWoodringNormal vertical kern is applied only
+// when the balloon face actually resolves to Comic Sans MS. The portable build
+// now ships real Comic Sans MS (commit "resolve bundled Comic Sans MS"), so this
+// reads the engine's resolved FreeType family rather than assuming — a substitute
+// face (e.g. the Comic Neue / DejaVu fallback) correctly yields doVKern = 0.
+[[nodiscard]] auto face_is_comic_sans(const TextEngine& engine) noexcept -> bool {
+    const auto* face = static_cast<FT_Face>(engine.native_face());
+    if (face == nullptr || face->family_name == nullptr) return false;
+    const std::string_view family{face->family_name};
+    return family.find("Comic Sans") != std::string_view::npos;
+}
+
+// Resolve + load the nick's deterministically assigned avatar asset, or nullopt
+// when no avatar directory/asset resolves. Shared by the PageAvatar dim wiring
+// (nick_page_avatar) and the compositing provider (make_nick_avatar_provider) so
+// both key off the identical nick->file assignment. Never throws.
+[[nodiscard]] auto load_nick_avatar_asset(const std::string_view nick) -> std::optional<AvatarAsset> {
+    const auto directory = find_avatar_directory();
+    if (!directory) return std::nullopt;
+    const auto names = available_avatars(*directory);
+    const auto chosen = assign_avatar(nick, names);
+    if (!chosen) return std::nullopt;
+    auto asset = load_avatar_asset(*directory / std::string{*chosen});
+    if (!asset.has_value()) return std::nullopt;
+    return std::move(*asset);
 }
 
 } // namespace
@@ -131,9 +173,20 @@ auto build_message_panel(const MessagePanelRequest& request, const TextMeasure& 
 }
 
 auto build_say_panel(TextEngine& engine, const std::string_view nick, const std::string_view text) -> Panel {
-    // Shout-font kern offsets (0, 0), matching fonts.cpp's balloon face; the
-    // raw n_leading = 0 keys the far-east top offset exactly as the source.
-    const auto metrics = build_font_metrics(engine, message_text_size, 0, 0);
+    // CBWoodringNormal say-balloon kern offsets from m_fiWNormal (fonts.cpp:89):
+    // (int)(-40*reduction*doVKern), (int)(30*reduction*doVKern) with
+    // reduction = message_text_size/180 and doVKern derived from the resolved
+    // balloon face. At 240 twips with Comic Sans MS this is (-53, +40) — the
+    // (int) casts truncate toward zero, matching MS. (These are NOT the Shout
+    // font's (0, 0); with a non-zero raw n_leading the say balloon's m_topOffset
+    // correctly keys to 0 rather than FAREAST_TOPOFFSET, balloon.cpp:635-638.)
+    const double reduction = message_text_size / woodring_kern_reference_height;
+    const int do_vkern = face_is_comic_sans(engine) ? 1 : 0;
+    const auto n_leading =
+        static_cast<std::int32_t>(woodring_leading_kern * reduction * do_vkern);
+    const auto n_base_add =
+        static_cast<std::int32_t>(woodring_base_add_kern * reduction * do_vkern);
+    const auto metrics = build_font_metrics(engine, message_text_size, n_leading, n_base_add);
 
     MessagePanelRequest request{};
     request.nick = std::string{nick};
@@ -190,14 +243,48 @@ auto assign_avatar(const std::string_view nick, const std::span<const std::strin
     return std::string_view{names[fnv1a(nick) % names.size()]};
 }
 
-auto make_nick_avatar_provider(const std::string_view nick) -> PanelAvatarProvider {
-    const auto directory = find_avatar_directory();
-    if (!directory) return {};
-    const auto names = available_avatars(*directory);
-    const auto chosen = assign_avatar(nick, names);
-    if (!chosen) return {};
+auto nick_page_avatar(const std::string_view nick) -> PageAvatar {
+    PageAvatar avatar;
+    avatar.avatar_id = nick_avatar_id(nick);
+    avatar.color = nick_color(nick);
 
-    auto asset = load_avatar_asset(*directory / std::string{*chosen});
+    // Preferred path: the REAL per-avatar metric (avatar_dim_info == the
+    // CBody::GetDimInfo port, panel.cpp:761). Feeds LayoutAvatars the true art
+    // dims + head:body ratio so the zoom cap keeps the head on panel.
+    if (auto asset = load_nick_avatar_asset(nick); asset.has_value()) {
+        const auto neutral = select_avatar_expression(*asset, {0.0, 0.0});
+        if (neutral.has_value()) {
+            // flip == false: face_fraction is the UNFLIPPED (right-pose) column;
+            // layout.cpp mirrors it to (1 - face_fraction) when a body flips.
+            const auto dim = avatar_dim_info(*asset, *neutral, /*flip=*/false);
+            if (dim.has_value() && dim->width > 0 && dim->height > 0) {
+                avatar.body_width = dim->width;
+                avatar.body_height = dim->height;
+                avatar.norm_height = dim->height;  // standing height (GetDimInfo)
+                // head_height is the true head-pixel span; guard a degenerate
+                // metric with MS's simple-avatar value (avatar.cpp:63).
+                avatar.head_height =
+                    dim->head_height > 0 ? dim->head_height : dim->height / 2;
+                avatar.face_fraction =
+                    static_cast<double>(dim->face_x) / static_cast<double>(dim->width);
+                return avatar;
+            }
+        }
+    }
+
+    // Fallback (no avatar asset resolves, or a degenerate metric): keep the
+    // default body constants but set head_height to body_height/2 — MS's own
+    // simple-avatar head value (avatar.cpp:63), NOT a guessed sub-half fraction —
+    // so the "don't cut at neck" zoom cap (panel.cpp:797) stays conservative and
+    // a lone speaker's head stays on panel.
+    avatar.norm_height = avatar.body_height;      // normalize to own standing height
+    avatar.head_height = avatar.body_height / 2;  // avatar.cpp:63
+    avatar.face_fraction = 0.5;
+    return avatar;
+}
+
+auto make_nick_avatar_provider(const std::string_view nick) -> PanelAvatarProvider {
+    auto asset = load_nick_avatar_asset(nick);
     if (!asset.has_value()) return {};
 
     // Load the asset once; composite its neutral pose per body render at the
