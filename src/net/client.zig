@@ -433,6 +433,58 @@ pub const Client = struct {
         try self.queueOut(.interactive, false, false);
     }
 
+    /// `# GetInfo` (`ChatGetInfo`, protsupp.cpp:3415-3422): request the
+    /// target's profile text.
+    pub fn requestProfile(self: *Client, target: []const u8) !void {
+        return self.privmsg(target, "# GetInfo");
+    }
+
+    /// `# HeresInfo: <profile>` (protsupp.cpp:919-920): reply to a profile
+    /// request.
+    pub fn sendProfile(self: *Client, target: []const u8, profile: []const u8) !void {
+        var text: std.ArrayList(u8) = .empty;
+        defer text.deinit(self.gpa);
+        try text.appendSlice(self.gpa, "# HeresInfo: ");
+        try text.appendSlice(self.gpa, profile);
+        return self.privmsg(target, text.items);
+    }
+
+    /// `# GetCharInfo` (`ChatGetAvatarInfo`, protsupp.cpp:3424-3430): ask the
+    /// target to (re)announce its avatar name/URL. This port has no avatar
+    /// file-transfer path (`filesend.cpp`), so a reply only ever updates the
+    /// name via `announceAvatar`/`parseAvatarAnnouncement`.
+    pub fn requestAvatarInfo(self: *Client, target: []const u8) !void {
+        return self.privmsg(target, "# GetCharInfo");
+    }
+
+    /// `ChatSyncBackDrop` (protsupp.cpp:3432-3453): announce a channel
+    /// backdrop change, in both the modern and legacy-compat wire forms so
+    /// either kind of receiver picks it up. `name` keeps its extension
+    /// (e.g. "cave.bmp"); `url` may be omitted.
+    pub fn syncBackdrop(self: *Client, target: []const u8, name: []const u8, url: ?[]const u8) !void {
+        if (name.len == 0) return error.InvalidIrcParameter;
+
+        var modern: std.ArrayList(u8) = .empty;
+        defer modern.deinit(self.gpa);
+        try modern.appendSlice(self.gpa, "# BDrop2: ");
+        try modern.appendSlice(self.gpa, name);
+        try modern.append(self.gpa, ',');
+        if (url) |u| try modern.appendSlice(self.gpa, u);
+        try self.privmsg(target, modern.items);
+
+        const dot = std.mem.indexOfScalar(u8, name, '.');
+        const base_name = if (dot) |i| name[0..i] else name;
+        var legacy: std.ArrayList(u8) = .empty;
+        defer legacy.deinit(self.gpa);
+        // BACKGRNDPREFIX already ends in a space, and protsupp.cpp:3447's
+        // format string ("#%s %s") adds one more, so a real client emits a
+        // double space here. Preserved verbatim: the receiver skips all
+        // whitespace after the prefix (protsupp.cpp:975-976).
+        try legacy.appendSlice(self.gpa, "# BDrop:  ");
+        try legacy.appendSlice(self.gpa, base_name);
+        try self.privmsg(target, legacy.items);
+    }
+
     pub fn accountRegister(
         self: *Client,
         account_or_star: []const u8,

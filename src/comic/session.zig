@@ -73,6 +73,108 @@ pub fn parseAvatarAnnouncement(text: []const u8) AvatarAnnouncement {
     return if (bundledAvatarByName(name)) |avatar| .{ .avatar = avatar } else .invalid;
 }
 
+pub const get_info_prefix = " GetInfo";
+pub const heres_info_prefix = " HeresInfo: ";
+pub const get_char_info_prefix = " GetCharInfo";
+pub const backdrop_prefix = " BDrop: ";
+pub const backdrop2_prefix = " BDrop2: ";
+
+/// The small text-comment controls beyond the avatar announcement
+/// (`protsupp.cpp:902-962`'s `ProcessComment` dispatch table). Callers pass
+/// the message with the leading `#` already stripped, matching
+/// `parseAvatarAnnouncement`. Source matches these with a plain `strncmp`
+/// prefix check rather than requiring an exact remainder, so a message with
+/// trailing garbage is still recognized.
+pub const ProfileControl = union(enum) {
+    not_control,
+    /// ` GetInfo` - a profile request; no payload.
+    get_info,
+    /// ` GetCharInfo` - a request to resend our avatar name/URL. No
+    /// payload. Source triggers `ChatAnnounceNewAvatar` with the real URL
+    /// (protsupp.cpp:926-939); this port does not implement avatar file
+    /// transfer (`filesend.cpp`), so recognizing the request is as far as
+    /// it goes.
+    get_char_info,
+    /// ` HeresInfo: <profile>` - a profile reply. Source only displays this
+    /// when the receiver actually asked (protsupp.cpp:948, the `RF_PROFILE`
+    /// request counter); this pure parser does not track that state.
+    heres_info: []const u8,
+};
+
+pub fn parseProfileControl(text: []const u8) ProfileControl {
+    if (std.mem.startsWith(u8, text, get_info_prefix)) return .get_info;
+    if (std.mem.startsWith(u8, text, get_char_info_prefix)) return .get_char_info;
+    if (std.mem.startsWith(u8, text, heres_info_prefix))
+        return .{ .heres_info = text[heres_info_prefix.len..] };
+    return .not_control;
+}
+
+/// One backdrop-sync announcement (protsupp.cpp:964-1017's `BACKGRNDPREFIX`
+/// / `NEWBACKGRNDPREFIX` handlers).
+pub const BackdropAnnouncement = struct {
+    /// Name exactly as sent (extension retained, e.g. "cave.bmp").
+    name: []const u8,
+    /// Name truncated at the first '.', matching `g_szLastBackdropName`
+    /// (protsupp.cpp:1005-1008) - the value a later legacy ` BDrop: `
+    /// message is compared against before a real client applies it.
+    base_name: []const u8,
+    /// Null when no URL segment followed the name.
+    url: ?[]const u8,
+};
+
+pub const BackdropControl = union(enum) {
+    not_control,
+    /// Recognized but a no-op: the source only acts `if (*szBackdropName)`
+    /// (protsupp.cpp:1003) or `if (*strToEnd)` (protsupp.cpp:977).
+    empty,
+    /// ` BDrop2: name[,url]` - the modern form (protsupp.cpp:988-1017).
+    sync: BackdropAnnouncement,
+    /// ` BDrop: name` - the legacy compat form sent second by
+    /// `ChatSyncBackDrop` for old clients (protsupp.cpp:964-983). The
+    /// source applies it only when `name` differs case-insensitively from
+    /// the last BDrop2 base name; this pure parser leaves that comparison
+    /// to the caller.
+    legacy: []const u8,
+};
+
+/// Port of `GetToken2`'s begin/end-separator scan (protsupp.cpp:257-283):
+/// skip whitespace or a `seps_begin` byte, then take bytes until whitespace
+/// or a `seps_end` byte. Returns `null` when nothing but skipped bytes
+/// remain, matching the source returning `NULL` when `!*szStart`.
+fn getToken2(text: []const u8, seps_begin: []const u8, seps_end: []const u8) ?struct { token: []const u8, rest: []const u8 } {
+    var start: usize = 0;
+    while (start < text.len and (std.ascii.isWhitespace(text[start]) or std.mem.indexOfScalar(u8, seps_begin, text[start]) != null))
+        start += 1;
+    if (start == text.len) return null;
+    var end = start;
+    while (end < text.len and !std.ascii.isWhitespace(text[end]) and std.mem.indexOfScalar(u8, seps_end, text[end]) == null)
+        end += 1;
+    return .{ .token = text[start..end], .rest = text[end..] };
+}
+
+pub fn parseBackdropControl(text: []const u8) BackdropControl {
+    if (std.mem.startsWith(u8, text, backdrop2_prefix)) {
+        const rest = text[backdrop2_prefix.len..];
+        const name_tok = getToken2(rest, ",", ",") orelse return .empty;
+        if (name_tok.token.len == 0) return .empty;
+        const url_tok = getToken2(name_tok.rest, ",", ",)");
+        const dot = std.mem.indexOfScalar(u8, name_tok.token, '.');
+        return .{ .sync = .{
+            .name = name_tok.token,
+            .base_name = if (dot) |i| name_tok.token[0..i] else name_tok.token,
+            .url = if (url_tok) |u| u.token else null,
+        } };
+    }
+    if (std.mem.startsWith(u8, text, backdrop_prefix)) {
+        const rest = text[backdrop_prefix.len..];
+        var i: usize = 0;
+        while (i < rest.len and std.ascii.isWhitespace(rest[i])) i += 1;
+        if (i == rest.len) return .empty;
+        return .{ .legacy = rest[i..] };
+    }
+    return .not_control;
+}
+
 /// Deterministic, case-insensitive nick → avatar (FNV-1a hash, mod 22).
 pub fn avatarForNick(nick: []const u8) []const u8 {
     var h: u64 = 0xcbf29ce484222325;
@@ -501,6 +603,49 @@ test "transcript consumes announcements and resolves speakers and talk targets" 
     try std.testing.expect(try transcript.consumeAvatarAnnouncement("Bob", "# Appears as NONE"));
     try std.testing.expectEqualStrings(avatarForNick("bob"), transcript.resolvedAvatar("bob"));
     try std.testing.expect(!(try transcript.consumeAvatarAnnouncement("Bob", "ordinary text")));
+}
+
+test "profile control parser matches source prefixes" {
+    try std.testing.expect(parseProfileControl(" GetInfo") == .get_info);
+    try std.testing.expect(parseProfileControl(" GetInfoNow") == .get_info); // strncmp prefix match
+    try std.testing.expect(parseProfileControl(" GetCharInfo") == .get_char_info);
+    try std.testing.expectEqualStrings("likes long walks", parseProfileControl(" HeresInfo: likes long walks").heres_info);
+    try std.testing.expect(parseProfileControl(" HeresInfo: ") == .heres_info);
+    try std.testing.expectEqualStrings("", parseProfileControl(" HeresInfo: ").heres_info);
+    try std.testing.expect(parseProfileControl("ordinary text") == .not_control);
+    try std.testing.expect(parseProfileControl(" Appears as anna") == .not_control);
+}
+
+test "backdrop control parser matches both wire forms and their quirks" {
+    const sync = parseBackdropControl(" BDrop2: cave.bmp,https://example.invalid/cave.bmp").sync;
+    try std.testing.expectEqualStrings("cave.bmp", sync.name);
+    try std.testing.expectEqualStrings("cave", sync.base_name);
+    try std.testing.expectEqualStrings("https://example.invalid/cave.bmp", sync.url.?);
+
+    const no_url = parseBackdropControl(" BDrop2: cave.bmp,").sync;
+    try std.testing.expectEqualStrings("cave.bmp", no_url.name);
+    try std.testing.expect(no_url.url == null);
+
+    const no_dot = parseBackdropControl(" BDrop2: cave").sync;
+    try std.testing.expectEqualStrings("cave", no_dot.name);
+    try std.testing.expectEqualStrings("cave", no_dot.base_name);
+    try std.testing.expect(no_dot.url == null);
+
+    try std.testing.expect(parseBackdropControl(" BDrop2: ") == .empty);
+    // GetToken's begin/end separator sets are identical (protsupp.cpp:317-320),
+    // so a leading comma is itself skipped as a delimiter rather than
+    // producing an empty name field.
+    try std.testing.expectEqualStrings("url", parseBackdropControl(" BDrop2: ,url").sync.name);
+
+    // Real senders double the space here (BACKGRNDPREFIX already ends in
+    // one, and protsupp.cpp:3447's format string adds another); the
+    // receiver skips all whitespace after the prefix regardless.
+    try std.testing.expectEqualStrings("cave", parseBackdropControl(" BDrop:  cave").legacy);
+    try std.testing.expectEqualStrings("cave", parseBackdropControl(" BDrop: cave").legacy);
+    try std.testing.expect(parseBackdropControl(" BDrop: ") == .empty);
+    try std.testing.expect(parseBackdropControl(" BDrop:    ") == .empty);
+
+    try std.testing.expect(parseBackdropControl("ordinary text") == .not_control);
 }
 
 test "nickFromPrefix strips user@host and leading colon" {
