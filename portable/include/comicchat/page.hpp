@@ -94,6 +94,14 @@ struct Line final {
     PageAvatar speaker;
     std::string text;
     std::uint16_t modes{bm_say};
+    // Optional pre-parsed formatting runs for `text` (produced by
+    // strip_control_codes + mark_urls, formatting.hpp), in byte offsets into
+    // `text`. DEFAULT EMPTY = no behavior change: the layout wraps `text` with
+    // the plain break_into_lines and the balloon draws a single default-color
+    // upright regular span, exactly as before this feature. When non-empty, the
+    // caller has already parsed `text` into plain text + runs, and layout routes
+    // through break_into_lines_formatted so each wrapped line carries its slice.
+    std::vector<TextRun> runs{};
 };
 
 // Page geometry + the say-font the balloons lay out with. Defaults mirror the

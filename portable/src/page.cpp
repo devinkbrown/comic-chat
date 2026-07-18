@@ -497,7 +497,15 @@ auto Page::layout_panel(PanelState& draft) -> Page::LayoutOutcome {
         const auto kind = modes_to_kind(line.modes);
         const bool is_box = kind.mode == BalloonMode::action;
 
-        const auto lines = break_into_lines(measure_, config_.max_text_width, line.text);
+        // Formatting seam (page.hpp Line::runs): with no runs this is the exact
+        // plain break_into_lines call as before (zero behavior change); with runs
+        // the formatted overload attaches each line's slice on top of the SAME
+        // wrap result, so line text/width/count and the PRNG walk below are
+        // unaffected. The caller supplies runs already parsed against line.text.
+        const auto lines = line.runs.empty()
+                               ? break_into_lines(measure_, config_.max_text_width, line.text)
+                               : break_into_lines_formatted(measure_, config_.max_text_width, line.text,
+                                                            line.runs);
         const int text_extent = measure_(line.text);
 
         CloudEstimateInput in{};

@@ -1,6 +1,7 @@
 #include "comicchat/render.hpp"
 
 #include "comicchat/balloon.hpp"
+#include "comicchat/formatting.hpp"
 #include "comicchat/text.hpp"
 
 #include <algorithm>
@@ -115,6 +116,99 @@ void draw_shaped(cairo_t* context, TextEngine& text, const std::string_view valu
         vertical += glyph.y_advance;
     }
     cairo_show_glyphs(context, glyphs.data(), static_cast<int>(glyphs.size()));
+}
+
+// Default balloon text ink (matches the pre-formatting single-color path,
+// render.cpp:518) used when a run carries no explicit foreground override.
+constexpr Rgba default_balloon_ink{0.08, 0.07, 0.08, 1.0};
+// Link runs render in blue when no explicit fg is set (classic hyperlink /
+// mIRC palette index 12), and are always underlined.
+constexpr Rgba link_ink{0.0, 0.0, 0.9, 1.0};
+
+// FONT-ASSET DECISION (documented per task): the portable repo bundles only
+// assets/fonts/comic.ttf -- there is NO bundled bold or italic Comic Neue face
+// (no *_italic*/*_bold* TTF, no COMIC_NEUE_LICENSE.txt for a licensed variant).
+// So bold/italic are SYNTHETIC. Crucially we do NOT reach for cairo_select_font_face:
+// its toy-font family lookup would DISCARD the bundled Comic Neue FT face and pull
+// a non-deterministic system font via fontconfig, breaking the whole point of the
+// bundled-font parity pipeline. Instead we keep the real Comic Neue FT face for
+// every run and synthesize:
+//   * ITALIC  -> a horizontal shear baked into the cairo font matrix (upright
+//                glyphs of the SAME face, slanted), advances unchanged.
+//   * BOLD    -> faux-bold: draw the glyphs, then hairline-stroke the same glyph
+//                path, thickening the strokes (a measurable ink-density increase
+//                the gate test asserts on rendered pixels).
+// Real fidelity would beat this, but no real face exists to load, so this is the
+// honest maximum. Draws one run at [x, baseline); returns the run's x-advance so
+// the caller can position the next run. Saves/restores all cairo state it touches
+// so nothing (font matrix, face, color, line width) bleeds into the next run,
+// line, or balloon.
+[[nodiscard]] double draw_run_glyphs(cairo_t* context, TextEngine& text, const std::string_view value,
+                                     const double size, const double x, const double baseline,
+                                     const Rgba color, const bool bold, const bool italic,
+                                     const bool underline) {
+    const auto shaped = text.shape(value, size);
+    if (!shaped || shaped->empty()) return 0.0;
+
+    cairo_save(context);
+    auto* face = static_cast<FT_Face>(text.native_face());
+    auto* cairo_face = cairo_ft_font_face_create_for_ft_face(face, 0);
+    cairo_set_font_face(context, cairo_face);
+    cairo_font_face_destroy(cairo_face);
+
+    // Font matrix = uniform scale, plus a horizontal shear for synthetic italic.
+    constexpr double italic_shear = 0.21; // ~12deg slant, typical oblique synthesis.
+    cairo_matrix_t font_matrix{};
+    cairo_matrix_init(&font_matrix, size, 0.0, italic ? italic_shear * size : 0.0, size, 0.0, 0.0);
+    cairo_set_font_matrix(context, &font_matrix);
+
+    std::vector<cairo_glyph_t> glyphs;
+    glyphs.reserve(shaped->size());
+    double cursor = x;
+    double vertical{};
+    for (const auto& glyph : *shaped) {
+        glyphs.push_back({glyph.index, cursor + glyph.x_offset, baseline - vertical - glyph.y_offset});
+        cursor += glyph.x_advance;
+        vertical += glyph.y_advance;
+    }
+    const double advance = cursor - x;
+
+    set_color(context, color);
+    cairo_show_glyphs(context, glyphs.data(), static_cast<int>(glyphs.size()));
+    if (bold) {
+        // Faux-bold: re-trace the glyph outlines and stroke them, thickening
+        // every stem. Line width scales with the font size so bold reads at any
+        // zoom. This is the ink-density delta the gate test measures.
+        cairo_glyph_path(context, glyphs.data(), static_cast<int>(glyphs.size()));
+        cairo_set_line_width(context, std::max(0.6, size * 0.045));
+        cairo_stroke(context);
+    }
+    if (underline) {
+        // A simple stroked rule just below the baseline spanning the run advance.
+        const double thickness = std::max(1.0, size * 0.06);
+        const double underline_y = baseline + size * 0.12;
+        cairo_new_path(context);
+        cairo_move_to(context, x, underline_y);
+        cairo_line_to(context, x + advance, underline_y);
+        cairo_set_line_width(context, thickness);
+        cairo_stroke(context);
+    }
+    cairo_restore(context);
+    return advance;
+}
+
+// Resolve a run's cairo ink: explicit fg override wins; else link runs get the
+// link color; else the balloon's default ink. bg is intentionally not painted
+// (the portable balloon has its own cloud fill; mIRC bg boxes are out of scope).
+[[nodiscard]] Rgba run_ink(const TextRun& run) {
+    if (run.fg) {
+        const auto rgb = palette_color(*run.fg);
+        return unpack_color((static_cast<std::uint32_t>(rgb.r) << 16U) |
+                                (static_cast<std::uint32_t>(rgb.g) << 8U) | rgb.b,
+                            1.0);
+    }
+    if (run.link) return link_ink;
+    return default_balloon_ink;
 }
 
 } // namespace
@@ -539,8 +633,41 @@ void Canvas::render_panel(const Panel& panel, TextEngine& text, const PanelAvata
                 const auto left_x = balloon.bbox.left + offset;
                 const auto anchor = transform.to_device(
                     LogicalPoint{static_cast<double>(left_x), static_cast<double>(cell_top_y)});
-                draw_shaped(context, text, line.text, text_size, anchor.x,
-                            anchor.y + extents.ascent, /*centered=*/false);
+                const double baseline = anchor.y + extents.ascent;
+                if (line.runs.empty()) {
+                    // ZERO-BEHAVIOR-CHANGE PATH (the common case): no per-run
+                    // formatting -> the exact single-color draw_shaped call as
+                    // before this feature, byte-identical rendered pixels.
+                    draw_shaped(context, text, line.text, text_size, anchor.x, baseline,
+                                /*centered=*/false);
+                } else {
+                    // FORMATTED PATH: split the line into segments at run offsets
+                    // (line-local bytes) and draw each with its own ink + synthetic
+                    // bold/italic/underline, advancing the pen by each segment's
+                    // measured x-advance. draw_run_glyphs saves/restores cairo state
+                    // so no font matrix / color / line width bleeds across segments.
+                    double pen_x = anchor.x;
+                    const auto& runs = line.runs;
+                    // A leading default-format segment when the first run starts
+                    // past byte 0 (text before any formatting on this line).
+                    if (runs.front().offset > 0) {
+                        const auto head = std::string_view{line.text}.substr(0, runs.front().offset);
+                        pen_x += draw_run_glyphs(context, text, head, text_size, pen_x, baseline,
+                                                 default_balloon_ink, /*bold=*/false, /*italic=*/false,
+                                                 /*underline=*/false);
+                    }
+                    for (std::size_t r = 0; r < runs.size(); ++r) {
+                        const std::size_t start = std::min(runs[r].offset, line.text.size());
+                        const std::size_t end =
+                            (r + 1 < runs.size()) ? std::min(runs[r + 1].offset, line.text.size())
+                                                  : line.text.size();
+                        if (end <= start) continue;
+                        const auto span = std::string_view{line.text}.substr(start, end - start);
+                        pen_x += draw_run_glyphs(context, text, span, text_size, pen_x, baseline,
+                                                 run_ink(runs[r]), runs[r].bold, runs[r].italic,
+                                                 runs[r].underline || runs[r].link);
+                    }
+                }
                 cell_top_y -= balloon.line_height;
             }
         }

@@ -478,6 +478,7 @@ if get_option('tests')
       'tests/backdrop_test.cpp',
       'tests/source_raster_test.cpp',
       'tests/render_test.cpp',
+      'tests/format_render_test.cpp',
       'tests/comic_page_test.cpp',
       'tests/page_test.cpp',
       'tests/memory_test.cpp',

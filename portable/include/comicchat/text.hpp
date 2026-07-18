@@ -1,8 +1,10 @@
 #pragma once
 
 #include "comicchat/cpp26.hpp"
+#include "comicchat/formatting.hpp"
 #include "comicchat/layout.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <functional>
@@ -73,6 +75,13 @@ enum class LabelJustify { center, left };
 struct TextLine final {
     std::string text;
     std::int32_t width{};
+    // Per-run formatting local to THIS line (offsets rebased to the line, as
+    // produced by reslice_runs_for_line, formatting.hpp). Empty for the plain
+    // break_into_lines path: a line with no runs draws as a single default-color,
+    // upright, regular-weight span exactly as before the formatting feature
+    // (render.cpp balloon-text-draw zero-behavior-change guarantee). Only
+    // break_into_lines_formatted populates this.
+    std::vector<TextRun> runs{};
     auto operator==(const TextLine&) const -> bool = default;
 };
 
@@ -96,6 +105,26 @@ using TextMeasure = std::function<std::int32_t(std::string_view)>;
 // the box, and capping at max_label_lines. Records each line's measured width.
 [[nodiscard]] auto break_into_lines(const TextMeasure& measure, std::int32_t max_width,
                                     std::string_view text) -> std::vector<TextLine>;
+
+// Formatting-aware overload of break_into_lines. Wrapping is delegated verbatim
+// to the plain break_into_lines (identical line text/width/count/PRNG behavior),
+// then each produced line is located back in `text` and its slice of `runs` is
+// computed with reslice_runs_for_line (formatting.hpp). `runs` must be sorted
+// ascending by offset and expressed in byte offsets into `text` (as produced by
+// strip_control_codes + mark_urls). The result equals break_into_lines(...) with
+// TextLine::runs additionally filled in; passing empty `runs` yields lines whose
+// runs are all empty, i.e. it degenerates to the plain path.
+//
+// SPACE-COLLAPSE CAVEAT: break_into_lines collapses runs of spaces to a single
+// space and trims wrap-boundary spaces, so a line's byte span is located by a
+// whitespace-tolerant walk over `text`. When the source line contains a run of
+// >1 consecutive spaces the collapsed line-local byte length no longer matches
+// the original span exactly, so a run boundary landing inside such a gap can be
+// off by the collapsed byte count. Single-space text (the overwhelmingly common
+// IRC/chat case) and force-broken long tokens map exactly.
+[[nodiscard]] auto break_into_lines_formatted(const TextMeasure& measure, std::int32_t max_width,
+                                              std::string_view text, const std::vector<TextRun>& runs)
+    -> std::vector<TextLine>;
 
 // Widest of the produced lines (fInfo.m_iMaxWidth, balloon.cpp:694-696).
 [[nodiscard]] auto widest_line_width(const std::vector<TextLine>& lines) noexcept -> std::int32_t;

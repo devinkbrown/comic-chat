@@ -345,6 +345,45 @@ auto break_into_lines(const TextMeasure& measure, const std::int32_t max_width,
     return lines;
 }
 
+auto break_into_lines_formatted(const TextMeasure& measure, const std::int32_t max_width,
+                                const std::string_view text, const std::vector<TextRun>& runs)
+    -> std::vector<TextLine> {
+    // Delegate wrapping verbatim so text/width/count/PRNG behavior is byte-for-byte
+    // identical to the plain path; we only add per-line runs on top.
+    auto lines = break_into_lines(measure, max_width, text);
+    if (runs.empty()) return lines; // nothing to slice; runs stay empty (plain path).
+
+    // Locate each produced line back in `text` to get its [line_start, line_len)
+    // byte span, tolerant of the wrapper's leading-trim and single-space collapse
+    // (see the header's SPACE-COLLAPSE CAVEAT). Lines preserve character order, so
+    // a forward cursor over `text` suffices.
+    std::size_t cursor = 0;
+    const auto is_wrap_space = [](const char byte) { return byte == ' ' || byte == '\n'; };
+    for (auto& line : lines) {
+        if (line.text.empty()) {
+            // A blank line (e.g. from "\n\n") draws no glyphs; give it an empty,
+            // zero-length slice and leave the cursor for the next non-empty line.
+            line.runs = reslice_runs_for_line(runs, cursor, 0);
+            continue;
+        }
+        // Skip separator whitespace (trimmed leading spaces / hard-break newlines)
+        // that the wrapper dropped between the previous line and this one.
+        while (cursor < text.size() && is_wrap_space(text[cursor])) ++cursor;
+        const std::size_t line_start = cursor;
+        for (const char glyph_byte : line.text) {
+            if (glyph_byte == ' ') {
+                // One line-local space maps to one-or-more original spaces (collapse).
+                while (cursor < text.size() && text[cursor] == ' ') ++cursor;
+            } else {
+                // Non-space byte (incl. UTF-8 continuation bytes) matches one-to-one.
+                if (cursor < text.size()) ++cursor;
+            }
+        }
+        line.runs = reslice_runs_for_line(runs, line_start, cursor - line_start);
+    }
+    return lines;
+}
+
 auto ellipsize_single_line(const TextMeasure& measure, const std::int32_t max_width,
                            const std::string_view text, const std::string_view ellipsis) -> std::string {
     if (text.empty() || measure(text) <= max_width) return std::string{text};
