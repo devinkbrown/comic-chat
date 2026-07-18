@@ -27,8 +27,6 @@
 namespace comicchat::net {
 namespace {
 
-constexpr std::string_view application_directory = "comic-chat-reinked";
-constexpr std::string_view sts_policy_filename = "sts-policies-v1";
 constexpr std::size_t maximum_transport_events_per_poll = 128;
 constexpr std::size_t maximum_protocol_items_per_poll = 1024;
 constexpr std::size_t maximum_lines_per_receive_event = 512;
@@ -109,6 +107,12 @@ class ConnectionSessionTransport final : public SessionTransport {
 };
 
 #if !defined(_WIN32)
+
+// prepare_native_user_paths (the #else arm below) is the only consumer; on
+// Windows that function short-circuits to home_unavailable without touching
+// the filesystem, so these would be unused-and-Werror-fatal at file scope.
+constexpr std::string_view application_directory = "comic-chat-reinked";
+constexpr std::string_view sts_policy_filename = "sts-policies-v1";
 
 class UniqueFd final {
   public:
