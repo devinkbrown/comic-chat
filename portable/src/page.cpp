@@ -206,9 +206,16 @@ inline constexpr double head_height_body_fraction = 0.32;
 }
 
 // One placed body's final scaled geometry (LayoutAvatars panel.cpp:759-806).
+// `top` is the box top-anchor Y (the avatar's head), = MS top[i] (panel.cpp:772,
+// 787): computed from the normalized/shrunk height and, in the zoom branch,
+// NOT recomputed — so a zoomed body grows DOWNWARD (feet sink below the floor,
+// clipped by the panel) while the head stays pinned just under the balloon,
+// exactly as SetBBox (panel.cpp:816) does. Pinning the feet instead floats the
+// head up into the balloon region (the over-zoom regression).
 struct ScaledBody final {
     std::int32_t width{};
     std::int32_t height{};
+    std::int32_t top{};
 };
 
 // CUnitPanel::LayoutAvatars body scaling (panel.cpp:740,759-819): normalize
@@ -217,15 +224,14 @@ struct ScaledBody final {
 // Establishing() is always false for a chat panel) to fill unused panel width,
 // capped so a zoomed head is never cropped.
 //
-// Deliberate divergence from the source: after the zoom branch (panel.cpp:801-
-// 806) the literal MS `top[i]` is stale (computed from the pre-zoom height) and
-// SetBBox (panel.cpp:816) uses it as-is, sinking the zoomed box's bottom below
-// the panel floor — compensated in the source by AdjustArtToCoord's separate
-// raster-blit remap (panel.cpp:790,808), which this port does not carry (see
-// the HONEST LIMITS in page.hpp). The portable renderer scales the body bitmap
-// straight into the returned box, so the box bottom is always recomputed from
-// the FINAL height and pinned to -unit_height, keeping every body's feet on the
-// panel floor regardless of scaling.
+// Head-anchoring (panel.cpp:772,787,816): top[i] is set to -unitHeight+height
+// after normalize (and recomputed after shrink), but is NOT recomputed after the
+// zoom branch. SetBBox then anchors the box TOP (head) at top[i] and puts the
+// bottom (feet) at top[i]-height. So a zoomed body keeps its head pinned just
+// under the balloon and grows downward, its feet sinking below the panel floor
+// where the panel clip crops them. This is faithful and — unlike pinning the
+// feet to the floor — keeps the head on-panel instead of shoving it up behind
+// the balloon (the "balloon covers the avatar" over-zoom).
 [[nodiscard]] auto scale_avatar_bodies(const std::vector<PlacedBody>& order_bodies,
                                        const std::map<std::uint32_t, PageAvatar>& registry,
                                        const PageConfig& config) -> std::vector<ScaledBody> {
@@ -257,13 +263,17 @@ struct ScaledBody final {
     // (real avatar art never is); guard the divide the source has no need to.
     if (max_norm <= 0) {
         for (std::size_t i = 0; i < count; ++i) {
-            scaled[i] = ScaledBody{raw_width[i], raw_height[i]};
+            scaled[i] = ScaledBody{raw_width[i], raw_height[i],
+                                   -config.unit_height + raw_height[i]};
         }
         return scaled;
     }
 
     std::vector<std::int32_t> width(count);
     std::vector<std::int32_t> height(count);
+    // top[i] head-anchor (panel.cpp:772): -unitHeight + height, set after
+    // normalize, recomputed after shrink, left stale through zoom.
+    std::vector<std::int32_t> top(count);
     std::int32_t sum_width = 0;
     for (std::size_t i = 0; i < count; ++i) {
         // panel.cpp:768-774: scale every body so its normHeight maps onto the
@@ -278,6 +288,7 @@ struct ScaledBody final {
         height[i] = new_height;
         width[i] = round_half(scale_ratio * static_cast<double>(raw_width[i]));
         head_height[i] = round_half(scale_ratio * static_cast<double>(head_height[i]));
+        top[i] = -config.unit_height + height[i];  // panel.cpp:772
         sum_width += width[i];
     }
 
@@ -289,6 +300,7 @@ struct ScaledBody final {
         for (std::size_t i = 0; i < count; ++i) {
             height[i] = round_half(static_cast<double>(height[i]) * reduction);
             width[i] = round_half(static_cast<double>(width[i]) * reduction);
+            top[i] = -config.unit_height + height[i];  // panel.cpp:787 (recomputed)
         }
     } else if (sum_width > 0 && config.zoom_avatars) {
         // panel.cpp:791-806: zoom every body up to fill unused panel width,
@@ -313,7 +325,7 @@ struct ScaledBody final {
     }
 
     for (std::size_t i = 0; i < count; ++i) {
-        scaled[i] = ScaledBody{width[i], height[i]};
+        scaled[i] = ScaledBody{width[i], height[i], top[i]};
     }
     return scaled;
 }
@@ -457,8 +469,10 @@ auto Page::layout_panel(PanelState& draft) -> Page::LayoutOutcome {
         // SetBBox (panel.cpp:816): Bottom = panel floor, Top = floor + height.
         // (Bottom is always the floor here, not the source's literal stale
         // top[i]-height[i] after a zoom — see scale_avatar_bodies' doc comment.)
-        Rect box{anchor.left, -config_.unit_height, anchor.left + dims.width,
-                 -config_.unit_height + dims.height};
+        // SetBBox (panel.cpp:816): head pinned at dims.top, feet at top-height
+        // (below the floor when zoomed; the panel clip crops them).
+        Rect box{anchor.left, dims.top - dims.height, anchor.left + dims.width,
+                 dims.top};
         placements[placed.avatar_id] = BodyPlacement{anchor.arrow_x, box, placed.flip, sel.color};
         draft.info.body_order.push_back(placed.avatar_id);
 

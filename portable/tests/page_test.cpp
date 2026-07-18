@@ -377,7 +377,12 @@ TEST_CASE("a lone narrow body zooms in to fill unused panel width") {
     // must make it taller and wider than that.
     CHECK(height > 1210);
     CHECK(width > 605);
-    CHECK(body.box.bottom == -config().unit_height);  // floor still pinned.
+    // Head-anchored (panel.cpp:816): the zoom does NOT recompute top[i], so the
+    // head stays pinned at -unitHeight + the normalized 1210, ON panel, while the
+    // feet sink below the floor (clipped) — the "balloon covers the avatar" fix.
+    CHECK(body.box.top == -config().unit_height + 1210);
+    CHECK(body.box.top <= 0);                          // head never above panel top.
+    CHECK(body.box.bottom < -config().unit_height);    // feet clipped below floor.
 }
 
 // Multiple bodies whose normalized+zoomed widths sum past the panel width
@@ -392,7 +397,8 @@ TEST_CASE("scaled multi-body placement keeps left-to-right order and floor") {
     const auto& tail = page.panels().back();
     REQUIRE(tail.bodies.size() >= 2);
     for (const auto& body : tail.bodies) {
-        CHECK(body.box.bottom == -config().unit_height);
+        CHECK(body.box.top <= 0);                        // head on-panel (head-anchored).
+        CHECK(body.box.bottom <= -config().unit_height); // feet on or below the floor.
         CHECK(body.box.top > body.box.bottom);
         CHECK(body.box.right > body.box.left);
     }
