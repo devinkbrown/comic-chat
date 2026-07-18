@@ -32,8 +32,11 @@ using comicchat::net::EngineError;
 using comicchat::net::Event;
 using comicchat::net::GenerationId;
 using comicchat::net::NativeSession;
+using comicchat::net::NativeSessionError;
 using comicchat::net::NativeSessionOptions;
+using comicchat::net::Priority;
 using comicchat::net::Security;
+using comicchat::net::Send;
 using comicchat::net::SessionTransport;
 using comicchat::net::StsPolicyStore;
 using comicchat::net::StsTimePoint;
@@ -507,6 +510,67 @@ TEST_CASE("native poll line-work budget spans all receive events") {
     }
     REQUIRE(observed->posts.size() == 1);
     CHECK(std::holds_alternative<comicchat::net::Disconnect>(observed->posts.back()));
+}
+
+TEST_CASE("send_privmsg is rejected before start and after stop") {
+    TemporaryDirectory temporary;
+    auto fake = std::make_unique<FakeTransport>();
+    auto* observed = fake.get();
+    NativeSession session{temporary.path / "sts-policies", std::move(fake), [] { return at(100); }};
+
+    const auto before_start = session.send_privmsg("#comic-chat", "hello");
+    REQUIRE_FALSE(before_start);
+    CHECK(before_start.error() == NativeSessionError::not_running);
+    CHECK(observed->posts.empty());
+
+    REQUIRE(session.start(options(Security::plaintext)));
+    observed->push(Event{1, Connected{"irc.example", "127.0.0.1", false, false}});
+    (void)session.poll();
+    observed->posts.clear();
+    session.stop();
+
+    const auto after_stop = session.send_privmsg("#comic-chat", "hello");
+    REQUIRE_FALSE(after_stop);
+    CHECK(after_stop.error() == NativeSessionError::not_running);
+    CHECK(observed->posts.empty());
+}
+
+TEST_CASE("send_privmsg forwards a chat-priority PRIVMSG to the transport once running") {
+    TemporaryDirectory temporary;
+    auto fake = std::make_unique<FakeTransport>();
+    auto* observed = fake.get();
+    NativeSession session{temporary.path / "sts-policies", std::move(fake), [] { return at(100); }};
+    REQUIRE(session.start(options(Security::plaintext)));
+    observed->push(Event{1, Connected{"irc.example", "127.0.0.1", false, false}});
+    (void)session.poll();
+    observed->posts.clear();
+
+    const auto sent = session.send_privmsg("#comic-chat", "hello from the compose bar");
+    REQUIRE(sent);
+
+    REQUIRE(observed->posts.size() == 1);
+    const auto* send = std::get_if<Send>(&observed->posts.front());
+    REQUIRE(send != nullptr);
+    CHECK(send->priority == Priority::chat);
+    CHECK(send->target == "#comic-chat");
+    const std::string wire(reinterpret_cast<const char*>(send->bytes.data()), send->bytes.size());
+    CHECK(wire == "PRIVMSG #comic-chat :hello from the compose bar\r\n");
+}
+
+TEST_CASE("send_privmsg rejects a target that cannot be framed as an IRC parameter") {
+    TemporaryDirectory temporary;
+    auto fake = std::make_unique<FakeTransport>();
+    auto* observed = fake.get();
+    NativeSession session{temporary.path / "sts-policies", std::move(fake), [] { return at(100); }};
+    REQUIRE(session.start(options(Security::plaintext)));
+    observed->push(Event{1, Connected{"irc.example", "127.0.0.1", false, false}});
+    (void)session.poll();
+    observed->posts.clear();
+
+    const auto sent = session.send_privmsg("#comic chat", "hello");
+    REQUIRE_FALSE(sent);
+    CHECK(sent.error() == NativeSessionError::invalid_message);
+    CHECK(observed->posts.empty());
 }
 
 } // namespace

@@ -63,6 +63,13 @@ enum class NativeSessionError {
     credential_lock_failed,
     sts_store,
     transport,
+    // The session is not currently started (post()/send_privmsg() called
+    // before start() or after stop()/a fail-closed shutdown).
+    not_running,
+    // The target or text could not be framed as a valid IRC line (embedded
+    // control bytes, an empty/oversized target, or a line that would exceed
+    // the negotiated wire-frame budget).
+    invalid_message,
 };
 
 struct NativeSessionDiagnostic final {
@@ -80,6 +87,12 @@ struct NativeSessionPoll final {
     bool tls_verified{};
 };
 
+// NativeSession is not internally synchronized: start()/poll()/set_wakeup()/
+// stop()/send_privmsg() must all be called from the single external thread
+// that owns the session (the same thread already required to call poll()).
+// That external thread only ever hands commands to the transport/engine,
+// which does its own locking against its private network thread, so this
+// restriction costs nothing in the app's single-threaded event-loop use.
 class NativeSession final {
   public:
     using Now = std::function<StsTimePoint()>;
@@ -98,6 +111,17 @@ class NativeSession final {
         -> NativeSessionPoll;
     void set_wakeup(std::function<void()> wakeup);
     void stop() noexcept;
+
+    // Queues an outbound PRIVMSG to `target` (a channel or nick) over the
+    // live wire, going through the same IRCv3 outgoing pipeline
+    // (PrepareOutgoingChecked) that registration and protocol-response lines
+    // use, so labeled-response bookkeeping and echo-message dedup see this
+    // line exactly like any other client-initiated message. Returns
+    // not_running if the session is not currently started; the caller is
+    // expected to keep its own local echo (this call never blocks on the
+    // network and never retries).
+    [[nodiscard]] auto send_privmsg(std::string target, std::string text)
+        -> std::expected<void, NativeSessionError>;
 
     [[nodiscard]] auto generation() const noexcept -> GenerationId;
     [[nodiscard]] auto running() const noexcept -> bool;

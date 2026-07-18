@@ -85,6 +85,7 @@ auto registration_line(std::string command, std::vector<std::string> params) -> 
 auto priority_for(const std::string_view wire) noexcept -> Priority {
     if (wire.starts_with("PONG ") || wire == "PONG\r\n") return Priority::pong;
     if (wire.starts_with("AUTHENTICATE ")) return Priority::authentication;
+    if (wire.starts_with("PRIVMSG ") || wire.starts_with("NOTICE ")) return Priority::chat;
     return Priority::control;
 }
 
@@ -374,6 +375,16 @@ class NativeSession::Impl final {
         if (transport_) transport_->set_wakeup(std::move(wakeup));
     }
 
+    auto send_privmsg(std::string target, std::string text) -> std::expected<void, NativeSessionError> {
+        if (!running_ || !transport_) return std::unexpected{NativeSessionError::not_running};
+        if (!safe_atom(target, 512)) return std::unexpected{NativeSessionError::invalid_message};
+        auto wire = registration_line("PRIVMSG", {target, std::move(text)});
+        if (!wire) return std::unexpected{NativeSessionError::invalid_message};
+        if (!queue_protocol_line(std::move(*wire), std::move(target)))
+            return std::unexpected{NativeSessionError::transport};
+        return {};
+    }
+
     void stop() noexcept {
         if (!transport_) return;
         if (running_ && connected_ && tls_verified_) {
@@ -421,7 +432,11 @@ class NativeSession::Impl final {
         output.states.push_back(state);
     }
 
-    auto queue_protocol_line(std::string wire) -> bool {
+    // `target` is only ever the bounded per-target fairness hint carried on
+    // the Send command (see connection_engine.hpp); it is never interpreted
+    // as a network address. Non-chat protocol lines (registration, JOIN,
+    // PING/PONG replies, ...) leave it empty, matching prior behavior.
+    auto queue_protocol_line(std::string wire, std::string target = {}) -> bool {
         const bool sensitive = sensitive_line(wire);
         const ConditionalStringWipe wire_wipe{&wire, sensitive};
         const auto priority = priority_for(wire);
@@ -435,7 +450,7 @@ class NativeSession::Impl final {
         bytes.reserve(prepared->size());
         for (const unsigned char byte : *prepared)
             bytes.push_back(static_cast<std::byte>(byte));
-        Send command{generation_, next_send_id_++, priority, std::move(bytes), sensitive};
+        Send command{generation_, next_send_id_++, priority, std::move(bytes), sensitive, std::move(target)};
         return transport_->post(std::move(command)).has_value();
     }
 
@@ -713,6 +728,11 @@ auto NativeSession::poll(const std::size_t maximum_transport_events, const std::
 
 void NativeSession::set_wakeup(std::function<void()> wakeup) {
     if (impl_) impl_->set_wakeup(std::move(wakeup));
+}
+
+auto NativeSession::send_privmsg(std::string target, std::string text) -> std::expected<void, NativeSessionError> {
+    if (!impl_) return std::unexpected{NativeSessionError::not_running};
+    return impl_->send_privmsg(std::move(target), std::move(text));
 }
 
 void NativeSession::stop() noexcept {

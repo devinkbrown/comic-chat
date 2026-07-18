@@ -619,15 +619,19 @@ auto main(const int argc, char** argv) -> int {
                             // feed and --say both use, so the submitted line
                             // becomes a real framed comic panel immediately.
                             feed_line(local_nickname, submitted);
-                            // NOTE (Phase 2.5c honest limit): NativeSession only
-                            // exposes start()/poll()/set_wakeup()/stop() — there is
-                            // no public outbound-send API yet to also PRIVMSG this
-                            // line over the wire when `session` is connected. That
-                            // requires a NativeSession send surface, which is a
-                            // net/native_session.hpp/.cpp change outside this
-                            // change's file scope; the compose bar stays
-                            // local-echo-only against a live session until that
-                            // lands.
+                            // Also transmit over the wire when a live session is
+                            // connected, alongside (not instead of) the local
+                            // echo above. A failure here is surfaced the same way
+                            // session->poll()'s diagnostics already are below;
+                            // it never crashes the UI or retries on its own.
+                            if (session && arguments->connection) {
+                                const auto posted =
+                                    session->send_privmsg(arguments->connection->channel, submitted);
+                                if (!posted) {
+                                    std::cerr << "IRC session [send-failed]: outbound line could not be queued ("
+                                              << static_cast<int>(posted.error()) << ")\n";
+                                }
+                            }
                             // rebuild() below also repaints compose_texture (now
                             // empty) against the freshly sized canvas, so the
                             // shared compose_touched branch below does not need to
