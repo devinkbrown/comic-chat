@@ -1466,12 +1466,14 @@ fn finalizeGeometry(allocator: std.mem.Allocator, balloon: *InternalBalloon, fon
         points[3] = .{ .x = points[2].x, .y = points[0].y };
         errdefer allocator.free(points);
         beziers = try allocator.alloc(CubicBezier, 0);
-    } else if (balloon.kind == .think) {
-        points = balloon.base_points;
-        balloon.base_points = &.{};
-        errdefer allocator.free(points);
-        beziers = try betaBeziers(allocator, points, true);
     } else {
+        // CBWoodringThink overrides only Draw, not SetBalloonTraj
+        // (balloon.cpp:1820-1868): CBWoodringThink::Draw calls
+        // CBWoodringNormal::Draw first ("will draw the cloud properly", i.e.
+        // the same open-cloud + pointed-tail path any say/whisper balloon
+        // gets from AddArrow) and only then overlays the bubble chain. A
+        // think balloon is not tailless — the bubbles are additive, not a
+        // replacement. See thoughtBubbles below for the think-only overlay.
         const arrow = try addArrow(allocator, balloon);
         allocator.free(balloon.base_points);
         balloon.base_points = &.{};
@@ -1863,7 +1865,7 @@ test "panel layout subtracts route regions and emits tail Beziers and arcs" {
     }
 }
 
-test "thought balloon suppresses the pointed tail and uses source ellipses" {
+test "thought balloon keeps the pointed tail and adds source ellipses" {
     const allocator = std.testing.allocator;
     const metrics = TestMetrics{ .char_width = 30, .line_height = 100 };
     const input = [_]BalloonInput{.{
@@ -1882,8 +1884,12 @@ test "thought balloon suppresses the pointed tail and uses source ellipses" {
     );
     defer panel.deinit(allocator);
     const balloon = panel.balloons[0];
-    // CBWoodringThink::AddArrow is the source's virtual no-op.
-    try std.testing.expect(balloon.tail == null);
+    // CBWoodringThink overrides only Draw, not SetBalloonTraj
+    // (balloon.cpp:1820-1868): it inherits CBWoodringNormal's AddArrow tail
+    // unchanged and additively overlays the bubble chain on top ("will draw
+    // the cloud properly", balloon.cpp:1828) -- a think balloon keeps its
+    // pointed tail, it is not a replacement for one.
+    try std.testing.expect(balloon.tail != null);
     try std.testing.expect(balloon.thought_bubbles.len > 0);
     try std.testing.expectEqual(@as(i32, bubble_height), balloon.thought_bubbles[0].height());
 }

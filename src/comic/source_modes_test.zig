@@ -76,7 +76,7 @@ test "BM_WHISPER renders the dashed Woodring trajectory" {
     try std.testing.expectEqual(white, pixel(whisper, 409, 20));
 }
 
-test "BM_THINK renders thought bubbles and no pointed tail" {
+test "BM_THINK renders thought bubbles on top of the same pointed tail as BM_SAY" {
     const gpa = std.testing.allocator;
     var say = try strip.render(gpa, &.{.{
         .speaker = "anna",
@@ -91,15 +91,17 @@ test "BM_THINK renders thought bubbles and no pointed tail" {
     }});
     defer think.deinit(gpa);
 
-    try std.testing.expectEqual(@as(u64, 0x31a9845d669d45dd), pixelHash(think.pixels));
+    try std.testing.expectEqual(@as(u64, 0x47917f3e92ef5cea), pixelHash(think.pixels));
     // A fixed bubble has a black ellipse edge and white interior.
     try std.testing.expectEqual(black, pixel(think, 487, 112));
     try std.testing.expectEqual(white, pixel(think, 498, 112));
-    // Normal speech has its pointed-tail edge here. The thought balloon leaves
-    // the point untouched and connects with the bubble chain instead.
+    // CBWoodringThink overrides only Draw, not SetBalloonTraj
+    // (balloon.cpp:1820-1868), so it inherits the exact same AddArrow
+    // pointed-tail geometry as a normal say balloon and additively overlays
+    // the bubble chain on top ("will draw the cloud properly",
+    // balloon.cpp:1828) -- the tail edge here is identical for both kinds.
     try std.testing.expectEqual(black, pixel(say, 508, 91));
-    try std.testing.expect(pixel(think, 508, 91) != black);
-    try std.testing.expect(pixel(think, 508, 91) != white);
+    try std.testing.expectEqual(black, pixel(think, 508, 91));
 }
 
 test "exact BM_ACTION starts a fresh conversation panel" {
