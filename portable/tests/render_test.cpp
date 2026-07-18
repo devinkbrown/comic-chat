@@ -1,4 +1,5 @@
 #include "comicchat/avatar_assets.hpp"
+#include "comicchat/backdrop.hpp"
 #include "comicchat/balloon.hpp"
 #include "comicchat/comic_page.hpp"
 #include "comicchat/layout.hpp"
@@ -709,6 +710,125 @@ TEST_CASE("render_panel blits the composited avatar raster over the color-box pl
 
     // Emit the headless PNG artifact showing an actual avatar in the panel.
     CHECK(avatars.write_png("avatar_panel_render.png"));
+}
+
+// ===================================================================
+// Backdrop draw-hook — wires the already-tested BackdropCatalog/crop_for_panel
+// (backdrop.hpp) into render_panel's draw pass, mirroring CUnitPanel::Draw's
+// m_backDrop.Draw(...) call immediately after the panel clip and before any
+// body draws (panel.cpp:681,684). Panel::backdrop_id defaults to nullopt
+// (panel.cpp:560's id-0 "no backdrop"), so the two gates below are: (a) that
+// default leaves render_panel byte-identical to before this field existed,
+// and (b) a set id, resolved through a real BackdropCatalog, actually paints
+// backdrop pixels into the panel interior before anything else.
+// ===================================================================
+
+TEST_CASE("render_panel is byte-identical to before when backdrop_id is unset (regression guard)") {
+    const auto font = comicchat::find_portable_comic_font();
+    REQUIRE(font.has_value());
+    auto text = comicchat::TextEngine::create(*font);
+    REQUIRE(text.has_value());
+
+    const auto panel = demo_panel();
+    REQUIRE_FALSE(panel.backdrop_id.has_value());  // default-constructed Panel field
+
+    // Baseline: the original two-arg call shape (no avatars provider, no
+    // backdrop catalog parameter at all -- proves the new parameter's default
+    // doesn't perturb existing call sites).
+    comicchat::Canvas baseline{460, 460};
+    baseline.clear({1.0, 1.0, 1.0, 1.0});
+    baseline.render_panel(panel, **text);
+
+    // Same panel, now explicitly passing a real, populated BackdropCatalog --
+    // but backdrop_id stays unset, so the backdrop pass must not run.
+    comicchat::BackdropCatalog catalog{std::filesystem::path{COMICCHAT_TEST_COMICART_DIR}};
+    comicchat::Canvas with_catalog{460, 460};
+    with_catalog.clear({1.0, 1.0, 1.0, 1.0});
+    with_catalog.render_panel(panel, **text, {}, &catalog);
+    CHECK(std::ranges::equal(baseline.pixels(), with_catalog.pixels()));
+    CHECK(frame_hash(baseline) == frame_hash(with_catalog));
+
+    // A panel that DOES set backdrop_id but is rendered with no catalog
+    // (nullptr, the default) must also fall back to the unchanged baseline --
+    // there is nothing to resolve the id against.
+    auto panel_with_id = panel;
+    panel_with_id.backdrop_id = catalog.id_for_name("room.bgb");
+    REQUIRE(*panel_with_id.backdrop_id != 0);
+    comicchat::Canvas no_catalog{460, 460};
+    no_catalog.clear({1.0, 1.0, 1.0, 1.0});
+    no_catalog.render_panel(panel_with_id, **text);
+    CHECK(std::ranges::equal(baseline.pixels(), no_catalog.pixels()));
+    CHECK(frame_hash(baseline) == frame_hash(no_catalog));
+}
+
+TEST_CASE("render_panel draws backdrop art behind an otherwise-blank panel") {
+    const auto font = comicchat::find_portable_comic_font();
+    REQUIRE(font.has_value());
+    auto text = comicchat::TextEngine::create(*font);
+    REQUIRE(text.has_value());
+
+    comicchat::BackdropCatalog catalog{std::filesystem::path{COMICCHAT_TEST_COMICART_DIR}};
+    const auto backdrop_id = catalog.id_for_name("room.bgb");
+    REQUIRE(backdrop_id != 0);
+
+    constexpr auto width = 460;
+    const auto white = std::uint32_t{0xffffffffU};
+
+    // An empty panel (no bodies, no balloons): every interior pixel is
+    // background-only, so any ink there can only have come from the backdrop
+    // pass (or the fixed border stroke, which the sample point below avoids).
+    comicchat::Panel panel;
+
+    comicchat::Canvas without{width, width};
+    without.clear({1.0, 1.0, 1.0, 1.0});
+    without.render_panel(panel, **text, {}, &catalog);  // backdrop_id unset: no backdrop pass
+
+    panel.backdrop_id = backdrop_id;
+    comicchat::Canvas with{width, width};
+    with.clear({1.0, 1.0, 1.0, 1.0});
+    with.render_panel(panel, **text, {}, &catalog);
+
+    // Grid-sample the panel interior, well inside the fixed border stroke
+    // (~24 device px wide at this scale) so every sample point is a pure
+    // background-only pixel with no bodies/balloons in play. Without a
+    // backdrop every one of these must be blank white (proving the region
+    // really is "otherwise blank"); with a backdrop, room.bgb's real scene
+    // content (see backdrop_panel_render.png) is not uniformly white -- it has
+    // a hatched border pattern and shaded foreground -- so a solid majority of
+    // the same sample points must turn non-white ink from the backdrop blit.
+    const auto pixel_at = [](const comicchat::Canvas& canvas, const int x, const int y) {
+        return canvas.pixels()[static_cast<std::size_t>(y) * width + static_cast<std::size_t>(x)];
+    };
+    int interior_samples = 0;
+    int without_non_white = 0;
+    int with_non_white = 0;
+    for (int y = 40; y < width - 40; y += 20) {
+        for (int x = 40; x < width - 40; x += 20) {
+            ++interior_samples;
+            if (pixel_at(without, x, y) != white) ++without_non_white;
+            if (pixel_at(with, x, y) != white) ++with_non_white;
+        }
+    }
+    REQUIRE(interior_samples > 0);
+    CHECK(without_non_white == 0);                        // otherwise blank without a backdrop
+    CHECK(with_non_white > interior_samples / 2);          // real backdrop ink now dominates
+
+    // Broader gate: a real scene bitmap stretched to fill the whole panel
+    // interior should paint far more than a handful of pixels.
+    const auto non_white_without =
+        std::ranges::count_if(without.pixels(), [white](const auto pixel) { return pixel != white; });
+    const auto non_white_with =
+        std::ranges::count_if(with.pixels(), [white](const auto pixel) { return pixel != white; });
+    CHECK(non_white_with > non_white_without + 10'000);
+
+    // Determinism: the same Panel + catalog yields a byte-identical frame.
+    comicchat::Canvas with_repeat{width, width};
+    with_repeat.clear({1.0, 1.0, 1.0, 1.0});
+    with_repeat.render_panel(panel, **text, {}, &catalog);
+    CHECK(std::ranges::equal(with.pixels(), with_repeat.pixels()));
+    CHECK(frame_hash(with) == frame_hash(with_repeat));
+
+    CHECK(with.write_png("backdrop_panel_render.png"));
 }
 
 // ===================================================================

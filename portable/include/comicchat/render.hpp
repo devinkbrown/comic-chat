@@ -16,6 +16,7 @@
 namespace comicchat {
 
 class TextEngine;
+class BackdropCatalog;
 
 // Resolve a placed PanelBody to a composited avatar raster (Item 2.2 output:
 // render_avatar's AvatarBitmap, 0xAARRGGBB matching Cairo's ARGB32). Given the
@@ -65,15 +66,24 @@ public:
     void render_title_panel(const TitlePanel& model, TextEngine& text);
 
     // Emit an assembled conversation panel (Item 2.1, render-port-spec.md
-    // §2.1.f) into the logical drawing pass: real composited avatar bodies (when
-    // `avatars` resolves a PanelBody to an Item 2.2 raster) or a flat color-box
-    // placeholder otherwise, the
+    // §2.1.f) into the logical drawing pass: an optional scene backdrop (when
+    // `panel.backdrop_id` is set and `backdrop_catalog` resolves it), then real
+    // composited avatar bodies (when `avatars` resolves a PanelBody to an Item
+    // 2.2 raster) or a flat color-box placeholder otherwise, the
     // beta-spline cloud (or action box) outline, the whisper dash / think
     // bubbles / say tail, and the balloon text. Geometry arrives in panel-local
     // twips (Y-up) and is mapped through the single panel transform, exactly as
     // fill_logical_rect. Deterministic: the same Panel yields a byte-identical
     // frame.
-    void render_panel(const Panel& panel, TextEngine& text, const PanelAvatarProvider& avatars = {});
+    //
+    // `backdrop_catalog` mirrors CUnitPanel::Draw's `m_backDrop.Draw(...)` call
+    // immediately after the panel clip and before any body draws (panel.cpp:
+    // 681,684). It defaults to nullptr so every existing caller keeps compiling
+    // and rendering unchanged; when null (or `panel.backdrop_id` is unset), no
+    // backdrop pass runs, matching today's behavior exactly. Non-const because
+    // BackdropCatalog::resolve_art caches decoded art on first use.
+    void render_panel(const Panel& panel, TextEngine& text, const PanelAvatarProvider& avatars = {},
+                       BackdropCatalog* backdrop_catalog = nullptr);
 
     // The shared logical-coordinate drawing pass foundation (render-port-spec.md
     // §0). Compute the device transform that fits a `source_units`-twip square

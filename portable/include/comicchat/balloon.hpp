@@ -5,6 +5,7 @@
 #include "comicchat/text.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -332,6 +333,13 @@ struct Panel final {
     std::uint32_t seed{};
     std::vector<Balloon> balloons;
     std::vector<PanelBody> bodies;
+
+    // Mirrors CPanel::m_backDrop.m_backID, set from the chat doc's configured
+    // backdrop at panel construction (panel.cpp:560:
+    // `m_backDrop.m_backID = GetChatDoc() ? GetChatDoc()->GetBackDropID() : 0;`).
+    // nullopt (the default) means "no backdrop" (id 0 in the source), so every
+    // existing Panel construction site keeps compiling and rendering unchanged.
+    std::optional<std::uint16_t> backdrop_id{};
 };
 
 // The single-balloon layout request LayoutBalloon fills (panel.cpp:928): text

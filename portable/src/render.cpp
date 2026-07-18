@@ -1,5 +1,6 @@
 #include "comicchat/render.hpp"
 
+#include "comicchat/backdrop.hpp"
 #include "comicchat/balloon.hpp"
 #include "comicchat/formatting.hpp"
 #include "comicchat/text.hpp"
@@ -439,11 +440,27 @@ void trace_cloud_and_tail(cairo_t* context, const PanelTransform& transform, con
 // (dev_y) — the Y-up->Y-down flip already happened when the caller mapped the
 // logical body rect corners through the panel transform, so the raster is drawn
 // upright without a second flip.
+//
+// `crop`, when non-null, restricts the source region blitted to `crop`'s
+// pixel-space [left,right]x[top,bottom] window (BackdropCrop::src's
+// convention: origin top-left, rows increasing downward — see backdrop.hpp)
+// instead of the whole bitmap, which is how the backdrop draw-hook below
+// reuses this same StretchBlt-equivalent pattern for a CBackDrop::Draw-style
+// panned/zoomed crop (backdrop.cpp:330-368) rather than a full-bitmap blit.
+// nullptr (the default, used by the avatar-body call site) keeps blitting the
+// entire bitmap exactly as before.
 void blit_avatar(cairo_t* context, const AvatarBitmap& bitmap, const double dev_x, const double dev_y,
-                 const double dev_w, const double dev_h) {
+                 const double dev_w, const double dev_h, const Rect* crop = nullptr) {
     if (bitmap.width <= 0 || bitmap.height <= 0 || dev_w <= 0.0 || dev_h <= 0.0) return;
     const auto expected = static_cast<std::size_t>(bitmap.width) * static_cast<std::size_t>(bitmap.height);
     if (bitmap.pixels.size() < expected) return;
+
+    const double src_left = crop ? static_cast<double>(crop->left) : 0.0;
+    const double src_top = crop ? static_cast<double>(crop->top) : 0.0;
+    const double src_w = crop ? static_cast<double>(crop->right - crop->left) : static_cast<double>(bitmap.width);
+    const double src_h = crop ? static_cast<double>(crop->bottom - crop->top) : static_cast<double>(bitmap.height);
+    if (src_w <= 0.0 || src_h <= 0.0) return;
+
     auto* surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, bitmap.width, bitmap.height);
     if (!surface || cairo_surface_status(surface) != CAIRO_STATUS_SUCCESS) {
         if (surface) cairo_surface_destroy(surface);
@@ -461,13 +478,14 @@ void blit_avatar(cairo_t* context, const AvatarBitmap& bitmap, const double dev_
     cairo_surface_mark_dirty(surface);
     cairo_save(context);
     cairo_translate(context, dev_x, dev_y);
-    cairo_scale(context, dev_w / static_cast<double>(bitmap.width), dev_h / static_cast<double>(bitmap.height));
+    cairo_scale(context, dev_w / src_w, dev_h / src_h);
+    cairo_translate(context, -src_left, -src_top);
     cairo_set_source_surface(context, surface, 0.0, 0.0);
     // Deterministic sampling for the StretchBlt-equivalent scale; nudged onto the
-    // pad region so the fitted body box is fully covered.
+    // pad region so the fitted box is fully covered.
     cairo_pattern_set_filter(cairo_get_source(context), CAIRO_FILTER_BILINEAR);
     cairo_pattern_set_extend(cairo_get_source(context), CAIRO_EXTEND_PAD);
-    cairo_rectangle(context, 0.0, 0.0, static_cast<double>(bitmap.width), static_cast<double>(bitmap.height));
+    cairo_rectangle(context, src_left, src_top, src_w, src_h);
     cairo_fill(context);
     cairo_restore(context);
     cairo_surface_destroy(surface);
@@ -475,7 +493,8 @@ void blit_avatar(cairo_t* context, const AvatarBitmap& bitmap, const double dev_
 
 } // namespace
 
-void Canvas::render_panel(const Panel& panel, TextEngine& text, const PanelAvatarProvider& avatars) {
+void Canvas::render_panel(const Panel& panel, TextEngine& text, const PanelAvatarProvider& avatars,
+                          BackdropCatalog* backdrop_catalog) {
     auto* context = impl_->context.get();
     const auto transform = fit_panel_transform(impl_->width, impl_->height, source_panel_units);
     const auto stroke_width = std::max(1.0, 28.0 * transform.scale);  // CBWoodringNormal::m_pen 28
@@ -491,6 +510,32 @@ void Canvas::render_panel(const Panel& panel, TextEngine& text, const PanelAvata
     const auto panel_br = transform.to_device(LogicalPoint{source_panel_units, -source_panel_units});
     cairo_rectangle(context, panel_tl.x, panel_tl.y, panel_br.x - panel_tl.x, panel_br.y - panel_tl.y);
     cairo_clip(context);
+
+    // Scene backdrop. CUnitPanel::Draw calls m_backDrop.Draw(...) immediately
+    // after the clip (panel.cpp:681) and before any body draws (panel.cpp:684),
+    // so a configured backdrop always sits behind the avatars/balloons for this
+    // panel. Skip entirely (no behavior change from before this field existed)
+    // when the panel has no backdrop_id, or when the caller passed no catalog
+    // to resolve it against -- this keeps every existing render_panel call site
+    // compiling and rendering byte-identically.
+    if (panel.backdrop_id && backdrop_catalog) {
+        // world_coords == panel_bbox: the degenerate BF_NOZOOM crop window
+        // (backdrop.hpp's crop_for_panel docs) -- Panel does not yet carry a
+        // per-instance pan/zoom bbox of its own (CBackDrop::m_bbox, set by
+        // AdjustArtToCoord, panel.cpp:951-958), so the whole source bitmap is
+        // shown stretched to fill the panel, matching CBackDrop's own default
+        // (BF_NOZOOM, backdrop.h:36,43) until that per-panel bbox is wired up.
+        // `panel_tl`/`panel_br` above are already this same panel_bbox mapped
+        // through the device transform, so they double as both the crop
+        // window's device rect AND the blit destination rect.
+        const Rect panel_world_bbox{.left = 0, .bottom = -static_cast<std::int32_t>(source_panel_units),
+                                    .right = static_cast<std::int32_t>(source_panel_units), .top = 0};
+        if (auto art = backdrop_catalog->resolve_art(*panel.backdrop_id); art.has_value()) {
+            const auto crop = crop_for_panel(art->get(), panel_world_bbox, panel_world_bbox);
+            blit_avatar(context, art->get(), panel_tl.x, panel_tl.y, panel_br.x - panel_tl.x,
+                       panel_br.y - panel_tl.y, &crop.src);
+        }
+    }
 
     // Avatar bodies. Map the logical (twips, Y-up) body box through the panel
     // transform to a device rect (this applies the Y-up->Y-down flip once), then
