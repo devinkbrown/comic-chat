@@ -152,6 +152,35 @@ void add_wavies(const BalloonPoint& pt1, const BalloonPoint& pt2, std::vector<Ba
 [[nodiscard]] auto beta_closed_bezier(const std::vector<BalloonPoint>& cps)
     -> std::vector<BalloonPoint>;
 
+// CBeta(pts, n, FALSE) OPEN beta-spline expansion (spline.cpp:55,169,241): the
+// same beta matrix, but the OPEN knot model (dups=3 duplicating the first/last
+// control point, KnotCount = nCps + 4, BezierCount = 3*nCps + 4, GetKnot's open
+// branch). This is the curve BreakSpline draws after it rewrites the control
+// array to start/end at the two tail-gap points and clears `closed`
+// (balloon.cpp:477-478). The path does NOT loop back to its start.
+[[nodiscard]] auto beta_open_bezier(const std::vector<BalloonPoint>& cps)
+    -> std::vector<BalloonPoint>;
+
+// The result of BreakSpline (balloon.cpp:451-479): the cloud opened at the tail
+// throat. `outline_open` is the OPEN beta bezier of the rewritten control array
+// (running the long way round from `gap_right` over the cloud top to
+// `gap_left`); `gap_left`/`gap_right` are the two real wavy-bottom points the
+// tail arcs bridge (leftNearest/rightNearest, panel coords).
+struct BrokenCloud final {
+    std::vector<BalloonPoint> outline_open;
+    BalloonPoint gap_left{};   // leftNearest = cps[nCpsNew-1]
+    BalloonPoint gap_right{};  // rightNearest = cps[0]
+};
+
+// BreakSpline (balloon.cpp:451-479) in panel coordinates: open the CLOSED cloud
+// (`spline_cps` control points, `closed_outline` its closed beta bezier) at the
+// break column `x_panel` on the row `y_panel` (fInfo.m_bbox.Bottom lifted into
+// panel space). Ports CSpline::ClosestPoint / WalkHorizontalDistance
+// (spline.cpp:251-296) and the modular control-array rebuild (balloon.cpp:464-470).
+[[nodiscard]] auto break_spline_open(const std::vector<BalloonPoint>& spline_cps,
+                                     const std::vector<BalloonPoint>& closed_outline, int x_panel,
+                                     int y_panel) -> BrokenCloud;
+
 // ComputeCloudBBox (balloon.cpp:1504): the tight bounding box of the control
 // points, as a twips/Y-up Rect (top > bottom).
 [[nodiscard]] auto cloud_bbox(const std::vector<BalloonPoint>& cps) -> Rect;
@@ -209,9 +238,17 @@ struct TailInput final {
 
 struct TailGeometry final {
     BalloonPoint anchor{};  // bottom2 = (arrow_x, speaker_top + 200), panel coords
-    BalloonPoint tip{};     // top2 = (xbreak + bbox_left, cloud_bottom), panel coords
+    BalloonPoint tip{};     // top2: (xbreak + bbox_left, cloud_bottom) from compute_tail,
+                            // updated by layout_balloon to the gap-endpoint midpoint
+                            // after BreakSpline (balloon.cpp:1590-1591), panel coords
     int xbreak{};           // chosen break x, balloon-local (after text-nudge + angle clamp)
     double angle{};         // tail angle from vector_to_angle, clamped to <= 45 deg
+    // AddArrow bow parameters (balloon.cpp:1595-1601). `altitude` = 0.05*tailLen,
+    // the CArc bow height; `tail_sign` = (anchor.x > gap_left.x ? 1 : -1). The two
+    // tail edges bow with +tail_sign*altitude and -tail_sign*altitude, curving
+    // apart. Zero until layout_balloon runs BreakSpline (compute_tail leaves them 0).
+    int altitude{};
+    int tail_sign{1};
     auto operator==(const TailGeometry&) const -> bool = default;
 };
 
@@ -257,8 +294,16 @@ struct Balloon final {
     Rect bbox{};                             // m_bbox positioned in panel space
     Rect route_region{};                     // GetCloudBBox, panel coords
     std::vector<BalloonPoint> spline;        // cloud control points, panel coords
-    std::vector<BalloonPoint> outline;       // beta bezier expansion, panel coords
-    TailGeometry tail{};                     // say/whisper/think tail anchor
+    std::vector<BalloonPoint> outline;       // CLOSED beta bezier expansion, panel coords
+    // The OPEN cloud+tail figure (BreakSpline output, balloon.cpp:451-479): the
+    // cloud broken at the tail throat so the bottom is never stroked across the
+    // gap. render.cpp traces this WITHOUT a close_path, then bridges the gap with
+    // the two bowed tail arcs and closes once -- a single seamless figure. Empty
+    // for action boxes (which stay a closed rectangle with no tail).
+    std::vector<BalloonPoint> outline_open;  // OPEN beta bezier, gap_right -> ... -> gap_left
+    BalloonPoint tail_gap_left{};            // leftNearest on the wavy cloud bottom (panel)
+    BalloonPoint tail_gap_right{};           // rightNearest on the wavy cloud bottom (panel)
+    TailGeometry tail{};                     // say/whisper/think tail anchor + bow params
     std::vector<ThinkBubble> bubbles;        // think trail (empty otherwise)
     bool has_tail{};                         // false for action boxes
     int line_height{};                       // for text stacking

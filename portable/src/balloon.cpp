@@ -251,13 +251,24 @@ using Matrix = std::array<std::array<double, 4>, 4>;
     return m;
 }
 
-// CSpline::GetKnot closed case (spline.cpp:232) for a closed beta spline.
-[[nodiscard]] auto get_knot(const std::vector<BalloonPoint>& cps, const int index) -> BalloonPoint {
+// CSpline::GetKnot (spline.cpp:232). `closed` selects the wrap model: the closed
+// branch duplicates cps[n-1]/cps[0]/cps[1] around the seam; the OPEN branch
+// (spline.cpp:241-248) duplicates the first control point for the first `dups`(=3)
+// knots and the last control point for the trailing knots, so an open beta spline
+// starts/ends near cps[0]/cps[n-1] instead of looping.
+[[nodiscard]] auto get_knot(const std::vector<BalloonPoint>& cps, const int index, const bool closed)
+    -> BalloonPoint {
     const int n = static_cast<int>(cps.size());
-    if (index == 0) return cps[static_cast<std::size_t>(n - 1)];
-    if (index == n + 1) return cps[0];
-    if (index == n + 2) return cps[1];
-    return cps[static_cast<std::size_t>(index - 1)];
+    if (closed) {
+        if (index == 0) return cps[static_cast<std::size_t>(n - 1)];
+        if (index == n + 1) return cps[0];
+        if (index == n + 2) return cps[1];
+        return cps[static_cast<std::size_t>(index - 1)];
+    }
+    constexpr int dups = 3;  // CBeta::GetDups (spline.h:54)
+    if (index < dups) return cps[0];
+    if (index >= n + dups - 2) return cps[static_cast<std::size_t>(n - 1)];
+    return cps[static_cast<std::size_t>(index - dups + 1)];
 }
 
 [[nodiscard]] auto mat_apply(const Matrix& m, const int row, const BalloonPoint k0, const BalloonPoint k1,
@@ -268,22 +279,26 @@ using Matrix = std::array<std::array<double, 4>, 4>;
     };
 }
 
-} // namespace
-
-auto beta_closed_bezier(const std::vector<BalloonPoint>& cps) -> std::vector<BalloonPoint> {
+// CSpline::ComputeBezpts (spline.cpp:169): expand the beta control points into
+// the PolyBezier control-point list. `closed` picks the knot model and counts:
+// closed -> KnotCount nCps+3, BezierCount 3*nCps+1; open -> KnotCount nCps+4,
+// BezierCount 3*nCps+4. The loop body is identical for both (the only difference
+// is get_knot's wrap and the terminating knot count).
+[[nodiscard]] auto beta_bezier(const std::vector<BalloonPoint>& cps, const bool closed)
+    -> std::vector<BalloonPoint> {
     const int n_cps = static_cast<int>(cps.size());
     if (n_cps < 2) return {};
     const Matrix m = beta_matrix(beta_default_tension, beta_default_bias);
 
-    const int n_knots = n_cps + 3;             // CBeta::KnotCount, closed (spline.h:55)
-    const int bezier_count = 3 * n_knots - 8;  // CSpline::BezierCount (spline.h:17)
+    const int n_knots = closed ? n_cps + 3 : n_cps + 4;  // CBeta::KnotCount (spline.h:55)
+    const int bezier_count = 3 * n_knots - 8;             // CSpline::BezierCount (spline.h:17)
     std::vector<BalloonPoint> bez(static_cast<std::size_t>(bezier_count));
 
     int bez_index = 1;
-    BalloonPoint knot0 = get_knot(cps, 0);
-    BalloonPoint knot1 = get_knot(cps, 1);
-    BalloonPoint knot2 = get_knot(cps, 2);
-    BalloonPoint knot3 = get_knot(cps, 3);
+    BalloonPoint knot0 = get_knot(cps, 0, closed);
+    BalloonPoint knot1 = get_knot(cps, 1, closed);
+    BalloonPoint knot2 = get_knot(cps, 2, closed);
+    BalloonPoint knot3 = get_knot(cps, 3, closed);
     for (int i = 0;; ++i) {
         // CvertsToCubic: c3<-row0, c2<-row1, c1<-row2, c0<-row3 (spline.cpp:206).
         const BalloonPoint c3 = mat_apply(m, 0, knot0, knot1, knot2, knot3);
@@ -304,9 +319,240 @@ auto beta_closed_bezier(const std::vector<BalloonPoint>& cps) -> std::vector<Bal
         knot0 = knot1;
         knot1 = knot2;
         knot2 = knot3;
-        knot3 = get_knot(cps, i + 4);
+        knot3 = get_knot(cps, i + 4, closed);
     }
     return bez;
+}
+
+} // namespace
+
+auto beta_closed_bezier(const std::vector<BalloonPoint>& cps) -> std::vector<BalloonPoint> {
+    return beta_bezier(cps, /*closed=*/true);
+}
+
+auto beta_open_bezier(const std::vector<BalloonPoint>& cps) -> std::vector<BalloonPoint> {
+    return beta_bezier(cps, /*closed=*/false);
+}
+
+namespace {
+
+// ------------------------------------------------------------------------
+// splinutl.cpp double-precision bezier walk (ported for BreakSpline). A cubic
+// bezier is recursively split until flat, then sampled ~epsilon apart, running a
+// callback at each sample. Two callbacks are needed: nearest-point (ClosestPoint)
+// and beyond-goal-x (WalkHorizontalDistance).
+// ------------------------------------------------------------------------
+constexpr double spline_epsilon = 1.0;    // splinutl.cpp:57
+constexpr double spline_small_number = 1.0e-24;  // vector2d.h:26
+
+struct DBezier final {
+    DPoint p0, p1, p2, p3;
+};
+
+[[nodiscard]] auto dadd(const DPoint a, const DPoint b) noexcept -> DPoint { return {a.x + b.x, a.y + b.y}; }
+[[nodiscard]] auto dsub(const DPoint a, const DPoint b) noexcept -> DPoint { return {a.x - b.x, a.y - b.y}; }
+[[nodiscard]] auto ddist(const DPoint a, const DPoint b) noexcept -> double {
+    const double dx = a.x - b.x;
+    const double dy = a.y - b.y;
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+// split_bezier (splinutl.cpp:20): de Casteljau split at t = 1/2.
+void split_bezier(const DBezier& b, DBezier& left, DBezier& right) {
+    left.p0 = b.p0;
+    left.p1 = scal(0.5, dadd(b.p0, b.p1));
+    const DPoint t = scal(0.5, dadd(b.p1, b.p2));
+    left.p2 = scal(0.5, dadd(left.p1, t));
+    right.p3 = b.p3;
+    right.p2 = scal(0.5, dadd(b.p2, b.p3));
+    right.p1 = scal(0.5, dadd(t, right.p2));
+    left.p3 = right.p0 = scal(0.5, dadd(left.p2, right.p1));
+}
+
+[[nodiscard]] auto inside_bbox_tol(const DPoint pt, const double xmin, const double xmax, const double ymin,
+                                   const double ymax, const double tol) noexcept -> bool {
+    return !((pt.x + tol < xmin) || (pt.x - tol > xmax) || (pt.y + tol < ymin) || (pt.y - tol > ymax));
+}
+
+// flat_bezier (splinutl.cpp:58): approximate flatness test against epsilon.
+[[nodiscard]] auto flat_bezier(const DBezier& b) noexcept -> bool {
+    const double xmin = std::min(b.p0.x, b.p3.x);
+    const double xmax = std::max(b.p0.x, b.p3.x);
+    const double ymin = std::min(b.p0.y, b.p3.y);
+    const double ymax = std::max(b.p0.y, b.p3.y);
+    if (!inside_bbox_tol(b.p1, xmin, xmax, ymin, ymax, 0.5 * spline_epsilon) ||
+        !inside_bbox_tol(b.p2, xmin, xmax, ymin, ymax, 0.5 * spline_epsilon))
+        return false;
+
+    const DPoint d1 = dsub(b.p1, b.p0);
+    const DPoint d2 = dsub(b.p2, b.p0);
+    const DPoint d = dsub(b.p3, b.p0);
+    const double dx = std::abs(d.x);
+    const double dy = std::abs(d.y);
+    if (dx + dy < spline_epsilon) return true;
+    if (dy < dx) {
+        const double dydx = d.y / d.x;
+        return std::abs(d2.y - (d2.x * dydx)) < spline_epsilon &&
+               std::abs(d1.y - (d1.x * dydx)) < spline_epsilon;
+    }
+    const double dxdy = d.x / d.y;
+    return std::abs(d2.x - (d2.y * dxdy)) < spline_epsilon &&
+           std::abs(d1.x - (d1.y * dxdy)) < spline_epsilon;
+}
+
+// subdivide (splinutl.cpp:92): walk the flattened bezier, running `proc` roughly
+// `spline_epsilon` apart. `proc` returns true to stop. Depth is bounded because
+// flat_bezier converges just as the source relies on.
+template <typename Proc>
+[[nodiscard]] auto subdivide(const DBezier& bezier, Proc&& proc) -> bool {
+    if (flat_bezier(bezier)) {
+        const double length = ddist(bezier.p0, bezier.p3);
+        if (length > spline_small_number) {
+            const double step = spline_epsilon / length;
+            for (double alpha = 0.0; alpha <= 1.0; alpha += step) {
+                const DPoint pt = dadd(scal(alpha, bezier.p3), scal(1.0 - alpha, bezier.p0));
+                if (proc(pt)) return true;
+            }
+        }
+        return proc(bezier.p3);
+    }
+    DBezier left{};
+    DBezier right{};
+    split_bezier(bezier, left, right);
+    if (subdivide(left, proc)) return true;
+    return subdivide(right, proc);
+}
+
+[[nodiscard]] auto to_dbezier(const BalloonPoint* triple) -> DBezier {
+    return {to_d(triple[0]), to_d(triple[1]), to_d(triple[2]), to_d(triple[3])};
+}
+
+// int_bezier_nearest_point (splinutl.cpp:184): manhattan-nearest point on one
+// cubic. `dist` truncates like the source (int) cast.
+struct NearestResult final {
+    int dist{};
+    BalloonPoint found{};
+};
+[[nodiscard]] auto bezier_nearest(const BalloonPoint* triple, const BalloonPoint given) -> NearestResult {
+    const DBezier b = to_dbezier(triple);
+    const DPoint given_d = to_d(given);
+    double best = 1.0e24;  // LARGENUMBER (vector2d.h:25)
+    DPoint found{};
+    // cb_nearest never stops the walk (it always returns FALSE); the whole cubic
+    // is sampled, so the walk's own return is intentionally unused (splinutl.cpp:206).
+    (void)subdivide(b, [&](const DPoint pt) {
+        const double this_dist = std::abs(pt.x - given_d.x) + std::abs(pt.y - given_d.y);
+        if (this_dist < best) {
+            best = this_dist;
+            found = pt;
+        }
+        return false;
+    });
+    return {static_cast<int>(best), {static_cast<int>(found.x), static_cast<int>(found.y)}};
+}
+
+// walk_horizontal_dist (splinutl.cpp:259): the rightmost sample on one cubic, and
+// whether any sample reached goal_x. found.x starts below any real sample.
+struct HorizontalResult final {
+    bool found{};
+    BalloonPoint furthest{};
+};
+[[nodiscard]] auto bezier_walk_horizontal(const BalloonPoint* triple, const int goal_x) -> HorizontalResult {
+    const DBezier b = to_dbezier(triple);
+    DPoint best{-1000000.0, 0.0};
+    const bool found = subdivide(b, [&](const DPoint pt) {
+        if (pt.x > best.x) best = pt;
+        return pt.x >= static_cast<double>(goal_x);
+    });
+    return {found, to_i(best)};  // dpoint_to_point ROUNDs (vector2d.cpp:159)
+}
+
+struct ClosestResult final {
+    BalloonPoint point{};
+    int knot_index{};
+};
+
+// CSpline::ClosestPoint (spline.cpp:251): manhattan-nearest point across every
+// cubic of the CLOSED bezier, plus the knot index (i/3 + 2) it landed on.
+[[nodiscard]] auto spline_closest_point(const std::vector<BalloonPoint>& bez, const BalloonPoint to_pt)
+    -> ClosestResult {
+    const int bez_count = static_cast<int>(bez.size());
+    int min_dist = 10000000;
+    ClosestResult result{};
+    for (int i = 0; i < bez_count - 1; i += 3) {
+        const NearestResult near = bezier_nearest(bez.data() + i, to_pt);
+        if (near.dist < min_dist) {
+            min_dist = near.dist;
+            result.point = near.found;
+            result.knot_index = (i / 3) + 2;
+        }
+    }
+    return result;
+}
+
+// CSpline::WalkHorizontalDistance (spline.cpp:269): from `from_knot_index`, walk
+// forward around the CLOSED bezier until a sample's x reaches `goal_x`, else keep
+// the rightmost sample seen. Returns the point and the knot index it came from.
+[[nodiscard]] auto spline_walk_horizontal(const std::vector<BalloonPoint>& bez, const int from_knot_index,
+                                          const int goal_x) -> ClosestResult {
+    const int bez_count = static_cast<int>(bez.size());
+    ClosestResult result{};
+    result.knot_index = -1;
+    int index = (from_knot_index - 2) * 3;
+    BalloonPoint last_furthest{-100000, -100000};
+    for (int i = 0; i < bez_count - 1; i += 3) {
+        if (index + 3 > bez_count - 1) index = 0;
+        const HorizontalResult walk = bezier_walk_horizontal(bez.data() + index, goal_x);
+        if (walk.found) {
+            result.knot_index = index / 3 + 2;
+            result.point = walk.furthest;
+            return result;
+        }
+        if (walk.furthest.x > last_furthest.x) {
+            result.knot_index = index / 3 + 2;
+            last_furthest = walk.furthest;
+        }
+        index += 3;
+    }
+    result.point = last_furthest;
+    return result;
+}
+
+} // namespace
+
+auto break_spline_open(const std::vector<BalloonPoint>& spline_cps,
+                       const std::vector<BalloonPoint>& closed_outline, const int x_panel,
+                       const int y_panel) -> BrokenCloud {
+    const int n_cps = static_cast<int>(spline_cps.size());
+    if (n_cps < 2 || closed_outline.size() < 4) return {};
+
+    constexpr int gapwidth = 80;  // BreakSpline gapwidth (balloon.cpp:457)
+    const BalloonPoint left{x_panel - gapwidth, y_panel};
+
+    const ClosestResult left_hit = spline_closest_point(closed_outline, left);
+    const ClosestResult right_hit =
+        spline_walk_horizontal(closed_outline, left_hit.knot_index, left_hit.point.x + 2 * gapwidth);
+    const int left_knot = left_hit.knot_index;
+    const int right_knot = right_hit.knot_index;
+    if (left_knot < 0 || right_knot < 0) return {};
+
+    // Rebuild the control array (balloon.cpp:464-470): start at rightNearest, walk
+    // the surviving control points forward from (right_knot-1), end at leftNearest.
+    // The (right_knot-left_knot) mod nCps points spanning the tail gap are dropped.
+    const int n_new = n_cps + 2 - (right_knot - left_knot + n_cps) % n_cps;
+    std::vector<BalloonPoint> new_cps(static_cast<std::size_t>(n_new));
+    new_cps[0] = right_hit.point;
+    for (int i = 1; i <= n_new - 2; ++i) {
+        const int src = ((right_knot + i - 2) % n_cps + n_cps) % n_cps;
+        new_cps[static_cast<std::size_t>(i)] = spline_cps[static_cast<std::size_t>(src)];
+    }
+    new_cps[static_cast<std::size_t>(n_new - 1)] = left_hit.point;
+
+    BrokenCloud broken;
+    broken.outline_open = beta_open_bezier(new_cps);
+    broken.gap_left = left_hit.point;    // leftNearest = cps[nCpsNew-1]
+    broken.gap_right = right_hit.point;  // rightNearest = cps[0]
+    return broken;
 }
 
 auto cloud_bbox(const std::vector<BalloonPoint>& cps) -> Rect {
@@ -509,19 +755,45 @@ auto layout_balloon(const BalloonRequest& request) -> Balloon {
         request.arrow_x, request.speaker_top, bbox_left, bbox_top, out.route_region.left,
         out.route_region.right, out.route_region.bottom, last_left, last_width});
 
+    // fInfo.m_bbox.Bottom (balloon.cpp:711) lifted into panel space: the TEXT bbox
+    // bottom, one AddWavies scallop above the cloud bottom. BreakSpline breaks on
+    // this row (balloon.cpp:1585); the think-bubble entry uses the same value.
+    const int text_bbox_bottom = bbox_top - n_lines * request.font.line_height - request.font.base_add;
+
+    // SetBalloonTraj (balloon.cpp:1886): one CTraj = the cloud spline + AddArrow.
+    // AddArrow calls BreakSpline to open the cloud bottom at the tail throat, then
+    // AddSeg's two CArc tail edges bridging the gap endpoints -- a single open
+    // cloud+tail figure with no stroked-across seam. think inherits this traj
+    // (CBWoodringThink overrides only Draw, balloon.cpp:1966), so it too carries
+    // the pointed tail beneath its bubble trail.
+    const auto broken = break_spline_open(out.spline, out.outline, out.tail.tip.x, text_bbox_bottom);
+    out.outline_open = broken.outline_open;
+    out.tail_gap_left = broken.gap_left;
+    out.tail_gap_right = broken.gap_right;
+
+    if (!out.outline_open.empty()) {
+        // AddArrow (balloon.cpp:1588-1601): top2 recomputed as the gap-endpoint
+        // midpoint, tailLen = dist(top2, bottom2), alt = 0.05*tailLen, and
+        // sign = (bottom.x > left.x ? 1 : -1). The two edges bow +/-alt, apart.
+        out.tail.tip = {(broken.gap_left.x + broken.gap_right.x) / 2,
+                        (broken.gap_left.y + broken.gap_right.y) / 2};
+        const double tail_len = dist(out.tail.tip, out.tail.anchor);
+        out.tail.altitude = static_cast<int>(0.05 * tail_len);
+        out.tail.tail_sign = out.tail.anchor.x > broken.gap_left.x ? 1 : -1;
+    }
+
     if (request.kind.mode == BalloonMode::think) {
         // CBWoodringThink::Draw (balloon.cpp:1970): the bubble entry X centers on
         // the cloud route region, but the entry Y is the TEXT bbox bottom
         // (fInfo.m_bbox.Bottom = -(nLines*lineHeight + baseAdd)), not the cloud
         // bbox bottom -- the cloud bottom sits lower by the AddWavies scallops and
         // the finalY inset, which would change the bubble count and spacing.
-        const int text_bbox_bottom =
-            bbox_top - n_lines * request.font.line_height - request.font.base_add;
         const BalloonPoint entry{(out.route_region.left + out.route_region.right) / 2,
                                  text_bbox_bottom};
         const BalloonPoint tail{request.arrow_x, request.speaker_top + 200};
         out.bubbles = think_bubbles(entry, tail);
-        out.has_tail = false;  // think replaces the tail with the bubble trail
+        // think keeps BOTH the pointed tail (open cloud + bowed arcs) AND the
+        // bubble trail -- it does not replace one with the other (balloon.cpp:1966).
     }
     return out;
 }

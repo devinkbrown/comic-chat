@@ -189,6 +189,50 @@ TEST_CASE("Closed beta-spline expansion matches the CBeta bezier port (spline.cp
     CHECK(bez.back() == BalloonPoint{-59, -32});
 }
 
+TEST_CASE("Open beta-spline expansion uses the OPEN knot model (spline.cpp:55,241)") {
+    const auto lines = golden_lines();
+    const auto offsets = comicchat::shift_line_offsets(lines, comicchat::LabelJustify::center);
+    auto filters = comicchat::get_filters(lines, offsets);
+    const int final_y = comicchat::permute_filters(filters, golden_font());
+    const auto cps = comicchat::create_balloon_spline(filters, final_y);
+
+    const auto open = comicchat::beta_open_bezier(cps);
+    // BezierCount() = 3*nCps + 4 for an OPEN CBeta (spline.h:17,55) -- the classic
+    // off-by-one guard: closed is 3*nCps + 1, open is three points longer.
+    REQUIRE(open.size() == static_cast<std::size_t>(3 * cps.size() + 4));
+    CHECK(open.size() == comicchat::beta_closed_bezier(cps).size() + 3);
+    // An open spline does NOT loop back to its start (unlike the closed one).
+    CHECK(open.front() != open.back());
+}
+
+TEST_CASE("BreakSpline opens the cloud bottom at the tail throat (balloon.cpp:451-479)") {
+    const auto lines = golden_lines();
+    const auto offsets = comicchat::shift_line_offsets(lines, comicchat::LabelJustify::center);
+    auto filters = comicchat::get_filters(lines, offsets);
+    const int final_y = comicchat::permute_filters(filters, golden_font());
+    const auto cps = comicchat::create_balloon_spline(filters, final_y);
+    const auto closed = comicchat::beta_closed_bezier(cps);
+
+    // Break near the horizontal centre of the cloud on the bottom row.
+    const auto broken = comicchat::break_spline_open(cps, closed, 600, final_y);
+
+    // The rewritten control array yields a valid OPEN beta bezier (size 3n+4).
+    REQUIRE(broken.outline_open.size() >= 4);
+    CHECK((broken.outline_open.size() - 4) % 3 == 0);
+    // The two real wavy-bottom gap endpoints exist and straddle the break column,
+    // so the outline runs from the right edge over the top to the left edge and
+    // never strokes across the gap between them.
+    CHECK(broken.gap_left != broken.gap_right);
+    CHECK(broken.gap_left.x < broken.gap_right.x);
+    // Both gap endpoints sit along the low (bottom) part of the cloud.
+    const auto box = comicchat::cloud_bbox(cps);
+    const int mid_y = (box.top + box.bottom) / 2;
+    CHECK(broken.gap_left.y < mid_y);
+    CHECK(broken.gap_right.y < mid_y);
+    // The open outline is not a closed loop.
+    CHECK(broken.outline_open.front() != broken.outline_open.back());
+}
+
 TEST_CASE("AddArrow tail anchors at the speaker and clamps to 45 degrees (balloon.cpp:1538)") {
     comicchat::TailInput in{};
     in.arrow_x = 1500;
@@ -326,12 +370,29 @@ TEST_CASE("layout_balloon docks the cloud and points its tail at the speaker's a
     // The outline is the closed beta-spline expansion of the placed control pts.
     CHECK(balloon.outline.size() == static_cast<std::size_t>(3 * balloon.spline.size() + 1));
 
-    // A think balloon replaces the tail with a bubble trail; a box has neither.
+    // GAP 1: the cloud is broken OPEN at the tail throat. The open outline is a
+    // valid OPEN beta bezier (3*nCpsNew + 4 points for some nCpsNew), it does NOT
+    // loop back to its start (front != back, unlike the closed outline), and the
+    // two real wavy-bottom gap endpoints exist bracketing the break column.
+    REQUIRE(balloon.outline_open.size() >= 4);
+    CHECK(balloon.outline_open.front() != balloon.outline_open.back());
+    CHECK((balloon.outline_open.size() - 4) % 3 == 0);
+    CHECK(balloon.tail_gap_left != balloon.tail_gap_right);
+    // The gap endpoints straddle the break tip (leftNearest left of rightNearest).
+    CHECK(balloon.tail_gap_left.x < balloon.tail_gap_right.x);
+    // GAP 2: the tail edges carry a non-zero bow altitude and a definite sign.
+    CHECK(balloon.tail.altitude > 0);
+    CHECK((balloon.tail.tail_sign == 1 || balloon.tail.tail_sign == -1));
+
+    // GAP 3: a think balloon now carries BOTH the pointed tail (open cloud + arcs)
+    // AND the bubble trail; a box has neither.
     comicchat::BalloonRequest think = request;
     think.kind = {comicchat::BalloonMode::think, false};
     const auto thought = comicchat::layout_balloon(think);
-    CHECK_FALSE(thought.has_tail);
+    CHECK(thought.has_tail);
     CHECK_FALSE(thought.bubbles.empty());
+    CHECK_FALSE(thought.outline_open.empty());
+    CHECK(thought.tail.altitude > 0);
     // Regression (cpp-reviewer HIGH): the think-bubble entry Y is the TEXT bbox
     // bottom (bbox.top - nLines*lineHeight - baseAdd), not the cloud route-region
     // bottom -- they differ by the AddWavies scallops, which changes bubble count

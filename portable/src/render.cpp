@@ -260,32 +260,80 @@ void trace_polygon(cairo_t* context, const PanelTransform& transform,
     cairo_close_path(context);
 }
 
-// The say/whisper tail (balloon.cpp:1538): a filled white pointer with a black
-// edge from a gap in the cloud bottom (around the break tip) down to the speaker
-// anchor. Not a bit-exact CArc port — the deterministic anchor/xbreak/angle math
-// is goldened separately; this is the visual fill.
-void draw_tail(cairo_t* context, const PanelTransform& transform, const TailGeometry& tail,
-               const double stroke_width, const bool dashed) {
-    constexpr int gap = 80;  // BreakSpline gapwidth (balloon.cpp:457)
-    const auto left = to_device(transform, BalloonPoint{tail.tip.x - gap, tail.tip.y});
-    const auto right = to_device(transform, BalloonPoint{tail.tip.x + gap, tail.tip.y});
-    const auto anchor = to_device(transform, tail.anchor);
-    cairo_new_path(context);
-    cairo_move_to(context, left.x, left.y);
-    cairo_line_to(context, anchor.x, anchor.y);
-    cairo_line_to(context, right.x, right.y);
-    cairo_set_source_rgba(context, 1.0, 1.0, 1.0, 1.0);
-    cairo_fill_preserve(context);
-    if (dashed) {
-        const double dashes[2] = {stroke_width * 3.0, stroke_width * 2.0};
-        cairo_set_dash(context, dashes, 2, 0.0);
-    } else {
-        cairo_set_dash(context, nullptr, 0, 0.0);
+// Trace an OPEN cubic-bezier outline (beta_open_bezier output: point 0 then
+// (b1,b2,b3) triples) as a device path WITHOUT closing it. This is the cloud
+// broken at the tail throat (BreakSpline, balloon.cpp:477): it runs from the
+// right gap edge, over the cloud top, to the left gap edge, and stops there so
+// the tail arcs can bridge the gap instead of a stroked-across bottom.
+void trace_bezier_outline_open(cairo_t* context, const PanelTransform& transform,
+                               const std::vector<BalloonPoint>& bez) {
+    if (bez.size() < 4) return;
+    const auto first = to_device(transform, bez.front());
+    cairo_move_to(context, first.x, first.y);
+    for (std::size_t i = 1; i + 2 < bez.size(); i += 3) {
+        const auto c1 = to_device(transform, bez[i]);
+        const auto c2 = to_device(transform, bez[i + 1]);
+        const auto c3 = to_device(transform, bez[i + 2]);
+        cairo_curve_to(context, c1.x, c1.y, c2.x, c2.y, c3.x, c3.y);
     }
-    cairo_set_source_rgba(context, 0.0, 0.0, 0.0, 1.0);
-    cairo_set_line_width(context, stroke_width);
-    cairo_stroke(context);
-    cairo_set_dash(context, nullptr, 0, 0.0);
+}
+
+// One bowed tail edge: DrawArc2 (arc.cpp:97) approximated by a cubic bezier whose
+// midpoint sagitta equals `altitude`. A positive altitude bows to the RIGHT of
+// the start->end vector in logical (Y-up) space (arc.cpp:95); |altitude| < 1
+// degenerates to a straight LineTo (arc.cpp:101-104), which also guards the
+// zero-tail (tailLen == 0 -> alt == 0) case with no NaN. The control points are
+// built in logical space and mapped through the panel transform, so the Y-up ->
+// Y-down handedness of "right of the vector" is preserved. Assumes the current
+// path point is already `a` mapped to device.
+void trace_bowed_edge(cairo_t* context, const PanelTransform& transform, const BalloonPoint a,
+                      const BalloonPoint b, const int altitude) {
+    const auto end = to_device(transform, b);
+    const double dx = static_cast<double>(b.x - a.x);
+    const double dy = static_cast<double>(b.y - a.y);
+    const double len = std::hypot(dx, dy);
+    if (len < 1e-9 || std::abs(altitude) < 1) {
+        cairo_line_to(context, end.x, end.y);
+        return;
+    }
+    // Right normal of the start->end vector in Y-up logical space (arc.cpp:114).
+    const double nx = dy / len;
+    const double ny = -dx / len;
+    // A cubic with both interior handles offset by f along the normal reaches a
+    // midpoint deviation of 0.75*f; f = 4/3*altitude makes that deviation exactly
+    // the altitude (the circular-arc sagitta), faithful for the shallow 5% bow.
+    const double f = (4.0 / 3.0) * static_cast<double>(altitude);
+    const LogicalPoint c1_log{static_cast<double>(a.x) + dx / 3.0 + f * nx,
+                              static_cast<double>(a.y) + dy / 3.0 + f * ny};
+    const LogicalPoint c2_log{static_cast<double>(a.x) + 2.0 * dx / 3.0 + f * nx,
+                              static_cast<double>(a.y) + 2.0 * dy / 3.0 + f * ny};
+    const auto c1 = transform.to_device(c1_log);
+    const auto c2 = transform.to_device(c2_log);
+    cairo_curve_to(context, c1.x, c1.y, c2.x, c2.y, end.x, end.y);
+}
+
+// The single open cloud + bowed tail figure (CBWoodringNormal::SetBalloonTraj +
+// Draw, balloon.cpp:1886-1934). One CTraj = the open cloud spline + two CArc tail
+// edges, m_closed = TRUE, StrokeAndFill'd once: trace the open cloud (right gap
+// edge -> top -> left gap edge), bow down to the speaker anchor, bow back up to
+// the right gap edge (== the move_to start), then close once. The cloud bottom
+// between the gap edges is never drawn, so there is no tail-throat seam. Falls
+// back to the closed outline if the break degenerated (empty open outline).
+void trace_cloud_and_tail(cairo_t* context, const PanelTransform& transform, const Balloon& balloon) {
+    const auto& bez = balloon.outline_open;
+    if (bez.size() < 4) {
+        trace_bezier_outline(context, transform, balloon.outline);
+        return;
+    }
+    trace_bezier_outline_open(context, transform, bez);
+    // The open outline ends at the left gap edge; arc down to the anchor, then
+    // back up to the right gap edge (bez.front(), the move_to start). The two
+    // edges bow with +sign*alt and -sign*alt, curving apart (balloon.cpp:1598-1601).
+    const int alt = balloon.tail.altitude;
+    const int sign = balloon.tail.tail_sign;
+    trace_bowed_edge(context, transform, bez.back(), balloon.tail.anchor, sign * alt);
+    trace_bowed_edge(context, transform, balloon.tail.anchor, bez.front(), -sign * alt);
+    cairo_close_path(context);
 }
 
 // Blit an Item 2.2 composited avatar raster (AvatarBitmap, 0xAARRGGBB, Y-down
@@ -390,16 +438,17 @@ void Canvas::render_panel(const Panel& panel, TextEngine& text, const PanelAvata
     // reverse to reproduce that draw order for overlapping balloons.
     for (auto it = panel.balloons.rbegin(); it != panel.balloons.rend(); ++it) {
         const auto& balloon = *it;
-        // Tail first so the cloud fill overlaps the tail's top edge.
-        if (balloon.has_tail) {
-            draw_tail(context, transform, balloon.tail, stroke_width, balloon.kind.dashed);
-        }
 
+        // ONE path for the whole balloon: an action box stays a closed rectangle
+        // with no tail; every cloud (say/whisper/think) is the single open
+        // cloud+tail figure (BreakSpline opened the cloud bottom, the two bowed
+        // CArc edges bridge the gap), filled white and stroked once -- no separate
+        // tail triangle stroked across the throat, so the seam is gone.
         cairo_new_path(context);
         if (balloon.kind.mode == BalloonMode::action) {
             trace_polygon(context, transform, balloon.outline);
         } else {
-            trace_bezier_outline(context, transform, balloon.outline);
+            trace_cloud_and_tail(context, transform, balloon);
         }
         cairo_set_source_rgba(context, 1.0, 1.0, 1.0, 1.0);
         cairo_fill_preserve(context);
