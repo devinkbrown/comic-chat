@@ -11,6 +11,11 @@
 
 namespace comicchat {
 
+// Weighted emotion set produced by the text inference engine (expression.hpp).
+// Forward-declared to keep the pose-selection surface decoupled from the rule
+// engine; only the multi-emotion resolver overload needs the definition.
+struct EmotionOpts;
+
 enum class AvatarAssetError {
     io,
     truncated,
@@ -134,6 +139,13 @@ struct AvatarRenderRequest final {
 [[nodiscard]] auto load_avatar_asset(const std::filesystem::path& path)
     -> std::expected<AvatarAsset, AvatarAssetError>;
 [[nodiscard]] auto select_avatar_expression(const AvatarAsset& asset, AvatarExpression expression,
+    std::optional<AvatarSelection> previous = std::nullopt)
+    -> std::expected<AvatarSelection, AvatarAssetError>;
+// Multi-emotion resolver porting GetBodyFromEmotion(CEmotionOpts&)
+// (avatar.cpp:355 complex / avatar.cpp:387 simple): consumes the weighted set
+// produced by emotions_from_text, filling FACE from one option and TORSO from
+// another for a complex avatar, or the single body for a simple avatar.
+[[nodiscard]] auto select_avatar_expression(const AvatarAsset& asset, const EmotionOpts& emotions,
     std::optional<AvatarSelection> previous = std::nullopt)
     -> std::expected<AvatarSelection, AvatarAssetError>;
 [[nodiscard]] auto avatar_body_box(const AvatarAsset& asset, const AvatarSelection& selection,

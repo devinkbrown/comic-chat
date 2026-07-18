@@ -1,6 +1,7 @@
 #include "comicchat/avatar_assets.hpp"
 
 #include "comicchat/assets.hpp"
+#include "comicchat/expression.hpp"
 
 #include <algorithm>
 #include <array>
@@ -805,6 +806,19 @@ constexpr auto legacy_pi = 3.14159265358979323846;
 
 [[nodiscard]] auto select_rotating_component(const std::span<const AvatarComponent> components,
     const AvatarExpression expression, const std::optional<std::size_t> previous) -> std::optional<std::size_t> {
+    // Gesture sentinels (>2*pi, e.g. EM_WAVE/EM_POINTOTHER) cannot use the
+    // nearest-angle metric: the wheel emotions live in [0, 2*pi) and a nearest
+    // match would mis-fire the wrong gesture (or snap to neutral). Instead match
+    // the component whose emotion value equals the sentinel EXACTLY, mirroring
+    // the else-branch of GetBodyIndexFromEmotion (avatar.cpp:345-352) and
+    // GetHeadAndBodyFromEmotion (avatar.cpp:317-323). Float equality is
+    // deliberate: sentinels are integral literals shared by both sides.
+    if (expression.angle > 2.0 * legacy_pi) {
+        for (std::size_t index = 0; index < components.size(); ++index) {
+            if (legacy_emotion(components[index].emotion_index) == expression.angle) return index;
+        }
+        return std::nullopt;
+    }
     double nearest_intensity = 2.0;
     std::optional<std::size_t> nearest;
     for (std::size_t offset = 0; offset < components.size(); ++offset) {
@@ -1060,6 +1074,90 @@ auto select_avatar_expression(const AvatarAsset& asset, const AvatarExpression e
         if (!face || !torso) return std::unexpected{AvatarAssetError::invalid_record};
         return AvatarSelection{0, *face, *torso};
     }
+    return std::unexpected{AvatarAssetError::invalid_record};
+}
+
+namespace {
+
+// Highest-priority remaining option, mirroring the inner scan in
+// GetBodyFromEmotion (avatar.cpp:362-367,395-400): strict `>` so ties keep the
+// earliest option; returns nullopt once every remaining priority is zero.
+[[nodiscard]] auto highest_priority(const std::span<const int> priorities) -> std::optional<std::size_t> {
+    int best_priority = 0;
+    std::optional<std::size_t> best;
+    for (std::size_t index = 0; index < priorities.size(); ++index) {
+        if (priorities[index] > best_priority) {
+            best_priority = priorities[index];
+            best = index;
+        }
+    }
+    return best;
+}
+
+} // namespace
+
+auto select_avatar_expression(const AvatarAsset& asset, const EmotionOpts& emotions,
+    const std::optional<AvatarSelection> previous)
+    -> std::expected<AvatarSelection, AvatarAssetError> {
+    // Working copy of priorities; each consumed option is zeroed so it is not
+    // considered again (avatar.cpp:370,403 "nuke this entry").
+    std::vector<int> priorities;
+    priorities.reserve(emotions.opts.size());
+    for (const auto& opt : emotions.opts) priorities.push_back(opt.priority);
+
+    if (asset.kind == AvatarKind::simple) {
+        // CAvatarSimple::GetBodyFromEmotion (avatar.cpp:387-413): first option
+        // (highest priority) that resolves a body wins; then stop.
+        const auto previous_body = previous ? std::optional<std::size_t>{previous->body} : std::nullopt;
+        std::optional<std::size_t> found;
+        while (const auto best = highest_priority(priorities)) {
+            priorities[*best] = 0;
+            const auto& opt = emotions.opts[*best];
+            const auto body = select_rotating_component(asset.bodies,
+                AvatarExpression{opt.angle, opt.intensity}, previous_body);
+            if (body) {
+                found = body;
+                break;
+            }
+        }
+        // SetBodyNeutral (avatar.cpp:410): fall back to the neutral body.
+        if (!found) found = select_rotating_component(asset.bodies, AvatarExpression{0.0, 0.0}, previous_body);
+        if (!found) return std::unexpected{AvatarAssetError::invalid_record};
+        return AvatarSelection{*found, 0, 0};
+    }
+
+    if (asset.kind == AvatarKind::complex) {
+        // CAvatarComplex::GetBodyFromEmotion (avatar.cpp:355-385) with
+        // GetHeadAndBodyFromEmotion (avatar.cpp:299-325): a wheel option yields a
+        // FACE (nearest angle), a gesture sentinel yields a TORSO (exact match);
+        // fill each slot once from the highest-priority option that resolves it.
+        std::optional<std::size_t> found_face;
+        std::optional<std::size_t> found_torso;
+        while (const auto best = highest_priority(priorities)) {
+            priorities[*best] = 0;
+            const auto& opt = emotions.opts[*best];
+            if (opt.angle <= 2.0 * legacy_pi) {
+                if (!found_face) {
+                    if (const auto face = select_face(asset.faces, AvatarExpression{opt.angle, opt.intensity}))
+                        found_face = face;
+                }
+            } else if (!found_torso) {
+                if (const auto torso = select_rotating_component(asset.torsos,
+                        AvatarExpression{opt.angle, opt.intensity}, std::nullopt))
+                    found_torso = torso;
+            }
+            if (found_face && found_torso) break; // constraints filled (avatar.cpp:379)
+        }
+        // SetFaceNeutral / SetTorsoNeutral (avatar.cpp:381-382).
+        if (!found_face) found_face = select_face(asset.faces, AvatarExpression{0.0, 0.0});
+        if (!found_torso) {
+            const auto previous_torso = previous ? std::optional<std::size_t>{previous->torso} : std::nullopt;
+            found_torso = select_rotating_component(asset.torsos, AvatarExpression{0.0, 0.0}, previous_torso);
+        }
+        if (!found_face || !found_torso) return std::unexpected{AvatarAssetError::invalid_record};
+        return AvatarSelection{0, *found_face, *found_torso};
+    }
+
     return std::unexpected{AvatarAssetError::invalid_record};
 }
 

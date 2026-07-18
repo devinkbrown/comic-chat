@@ -1,10 +1,14 @@
 #include "comicchat/avatar_assets.hpp"
 
+#include "comicchat/expression.hpp"
+
 #include <algorithm>
 #include <array>
 #include <bit>
 #include <catch2/catch_test_macros.hpp>
+#include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string_view>
 
 #ifndef COMICCHAT_TEST_COMICART_DIR

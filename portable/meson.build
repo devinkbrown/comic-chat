@@ -314,6 +314,7 @@ core = static_library(
     'src/assets.cpp',
     'src/avatar_assets.cpp',
     'src/backdrop.cpp',
+    'src/expression.cpp',
     'src/source_raster.cpp',
     'src/sound.cpp',
     'src/balloon.cpp',
@@ -491,6 +492,13 @@ if get_option('tests')
     workdir: meson.project_source_root() / '..',
     timeout: 30,
   )
+
+  expression_tests = executable(
+    'comicchat-expression-tests',
+    'tests/expression_test.cpp',
+    dependencies: [core_dep, catch2],
+  )
+  test('comicchat-expression', expression_tests, timeout: 30)
 
   ircv3_tests = executable(
     'comicchat-ircv3-tests',
