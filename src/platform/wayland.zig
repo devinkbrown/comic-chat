@@ -6,16 +6,24 @@
 //! translates keyboard events into the same public event shape as the X11
 //! backend.
 //!
-//! Keyboard limitation: the compositor-provided XKB keymap fd is deliberately
-//! ignored for now. Raw evdev key codes are translated as a US keyboard, with
-//! Shift and Caps Lock. This keeps the backend dependency-free, but means
-//! non-US layouts, compose/dead keys, IME input, and client-side key repeat are
-//! not yet represented.
+//! Keyboard: the compositor-provided XKB keymap fd is received (see
+//! `xkb.zig`'s bounded text-format parser) and drives translation for the
+//! configured layout's base and Shift levels — non-US layouts now produce
+//! their real characters, not a hardcoded US table. Client-side key repeat
+//! (Wayland deliberately leaves this to the client, unlike X11's native
+//! auto-repeat) is implemented via `repeat_info` + `Window.checkRepeat`.
+//!
+//! Remaining keyboard limitation: AltGr/ISO Level3 and other multi-level
+//! layouts, compose/dead-key sequences, and IME input are not represented —
+//! see `xkb.zig`'s module doc for the precise parsing scope and why. A key
+//! whose keymap entry falls outside that scope, or any key before the first
+//! keymap event arrives, falls back to the hardcoded US evdev table below.
 
 const std = @import("std");
 const linux = std.os.linux;
 const posix = std.posix;
 const net = std.Io.net;
+const xkb = @import("xkb.zig");
 
 const wl_display: u32 = 1;
 const max_message_size: usize = 1024 * 1024;
@@ -114,12 +122,28 @@ const Connection = struct {
     io: std.Io,
     stream: net.Stream,
     next_id: u32 = 2,
+    /// A file descriptor delivered by SCM_RIGHTS on the most recent read that
+    /// has not yet been claimed by a specific event handler (e.g.
+    /// wl_keyboard.keymap). Wayland attaches at most one fd per message this
+    /// client parses, and the handler that expects one claims it via
+    /// `takePendingFd` in the same dispatch turn that read it.
+    pending_fd: ?posix.fd_t = null,
 
     fn allocId(self: *Connection) !u32 {
         if (self.next_id >= 0xff000000) return error.ObjectIdsExhausted;
         const id = self.next_id;
         self.next_id += 1;
         return id;
+    }
+
+    /// Returns and clears the fd captured by the most recent `readExact`, if
+    /// any. Closes and discards a stale unclaimed fd from an earlier message
+    /// before returning the new one, since this client only ever expects one
+    /// fd in flight at a time.
+    fn takePendingFd(self: *Connection) ?posix.fd_t {
+        const fd_value = self.pending_fd;
+        self.pending_fd = null;
+        return fd_value;
     }
 
     fn writeAll(self: *Connection, bytes: []const u8) !void {
@@ -137,13 +161,50 @@ const Connection = struct {
         }
     }
 
+    /// Every message read goes through raw `recvmsg`, not the `Io` vtable, so
+    /// an SCM_RIGHTS fd attached to any byte in this read (the compositor
+    /// sends wl_keyboard.keymap's fd alongside its 16-byte wire message) is
+    /// captured rather than silently dropped by a plain `read`/`recv`. This
+    /// mirrors `writeWithFd`'s raw-syscall approach on the send side.
     fn readExact(self: *Connection, dst: []u8) !void {
+        const header_space = comptime alignForward(@sizeOf(linux.cmsghdr), @alignOf(linux.cmsghdr));
+        const control_space = comptime header_space + alignForward(@sizeOf(i32), @alignOf(linux.cmsghdr));
+
         var off: usize = 0;
         while (off < dst.len) {
-            var iov = [_][]u8{dst[off..]};
-            const n = try self.stream.read(self.io, iov[0..]);
+            var control: [control_space]u8 align(@alignOf(linux.cmsghdr)) = @splat(0);
+            var iov: posix.iovec = .{ .base = dst[off..].ptr, .len = dst.len - off };
+            var msg: linux.msghdr = .{
+                .name = null,
+                .namelen = 0,
+                .iov = (&iov)[0..1],
+                .iovlen = 1,
+                .control = &control,
+                .controllen = control.len,
+                .flags = 0,
+            };
+
+            const n: usize = while (true) {
+                const rc = linux.recvmsg(self.stream.socket.handle, &msg, linux.MSG.CMSG_CLOEXEC);
+                switch (linux.errno(rc)) {
+                    .SUCCESS => break @intCast(rc),
+                    .INTR => continue,
+                    .AGAIN => return error.WouldBlock,
+                    .CONNRESET, .NOTCONN => return error.ConnectionResetByPeer,
+                    else => return error.ReadFailed,
+                }
+            };
             if (n == 0) return error.EndOfStream;
             off += n;
+
+            if (msg.controllen >= header_space + @sizeOf(i32)) {
+                const cmsg: *const linux.cmsghdr = @ptrCast(&control);
+                if (cmsg.level == linux.SOL.SOCKET and cmsg.type == linux.SCM.RIGHTS) {
+                    const received: i32 = @as(*const i32, @ptrCast(@alignCast(control[header_space..].ptr))).*;
+                    if (self.pending_fd) |stale| _ = linux.close(stale);
+                    self.pending_fd = received;
+                }
+            }
         }
     }
 
@@ -264,6 +325,23 @@ pub const Window = struct {
     shift_left: bool = false,
     shift_right: bool = false,
     caps_lock: bool = false,
+    /// The compositor's layout, once a keymap event with a supported format
+    /// has been received and successfully parsed. Null before that (falls
+    /// back to evdevToKey's hardcoded US table) and if the compositor sent
+    /// an unsupported format or a keymap this bounded parser could not read.
+    xkb_keymap: ?xkb.Keymap = null,
+    /// Repeats per second and initial hold delay from the compositor's
+    /// repeat_info (wl_keyboard v4+); non-positive rate means repeat is
+    /// disabled entirely, matching the Wayland protocol's own convention.
+    repeat_rate_per_sec: i32 = 0,
+    repeat_delay_ms: i32 = 0,
+    /// The evdev code and effective shift state of the one non-modifier key
+    /// currently held, so `checkRepeat` can keep synthesizing key events
+    /// without a matching wire message for each one — Wayland deliberately
+    /// leaves repeat entirely to the client (see the module doc).
+    held_key_code: ?u32 = null,
+    held_key_shift: bool = false,
+    next_repeat_at_ms: u64 = 0,
     buffers: std.ArrayList(Buffer) = .empty,
 
     pub fn open(gpa: std.mem.Allocator, w: u32, h: u32, title: []const u8) !*Window {
@@ -350,6 +428,7 @@ pub const Window = struct {
     pub fn deinit(self: *Window) void {
         self.destroyProtocolObjects() catch {};
         self.conn.stream.close(self.conn.io);
+        if (self.xkb_keymap) |*keymap| keymap.deinit();
         for (self.buffers.items) |*buffer| buffer.deinit();
         self.buffers.deinit(self.gpa);
         self.threaded.deinit();
@@ -405,6 +484,25 @@ pub const Window = struct {
         const msg = try self.conn.readMessage(self.gpa);
         defer msg.deinit(self.gpa);
         return try self.dispatch(msg) orelse .other;
+    }
+
+    /// Synthesizes the next key-repeat event, if a key is held and its
+    /// repeat interval has elapsed. Unlike X11 (which gets repeat for free
+    /// from the X server's own auto-repeat), Wayland deliberately leaves
+    /// this entirely to the client (see the module doc) — callers must poll
+    /// this on every loop tick, not only when the compositor socket has
+    /// data ready, since a repeat fires with no new wire message at all.
+    /// Always recomputes the next deadline from the current time rather
+    /// than accumulating fixed steps, so a delayed poll loop does not fire
+    /// a burst of catch-up repeats once it resumes.
+    pub fn checkRepeat(self: *Window) ?Event {
+        const code = self.held_key_code orelse return null;
+        if (self.repeat_rate_per_sec <= 0) return null;
+        const now = nowMs(self.conn.io);
+        if (now < self.next_repeat_at_ms) return null;
+        const interval_ms: u64 = @intCast(@max(1, @divTrunc(1000, self.repeat_rate_per_sec)));
+        self.next_repeat_at_ms = now +| interval_ms;
+        return .{ .key = self.translateKey(code, self.held_key_shift) };
     }
 
     fn discoverGlobals(self: *Window, globals: *Globals) !void {
@@ -515,6 +613,21 @@ pub const Window = struct {
         switch (opcode) {
             0 => { // keymap(format, fd, size); fd is ancillary, not in body
                 if (body.len != 8) return error.InvalidWaylandMessage;
+                const format = get32(body[0..4]);
+                const size = get32(body[4..8]);
+                if (self.conn.takePendingFd()) |fd_value| {
+                    defer _ = linux.close(fd_value);
+                    if (self.loadKeymap(fd_value, format, size)) |parsed| {
+                        if (self.xkb_keymap) |*old| old.deinit();
+                        self.xkb_keymap = parsed;
+                    } else |_| {
+                        // Unsupported format or a malformed keymap this bounded
+                        // parser cannot read: keep whatever keymap (or none) we
+                        // already had rather than failing the connection over a
+                        // layout we cannot represent. evdevToKey remains the
+                        // fallback either way.
+                    }
+                }
                 return null;
             },
             1 => { // enter(serial, surface, keys array)
@@ -527,6 +640,7 @@ pub const Window = struct {
                 if (body.len != 8) return error.InvalidWaylandMessage;
                 self.shift_left = false;
                 self.shift_right = false;
+                self.held_key_code = null;
                 return null;
             },
             3 => { // key(serial, time, key, state)
@@ -542,8 +656,17 @@ pub const Window = struct {
                     },
                     else => {},
                 }
+                if (code != 42 and code != 54 and code != 58) {
+                    if (down) {
+                        self.held_key_code = code;
+                        self.held_key_shift = self.shift_left or self.shift_right;
+                        self.next_repeat_at_ms = nowMs(self.conn.io) +| @as(u64, @intCast(@max(0, self.repeat_delay_ms)));
+                    } else if (self.held_key_code == code) {
+                        self.held_key_code = null;
+                    }
+                }
                 if (!down or code == 42 or code == 54 or code == 58) return null;
-                return .{ .key = evdevToKey(code, self.shift_left or self.shift_right, self.caps_lock) };
+                return .{ .key = self.translateKey(code, self.shift_left or self.shift_right) };
             },
             4 => { // modifiers(serial, depressed, latched, locked, group)
                 if (body.len != 20) return error.InvalidWaylandMessage;
@@ -553,12 +676,53 @@ pub const Window = struct {
                 // instead of guessing Shift/Caps bit indices.
                 return null;
             },
-            5 => { // repeat_info, available because the seat is bound at v4+
+            5 => { // repeat_info(rate, delay), available because the seat is bound at v4+
                 if (body.len != 8) return error.InvalidWaylandMessage;
+                self.repeat_rate_per_sec = getI32(body[0..4]);
+                self.repeat_delay_ms = getI32(body[4..8]);
                 return null;
             },
             else => return null,
         }
+    }
+
+    /// mmaps and parses a compositor-supplied keymap fd. The mapping is
+    /// unmapped before returning either way: `xkb.parse` copies everything
+    /// it needs into the returned `Keymap`'s own arena, so the raw text is
+    /// not needed past this call.
+    fn loadKeymap(self: *Window, fd_value: posix.fd_t, format: u32, size: u32) !xkb.Keymap {
+        if (size == 0) return error.EmptyKeymap;
+        const mapped = try posix.mmap(null, size, .{ .READ = true }, .{ .TYPE = .PRIVATE }, fd_value, 0);
+        defer posix.munmap(mapped);
+        const text_len = std.mem.indexOfScalar(u8, mapped, 0) orelse mapped.len;
+        return xkb.parse(self.gpa, format, mapped[0..text_len]);
+    }
+
+    /// Translates one physical key press using the compositor's real layout
+    /// when available, falling back to evdevToKey's US table otherwise (no
+    /// keymap yet, an unsupported/unparseable one, or a keysym this bounded
+    /// translator does not represent).
+    ///
+    /// Caps Lock only affects alphabetic keys (matching evdevToKey's
+    /// existing shift-XOR-caps behavior for letters): the key's own
+    /// unshifted keysym decides whether it is one, then the *effective*
+    /// shift state — physical shift XOR caps lock for a letter, physical
+    /// shift alone otherwise — selects which of the keymap's two levels to
+    /// read, rather than hand-flipping ASCII case after the fact (which
+    /// would silently be wrong for a layout where the shifted symbol is not
+    /// simply the base character's uppercase form).
+    fn translateKey(self: *Window, code: u32, shift: bool) Key {
+        if (self.xkb_keymap) |*keymap| {
+            if (keymap.keysymFor(code, false)) |base_keysym| {
+                const is_letter = base_keysym.len == 1 and std.ascii.isAlphabetic(base_keysym[0]);
+                const effective_shift = if (is_letter) (shift != self.caps_lock) else shift;
+                if (keymap.keysymFor(code, effective_shift)) |keysym| {
+                    if (xkb.charForKeysym(keysym)) |ch| return .{ .char = ch };
+                    if (xkb.namedKeyForKeysym(keysym)) |named| return namedKeyToKey(named);
+                }
+            }
+        }
+        return evdevToKey(code, shift, self.caps_lock);
     }
 
     fn createBuffer(self: *Window, w: u32, h: u32) !Buffer {
@@ -742,6 +906,24 @@ fn header(bytes: []u8, object: u32, opcode: u16) void {
     put32(bytes[4..8], (@as(u32, @intCast(bytes.len)) << 16) | opcode);
 }
 
+fn namedKeyToKey(named: xkb.NamedKey) Key {
+    return switch (named) {
+        .backspace => .backspace,
+        .enter => .enter,
+        .escape => .escape,
+        .tab => .tab,
+        .left => .left,
+        .right => .right,
+        .up => .up,
+        .down => .down,
+        .home => .home,
+        .end => .end,
+        .page_up => .page_up,
+        .page_down => .page_down,
+        .delete => .delete,
+    };
+}
+
 fn evdevToKey(code: u32, shift: bool, caps_lock: bool) Key {
     return switch (code) {
         1 => .escape,
@@ -903,6 +1085,15 @@ fn alignForward(n: usize, alignment: usize) usize {
     return (n + alignment - 1) & ~(alignment - 1);
 }
 
+/// Mirrors main.zig's own `monotonicMilliseconds` exactly (same clock, same
+/// non-negative clamp) so key-repeat timing recorded here and the poll
+/// loop's `checkRepeat` calls agree, whichever `Io` handle each reads it
+/// through.
+fn nowMs(io: std.Io) u64 {
+    const milliseconds = std.Io.Clock.awake.now(io).toMilliseconds();
+    return if (milliseconds > 0) @intCast(milliseconds) else 0;
+}
+
 fn get32(bytes: []const u8) u32 {
     return std.mem.readInt(u32, bytes[0..4], .native);
 }
@@ -1060,6 +1251,232 @@ test "protocol-only Wayland message returns other without a second blocking read
     try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(linux.shutdown(sockets[1], linux.SHUT.WR)));
 
     try std.testing.expectEqual(Event.other, try window.nextEvent());
+}
+
+test "readMessage captures an SCM_RIGHTS fd sent alongside the wire message" {
+    var sockets: [2]i32 = undefined;
+    const pair_rc = linux.socketpair(linux.AF.UNIX, linux.SOCK.STREAM | linux.SOCK.CLOEXEC, 0, &sockets);
+    try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(pair_rc));
+    defer _ = linux.close(sockets[0]);
+    defer _ = linux.close(sockets[1]);
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var reader_conn = Connection{
+        .io = threaded.io(),
+        .stream = .{ .socket = .{ .handle = sockets[0], .address = undefined } },
+    };
+
+    // Mirror the compositor: one sendmsg carrying the wl_keyboard.keymap wire
+    // bytes (object=99, opcode=0, body = format:u32=1, size:u32=4096) with an
+    // SCM_RIGHTS fd attached, exactly as writeWithFd attaches one on the send
+    // side this client already exercises.
+    const keymap_fd = try posix.memfd_create("comicchat-wayland-keymap-test", linux.MFD.CLOEXEC);
+    const marker = "xkb_keymap_marker";
+    const write_rc = linux.write(keymap_fd, marker.ptr, marker.len);
+    try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(write_rc));
+    try std.testing.expectEqual(marker.len, @as(usize, @intCast(write_rc)));
+
+    var wire: [16]u8 = @splat(0);
+    header(&wire, 99, 0);
+    put32(wire[8..12], 1);
+    put32(wire[12..16], 4096);
+
+    var writer_conn = Connection{
+        .io = threaded.io(),
+        .stream = .{ .socket = .{ .handle = sockets[1], .address = undefined } },
+    };
+    try writer_conn.writeWithFd(&wire, keymap_fd);
+    _ = linux.close(keymap_fd);
+
+    const msg = try reader_conn.readMessage(std.testing.allocator);
+    defer msg.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u32, 99), msg.object);
+    try std.testing.expectEqual(@as(u16, 0), msg.opcode);
+
+    const received_fd = reader_conn.takePendingFd() orelse return error.TestExpectedFd;
+    defer _ = linux.close(received_fd);
+    // keymap_fd is already closed above; the kernel is free to recycle its
+    // number for received_fd, so equality here is expected, not proof of a
+    // bug. The content readback below is the real correctness proof: the
+    // received descriptor genuinely refers to the memfd the writer sent.
+    try std.testing.expectEqual(@as(u64, 0), linux.lseek(received_fd, 0, linux.SEEK.SET));
+    var readback: [marker.len]u8 = undefined;
+    const read_rc = linux.read(received_fd, &readback, readback.len);
+    try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(read_rc));
+    try std.testing.expectEqual(readback.len, @as(usize, @intCast(read_rc)));
+    try std.testing.expectEqualSlices(u8, marker, &readback);
+
+    // The fd is claimed exactly once; a second take sees nothing left over.
+    try std.testing.expectEqual(@as(?posix.fd_t, null), reader_conn.takePendingFd());
+}
+
+test "a real keymap event overrides evdevToKey's US table for the same physical key" {
+    var sockets: [2]i32 = undefined;
+    const pair_rc = linux.socketpair(linux.AF.UNIX, linux.SOCK.STREAM | linux.SOCK.CLOEXEC, 0, &sockets);
+    try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(pair_rc));
+    defer _ = linux.close(sockets[1]);
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var window = Window{
+        .gpa = std.testing.allocator,
+        .threaded = undefined,
+        .conn = .{
+            .io = threaded.io(),
+            .stream = .{ .socket = .{ .handle = sockets[0], .address = undefined } },
+        },
+        .keyboard_id = 77,
+        .width = 1,
+        .height = 1,
+    };
+    defer _ = linux.close(sockets[0]);
+    defer if (window.xkb_keymap) |*keymap| keymap.deinit();
+
+    // A minimal synthetic layout that swaps evdev code 30 (the physical key
+    // the US table maps to 'a'/'A') to 'q'/'Q', so a passing test proves the
+    // keymap was genuinely consulted rather than coincidentally agreeing
+    // with the fallback.
+    const synthetic_keymap =
+        \\xkb_keymap {
+        \\  xkb_keycodes "test" {
+        \\      <AC01> = 38;
+        \\  };
+        \\  xkb_symbols "test" {
+        \\      key <AC01> { [ q, Q ] };
+        \\  };
+        \\};
+    ;
+    const keymap_fd = try posix.memfd_create("comicchat-wayland-keymap-e2e-test", linux.MFD.CLOEXEC);
+    defer _ = linux.close(keymap_fd);
+    const write_rc = linux.write(keymap_fd, synthetic_keymap.ptr, synthetic_keymap.len);
+    try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(write_rc));
+    try std.testing.expectEqual(synthetic_keymap.len, @as(usize, @intCast(write_rc)));
+
+    var writer_conn = Connection{
+        .io = threaded.io(),
+        .stream = .{ .socket = .{ .handle = sockets[1], .address = undefined } },
+    };
+    var keymap_wire: [16]u8 = @splat(0);
+    header(&keymap_wire, window.keyboard_id, 0);
+    put32(keymap_wire[8..12], 1); // format = XKB_V1_TEXT
+    put32(keymap_wire[12..16], @intCast(synthetic_keymap.len));
+    try writer_conn.writeWithFd(&keymap_wire, keymap_fd);
+
+    try std.testing.expectEqual(Event.other, try window.nextEvent());
+    try std.testing.expect(window.xkb_keymap != null);
+
+    var key_wire: [24]u8 = @splat(0);
+    header(&key_wire, window.keyboard_id, 3);
+    put32(key_wire[8..12], 1); // serial
+    put32(key_wire[12..16], 0); // time
+    put32(key_wire[16..20], 30); // evdev code (the US table's 'a' key)
+    put32(key_wire[20..24], 1); // state = pressed
+    const key_written = linux.write(sockets[1], &key_wire, key_wire.len);
+    try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(key_written));
+    try std.testing.expectEqual(key_wire.len, @as(usize, @intCast(key_written)));
+
+    try std.testing.expectEqual(Event{ .key = .{ .char = 'q' } }, try window.nextEvent());
+}
+
+fn checkRepeatTestWindow(threaded: *std.Io.Threaded) Window {
+    return Window{
+        .gpa = std.testing.allocator,
+        .threaded = undefined,
+        .conn = .{ .io = threaded.io(), .stream = .{ .socket = .{ .handle = -1, .address = undefined } } },
+        .width = 1,
+        .height = 1,
+    };
+}
+
+test "checkRepeat is silent with no key held, a non-positive rate, or before the deadline" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var window = checkRepeatTestWindow(&threaded);
+
+    // Nothing held at all.
+    try std.testing.expectEqual(@as(?Event, null), window.checkRepeat());
+
+    // Held, but the compositor either never sent repeat_info or sent a
+    // non-positive rate (repeat explicitly disabled per protocol convention).
+    window.held_key_code = 30;
+    window.repeat_rate_per_sec = 0;
+    try std.testing.expectEqual(@as(?Event, null), window.checkRepeat());
+
+    // Held with a valid rate, but the deadline is far in the future.
+    window.repeat_rate_per_sec = 25;
+    window.next_repeat_at_ms = nowMs(window.conn.io) +| 60_000;
+    try std.testing.expectEqual(@as(?Event, null), window.checkRepeat());
+}
+
+test "checkRepeat fires once the deadline has passed and reschedules from now, not by accumulation" {
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var window = checkRepeatTestWindow(&threaded);
+
+    window.held_key_code = 30; // evdevToKey's 'a' key, no keymap loaded
+    window.held_key_shift = false;
+    window.repeat_rate_per_sec = 25; // interval = 40ms
+    window.next_repeat_at_ms = nowMs(window.conn.io); // already due
+
+    const before = window.next_repeat_at_ms;
+    const event = window.checkRepeat();
+    try std.testing.expectEqual(Event{ .key = .{ .char = 'a' } }, event.?);
+    // Rescheduled forward from *now* (>= before, by roughly one interval),
+    // not left at the stale deadline that just fired.
+    try std.testing.expect(window.next_repeat_at_ms >= before);
+
+    // Immediately checking again is not yet due (the new deadline is ~40ms
+    // out), proving this does not fire on every call once due.
+    try std.testing.expectEqual(@as(?Event, null), window.checkRepeat());
+}
+
+test "releasing the held key stops repeat, and repeat_info updates rate/delay" {
+    var sockets: [2]i32 = undefined;
+    const pair_rc = linux.socketpair(linux.AF.UNIX, linux.SOCK.STREAM | linux.SOCK.CLOEXEC, 0, &sockets);
+    try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(pair_rc));
+    defer _ = linux.close(sockets[1]);
+
+    var threaded = std.Io.Threaded.init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    var window = Window{
+        .gpa = std.testing.allocator,
+        .threaded = undefined,
+        .conn = .{ .io = threaded.io(), .stream = .{ .socket = .{ .handle = sockets[0], .address = undefined } } },
+        .keyboard_id = 55,
+        .width = 1,
+        .height = 1,
+    };
+    defer _ = linux.close(sockets[0]);
+
+    var repeat_info_wire: [16]u8 = @splat(0);
+    header(&repeat_info_wire, window.keyboard_id, 5);
+    put32(repeat_info_wire[8..12], 33); // rate
+    put32(repeat_info_wire[12..16], 500); // delay
+    var wrote = linux.write(sockets[1], &repeat_info_wire, repeat_info_wire.len);
+    try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(wrote));
+    try std.testing.expectEqual(Event.other, try window.nextEvent());
+    try std.testing.expectEqual(@as(i32, 33), window.repeat_rate_per_sec);
+    try std.testing.expectEqual(@as(i32, 500), window.repeat_delay_ms);
+
+    var key_down: [24]u8 = @splat(0);
+    header(&key_down, window.keyboard_id, 3);
+    put32(key_down[16..20], 30);
+    put32(key_down[20..24], 1); // pressed
+    wrote = linux.write(sockets[1], &key_down, key_down.len);
+    try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(wrote));
+    try std.testing.expectEqual(Event{ .key = .{ .char = 'a' } }, try window.nextEvent());
+    try std.testing.expectEqual(@as(?u32, 30), window.held_key_code);
+
+    var key_up: [24]u8 = @splat(0);
+    header(&key_up, window.keyboard_id, 3);
+    put32(key_up[16..20], 30);
+    put32(key_up[20..24], 0); // released
+    wrote = linux.write(sockets[1], &key_up, key_up.len);
+    try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(wrote));
+    try std.testing.expectEqual(Event.other, try window.nextEvent());
+    try std.testing.expectEqual(@as(?u32, null), window.held_key_code);
+    try std.testing.expectEqual(@as(?Event, null), window.checkRepeat());
 }
 
 test "Wayland Window entry points compile without a compositor" {

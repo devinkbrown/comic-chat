@@ -55,8 +55,13 @@ hash.
 - `src/platform/win32.zig` uses direct Win32 declarations and presents the
   same software framebuffer. It is not the MFC legacy lane.
 - `src/client/` owns portable view/input behavior shared by native backends.
-- The direct Wayland keyboard path is currently US evdev only; do not claim
-  XKB, compose, IME, or key-repeat support until implemented and tested.
+- The direct Wayland keyboard path parses the compositor's real XKB keymap
+  (`src/platform/xkb.zig`, base + Shift levels only) and implements
+  client-side key-repeat (`repeat_info` + `Window.checkRepeat`), with a US
+  evdev fallback before the first keymap arrives or for an out-of-scope
+  keysym. Do not claim AltGr/ISO Level3, compose/dead-key sequences, or IME
+  support — those remain unimplemented; see `xkb.zig`'s module doc for the
+  exact parsing scope.
 
 ## Change rules
 

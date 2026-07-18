@@ -1139,9 +1139,21 @@ fn runInteractivePollBackend(
         .{ .fd = -1, .events = posix.POLL.IN | posix.POLL.ERR, .revents = 0 },
     };
 
+    // Wayland deliberately leaves key-repeat to the client (see
+    // platform/wayland.zig's module doc) — Window.checkRepeat must be
+    // polled regularly even with no compositor traffic at all, so a backend
+    // that implements it gets a short poll timeout instead of the normal
+    // up-to-1000ms one. X11 (no checkRepeat: real auto-repeat arrives as
+    // ordinary wire KeyPress events the existing revents check already
+    // handles) keeps its current cadence.
+    const has_client_side_repeat = @hasDecl(Backend.Window, "checkRepeat");
+    const repeat_poll_timeout_ms = 15;
+
     while (true) {
         var redraw = false;
-        _ = try posix.poll(&poll_fds, if (network.clientPtr() == null) 50 else 1000);
+        const base_timeout: i32 = if (network.clientPtr() == null) 50 else 1000;
+        const timeout = if (has_client_side_repeat) @min(base_timeout, repeat_poll_timeout_ms) else base_timeout;
+        _ = try posix.poll(&poll_fds, timeout);
         const now_ms = monotonicMilliseconds(io);
         redraw = applyNetworkEvent(try network.tick(now_ms), &state) or redraw;
         poll_fds[1].fd = if (network.clientPtr()) |client| client.fd() else -1;
@@ -1162,6 +1174,24 @@ fn runInteractivePollBackend(
             );
             if (!event_result.keep_running) return;
             redraw = redraw or event_result.redraw;
+        }
+        if (has_client_side_repeat) {
+            if (win.checkRepeat()) |repeat_event| {
+                const event_result = try handleWindowEvent(
+                    gpa,
+                    repeat_event,
+                    &view,
+                    &editor,
+                    network.clientPtr(),
+                    &transcript,
+                    nick,
+                    channel,
+                    state.joined,
+                    state.ircx_data,
+                );
+                if (!event_result.keep_running) return;
+                redraw = redraw or event_result.redraw;
+            }
         }
 
         if (network.clientPtr()) |client| if ((poll_fds[1].revents & posix.POLL.IN) != 0) {

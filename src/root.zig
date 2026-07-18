@@ -85,7 +85,10 @@ test {
     _ = @import("render/png.zig");
     _ = @import("platform/x11.zig");
     _ = @import("platform/win32.zig");
-    if (builtin.os.tag == .linux) _ = @import("platform/wayland.zig");
+    if (builtin.os.tag == .linux) {
+        _ = @import("platform/wayland.zig");
+        _ = @import("platform/xkb.zig");
+    }
     _ = @import("client/input.zig");
     _ = @import("client/view.zig");
     _ = @import("net/message.zig");
