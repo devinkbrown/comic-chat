@@ -464,3 +464,12 @@ FodyWeavers.xsd
 /portable/subprojects/harfbuzz-*/
 /portable/subprojects/icu/
 /portable/subprojects/zlib-*/
+# Transitively pulled in by cairo's fallback subproject chain on platforms
+# with no system pkg-config (e.g. the Windows cross-build).
+/portable/subprojects/glib-*/
+/portable/subprojects/libffi-*/
+/portable/subprojects/libpng-*/
+/portable/subprojects/pcre2-*/
+/portable/subprojects/pixman-*/
+/portable/subprojects/proxy-libintl/
+/portable/subprojects/sysprof/
