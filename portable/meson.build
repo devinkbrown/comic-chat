@@ -103,7 +103,12 @@ icu_i18n_dep = dependency(
   include_type: 'system',
   default_options: ['warning_level=0', 'werror=false'],
 )
-cairo_dep = dependency('cairo', fallback: ['cairo', 'libcairo_dep'], include_type: 'system')
+cairo_dep = dependency(
+  'cairo',
+  fallback: ['cairo', 'libcairo_dep'],
+  include_type: 'system',
+  default_options: ['warning_level=0', 'werror=false'],
+)
 fontconfig_dep = dependency(
   'fontconfig',
   required: host_machine.system() != 'windows',
