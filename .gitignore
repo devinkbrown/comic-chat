@@ -1,2 +1,8 @@
 .zig-cache/
 zig-out/
+.zig-global-cache/
+.comicchat-*-smoke.png
+.comicchat-*-smoke.ppm
+# Zig package-manager fetch cache (build.zig.zon dependencies, e.g. mbedTLS);
+# regenerated on demand from the pinned url+hash, never hand-authored.
+zig-pkg/

@@ -8,15 +8,119 @@
 //! an opaque white "sticker" silhouette with black ink, matching the original.
 
 const std = @import("std");
+const avb_asset = @import("../assets/avb.zig");
 const bgb = @import("../assets/bgb.zig");
+const emotion_mod = @import("emotion.zig");
+const udi = @import("../proto/udi.zig");
 const Canvas = @import("../render/canvas.zig").Canvas;
 
 pub const Image = bgb.Image;
 
-/// Vertical seat applied to the metadata neck anchor (a single global value is a
-/// compromise across body types; the record's d(x,y) field may hold the exact
-/// per-pose offset — see docs).
-pub const neck_seat: i32 = 10;
+pub const Rendered = struct {
+    image: Image,
+    /// Original `GetDimInfo` values in authored bitmap pixels.
+    face_x: i32,
+    head_height: i32,
+    /// `CBody::m_requested` is not visual, but it is part of the exact state
+    /// installed by `SetIndices` and must survive the portable assembly path.
+    requested: bool = false,
+
+    pub fn deinit(self: *Rendered, gpa: std.mem.Allocator) void {
+        self.image.deinit(gpa);
+        self.* = undefined;
+    }
+};
+
+/// Exact AVB records selected by `SayEntry::Execute`.  Normal avatars use the
+/// transmitted record ordinals directly; OTHERMAPPED avatars select from the
+/// serialized emotion/intensity pair instead (`histent.cpp:94-105`).
+pub const SourcePoseSelection = struct {
+    face: ?*const avb_asset.PoseRecord = null,
+    torso: ?*const avb_asset.PoseRecord = null,
+    body: ?*const avb_asset.PoseRecord = null,
+    requested: bool,
+};
+
+/// Port of `CAvatarComplex/CAvatarSimple::SetIndices`, plus the OTHERMAPPED
+/// `BytesToEmotion`/`SetEmotions` branch.  `SetIndices` leaves an invalid layer
+/// unchanged; the portable page renderer has no long-lived `CAvatarX` body to
+/// consult, so an out-of-range wire ordinal uses a deterministic neutral
+/// fallback. Valid annotations, including every emitted by the old client,
+/// take the exact source path.
+pub fn selectSourcePose(
+    records: []const avb_asset.PoseRecord,
+    kind: avb_asset.Kind,
+    other_mapped: bool,
+    pose: udi.PoseState,
+) SourcePoseSelection {
+    if (kind == .simple_avatar) return .{
+        .body = if (other_mapped)
+            mappedRecord(records, .body, pose.expression)
+        else
+            recordByOrdinal(records, .body, pose.gesture.index) orelse neutralRecord(records, .body),
+        .requested = pose.requested,
+    };
+    return .{
+        .face = if (other_mapped)
+            mappedRecord(records, .face, pose.expression)
+        else
+            recordByOrdinal(records, .face, pose.expression.index) orelse neutralRecord(records, .face),
+        .torso = if (other_mapped)
+            mappedRecord(records, .torso, pose.gesture)
+        else
+            recordByOrdinal(records, .torso, pose.gesture.index) orelse neutralRecord(records, .torso),
+        .requested = pose.requested,
+    };
+}
+
+fn recordByOrdinal(records: []const avb_asset.PoseRecord, layer: avb_asset.PoseLayer, ordinal: u8) ?*const avb_asset.PoseRecord {
+    var found: usize = 0;
+    for (records) |*record| {
+        if (record.layer != layer) continue;
+        if (found == @as(usize, ordinal)) return record;
+        found += 1;
+    }
+    return null;
+}
+
+fn neutralRecord(records: []const avb_asset.PoseRecord, layer: avb_asset.PoseLayer) ?*const avb_asset.PoseRecord {
+    for (records) |*record|
+        if (record.layer == layer and record.emotion_index == 9 and record.intensity == 0) return record;
+    for (records) |*record| if (record.layer == layer) return record;
+    return null;
+}
+
+/// `BytesToEmotion` indexes float values, not AVB codes. `emFloats[0]`, HAPPY,
+/// and NEUTRAL all equal 0.0, so records 1 and 9 (plus invalid record indices,
+/// which `EmotionToFloat` also maps to zero) compete by intensity for wire
+/// indices 0, 1, 9, and the out-of-range neutral fallback.
+fn mappedEmotionMatches(record_index: u16, wire_index: u8) bool {
+    if (wire_index == 0 or wire_index == 1 or wire_index == 9 or wire_index >= 18)
+        return record_index == 0 or record_index == 1 or record_index == 9 or record_index >= 18;
+    return record_index == wire_index;
+}
+
+fn mappedRecord(
+    records: []const avb_asset.PoseRecord,
+    layer: avb_asset.PoseLayer,
+    components: udi.Components,
+) ?*const avb_asset.PoseRecord {
+    var best: ?*const avb_asset.PoseRecord = null;
+    var best_delta: u32 = std.math.maxInt(u32);
+    for (records) |*record| {
+        if (record.layer != layer or !mappedEmotionMatches(record.emotion_index, components.emotion)) continue;
+        // AVB intensity is byte/255.0; BytesToEmotion is wire/10.0. Compare
+        // without floating-point rounding: |record*10 - wire*255|.
+        const authored = @as(i32, record.intensity) * 10;
+        const requested = @as(i32, components.intensity) * 255;
+        const delta: u32 = @intCast(@abs(authored - requested));
+        if (delta < best_delta) {
+            best = record;
+            best_delta = delta;
+        }
+    }
+    return best orelse neutralRecord(records, layer);
+}
 
 /// Assemble the figure for `avb` using head pose `emotion` and body pose `gesture`
 /// (both 0-based; clamped to what's available — index 0 = neutral).
@@ -33,17 +137,242 @@ pub fn assemble(gpa: std.mem.Allocator, avb: []const u8, emotion: usize, gesture
     // avatars with NO head layer at all (e.g. Jordan) render a single pose.
     if (head_opt == null) return try solo(gpa, body);
 
-    const head = head_opt.?;
-    var dx: i32 = undefined;
-    var dy: i32 = undefined;
-    if (bgb.neckAnchors(avb)) |a| {
-        dx = a.body.x - a.head.x;
-        dy = a.body.y - a.head.y + neck_seat;
-    } else {
-        const bt = topInkRow(body);
-        dx = centroidX(body, bt, bt + 18) - centroidX(head, @as(i32, @intCast(head.height)) - 25, @as(i32, @intCast(head.height)));
-        dy = (bt + 26) - headNeckBottom(head, centroidX(head, @as(i32, @intCast(head.height)) - 25, @as(i32, @intCast(head.height))));
+    return joinExact(gpa, bgb.neckAnchors(avb) orelse return error.MissingNeckAnchors, head_opt.?, body);
+}
+
+/// Reproduce `GetBodyFromEmotion(CEmotionOpts&)`: priority-ranked text rules
+/// choose one face and one gesture independently for complex avatars, while a
+/// simple avatar chooses its single whole-body pose from the same option set.
+pub fn assembleForText(gpa: std.mem.Allocator, avb_data: []const u8, text: []const u8) !Image {
+    const analysis = emotion_mod.analyzeText(text);
+    return assembleAnalysis(gpa, avb_data, &analysis);
+}
+
+pub fn assembleAnalysis(gpa: std.mem.Allocator, avb_data: []const u8, analysis: *const emotion_mod.TextAnalysis) !Image {
+    const rendered = try assembleDetailedAnalysis(gpa, avb_data, analysis);
+    return rendered.image;
+}
+
+pub fn assembleDetailedForText(gpa: std.mem.Allocator, avb_data: []const u8, text: []const u8) !Rendered {
+    const analysis = emotion_mod.analyzeText(text);
+    return assembleDetailedAnalysis(gpa, avb_data, &analysis);
+}
+
+/// Reproduce the pose fields emitted by `bInsertAnnotations` after
+/// `ChatPreSendText` has selected an avatar body from the message text.
+/// Indices are raw face/torso/body record ordinals; emotion/intensity bytes
+/// follow `EmotionToBytes`, including its first-match HAPPY encoding for the
+/// shared HAPPY/NEUTRAL 0.0 float value.
+pub fn poseStateForText(
+    gpa: std.mem.Allocator,
+    avb_data: []const u8,
+    text: []const u8,
+) !udi.PoseState {
+    const analysis = emotion_mod.analyzeText(text);
+    const asset = try avb_asset.parse(avb_data);
+    var table = try avb_asset.parsePoseTable(gpa, avb_data);
+    defer table.deinit(gpa);
+
+    if (asset.kind == .simple_avatar) {
+        const choice = selectAvailable(table.records, &analysis, .body, null) orelse neutralChoice();
+        const body = bgb.selectPose(table.records, .body, choice.emotion.assetIndex(), choice.intensity) orelse
+            return error.PoseNotFound;
+        return .{
+            // CAvatarSimple::GetEmotions reports torso as (0,0), while
+            // GetIndices reports the selected whole body as the torso index.
+            .gesture = .{
+                .index = try recordOrdinal(table.records, .body, body),
+                .emotion = 1,
+                .intensity = 0,
+            },
+            .expression = sourceComponents(
+                0,
+                body.emotion_index,
+                body.intensity,
+            ),
+            .requested = false,
+        };
     }
+
+    const face_choice = selectAvailable(table.records, &analysis, .face, false) orelse neutralChoice();
+    const torso_choice = selectAvailable(table.records, &analysis, .torso, true) orelse neutralChoice();
+    const face = bgb.selectPose(table.records, .face, face_choice.emotion.assetIndex(), face_choice.intensity) orelse
+        return error.PoseNotFound;
+    const torso = bgb.selectPose(table.records, .torso, torso_choice.emotion.assetIndex(), torso_choice.intensity) orelse
+        return error.PoseNotFound;
+    return .{
+        .gesture = sourceComponents(
+            try recordOrdinal(table.records, .torso, torso),
+            torso.emotion_index,
+            torso.intensity,
+        ),
+        .expression = sourceComponents(
+            try recordOrdinal(table.records, .face, face),
+            face.emotion_index,
+            face.intensity,
+        ),
+        .requested = false,
+    };
+}
+
+fn recordOrdinal(
+    records: []const avb_asset.PoseRecord,
+    layer: avb_asset.PoseLayer,
+    wanted: *const avb_asset.PoseRecord,
+) !u8 {
+    var ordinal: usize = 0;
+    for (records) |*record| {
+        if (record.layer != layer) continue;
+        if (record == wanted) return std.math.cast(u8, ordinal) orelse error.PoseOrdinalOverflow;
+        ordinal += 1;
+    }
+    return error.PoseNotFound;
+}
+
+fn sourceComponents(index: u8, emotion_index: u16, intensity: u8) udi.Components {
+    return .{
+        .index = index,
+        // EmotionToBytes scans emFloats from index one. HAPPY, NEUTRAL, zero,
+        // and invalid EmotionToFloat values all share the first HAPPY value.
+        .emotion = switch (emotion_index) {
+            2...8, 10...17 => @intCast(emotion_index),
+            else => 1,
+        },
+        .intensity = @intCast(@divTrunc(@as(u16, intensity) * 10, 255)),
+    };
+}
+
+/// Assemble the exact cooked UDI pose.  Unlike the semantic text path, record
+/// indices remain raw AVB table ordinals for ordinary avatars, matching
+/// `CAvatarComplex::SetIndices` and `CAvatarSimple::SetIndices`.
+pub fn assembleDetailedForSourcePose(
+    gpa: std.mem.Allocator,
+    avb_data: []const u8,
+    pose: udi.PoseState,
+) !Rendered {
+    const asset = try avb_asset.parse(avb_data);
+    var table = try avb_asset.parsePoseTable(gpa, avb_data);
+    defer table.deinit(gpa);
+    const selected = selectSourcePose(table.records, asset.kind, asset.flags.other_mapped, pose);
+
+    if (asset.kind == .simple_avatar) {
+        const record = selected.body orelse return error.PoseNotFound;
+        const image = try bgb.decodeImageRef(gpa, avb_data, record.images[0]);
+        return .{
+            .image = image,
+            .face_x = record.face.x,
+            .head_height = @intCast(image.height / 2),
+            .requested = selected.requested,
+        };
+    }
+
+    const face_record = selected.face orelse return error.PoseNotFound;
+    const torso_record = selected.torso orelse return error.PoseNotFound;
+    var head = try bgb.decodeImageRef(gpa, avb_data, face_record.images[0]);
+    defer head.deinit(gpa);
+    var body = try bgb.decodeImageRef(gpa, avb_data, torso_record.images[0]);
+    defer body.deinit(gpa);
+    const anchors = bgb.NeckAnchors{
+        .head = .{
+            .x = @as(i32, face_record.center.x) - face_record.delta.x,
+            .y = @as(i32, face_record.center.y) - face_record.delta.y,
+        },
+        .body = .{ .x = torso_record.center.x, .y = torso_record.center.y },
+    };
+    const image = try joinExact(gpa, anchors, head, body);
+    const dx = anchors.body.x - anchors.head.x;
+    const dy = anchors.body.y - anchors.head.y;
+    const bit_left = @min(@as(i32, 0), dx);
+    const bit_top = @min(@as(i32, 0), dy);
+    return .{
+        .image = image,
+        .face_x = @as(i32, face_record.face.x) + dx - bit_left,
+        .head_height = dy + @as(i32, @intCast(head.height)) - bit_top,
+        .requested = selected.requested,
+    };
+}
+
+pub fn assembleDetailedAnalysis(gpa: std.mem.Allocator, avb_data: []const u8, analysis: *const emotion_mod.TextAnalysis) !Rendered {
+    const asset = try avb_asset.parse(avb_data);
+    var table = try avb_asset.parsePoseTable(gpa, avb_data);
+    defer table.deinit(gpa);
+    if (asset.kind == .simple_avatar) {
+        const choice = selectAvailable(table.records, analysis, .body, null) orelse neutralChoice();
+        const record = bgb.selectPose(table.records, .body, choice.emotion.assetIndex(), choice.intensity) orelse
+            return error.PoseNotFound;
+        const image = try bgb.decodePoseForEmotion(gpa, avb_data, .body, choice.emotion.assetIndex(), choice.intensity);
+        return .{
+            .image = image,
+            .face_x = record.face.x,
+            .head_height = @intCast(image.height / 2),
+        };
+    }
+
+    const face_choice = selectAvailable(table.records, analysis, .face, false) orelse neutralChoice();
+    const torso_choice = selectAvailable(table.records, analysis, .torso, true) orelse neutralChoice();
+    const face_record = bgb.selectPose(table.records, .face, face_choice.emotion.assetIndex(), face_choice.intensity) orelse
+        return error.PoseNotFound;
+    const torso_record = bgb.selectPose(table.records, .torso, torso_choice.emotion.assetIndex(), torso_choice.intensity) orelse
+        return error.PoseNotFound;
+    var head = try bgb.decodePoseForEmotion(
+        gpa,
+        avb_data,
+        .face,
+        face_choice.emotion.assetIndex(),
+        face_choice.intensity,
+    );
+    defer head.deinit(gpa);
+    var body = try bgb.decodePoseForEmotion(
+        gpa,
+        avb_data,
+        .torso,
+        torso_choice.emotion.assetIndex(),
+        torso_choice.intensity,
+    );
+    defer body.deinit(gpa);
+    const anchors = bgb.NeckAnchors{
+        .head = .{
+            .x = @as(i32, face_record.center.x) - face_record.delta.x,
+            .y = @as(i32, face_record.center.y) - face_record.delta.y,
+        },
+        .body = .{ .x = torso_record.center.x, .y = torso_record.center.y },
+    };
+    const image = try joinExact(gpa, anchors, head, body);
+    const dx = anchors.body.x - anchors.head.x;
+    const dy = anchors.body.y - anchors.head.y;
+    const bit_left = @min(@as(i32, 0), dx);
+    const bit_top = @min(@as(i32, 0), dy);
+    return .{
+        .image = image,
+        .face_x = @as(i32, face_record.face.x) + dx - bit_left,
+        .head_height = dy + @as(i32, @intCast(head.height)) - bit_top,
+    };
+}
+
+fn neutralChoice() emotion_mod.EmotionOption {
+    return .{ .emotion = .neutral, .intensity = 0, .priority = 0 };
+}
+
+fn selectAvailable(
+    records: []const avb_asset.PoseRecord,
+    analysis: *const emotion_mod.TextAnalysis,
+    layer: avb_asset.PoseLayer,
+    gesture: ?bool,
+) ?emotion_mod.EmotionOption {
+    var best: ?emotion_mod.EmotionOption = null;
+    for (analysis.slice()) |option| {
+        if (gesture) |want_gesture| {
+            if (option.emotion.isGesture() != want_gesture) continue;
+        }
+        if (bgb.selectPose(records, layer, option.emotion.assetIndex(), option.intensity) == null) continue;
+        if (best == null or option.priority > best.?.priority) best = option;
+    }
+    return best;
+}
+
+fn joinExact(gpa: std.mem.Allocator, anchors: bgb.NeckAnchors, head: Image, body: Image) !Image {
+    const dx = anchors.body.x - anchors.head.x;
+    const dy = anchors.body.y - anchors.head.y;
 
     const bw: i32 = @intCast(body.width);
     const bh: i32 = @intCast(body.height);
@@ -59,8 +388,8 @@ pub fn assemble(gpa: std.mem.Allocator, avb: []const u8, emotion: usize, gesture
     var c = try Canvas.init(gpa, W, H);
     defer c.deinit(gpa);
     c.clear(0x00000000);
-    composite(&c, body.pixels, body.width, body.height, body_x, body_y, 14);
-    composite(&c, head.pixels, head.width, head.height, head_x, head_y, 12);
+    composite(&c, body.pixels, body.width, body.height, body_x, body_y);
+    composite(&c, head.pixels, head.width, head.height, head_x, head_y);
     return dupe(gpa, &c);
 }
 
@@ -68,7 +397,7 @@ fn solo(gpa: std.mem.Allocator, img: Image) !Image {
     var c = try Canvas.init(gpa, img.width, img.height);
     defer c.deinit(gpa);
     c.clear(0x00000000);
-    composite(&c, img.pixels, img.width, img.height, 0, 0, 0);
+    composite(&c, img.pixels, img.width, img.height, 0, 0);
     return dupe(gpa, &c);
 }
 
@@ -77,13 +406,12 @@ fn dupe(gpa: std.mem.Allocator, c: *const Canvas) !Image {
     return .{ .width = c.width, .height = c.height, .pixels = px };
 }
 
-/// Composite a transparent-keyed image onto `c` (opaque; upper layer occludes),
-/// skipping the right `crop_r` columns (trailing-strip cleanup).
-pub fn composite(c: *Canvas, src: []const u32, sw: u32, sh: u32, dx: i32, dy: i32, crop_r: u32) void {
+/// Composite a transparent-keyed authored image onto `c`.
+pub fn composite(c: *Canvas, src: []const u32, sw: u32, sh: u32, dx: i32, dy: i32) void {
     var y: u32 = 0;
     while (y < sh) : (y += 1) {
         var x: u32 = 0;
-        while (x + crop_r < sw) : (x += 1) {
+        while (x < sw) : (x += 1) {
             const p = src[y * sw + x];
             if (p >> 24 == 0) continue;
             const ox = dx + @as(i32, @intCast(x));
@@ -92,44 +420,6 @@ pub fn composite(c: *Canvas, src: []const u32, sw: u32, sh: u32, dx: i32, dy: i3
             c.px[@as(usize, @intCast(oy)) * c.width + @as(usize, @intCast(ox))] = p;
         }
     }
-}
-
-fn topInkRow(img: Image) i32 {
-    var y: u32 = 0;
-    while (y < img.height) : (y += 1) {
-        var x: u32 = 0;
-        while (x < img.width) : (x += 1) if (img.pixels[y * img.width + x] >> 24 != 0) return @intCast(y);
-    }
-    return 0;
-}
-
-fn headNeckBottom(img: Image, nx: i32) i32 {
-    const x0: u32 = @intCast(@max(@as(i32, 0), nx - 18));
-    const x1: u32 = @intCast(@min(@as(i32, @intCast(img.width)), nx + 18));
-    var y: i32 = @as(i32, @intCast(img.height)) - 1;
-    while (y >= 0) : (y -= 1) {
-        const row = @as(usize, @intCast(y)) * img.width;
-        var x: u32 = x0;
-        while (x < x1) : (x += 1) if (img.pixels[row + x] >> 24 != 0) return y;
-    }
-    return @as(i32, @intCast(img.height)) - 1;
-}
-
-fn centroidX(img: Image, y0: i32, y1: i32) i32 {
-    var sum: i64 = 0;
-    var cnt: i64 = 0;
-    var y: i32 = @max(0, y0);
-    const ye: i32 = @min(@as(i32, @intCast(img.height)), y1);
-    while (y < ye) : (y += 1) {
-        const row = @as(usize, @intCast(y)) * img.width;
-        var x: u32 = 0;
-        while (x < img.width) : (x += 1) if (img.pixels[row + x] >> 24 != 0) {
-            sum += x;
-            cnt += 1;
-        };
-    }
-    if (cnt == 0) return @intCast(img.width / 2);
-    return @intCast(@divTrunc(sum, cnt));
 }
 
 test "assemble produces a figure with transparent margins and opaque ink" {
@@ -143,4 +433,122 @@ test "assemble produces a figure with transparent margins and opaque ink" {
         if (p >> 24 != 0) opaque_px += 1;
     }
     try std.testing.expect(opaque_px > 1000);
+}
+
+test "text rules select simple-avatar whole-body expressions" {
+    const gpa = std.testing.allocator;
+    const jordan = @embedFile("../assets/testdata/jordan.avb");
+    var neutral = try assembleForText(gpa, jordan, "ordinary text");
+    defer neutral.deinit(gpa);
+    var laughing = try assembleForText(gpa, jordan, "LOL!!!");
+    defer laughing.deinit(gpa);
+    try std.testing.expect(!std.mem.eql(u32, neutral.pixels, laughing.pixels));
+}
+
+test "cooked UDI selects raw face and torso record ordinals" {
+    const gpa = std.testing.allocator;
+    const anna = @embedFile("../assets/testdata/anna.avb");
+    var table = try avb_asset.parsePoseTable(gpa, anna);
+    defer table.deinit(gpa);
+    const pose = udi.PoseState{
+        .gesture = .{ .index = 2, .emotion = 10, .intensity = 7 },
+        .expression = .{ .index = 1, .emotion = 8, .intensity = 9 },
+        .requested = true,
+    };
+    const selected = selectSourcePose(table.records, .avatar, false, pose);
+    try std.testing.expect(selected.face.? == recordByOrdinal(table.records, .face, 1).?);
+    try std.testing.expect(selected.torso.? == recordByOrdinal(table.records, .torso, 2).?);
+    try std.testing.expect(selected.requested);
+
+    var rendered = try assembleDetailedForSourcePose(gpa, anna, pose);
+    defer rendered.deinit(gpa);
+    try std.testing.expect(rendered.requested);
+    try std.testing.expect(rendered.image.width > 0 and rendered.image.height > 0);
+}
+
+test "outgoing text pose serializes selected source ordinals and EmotionToBytes" {
+    const gpa = std.testing.allocator;
+    const anna = @embedFile("../assets/testdata/anna.avb");
+    const neutral = try poseStateForText(gpa, anna, "ordinary words");
+    try std.testing.expectEqual(@as(u8, 1), neutral.expression.emotion);
+    try std.testing.expectEqual(@as(u8, 1), neutral.gesture.emotion);
+    try std.testing.expectEqual(@as(u8, 0), neutral.expression.intensity);
+    try std.testing.expectEqual(@as(u8, 0), neutral.gesture.intensity);
+    try std.testing.expect(!neutral.requested);
+
+    const expressive = try poseStateForText(gpa, anna, "Hello! LOL");
+    var table = try avb_asset.parsePoseTable(gpa, anna);
+    defer table.deinit(gpa);
+    try std.testing.expect(
+        recordByOrdinal(table.records, .face, expressive.expression.index).?.emotion_index == 8,
+    );
+    try std.testing.expect(
+        recordByOrdinal(table.records, .torso, expressive.gesture.index).?.emotion_index == 10,
+    );
+    try std.testing.expectEqual(@as(u8, 8), expressive.expression.emotion);
+    try std.testing.expectEqual(@as(u8, 10), expressive.gesture.emotion);
+}
+
+test "simple outgoing UDI stores body ordinal in gesture and pose in expression" {
+    const gpa = std.testing.allocator;
+    const jordan = @embedFile("../assets/testdata/jordan.avb");
+    const state = try poseStateForText(gpa, jordan, "LOL");
+    var table = try avb_asset.parsePoseTable(gpa, jordan);
+    defer table.deinit(gpa);
+    const body = recordByOrdinal(table.records, .body, state.gesture.index).?;
+    try std.testing.expectEqual(@as(u8, 0), state.expression.index);
+    try std.testing.expectEqual(sourceComponents(0, body.emotion_index, body.intensity).emotion, state.expression.emotion);
+    try std.testing.expectEqual(@as(u8, 1), state.gesture.emotion);
+    try std.testing.expectEqual(@as(u8, 0), state.gesture.intensity);
+}
+
+test "malformed direct UDI ordinal uses documented portable neutral fallback" {
+    const gpa = std.testing.allocator;
+    var table = try avb_asset.parsePoseTable(gpa, @embedFile("../assets/testdata/anna.avb"));
+    defer table.deinit(gpa);
+    const selected = selectSourcePose(table.records, .avatar, false, .{
+        .gesture = .{ .index = 255, .emotion = 0, .intensity = 0 },
+        .expression = .{ .index = 255, .emotion = 0, .intensity = 0 },
+        .requested = false,
+    });
+    try std.testing.expect(selected.face.? == neutralRecord(table.records, .face).?);
+    try std.testing.expect(selected.torso.? == neutralRecord(table.records, .torso).?);
+}
+
+test "OTHERMAPPED follows BytesToEmotion exact emotion and scaled intensity" {
+    const gpa = std.testing.allocator;
+    var table = try avb_asset.parsePoseTable(gpa, @embedFile("../assets/testdata/anna.avb"));
+    defer table.deinit(gpa);
+    const selected = selectSourcePose(table.records, .avatar, true, .{
+        .gesture = .{ .index = 99, .emotion = 10, .intensity = 10 },
+        .expression = .{ .index = 99, .emotion = 8, .intensity = 10 },
+        .requested = false,
+    });
+    try std.testing.expectEqual(@as(u16, 8), selected.face.?.emotion_index);
+    try std.testing.expectEqual(@as(u16, 10), selected.torso.?.emotion_index);
+
+    // BytesToEmotion maps an out-of-range emotion to neutral, and index zero
+    // has the same float value as EM_HAPPY in the source table.
+    const fallback = selectSourcePose(table.records, .avatar, true, .{
+        .gesture = .{ .index = 0, .emotion = 250, .intensity = 0 },
+        .expression = .{ .index = 0, .emotion = 0, .intensity = 10 },
+        .requested = false,
+    });
+    try std.testing.expectEqual(@as(u16, 1), fallback.face.?.emotion_index);
+    try std.testing.expectEqual(@as(u16, 9), fallback.torso.?.emotion_index);
+}
+
+test "simple SetIndices uses gesture ordinal while OTHERMAPPED uses expression" {
+    const gpa = std.testing.allocator;
+    var table = try avb_asset.parsePoseTable(gpa, @embedFile("../assets/testdata/jordan.avb"));
+    defer table.deinit(gpa);
+    const pose = udi.PoseState{
+        .gesture = .{ .index = 1, .emotion = 9, .intensity = 0 },
+        .expression = .{ .index = 0, .emotion = 8, .intensity = 10 },
+        .requested = true,
+    };
+    const direct = selectSourcePose(table.records, .simple_avatar, false, pose);
+    try std.testing.expect(direct.body.? == recordByOrdinal(table.records, .body, 1).?);
+    const mapped = selectSourcePose(table.records, .simple_avatar, true, pose);
+    try std.testing.expectEqual(@as(u16, 8), mapped.body.?.emotion_index);
 }

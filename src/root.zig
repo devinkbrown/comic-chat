@@ -1,13 +1,11 @@
-//! comicchat library root — platform-independent core.
-//!
-//! Everything reachable from here is pure Zig with zero dependencies and no
-//! C interop. The windowing/rendering/input backends (added later) build on
-//! top of this and are the only OS-specific code in the project.
+//! comicchat library root — source-derived portable core and native backends.
 
 const std = @import("std");
+const builtin = @import("builtin");
 
 pub const proto = struct {
     pub const record = @import("proto/record.zig");
+    pub const udi = @import("proto/udi.zig");
 };
 
 pub const assets = struct {
@@ -16,11 +14,18 @@ pub const assets = struct {
 };
 
 pub const comic = struct {
+    pub const formatting = @import("comic/formatting.zig");
     pub const figure = @import("comic/figure.zig");
     pub const strip = @import("comic/strip.zig");
     pub const layout = @import("comic/layout.zig");
     pub const session = @import("comic/session.zig");
     pub const emotion = @import("comic/emotion.zig");
+    pub const original_layout = @import("comic/original_layout.zig");
+    pub const original_balloon = @import("comic/original_balloon.zig");
+    pub const original_page = @import("comic/original_page.zig");
+    pub const original_title = @import("comic/original_title.zig");
+    pub const original_raster = @import("comic/original_raster.zig");
+    pub const original_figure = @import("comic/original_figure.zig");
 };
 
 pub const render = struct {
@@ -31,12 +36,25 @@ pub const render = struct {
 
 pub const platform = struct {
     pub const x11 = @import("platform/x11.zig");
+    pub const win32 = @import("platform/win32.zig");
+    pub const wayland = if (builtin.os.tag == .linux) @import("platform/wayland.zig") else struct {};
+};
+
+pub const client = struct {
+    pub const input = @import("client/input.zig");
+    pub const view = @import("client/view.zig");
 };
 
 pub const net = struct {
     pub const message = @import("net/message.zig");
+    pub const ircv3 = @import("net/ircv3.zig");
+    pub const sasl = @import("net/sasl.zig");
+    pub const features = @import("net/features.zig");
+    pub const connection_policy = @import("net/connection_policy.zig");
+    pub const sts_store = @import("net/sts_store.zig");
     pub const irc = @import("net/irc.zig");
     pub const transport = @import("net/transport.zig");
+    pub const tls = @import("net/tls.zig");
     pub const client = @import("net/client.zig");
 };
 
@@ -44,18 +62,40 @@ test {
     // 0.16 dropped refAllDeclsRecursive; reference each module so its tests run.
     std.testing.refAllDecls(@This());
     _ = @import("proto/record.zig");
+    _ = @import("proto/udi.zig");
     _ = @import("assets/avb.zig");
     _ = @import("assets/bgb.zig");
     _ = @import("render/canvas.zig");
     _ = @import("comic/figure.zig");
+    _ = @import("comic/formatting.zig");
     _ = @import("comic/strip.zig");
     _ = @import("comic/layout.zig");
     _ = @import("comic/session.zig");
     _ = @import("comic/emotion.zig");
+    _ = @import("comic/original_layout.zig");
+    _ = @import("comic/original_balloon.zig");
+    _ = @import("comic/original_page.zig");
+    _ = @import("comic/original_title.zig");
+    _ = @import("comic/original_raster.zig");
+    _ = @import("comic/original_figure.zig");
+    _ = @import("comic/source_parity_test.zig");
+    _ = @import("comic/source_page_balloon_test.zig");
+    _ = @import("comic/source_strip_test.zig");
+    _ = @import("comic/source_modes_test.zig");
     _ = @import("render/png.zig");
     _ = @import("platform/x11.zig");
+    _ = @import("platform/win32.zig");
+    if (builtin.os.tag == .linux) _ = @import("platform/wayland.zig");
+    _ = @import("client/input.zig");
+    _ = @import("client/view.zig");
     _ = @import("net/message.zig");
+    _ = @import("net/ircv3.zig");
+    _ = @import("net/sasl.zig");
+    _ = @import("net/features.zig");
+    _ = @import("net/connection_policy.zig");
+    _ = @import("net/sts_store.zig");
     _ = @import("net/irc.zig");
     _ = @import("net/transport.zig"); // compile-checked (no live socket test)
+    _ = @import("net/tls.zig");
     _ = @import("net/client.zig");
 }

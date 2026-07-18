@@ -38,17 +38,38 @@ pub const LineFramer = struct {
     /// buffered yet. Empty lines are returned as zero-length slices.
     pub fn next(self: *LineFramer) !?[]const u8 {
         const data = self.buf.items[self.cursor..];
-        const nl = std.mem.indexOfScalar(u8, data, '\n') orelse return null;
+        const nl = std.mem.indexOfScalar(u8, data, '\n') orelse {
+            // Maximum content is 8191 bytes of tag section plus 510 bytes of
+            // ordinary IRC payload. An untagged line can never exceed 510
+            // content bytes (both limits include the eventual CRLF).
+            const maximum_pending: usize = if (data.len > 0 and data[0] == '@') 8701 else 510;
+            if (data.len > maximum_pending) {
+                self.buf.clearRetainingCapacity();
+                self.cursor = 0;
+                return error.IrcLineTooLong;
+            }
+            return null;
+        };
         const line = std.mem.trimEnd(u8, data[0..nl], "\r");
 
-        self.scratch.clearRetainingCapacity();
-        try self.scratch.appendSlice(self.gpa, line);
-        self.cursor += nl + 1;
+        const valid_length = if (line.len > 0 and line[0] == '@') tagged: {
+            const separator = std.mem.indexOfScalar(u8, line, ' ') orelse break :tagged false;
+            // `separator + 1` includes both `@` and the tag separator space.
+            break :tagged separator + 1 <= 8191 and line.len - separator - 1 + 2 <= 512;
+        } else line.len + 2 <= 512;
 
+        if (valid_length) {
+            // Copy before clearing the source ArrayList; debug allocators are
+            // allowed to poison elements outside its new logical length.
+            self.scratch.clearRetainingCapacity();
+            try self.scratch.appendSlice(self.gpa, line);
+        }
+        self.cursor += nl + 1;
         if (self.cursor >= self.buf.items.len) {
             self.buf.clearRetainingCapacity();
             self.cursor = 0;
         }
+        if (!valid_length) return error.IrcLineTooLong;
         return self.scratch.items;
     }
 };
@@ -97,6 +118,46 @@ pub fn writePrivmsg(
     m.params[1] = text;
     m.param_count = 2;
     try message.write(out, gpa, m);
+}
+
+/// The source Comic Chat avatar control (`ChatAnnounceNewAvatar`):
+/// `PRIVMSG <target> :# Appears as <bundled-name>`.
+pub fn writeAvatarAnnouncement(
+    out: *std.ArrayList(u8),
+    gpa: std.mem.Allocator,
+    target: []const u8,
+    avatar: []const u8,
+) !void {
+    if (target.len == 0 or avatar.len == 0 or
+        std.mem.indexOfAny(u8, target, " \r\n") != null or
+        std.mem.indexOfAny(u8, avatar, " .\r\n") != null)
+        return error.InvalidIrcParameter;
+
+    const start = out.items.len;
+    errdefer out.shrinkRetainingCapacity(start);
+    try out.appendSlice(gpa, "PRIVMSG ");
+    try out.appendSlice(gpa, target);
+    try out.appendSlice(gpa, " :# Appears as ");
+    try out.appendSlice(gpa, avatar);
+    try out.appendSlice(gpa, "\r\n");
+}
+
+/// Source IRCX UDI sideband: `DATA <target> CCUDI1 :<annotation>`.
+pub fn writeComicData(
+    out: *std.ArrayList(u8),
+    gpa: std.mem.Allocator,
+    target: []const u8,
+    annotation: []const u8,
+) !void {
+    if (target.len == 0 or annotation.len == 0 or
+        std.mem.indexOfAny(u8, target, " \r\n") != null or
+        std.mem.indexOfAny(u8, annotation, "\r\n") != null)
+        return error.InvalidIrcParameter;
+    try out.appendSlice(gpa, "DATA ");
+    try out.appendSlice(gpa, target);
+    try out.appendSlice(gpa, " CCUDI1 :");
+    try out.appendSlice(gpa, annotation);
+    try out.appendSlice(gpa, "\r\n");
 }
 
 pub fn writePong(out: *std.ArrayList(u8), gpa: std.mem.Allocator, token: []const u8) !void {
@@ -172,6 +233,37 @@ test "privmsg builds trailing form" {
     try std.testing.expectEqualStrings("PRIVMSG #comics :hi there\r\n", out.items);
 }
 
+test "avatar announcement uses the source control PRIVMSG" {
+    const gpa = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+
+    try writeAvatarAnnouncement(&out, gpa, "#comics", "anna");
+    try std.testing.expectEqualStrings(
+        "PRIVMSG #comics :# Appears as anna\r\n",
+        out.items,
+    );
+    const before = out.items.len;
+    try std.testing.expectError(
+        error.InvalidIrcParameter,
+        writeAvatarAnnouncement(&out, gpa, "bad target", "anna"),
+    );
+    try std.testing.expectEqual(before, out.items.len);
+    try std.testing.expectError(
+        error.InvalidIrcParameter,
+        writeAvatarAnnouncement(&out, gpa, "#comics", "anna.url"),
+    );
+}
+
+test "IRCX comic DATA keeps the source CCUDI1 trailing form" {
+    const gpa = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    try writeComicData(&out, gpa, "#comics", "#G000E000RM1");
+    try std.testing.expectEqualStrings("DATA #comics CCUDI1 :#G000E000RM1\r\n", out.items);
+    try std.testing.expectError(error.InvalidIrcParameter, writeComicData(&out, gpa, "bad target", "#G000E000M1"));
+}
+
 test "pong echoes the ping token" {
     const gpa = std.testing.allocator;
     var out: std.ArrayList(u8) = .empty;
@@ -181,7 +273,6 @@ test "pong echoes the ping token" {
     try writePong(&out, gpa, ping.param(0).?);
     try std.testing.expectEqualStrings("PONG server1\r\n", out.items);
 }
-
 
 test "LineFramer: empty lines are returned as zero-length slices" {
     const gpa = std.testing.allocator;
@@ -215,6 +306,35 @@ test "LineFramer: trailing partial line stays buffered until terminated" {
     try std.testing.expect((try fr.next()) == null); // "PART" has no newline yet
     try fr.push("IAL\n");
     try std.testing.expectEqualStrings("PARTIAL", (try fr.next()).?);
+}
+
+test "LineFramer enforces ordinary and separate IRCv3 tag budgets and recovers" {
+    const gpa = std.testing.allocator;
+    var fr = LineFramer.init(gpa);
+    defer fr.deinit();
+
+    var ordinary: [511]u8 = undefined;
+    @memset(&ordinary, 'x');
+    try fr.push(&ordinary);
+    try std.testing.expectError(error.IrcLineTooLong, fr.next());
+
+    var oversized_tag: [8191]u8 = undefined;
+    @memset(&oversized_tag, 'a');
+    oversized_tag[0] = '@';
+    try fr.push(&oversized_tag);
+    try fr.push(" PING x\r\nPING :recovered\r\n");
+    try std.testing.expectError(error.IrcLineTooLong, fr.next());
+    try std.testing.expectEqualStrings("PING :recovered", (try fr.next()).?);
+
+    // 8189 tag-data bytes plus '@' and space is the exact 8191-byte tag
+    // section limit; `PING x` plus CRLF remains under the payload limit.
+    var exact_tag: [8190]u8 = undefined;
+    @memset(&exact_tag, 'a');
+    exact_tag[0] = '@';
+    try fr.push(&exact_tag);
+    try fr.push(" PING x\r\n");
+    const exact = (try fr.next()).?;
+    try std.testing.expectEqual(@as(usize, 8197), exact.len);
 }
 
 test "writeRegister without IRCX omits the IRCX probe" {

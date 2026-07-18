@@ -5,11 +5,20 @@
 
 const std = @import("std");
 const font = @import("font.zig");
+const whisper_font = @import("font_italic.zig");
 
 pub const Color = u32; // 0xAARRGGBB
 
 pub const black: Color = 0xff000000;
 pub const white: Color = 0xffffffff;
+
+/// Microsoft's `CUnitPanelPage::SetFonts` derives an italic face for whisper
+/// balloons. Other portable UI and comic text continues to use the normal
+/// bold face.
+pub const FontStyle = enum {
+    normal,
+    whisper,
+};
 
 fn chan(c: Color, comptime shift: u5) u32 {
     return (c >> shift) & 0xff;
@@ -162,33 +171,62 @@ pub const Canvas = struct {
 
     // --- Antialiased text -------------------------------------------------
 
-    pub fn textWidth(text: []const u8) i32 {
+    fn textWidthFor(comptime atlas: type, text: []const u8) i32 {
         var w: i32 = 0;
         for (text) |c| {
-            if (c < font.first or c >= font.first + font.count) continue;
-            w += font.glyphs[c - font.first].advance;
+            if (c < atlas.first or c >= atlas.first + atlas.count) continue;
+            w += atlas.glyphs[c - atlas.first].advance;
         }
         return w;
     }
 
-    /// Draw a single line of proportional, antialiased text. `y` is the line
-    /// top; glyphs are placed on the baseline. Returns the advanced pen X.
-    pub fn drawText(self: *Canvas, text: []const u8, x: i32, y: i32, color: Color) i32 {
+    pub fn textWidthStyled(text: []const u8, style: FontStyle) i32 {
+        return switch (style) {
+            .normal => textWidthFor(font, text),
+            .whisper => textWidthFor(whisper_font, text),
+        };
+    }
+
+    pub fn textWidth(text: []const u8) i32 {
+        return textWidthStyled(text, .normal);
+    }
+
+    fn drawTextFor(
+        self: *Canvas,
+        comptime atlas: type,
+        text: []const u8,
+        x: i32,
+        y: i32,
+        color: Color,
+    ) i32 {
         var pen = x;
         for (text) |c| {
-            if (c < font.first or c >= font.first + font.count) continue;
-            const g = font.glyphs[c - font.first];
+            if (c < atlas.first or c >= atlas.first + atlas.count) continue;
+            const g = atlas.glyphs[c - atlas.first];
             var row: u32 = 0;
             while (row < g.h) : (row += 1) {
                 var col: u32 = 0;
                 while (col < g.w) : (col += 1) {
-                    const a = font.coverage[g.off + row * g.w + col];
+                    const a = atlas.coverage[g.off + row * g.w + col];
                     self.blendPixel(pen + g.xoff + @as(i32, @intCast(col)), y + g.yoff + @as(i32, @intCast(row)), color, a);
                 }
             }
             pen += g.advance;
         }
         return pen;
+    }
+
+    pub fn drawTextStyled(self: *Canvas, text: []const u8, x: i32, y: i32, color: Color, style: FontStyle) i32 {
+        return switch (style) {
+            .normal => self.drawTextFor(font, text, x, y, color),
+            .whisper => self.drawTextFor(whisper_font, text, x, y, color),
+        };
+    }
+
+    /// Draw a single line of proportional, antialiased text. `y` is the line
+    /// top; glyphs are placed on the baseline. Returns the advanced pen X.
+    pub fn drawText(self: *Canvas, text: []const u8, x: i32, y: i32, color: Color) i32 {
+        return self.drawTextStyled(text, x, y, color, .normal);
     }
 
     pub fn wrappedHeight(text: []const u8, max_w: i32) i32 {
@@ -217,6 +255,39 @@ pub const Canvas = struct {
         while (it.next()) |word| {
             const ww = textWidth(word);
             if (line_w > 0 and line_w + space + ww > max_w) {
+                cy += font.line_height;
+                pen = x;
+                line_w = 0;
+            }
+            if (line_w > 0) {
+                pen += space;
+                line_w += space;
+            }
+            _ = self.drawText(word, pen, cy, color);
+            pen += ww;
+            line_w += ww;
+        }
+        return cy + font.line_height;
+    }
+
+    /// Wrapped text constrained to a rectangle height. When more words remain
+    /// than fit, the final visible line ends with an ellipsis. This is used in
+    /// speech balloons, where drawing into the next balloon is never valid.
+    pub fn drawTextWrappedClipped(self: *Canvas, text: []const u8, x: i32, y: i32, max_w: i32, max_h: i32, color: Color) i32 {
+        if (max_w <= 0 or max_h < font.line_height) return y;
+        const space = font.glyphs[' ' - font.first].advance;
+        var cy = y;
+        var pen = x;
+        var line_w: i32 = 0;
+        var it = std.mem.tokenizeScalar(u8, text, ' ');
+        while (it.next()) |word| {
+            const ww = textWidth(word);
+            if (line_w > 0 and line_w + space + ww > max_w) {
+                if (cy + 2 * font.line_height > y + max_h) {
+                    const ellipsis_w = textWidth("...");
+                    _ = self.drawText("...", x + @max(0, max_w - ellipsis_w), cy, color);
+                    return cy + font.line_height;
+                }
                 cy += font.line_height;
                 pen = x;
                 line_w = 0;
@@ -322,8 +393,40 @@ test "drawText advances and lights pixels for visible glyphs" {
     try std.testing.expect(lit > 0);
 }
 
+test "whisper text uses the generated italic atlas for metrics and pixels" {
+    try std.testing.expectEqual(@as(i32, 27), Canvas.textWidthStyled("D0.", .normal));
+    try std.testing.expectEqual(@as(i32, 28), Canvas.textWidthStyled("D0.", .whisper));
+
+    const gpa = std.testing.allocator;
+    var normal = try Canvas.init(gpa, 64, 28);
+    defer normal.deinit(gpa);
+    var whisper = try Canvas.init(gpa, 64, 28);
+    defer whisper.deinit(gpa);
+    normal.clear(white);
+    whisper.clear(white);
+    _ = normal.drawTextStyled("D0.", 4, 2, black, .normal);
+    _ = whisper.drawTextStyled("D0.", 4, 2, black, .whisper);
+    try std.testing.expect(!std.mem.eql(Color, normal.px, whisper.px));
+}
+
 test "wrappedHeight grows with narrower width" {
     const wide = Canvas.wrappedHeight("one two three four five six", 1000);
     const narrow = Canvas.wrappedHeight("one two three four five six", 40);
     try std.testing.expect(narrow > wide);
+}
+
+test "drawTextWrappedClipped never advances below its height" {
+    const gpa = std.testing.allocator;
+    var c = try Canvas.init(gpa, 180, 90);
+    defer c.deinit(gpa);
+    c.clear(white);
+    const bottom = c.drawTextWrappedClipped(
+        "one two three four five six seven eight nine ten",
+        4,
+        4,
+        72,
+        2 * font.line_height,
+        black,
+    );
+    try std.testing.expect(bottom <= 4 + 2 * font.line_height);
 }

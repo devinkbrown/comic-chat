@@ -2,13 +2,21 @@
     .name = .comicchat,
     .version = "0.0.0",
     .fingerprint = 0xd5fd484431146b5d,
-    .minimum_zig_version = "0.16.0",
-    // Pure Zig: no dependencies, no C interop, no SDL.
-    .dependencies = .{},
+    .minimum_zig_version = "0.17.0-dev.1282+c0f9b51d8",
+    .dependencies = .{
+        .mbedtls = .{
+            .url = "git+https://github.com/Mbed-TLS/mbedtls.git#0bebf8b8c7f07abe3571ded48a11aa907a1ffb20",
+            .hash = "N-V-__8AAI1FmQLj92go7nR7_J6kwr-7uYyuitngGqydvWkd",
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",
-        "src",
+        "LICENSE",
+        "README.md",
         "docs",
+        "legacy",
+        "src",
+        "tools",
     },
 }

@@ -1,33 +1,34 @@
-//! comicchat — pure-Zig Microsoft Comic Chat reimplementation (CLI entry).
+//! comicchat — source-faithful Microsoft Comic Chat continuation (CLI/app).
 //!
 //! Subcommands:
-//!   (none)                              headless codec demo
-//!   connect <host> <port> <nick> <chan> connect to an IRC server, join, speak
+//!   (none) / codec                       headless record-codec demo
+//!   render-bg | render-panel | render-figure | render-strip | topng
+//!                                        source art/render diagnostics
+//!   window <avatar>                      native backend smoke
+//!   connect | chat-comic | app           IRC and interactive comic clients
 //!
-//! The GUI (hand-rolled windowing + software rasterizer) is not wired up yet.
+//! Platform windows only present the shared software-rendered client view.
 
 const std = @import("std");
 const builtin = @import("builtin");
 const cc = @import("comicchat");
 
-/// Unbuffered stderr log (so progress is visible even if the process is
-/// killed mid-block). Linux-only; a no-op elsewhere (the CLI targets Linux).
+/// Diagnostics stay on stderr so image subcommands can reserve stdout for
+/// binary PPM/PNG data on every supported platform.
 fn elog(comptime fmt: []const u8, args: anytype) void {
-    if (builtin.os.tag != .linux) return;
-    var buf: [1024]u8 = undefined;
-    const s = std.fmt.bufPrint(&buf, fmt, args) catch return;
-    _ = std.os.linux.write(2, s.ptr, s.len);
+    std.debug.print(fmt, args);
 }
 
-pub fn main(init: std.process.Init.Minimal) !void {
-    const gpa = std.heap.page_allocator;
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
+    const minimal = init.minimal;
 
-    // Collect argv (Zig 0.16 delivers args via the Init parameter). The
+    // Collect argv through Zig's Init parameter. The
     // allocator-based iterator is the cross-platform form (Windows requires it).
-    var it = try init.args.iterateAllocator(gpa);
+    var it = try minimal.args.iterateAllocator(gpa);
     defer it.deinit();
     _ = it.skip(); // program name
-    var argv: [8][]const u8 = undefined;
+    var argv: [32][]const u8 = undefined;
     var argc: usize = 0;
     while (it.next()) |a| : (argc += 1) {
         if (argc >= argv.len) break;
@@ -35,77 +36,466 @@ pub fn main(init: std.process.Init.Minimal) !void {
     }
 
     if (argc >= 1 and std.mem.eql(u8, argv[0], "render-bg")) {
-        try runRenderBg(gpa, if (argc >= 2) argv[1] else "field");
+        try runRenderBg(gpa, init.io, if (argc >= 2) argv[1] else "field");
         return;
     }
 
     if (argc >= 1 and std.mem.eql(u8, argv[0], "render-panel")) {
         const bg = if (argc >= 2) argv[1] else "field";
         const speaker = if (argc >= 3) argv[2] else "ANNA";
-        const text = if (argc >= 4) argv[3] else "Hello from a pure-Zig Comic Chat panel!";
-        try runRenderPanel(gpa, bg, speaker, text);
+        const text = if (argc >= 4) argv[3] else "Hello from the source-faithful Comic Chat renderer!";
+        try runRenderPanel(gpa, init.io, bg, speaker, text);
         return;
     }
 
     if (argc >= 1 and std.mem.eql(u8, argv[0], "render-figure")) {
         const emo = if (argc >= 3) (cc.comic.emotion.Emotion.fromName(argv[2]) orelse .neutral) else .neutral;
-        try runRenderFigure(gpa, if (argc >= 2) argv[1] else "anna", emo.headIndex());
+        try runRenderFigure(gpa, init.io, if (argc >= 2) argv[1] else "anna", emo.headIndex());
         return;
     }
 
     if (argc >= 1 and std.mem.eql(u8, argv[0], "render-strip")) {
-        try runRenderStrip(gpa);
+        try runRenderStrip(gpa, init.io);
         return;
     }
 
     if (argc >= 1 and std.mem.eql(u8, argv[0], "topng")) {
-        try runToPng(gpa, if (argc >= 2) argv[1] else "field");
+        try runToPng(gpa, init.io, if (argc >= 2) argv[1] else "field");
         return;
     }
 
     if (argc >= 1 and std.mem.eql(u8, argv[0], "window")) {
-        try runWindow(gpa, if (argc >= 2) argv[1] else "anna");
+        const prefer_wayland = if (comptime builtin.os.tag == .linux)
+            minimal.environ.containsUnemptyConstant("WAYLAND_DISPLAY")
+        else
+            false;
+        try runWindow(gpa, if (argc >= 2) argv[1] else "anna", prefer_wayland);
+        return;
+    }
+
+    if (argc >= 1 and std.mem.eql(u8, argv[0], "app")) {
+        const connection = parseConnectionArgs(argv[1..argc], false) orelse {
+            printConnectionUsage("app", false);
+            return;
+        };
+        var runtime = try ConnectionRuntime.init(gpa, init.io, &connection);
+        defer runtime.deinit();
+        defer runtime.save() catch |err| elog("STS policy save failed: {s}\n", .{@errorName(err)});
+        const prefer_wayland = if (comptime builtin.os.tag == .linux)
+            minimal.environ.containsUnemptyConstant("WAYLAND_DISPLAY")
+        else
+            false;
+        try runInteractive(
+            gpa,
+            connection.host,
+            connection.port,
+            connection.nick,
+            connection.channel,
+            prefer_wayland,
+            &runtime,
+            init.io,
+        );
         return;
     }
 
     if (argc >= 1 and std.mem.eql(u8, argv[0], "chat-comic")) {
-        if (argc < 5) {
-            std.debug.print("usage: comicchat chat-comic <host> <port> <nick> <#channel> [maxlines]\n", .{});
+        const connection = parseConnectionArgs(argv[1..argc], true) orelse {
+            printConnectionUsage("chat-comic", true);
             return;
-        }
-        const port = std.fmt.parseInt(u16, argv[2], 10) catch return;
-        const maxlines: usize = if (argc >= 6) (std.fmt.parseInt(usize, argv[5], 10) catch 6) else 6;
-        try runChatComic(gpa, argv[1], port, argv[3], argv[4], maxlines);
+        };
+        const maxlines: usize = if (connection.extra) |value|
+            (std.fmt.parseInt(usize, value, 10) catch 6)
+        else
+            6;
+        var runtime = try ConnectionRuntime.init(gpa, init.io, &connection);
+        defer runtime.deinit();
+        defer runtime.save() catch |err| elog("STS policy save failed: {s}\n", .{@errorName(err)});
+        try runChatComic(
+            gpa,
+            init.io,
+            connection.host,
+            connection.port,
+            connection.nick,
+            connection.channel,
+            maxlines,
+            runtime.connect_options,
+            runtime.registrationOptions(),
+        );
         return;
     }
 
     if (argc >= 1 and std.mem.eql(u8, argv[0], "connect")) {
-        if (argc < 5) {
-            std.debug.print("usage: comicchat connect <host> <port> <nick> <#channel>\n", .{});
-            return;
-        }
-        const port = std.fmt.parseInt(u16, argv[2], 10) catch {
-            std.debug.print("bad port: {s}\n", .{argv[2]});
+        const connection = parseConnectionArgs(argv[1..argc], false) orelse {
+            printConnectionUsage("connect", false);
             return;
         };
-        try runConnect(gpa, argv[1], port, argv[3], argv[4]);
+        var runtime = try ConnectionRuntime.init(gpa, init.io, &connection);
+        defer runtime.deinit();
+        defer runtime.save() catch |err| elog("STS policy save failed: {s}\n", .{@errorName(err)});
+        try runConnect(
+            gpa,
+            init.io,
+            connection.host,
+            connection.port,
+            connection.nick,
+            connection.channel,
+            runtime.connect_options,
+            runtime.registrationOptions(),
+        );
         return;
     }
 
     try runCodecDemo(gpa);
 }
 
+const default_tls_port: u16 = 6697;
+
+const AuthArgs = struct {
+    user: ?[]const u8 = null,
+    authzid: ?[]const u8 = null,
+    password_file: ?[]const u8 = null,
+    mechanism: ?cc.net.sasl.Mechanism = null,
+    external: bool = false,
+
+    fn enabled(self: AuthArgs) bool {
+        return self.user != null or self.authzid != null or self.password_file != null or
+            self.mechanism != null or self.external;
+    }
+};
+
+const ConnectionArgs = struct {
+    host: []const u8,
+    port: u16 = default_tls_port,
+    nick: []const u8,
+    channel: []const u8,
+    extra: ?[]const u8 = null,
+    options: cc.net.client.ConnectOptions = .{},
+    auth: AuthArgs = .{},
+    sts_file: []const u8 = ".comicchat-sts",
+};
+
+fn parseConnectionArgs(args: []const []const u8, allow_extra: bool) ?ConnectionArgs {
+    var positional: [5][]const u8 = undefined;
+    var positional_count: usize = 0;
+    var options = cc.net.client.ConnectOptions{};
+    var auth: AuthArgs = .{};
+    var sts_file: []const u8 = ".comicchat-sts";
+    var index: usize = 0;
+    while (index < args.len) : (index += 1) {
+        const arg = args[index];
+        if (std.mem.eql(u8, arg, "--plaintext")) {
+            options.security = .plaintext;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--tls")) {
+            options.security = .tls;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--ca-file")) {
+            index += 1;
+            if (index >= args.len) return null;
+            options.ca_file = args[index];
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "--ca-file=")) {
+            const value = arg["--ca-file=".len..];
+            if (value.len == 0) return null;
+            options.ca_file = value;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--socks5") or std.mem.eql(u8, arg, "--http-proxy")) {
+            const use_socks = std.mem.eql(u8, arg, "--socks5");
+            index += 1;
+            if (index >= args.len) return null;
+            const endpoint = parseProxyEndpoint(args[index]) orelse return null;
+            options.proxy = if (use_socks) .{ .socks5 = endpoint } else .{ .http_connect = endpoint };
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "--socks5=") or std.mem.startsWith(u8, arg, "--http-proxy=")) {
+            const use_socks = std.mem.startsWith(u8, arg, "--socks5=");
+            const prefix = if (use_socks) "--socks5=" else "--http-proxy=";
+            const endpoint = parseProxyEndpoint(arg[prefix.len..]) orelse return null;
+            options.proxy = if (use_socks) .{ .socks5 = endpoint } else .{ .http_connect = endpoint };
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--connect-timeout-ms")) {
+            index += 1;
+            if (index >= args.len) return null;
+            options.connect_timeout_ms = std.fmt.parseInt(u32, args[index], 10) catch return null;
+            if (options.connect_timeout_ms == 0) return null;
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "--connect-timeout-ms=")) {
+            const value = nonEmptyValue(arg, "--connect-timeout-ms=") orelse return null;
+            options.connect_timeout_ms = std.fmt.parseInt(u32, value, 10) catch return null;
+            if (options.connect_timeout_ms == 0) return null;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--sasl-user")) {
+            index += 1;
+            if (index >= args.len or args[index].len == 0) return null;
+            auth.user = args[index];
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "--sasl-user=")) {
+            auth.user = nonEmptyValue(arg, "--sasl-user=") orelse return null;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--sasl-authzid")) {
+            index += 1;
+            if (index >= args.len) return null;
+            auth.authzid = args[index];
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "--sasl-authzid=")) {
+            auth.authzid = arg["--sasl-authzid=".len..];
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--sasl-password-file")) {
+            index += 1;
+            if (index >= args.len or args[index].len == 0) return null;
+            auth.password_file = args[index];
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "--sasl-password-file=")) {
+            auth.password_file = nonEmptyValue(arg, "--sasl-password-file=") orelse return null;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--sasl-mechanism")) {
+            index += 1;
+            if (index >= args.len) return null;
+            auth.mechanism = cc.net.sasl.Mechanism.parse(args[index]) orelse return null;
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "--sasl-mechanism=")) {
+            const value = nonEmptyValue(arg, "--sasl-mechanism=") orelse return null;
+            auth.mechanism = cc.net.sasl.Mechanism.parse(value) orelse return null;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--sasl-external")) {
+            auth.external = true;
+            auth.mechanism = .external;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--sts-file")) {
+            index += 1;
+            if (index >= args.len or args[index].len == 0) return null;
+            sts_file = args[index];
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "--sts-file=")) {
+            sts_file = nonEmptyValue(arg, "--sts-file=") orelse return null;
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "--")) return null;
+        if (positional_count == positional.len) return null;
+        positional[positional_count] = arg;
+        positional_count += 1;
+    }
+    if (positional_count < 3) return null;
+
+    var result: ConnectionArgs = undefined;
+    if (std.fmt.parseInt(u16, positional[1], 10)) |port| {
+        if (positional_count < 4) return null;
+        result = .{
+            .host = positional[0],
+            .port = port,
+            .nick = positional[2],
+            .channel = positional[3],
+            .options = options,
+            .auth = auth,
+            .sts_file = sts_file,
+        };
+        if (positional_count > 4) result.extra = positional[4];
+    } else |_| {
+        result = .{
+            .host = positional[0],
+            .nick = positional[1],
+            .channel = positional[2],
+            .options = options,
+            .auth = auth,
+            .sts_file = sts_file,
+        };
+        if (positional_count > 3) result.extra = positional[3];
+        if (positional_count > 4) return null;
+    }
+    if (!allow_extra and result.extra != null) return null;
+    return result;
+}
+
+fn nonEmptyValue(arg: []const u8, comptime prefix: []const u8) ?[]const u8 {
+    const value = arg[prefix.len..];
+    return if (value.len == 0) null else value;
+}
+
+fn parseProxyEndpoint(raw: []const u8) ?cc.net.transport.ProxyEndpoint {
+    if (raw.len == 0) return null;
+    var host: []const u8 = undefined;
+    var port_text: []const u8 = undefined;
+    if (raw[0] == '[') {
+        const close = std.mem.indexOfScalar(u8, raw, ']') orelse return null;
+        if (close <= 1 or close + 2 > raw.len or raw[close + 1] != ':') return null;
+        host = raw[1..close];
+        port_text = raw[close + 2 ..];
+    } else {
+        const colon = std.mem.lastIndexOfScalar(u8, raw, ':') orelse return null;
+        if (colon == 0) return null;
+        host = raw[0..colon];
+        port_text = raw[colon + 1 ..];
+    }
+    const port = std.fmt.parseInt(u16, port_text, 10) catch return null;
+    if (port == 0 or std.mem.indexOfAny(u8, host, " \r\n\x00") != null) return null;
+    return .{ .host = host, .port = port };
+}
+
+fn printConnectionUsage(command: []const u8, allow_extra: bool) void {
+    std.debug.print(
+        "usage: comicchat {s} <host> [port=6697] <nick> <#channel>{s} [--ca-file <pem>] [--plaintext] [--socks5 host:port|--http-proxy host:port] [--connect-timeout-ms <ms>] [--sasl-user <name> --sasl-password-file <path>] [--sasl-mechanism SCRAM-SHA-256|EXTERNAL|PLAIN] [--sts-file <path>]\n",
+        .{ command, if (allow_extra) " [maxlines]" else "" },
+    );
+}
+
+const ConnectionRuntime = struct {
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    sts_path: []const u8,
+    sts: cc.net.sts_store.Store,
+    connect_options: cc.net.client.ConnectOptions,
+    now_seconds: u64,
+    auth: AuthArgs,
+    nick: []const u8,
+    authzid_storage: ?[]u8 = null,
+    authcid_storage: ?[]u8 = null,
+    password_storage: ?[]u8 = null,
+    credentials: ?cc.net.sasl.Credentials = null,
+    preference: [1]cc.net.sasl.Mechanism = undefined,
+    preference_len: usize = 0,
+
+    fn init(gpa: std.mem.Allocator, io: std.Io, args: *const ConnectionArgs) !ConnectionRuntime {
+        const wall_seconds = std.Io.Clock.real.now(io).toSeconds();
+        const now_seconds: u64 = if (wall_seconds > 0) @intCast(wall_seconds) else 0;
+        var runtime = ConnectionRuntime{
+            .gpa = gpa,
+            .io = io,
+            .sts_path = args.sts_file,
+            .sts = try cc.net.sts_store.Store.loadFile(gpa, io, args.sts_file),
+            .connect_options = args.options,
+            .now_seconds = now_seconds,
+            .auth = args.auth,
+            .nick = args.nick,
+        };
+        errdefer runtime.deinit();
+
+        // A cached STS policy always overrides a plaintext command-line
+        // request. This is the downgrade protection the persisted policy is
+        // intended to provide.
+        if (runtime.sts.requiresTls(args.host, now_seconds)) runtime.connect_options.security = .tls;
+        try runtime.loadCredentials();
+        return runtime;
+    }
+
+    fn loadCredentials(self: *ConnectionRuntime) !void {
+        if (!self.auth.enabled()) return;
+        if (self.connect_options.security == .plaintext) return error.SaslRequiresTls;
+
+        const selected = self.auth.mechanism;
+        const external_available = self.auth.external or selected == .external;
+        if (!external_available and self.auth.password_file == null) return error.MissingSaslPasswordFile;
+
+        self.authzid_storage = try self.gpa.dupe(u8, self.auth.authzid orelse "");
+        self.authcid_storage = try self.gpa.dupe(u8, self.auth.user orelse self.nick);
+        if (self.auth.password_file) |path| {
+            self.password_storage = try std.Io.Dir.cwd().readFileAlloc(self.io, path, self.gpa, .limited(64 * 1024));
+        } else {
+            self.password_storage = try self.gpa.dupe(u8, "");
+        }
+        var password_len = self.password_storage.?.len;
+        while (password_len > 0 and
+            (self.password_storage.?[password_len - 1] == '\r' or self.password_storage.?[password_len - 1] == '\n'))
+        {
+            password_len -= 1;
+        }
+        const password = self.password_storage.?[0..password_len];
+        self.credentials = .{
+            .authorization_identity = self.authzid_storage.?,
+            .authentication_identity = self.authcid_storage.?,
+            .password = password,
+            .external_available = external_available,
+        };
+        if (selected) |mechanism| {
+            self.preference[0] = mechanism;
+            self.preference_len = 1;
+        }
+    }
+
+    fn registrationOptions(self: *ConnectionRuntime) cc.net.client.RegistrationOptions {
+        return .{
+            .credentials = if (self.credentials) |*credentials| credentials else null,
+            .sasl_preference = if (self.preference_len == 1) self.preference[0..1] else &cc.net.sasl.default_preference,
+            .io = self.io,
+            .sts = &self.sts,
+            .now_seconds = self.now_seconds,
+        };
+    }
+
+    /// Credentials are single-attempt mutable buffers. Reconnects reload the
+    /// password file only after the previous SASL session wiped and released
+    /// its copy, so no reusable cleartext command or queue entry survives.
+    fn registrationOptionsForAttempt(self: *ConnectionRuntime) !cc.net.client.RegistrationOptions {
+        if (self.credentials) |credentials| if (credentials.zeroized) {
+            self.clearCredentialStorage();
+            try self.loadCredentials();
+        };
+        return self.registrationOptions();
+    }
+
+    fn save(self: *ConnectionRuntime) !void {
+        try self.sts.saveFile(self.io, self.sts_path);
+    }
+
+    fn deinit(self: *ConnectionRuntime) void {
+        if (self.credentials) |*credentials| if (!credentials.zeroized) credentials.zeroize();
+        self.clearCredentialStorage();
+        self.sts.deinit();
+        self.* = undefined;
+    }
+
+    fn clearCredentialStorage(self: *ConnectionRuntime) void {
+        if (self.authzid_storage) |storage| {
+            std.crypto.secureZero(u8, storage);
+            self.gpa.free(storage);
+            self.authzid_storage = null;
+        }
+        if (self.authcid_storage) |storage| {
+            std.crypto.secureZero(u8, storage);
+            self.gpa.free(storage);
+            self.authcid_storage = null;
+        }
+        if (self.password_storage) |storage| {
+            std.crypto.secureZero(u8, storage);
+            self.gpa.free(storage);
+            self.password_storage = null;
+        }
+        self.credentials = null;
+    }
+};
+
+fn monotonicMilliseconds(io: std.Io) u64 {
+    const milliseconds = std.Io.Clock.awake.now(io).toMilliseconds();
+    return if (milliseconds > 0) @intCast(milliseconds) else 0;
+}
+
 fn runCodecDemo(gpa: std.mem.Allocator) !void {
-    std.debug.print("comicchat 0.0.0 — pure-Zig Comic Chat (core demo)\n\n", .{});
+    std.debug.print("Comic Chat portable source port — record codec demo\n\n", .{});
 
     const record = cc.proto.record;
     var doc: std.ArrayList(u8) = .empty;
     defer doc.deinit(gpa);
 
     try record.writeRecord(&doc, gpa, "#CHATCONVERSATION", &.{});
-    try record.writeRecord(&doc, gpa, "IRCCHANNEL:", &.{"#comics"});
-    try record.writeComicchar(&doc, gpa, "Anna", "eNplkk_demo_state");
-    try record.writeRecord(&doc, gpa, "Text", &.{ "Anna", "Hi from pure Zig!" });
+    try record.writeRecord(&doc, gpa, "join", &.{ "Anna", "Anna Example" });
+    try record.writeComicchar(&doc, gpa, "Anna", "character information unavailable");
+    try record.writeSay(&doc, gpa, "Anna", "(G:0 0 0 E:0 0 0 R:1 M:1)", "Hi from Comic Chat!");
 
     std.debug.print("--- encoded transcript ---\n{s}\n", .{doc.items});
     std.debug.print("--- decoded records ---\n", .{});
@@ -118,14 +508,8 @@ fn runCodecDemo(gpa: std.mem.Allocator) !void {
     }
 }
 
-fn writeAllFd(fd: i32, bytes: []const u8) void {
-    if (builtin.os.tag != .linux) return; // stdout emit is Linux-only for now
-    var off: usize = 0;
-    while (off < bytes.len) {
-        const n = std.os.linux.write(fd, bytes[off..].ptr, bytes.len - off);
-        if (n == 0 or n > bytes.len) break; // 0 = EOF; huge = -errno
-        off += n;
-    }
+fn writeStdout(io: std.Io, bytes: []const u8) !void {
+    try std.Io.File.stdout().writeStreamingAll(io, bytes);
 }
 
 fn avatarByName(name: []const u8) ?[]const u8 {
@@ -166,7 +550,7 @@ fn bgByName(name: []const u8) ?[]const u8 {
 }
 
 /// Emit RGBA pixels (0xAARRGGBB, top-down) as a binary PPM (P6) on stdout.
-fn emitPpm(gpa: std.mem.Allocator, pixels: []const u32, w: u32, h: u32) !void {
+fn emitPpm(gpa: std.mem.Allocator, io: std.Io, pixels: []const u32, w: u32, h: u32) !void {
     var ppm: std.ArrayList(u8) = .empty;
     defer ppm.deinit(gpa);
     var hdr: [64]u8 = undefined;
@@ -176,89 +560,34 @@ fn emitPpm(gpa: std.mem.Allocator, pixels: []const u32, w: u32, h: u32) !void {
         try ppm.append(gpa, @intCast((px >> 8) & 0xff));
         try ppm.append(gpa, @intCast(px & 0xff));
     }
-    writeAllFd(1, ppm.items);
+    try writeStdout(io, ppm.items);
 }
 
 /// Decode a named embedded background and emit it as PPM on stdout.
-fn runRenderBg(gpa: std.mem.Allocator, name: []const u8) !void {
+fn runRenderBg(gpa: std.mem.Allocator, io: std.Io, name: []const u8) !void {
     const data = bgByName(name) orelse {
         elog("unknown background '{s}' (field|volcano|den|room|pastoral)\n", .{name});
         return;
     };
     var img = try cc.assets.bgb.decodeBackground(gpa, data);
     defer img.deinit(gpa);
-    try emitPpm(gpa, img.pixels, img.width, img.height);
+    try emitPpm(gpa, io, img.pixels, img.width, img.height);
 }
 
-/// Compose a comic panel: background + a speaker placeholder + a speech
-/// balloon with wrapped text, and emit it as PPM on stdout.
-fn runRenderPanel(gpa: std.mem.Allocator, bg: []const u8, speaker: []const u8, text: []const u8) !void {
+/// Render a one-line source page (implicit title plus conversation panel) and
+/// emit it as PPM on stdout.
+fn runRenderPanel(gpa: std.mem.Allocator, io: std.Io, bg: []const u8, speaker: []const u8, text: []const u8) !void {
     const data = bgByName(bg) orelse {
         elog("unknown background '{s}'\n", .{bg});
         return;
     };
-    var img = try cc.assets.bgb.decodeBackground(gpa, data);
-    defer img.deinit(gpa);
-
-    const Canvas = cc.render.canvas.Canvas;
-    var c = try Canvas.init(gpa, img.width, img.height);
-    defer c.deinit(gpa);
-
-    const black = cc.render.canvas.black;
-    const white = cc.render.canvas.white;
-    const W: i32 = @intCast(img.width);
-
-    // Background.
-    c.blit(img.pixels, img.width, img.height, 0, 0);
-
-    // Speech balloon sized to fit the wrapped text.
-    const bx: i32 = 18;
-    const by: i32 = 14;
-    const bw: i32 = W - 36;
-    const pad: i32 = 14;
-    const text_w = bw - 2 * pad;
-    const bh = cc.render.canvas.Canvas.wrappedHeight(text, text_w) + 2 * pad;
-
-    // Character: the avatar's real decoded expression pose (2bpp grayscale,
-    // transparent background), composited bottom-left over the scene.
-    var head_x: i32 = 70;
-    var head_y: i32 = by + bh + 20;
-
-    var drew_pose = false;
-    if (avatarByName(speaker)) |avb| {
-        if (cc.assets.bgb.decodePoseAuto(gpa, avb, 0, false)) |pose_const| {
-            var pose = pose_const;
-            defer pose.deinit(gpa);
-            const pw: i32 = @intCast(pose.width);
-            const ph: i32 = @intCast(pose.height);
-            const px: i32 = 6;
-            const py: i32 = @as(i32, @intCast(img.height)) - ph - 4;
-            // composite with a 12px right-edge crop (trailing strip cleanup)
-            composite(&c, pose.pixels, pose.width, pose.height, px, py, 12);
-            head_x = px + @divTrunc(pw, 2);
-            head_y = py + 6;
-            // name tag
-            const nw = cc.render.canvas.Canvas.textWidth(speaker) + 12;
-            c.fillRect(px + 4, py - 4, nw, 22, white);
-            c.fillRect(px + 4, py - 4, nw, 2, black);
-            _ = c.drawText(speaker, px + 10, py - 2, black);
-            drew_pose = true;
-        } else |_| {}
-    }
-    if (!drew_pose) {
-        const cx: i32 = 36;
-        const cy: i32 = by + bh + 26;
-        c.fillRect(cx, cy, 100, 100, 0xfff4f4f4);
-        _ = c.drawText(speaker, cx + 8, cy + 8, black);
-        head_x = cx + 50;
-        head_y = cy;
-    }
-
-    // Balloon body + tail toward the character's head, then the text.
-    c.speechBalloon(bx, by, bw, bh, head_x, head_y);
-    _ = c.drawTextWrapped(text, bx + pad, by + pad, text_w, black);
-
-    try emitPpm(gpa, c.px, c.width, c.height);
+    var page = try cc.comic.strip.renderWithOptions(
+        gpa,
+        &.{.{ .speaker = speaker, .text = text }},
+        .{ .backdrop = data },
+    );
+    defer page.deinit(gpa);
+    try emitPpm(gpa, io, page.pixels, page.width, page.height);
 }
 
 /// Composite an avatar's head + body layers into the full standing figure and
@@ -266,7 +595,7 @@ fn runRenderPanel(gpa: std.mem.Allocator, bg: []const u8, speaker: []const u8, t
 /// gestures separately — the "emotion wheel" — and composites at the neck.)
 /// Render a single complete pose centered on white (for creature/totem avatars
 /// that have no head/body split).
-fn renderSolo(gpa: std.mem.Allocator, img: cc.assets.bgb.Image) !void {
+fn renderSolo(gpa: std.mem.Allocator, io: std.Io, img: cc.assets.bgb.Image) !void {
     const pad: i32 = 10;
     const W: u32 = img.width + 2 * @as(u32, @intCast(pad));
     const H: u32 = img.height + 2 * @as(u32, @intCast(pad));
@@ -274,10 +603,10 @@ fn renderSolo(gpa: std.mem.Allocator, img: cc.assets.bgb.Image) !void {
     defer cf.deinit(gpa);
     cf.clear(cc.render.canvas.white);
     composite(&cf, img.pixels, img.width, img.height, pad, pad, 0);
-    try emitPpm(gpa, cf.px, W, H);
+    try emitPpm(gpa, io, cf.px, W, H);
 }
 
-fn runRenderFigure(gpa: std.mem.Allocator, name: []const u8, emotion: usize) !void {
+fn runRenderFigure(gpa: std.mem.Allocator, io: std.Io, name: []const u8, emotion: usize) !void {
     const avb = avatarByName(name) orelse {
         elog("unknown avatar '{s}'\n", .{name});
         return;
@@ -294,8 +623,8 @@ fn runRenderFigure(gpa: std.mem.Allocator, name: []const u8, emotion: usize) !vo
     var c = try cc.render.canvas.Canvas.init(gpa, W, H);
     defer c.deinit(gpa);
     c.clear(cc.render.canvas.white);
-    cc.comic.figure.composite(&c, fig.pixels, fig.width, fig.height, pad, pad, 0);
-    try emitPpm(gpa, c.px, W, H);
+    cc.comic.figure.composite(&c, fig.pixels, fig.width, fig.height, pad, pad);
+    try emitPpm(gpa, io, c.px, W, H);
 }
 
 fn rowWidth(img: cc.assets.bgb.Image, y: i32) i32 {
@@ -403,27 +732,60 @@ fn composite(c: *cc.render.canvas.Canvas, src: []const u32, sw: u32, sh: u32, dx
 
 /// Connect to IRC, gather channel messages, and render the conversation as a
 /// comic strip (each speaker mapped to an avatar). Emits PPM on stdout.
-fn runChatComic(gpa: std.mem.Allocator, host: []const u8, port: u16, nick: []const u8, channel: []const u8, maxlines: usize) !void {
-    var client = try cc.net.client.Client.connect(gpa, host, port);
+fn runChatComic(
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    host: []const u8,
+    port: u16,
+    nick: []const u8,
+    channel: []const u8,
+    maxlines: usize,
+    connect_options: cc.net.client.ConnectOptions,
+    registration_options: cc.net.client.RegistrationOptions,
+) !void {
+    var client = try cc.net.client.Client.connectWithOptions(gpa, host, port, connect_options);
     defer client.deinit();
-    try client.register(nick, nick, "pure-Zig Comic Chat", true);
+    try client.registerWithOptions(nick, nick, "Comic Chat portable", registration_options);
 
     var transcript = cc.comic.session.Transcript.init(gpa);
     defer transcript.deinit();
+    try transcript.setSelf(nick);
+    var metadata_state: ChatState = .{};
+    defer metadata_state.deinit(gpa);
 
-    var joined = false;
     var budget: usize = 0;
     while (budget < 400 and transcript.count() < maxlines) : (budget += 1) {
         const msg = (try client.next()) orelse break;
-        if (!joined and std.mem.eql(u8, msg.command, "001")) {
+        _ = try transcript.observeIrc(&msg, channel, nick);
+        if (!metadata_state.join_requested and std.mem.eql(u8, msg.command, "001")) {
             try client.join(channel);
-            joined = true;
+            metadata_state.join_requested = true;
+        } else if (std.mem.eql(u8, msg.command, "JOIN")) {
+            const who = if (msg.prefix) |p| cc.comic.session.nickFromPrefix(p) else "";
+            const joined_channel = msg.param(0) orelse "";
+            if (std.ascii.eqlIgnoreCase(who, nick) and std.ascii.eqlIgnoreCase(joined_channel, channel))
+                try finishJoin(&client, &transcript, nick, channel, &metadata_state);
+        } else if (std.mem.eql(u8, msg.command, "366")) {
+            const joined_channel = msg.param(1) orelse msg.param(0) orelse "";
+            if (metadata_state.join_requested and std.ascii.eqlIgnoreCase(joined_channel, channel))
+                try finishJoin(&client, &transcript, nick, channel, &metadata_state);
+        } else if (std.mem.eql(u8, msg.command, "DATA")) {
+            const target = msg.param(0) orelse continue;
+            const kind = msg.param(1) orelse continue;
+            const wire = msg.param(2) orelse continue;
+            if (!std.ascii.eqlIgnoreCase(target, channel) or !std.mem.eql(u8, kind, "CCUDI1")) continue;
+            const who = if (msg.prefix) |prefix| cc.comic.session.nickFromPrefix(prefix) else continue;
+            _ = cc.proto.udi.parseAnnotation(wire) catch continue;
+            try metadata_state.rememberUdi(gpa, who, wire);
         } else if (std.mem.eql(u8, msg.command, "PRIVMSG")) {
             const target = msg.param(0) orelse continue;
-            if (!std.mem.eql(u8, target, channel)) continue;
+            if (!std.ascii.eqlIgnoreCase(target, channel)) continue;
             const text = msg.param(1) orelse continue;
             const who = if (msg.prefix) |p| cc.comic.session.nickFromPrefix(p) else "someone";
-            try transcript.add(who, text);
+            if (try transcript.consumeAvatarAnnouncement(who, text)) continue;
+            var pending = metadata_state.takeUdi(who);
+            defer if (pending) |*entry| entry.deinit(gpa);
+            try transcript.addWireMessage(who, text, false, if (pending) |entry| entry.wire else null);
         }
     }
     elog("collected {d} lines\n", .{transcript.count()});
@@ -431,28 +793,685 @@ fn runChatComic(gpa: std.mem.Allocator, host: []const u8, port: u16, nick: []con
 
     var lines = try gpa.alloc(cc.comic.strip.Line, transcript.count());
     defer gpa.free(lines);
-    for (transcript.lines.items, 0..) |l, i| lines[i] = .{ .speaker = l.avatar, .text = l.text };
+    var target_count: usize = 0;
+    for (transcript.lines.items) |line| target_count += line.talk_targets.len;
+    const targets = try gpa.alloc(cc.comic.strip.Participant, target_count);
+    defer gpa.free(targets);
+    var target_offset: usize = 0;
+    for (transcript.lines.items, 0..) |line, index| {
+        const target_start = target_offset;
+        for (line.talk_targets) |target| {
+            targets[target_offset] = .{
+                .identity = target.nick,
+                .display_name = target.nick,
+                .avatar = target.avatar,
+            };
+            target_offset += 1;
+        }
+        lines[index] = .{
+            .identity = line.nick,
+            .display_name = line.nick,
+            .avatar = line.avatar,
+            .text = line.text,
+            .formatting = line.formatting,
+            .pose_text = line.pose_text,
+            .pose_state = line.pose_state,
+            .talk_targets = targets[target_start..target_offset],
+            .modes = line.modes,
+        };
+    }
 
-    var strip = try cc.comic.strip.render(gpa, lines);
+    const title_roster = try gpa.alloc(cc.comic.strip.TitleParticipant, transcript.roster.items.len);
+    defer gpa.free(title_roster);
+    for (transcript.roster.items, 0..) |member, index| title_roster[index] = .{
+        .identity = member.nick,
+        .display_name = member.nick,
+        .avatar = member.avatar,
+        .is_self = member.is_self,
+        .sends = member.sends,
+        .departed = member.departed,
+    };
+
+    var strip = try cc.comic.strip.renderWithOptions(gpa, lines, .{ .title_roster = title_roster });
     defer strip.deinit(gpa);
-    try emitPpm(gpa, strip.pixels, strip.width, strip.height);
+    try emitPpm(gpa, io, strip.pixels, strip.width, strip.height);
 }
 
-fn runRenderStrip(gpa: std.mem.Allocator) !void {
+/// Run the real interactive application using the native platform transport.
+fn runInteractive(
+    gpa: std.mem.Allocator,
+    host: []const u8,
+    port: u16,
+    nick: []const u8,
+    channel: []const u8,
+    prefer_wayland: bool,
+    runtime: *ConnectionRuntime,
+    io: std.Io,
+) !void {
+    if (comptime builtin.os.tag == .linux) {
+        if (prefer_wayland) return runInteractiveWayland(gpa, host, port, nick, channel, runtime, io);
+        return runInteractiveX11(gpa, host, port, nick, channel, runtime, io);
+    } else if (comptime builtin.os.tag == .windows) {
+        return runInteractiveWin32(gpa, host, port, nick, channel, runtime, io);
+    } else {
+        std.debug.print("the interactive window backend is not implemented for {s} yet\n", .{@tagName(builtin.os.tag)});
+    }
+}
+
+const PendingUdi = struct {
+    nick: []u8,
+    wire: []u8,
+
+    fn deinit(self: *PendingUdi, gpa: std.mem.Allocator) void {
+        gpa.free(self.nick);
+        gpa.free(self.wire);
+        self.* = undefined;
+    }
+};
+
+const ChatState = struct {
+    status: []const u8 = "connecting",
+    joined: bool = false,
+    join_requested: bool = false,
+    avatar_announced: bool = false,
+    ircx_data: bool = false,
+    pending_udi: std.ArrayList(PendingUdi) = .empty,
+
+    fn deinit(self: *ChatState, gpa: std.mem.Allocator) void {
+        for (self.pending_udi.items) |*entry| entry.deinit(gpa);
+        self.pending_udi.deinit(gpa);
+        self.* = undefined;
+    }
+
+    fn rememberUdi(self: *ChatState, gpa: std.mem.Allocator, nick: []const u8, wire: []const u8) !void {
+        for (self.pending_udi.items) |*entry| {
+            if (!std.ascii.eqlIgnoreCase(entry.nick, nick)) continue;
+            const replacement = try gpa.dupe(u8, wire);
+            gpa.free(entry.wire);
+            entry.wire = replacement;
+            return;
+        }
+        const owned_nick = try gpa.dupe(u8, nick);
+        errdefer gpa.free(owned_nick);
+        const owned_wire = try gpa.dupe(u8, wire);
+        errdefer gpa.free(owned_wire);
+        try self.pending_udi.append(gpa, .{ .nick = owned_nick, .wire = owned_wire });
+    }
+
+    fn takeUdi(self: *ChatState, nick: []const u8) ?PendingUdi {
+        for (self.pending_udi.items, 0..) |entry, index| {
+            if (std.ascii.eqlIgnoreCase(entry.nick, nick))
+                return self.pending_udi.orderedRemove(index);
+        }
+        return null;
+    }
+};
+
+/// JOIN and end-of-NAMES may both confirm the same join. Announce the current
+/// deterministic/selected self avatar only once, after either confirmation.
+fn finishJoin(
+    client: *cc.net.client.Client,
+    transcript: *cc.comic.session.Transcript,
+    nick: []const u8,
+    channel: []const u8,
+    state: *ChatState,
+) !void {
+    state.joined = true;
+    state.status = "connected";
+    if (state.avatar_announced) return;
+    try client.announceAvatar(channel, transcript.resolvedAvatar(nick));
+    state.avatar_announced = true;
+}
+
+const UiEventResult = struct {
+    keep_running: bool = true,
+    redraw: bool = false,
+};
+
+const NetworkEvent = enum { none, connecting, transport_ready, retry_scheduled, sts_upgrading };
+
+/// UI-owned nonblocking connection lifecycle. DNS/TCP/proxy/TLS runs inside
+/// Transport.Connector; this owner only swaps immutable endpoint snapshots,
+/// registers a completed client, and schedules bounded reconnects.
+const AsyncNetwork = struct {
+    gpa: std.mem.Allocator,
+    host: []const u8,
+    nick: []const u8,
+    base_options: cc.net.client.ConnectOptions,
+    runtime: *ConnectionRuntime,
+    reconnect: cc.net.connection_policy.ReconnectController,
+    connector: ?*cc.net.transport.Connector = null,
+    client: ?cc.net.client.Client = null,
+
+    fn init(
+        gpa: std.mem.Allocator,
+        host: []const u8,
+        port: u16,
+        nick: []const u8,
+        runtime: *ConnectionRuntime,
+    ) !AsyncNetwork {
+        var self = AsyncNetwork{
+            .gpa = gpa,
+            .host = host,
+            .nick = nick,
+            .base_options = runtime.connect_options,
+            .runtime = runtime,
+            .reconnect = .init(port, 0x434f4d4943434841),
+        };
+        _ = self.reconnect.start();
+        try self.startConnector();
+        return self;
+    }
+
+    fn deinit(self: *AsyncNetwork) void {
+        self.reconnect.cancel();
+        if (self.connector) |connector| connector.deinit();
+        if (self.client) |*client| client.deinit();
+        self.* = undefined;
+    }
+
+    fn effectiveOptions(self: *const AsyncNetwork) cc.net.client.ConnectOptions {
+        var options = self.base_options;
+        if (self.reconnect.force_tls) options.security = .tls;
+        return options;
+    }
+
+    fn startConnector(self: *AsyncNetwork) !void {
+        if (self.connector != null or self.client != null) return error.InvalidReconnectState;
+        self.connector = try cc.net.transport.Connector.start(
+            self.gpa,
+            self.host,
+            self.reconnect.port,
+            self.effectiveOptions(),
+        );
+    }
+
+    fn tick(self: *AsyncNetwork, now_ms: u64) !NetworkEvent {
+        if (self.client) |*client| {
+            client.tick(now_ms) catch |err| return self.fail(now_ms, err);
+            return .none;
+        }
+        if (self.connector) |connector| {
+            const maybe_transport = connector.poll() catch {
+                connector.deinit();
+                self.connector = null;
+                self.reconnect.disconnected(now_ms);
+                return .retry_scheduled;
+            };
+            const connected = maybe_transport orelse return .none;
+            connector.deinit();
+            self.connector = null;
+            var client = cc.net.client.Client.fromTransport(
+                self.gpa,
+                self.host,
+                self.reconnect.port,
+                self.effectiveOptions(),
+                connected,
+            ) catch {
+                connected.deinit();
+                self.reconnect.disconnected(now_ms);
+                return .retry_scheduled;
+            };
+            var owns_client = true;
+            defer if (owns_client) client.deinit();
+            const registration_options = self.runtime.registrationOptionsForAttempt() catch {
+                self.reconnect.disconnected(now_ms);
+                return .retry_scheduled;
+            };
+            client.registerWithOptions(self.nick, self.nick, "Comic Chat for Zig", registration_options) catch {
+                self.reconnect.disconnected(now_ms);
+                return .retry_scheduled;
+            };
+            client.tick(now_ms) catch {
+                self.reconnect.disconnected(now_ms);
+                return .retry_scheduled;
+            };
+            self.client = client;
+            owns_client = false;
+            self.reconnect.connected();
+            return .transport_ready;
+        }
+        if (self.reconnect.due(now_ms)) {
+            self.startConnector() catch {
+                self.reconnect.disconnected(now_ms);
+                return .retry_scheduled;
+            };
+            return .connecting;
+        }
+        return .none;
+    }
+
+    fn fail(self: *AsyncNetwork, now_ms: u64, _: anyerror) NetworkEvent {
+        var upgrade_port: ?u16 = null;
+        if (self.client) |*client| {
+            upgrade_port = client.takeStsUpgradePort();
+            client.deinit();
+            self.client = null;
+        }
+        if (upgrade_port) |tls_port| {
+            self.reconnect.stsUpgrade(tls_port, now_ms) catch {
+                self.reconnect.disconnected(now_ms);
+                return .retry_scheduled;
+            };
+            return .sts_upgrading;
+        }
+        self.reconnect.disconnected(now_ms);
+        return .retry_scheduled;
+    }
+
+    fn clientPtr(self: *AsyncNetwork) ?*cc.net.client.Client {
+        if (self.client) |*client| return client;
+        return null;
+    }
+};
+
+fn applyNetworkEvent(event: NetworkEvent, state: *ChatState) bool {
+    return switch (event) {
+        .none => false,
+        .connecting => changed: {
+            state.status = "connecting";
+            break :changed true;
+        },
+        .transport_ready => changed: {
+            state.status = "registering";
+            break :changed true;
+        },
+        .retry_scheduled => changed: {
+            resetChatConnectionState(state);
+            state.status = "reconnecting";
+            break :changed true;
+        },
+        .sts_upgrading => changed: {
+            resetChatConnectionState(state);
+            state.status = "upgrading to TLS";
+            break :changed true;
+        },
+    };
+}
+
+fn resetChatConnectionState(state: *ChatState) void {
+    state.joined = false;
+    state.join_requested = false;
+    state.avatar_announced = false;
+}
+
+fn runInteractiveX11(gpa: std.mem.Allocator, host: []const u8, port: u16, nick: []const u8, channel: []const u8, runtime: *ConnectionRuntime, io: std.Io) !void {
+    return runInteractivePollBackend(cc.platform.x11, gpa, host, port, nick, channel, runtime, io);
+}
+
+fn runInteractiveWayland(gpa: std.mem.Allocator, host: []const u8, port: u16, nick: []const u8, channel: []const u8, runtime: *ConnectionRuntime, io: std.Io) !void {
+    return runInteractivePollBackend(cc.platform.wayland, gpa, host, port, nick, channel, runtime, io);
+}
+
+fn runInteractivePollBackend(
+    comptime Backend: type,
+    gpa: std.mem.Allocator,
+    host: []const u8,
+    port: u16,
+    nick: []const u8,
+    channel: []const u8,
+    runtime: *ConnectionRuntime,
+    io: std.Io,
+) !void {
+    const posix = std.posix;
+
+    const win = try Backend.Window.open(gpa, 960, 720, "Comic Chat");
+    defer win.deinit();
+    var view = try cc.client.view.View.init(gpa, win.width, win.height);
+    defer view.deinit();
+    var editor = cc.client.input.Editor.init(gpa);
+    defer editor.deinit();
+    var transcript = cc.comic.session.Transcript.init(gpa);
+    defer transcript.deinit();
+    try transcript.setSelf(nick);
+
+    var title_buf: [512]u8 = undefined;
+    const title = try std.fmt.bufPrint(&title_buf, "Comic Chat | {s} | {s}", .{ channel, nick });
+    var state: ChatState = .{};
+    defer state.deinit(gpa);
+    var network = try AsyncNetwork.init(gpa, host, port, nick, runtime);
+    defer network.deinit();
+
+    try presentView(win, &view, title, state.status, &transcript, &editor);
+
+    var poll_fds = [_]posix.pollfd{
+        .{ .fd = win.fd(), .events = posix.POLL.IN | posix.POLL.ERR, .revents = 0 },
+        .{ .fd = -1, .events = posix.POLL.IN | posix.POLL.ERR, .revents = 0 },
+    };
+
+    while (true) {
+        var redraw = false;
+        _ = try posix.poll(&poll_fds, if (network.clientPtr() == null) 50 else 1000);
+        const now_ms = monotonicMilliseconds(io);
+        redraw = applyNetworkEvent(try network.tick(now_ms), &state) or redraw;
+        poll_fds[1].fd = if (network.clientPtr()) |client| client.fd() else -1;
+
+        if ((poll_fds[0].revents & (posix.POLL.ERR | posix.POLL.HUP | posix.POLL.NVAL)) != 0) return;
+        if ((poll_fds[0].revents & posix.POLL.IN) != 0) {
+            const event_result = try handleWindowEvent(
+                gpa,
+                try win.nextEvent(),
+                &view,
+                &editor,
+                network.clientPtr(),
+                &transcript,
+                nick,
+                channel,
+                state.joined,
+                state.ircx_data,
+            );
+            if (!event_result.keep_running) return;
+            redraw = redraw or event_result.redraw;
+        }
+
+        if (network.clientPtr()) |client| if ((poll_fds[1].revents & posix.POLL.IN) != 0) {
+            const maybe_received: ?bool = client.receive() catch |err| failed: {
+                redraw = applyNetworkEvent(network.fail(now_ms, err), &state) or redraw;
+                poll_fds[1].fd = -1;
+                break :failed null;
+            };
+            if (maybe_received) |received| {
+                if (!received) {
+                    redraw = applyNetworkEvent(network.fail(now_ms, error.EndOfStream), &state) or redraw;
+                    poll_fds[1].fd = -1;
+                } else if (network.clientPtr()) |active| {
+                    const processed = processBufferedMessages(active, &transcript, nick, channel, &state) catch |err| failed: {
+                        redraw = applyNetworkEvent(network.fail(now_ms, err), &state) or redraw;
+                        poll_fds[1].fd = -1;
+                        break :failed false;
+                    };
+                    redraw = redraw or processed;
+                }
+            }
+        };
+        if (network.clientPtr() != null and
+            (poll_fds[1].revents & (posix.POLL.ERR | posix.POLL.HUP | posix.POLL.NVAL)) != 0)
+        {
+            redraw = applyNetworkEvent(network.fail(now_ms, error.ConnectionResetByPeer), &state) or redraw;
+            poll_fds[1].fd = -1;
+        }
+
+        if (redraw) try presentView(win, &view, title, state.status, &transcript, &editor);
+    }
+}
+
+fn runInteractiveWin32(gpa: std.mem.Allocator, host: []const u8, port: u16, nick: []const u8, channel: []const u8, runtime: *ConnectionRuntime, io: std.Io) !void {
+    const Win32 = cc.platform.win32;
+
+    const win = try Win32.Window.open(gpa, 960, 720, "Comic Chat");
+    defer win.deinit();
+    var view = try cc.client.view.View.init(gpa, win.width, win.height);
+    defer view.deinit();
+    var editor = cc.client.input.Editor.init(gpa);
+    defer editor.deinit();
+    var transcript = cc.comic.session.Transcript.init(gpa);
+    defer transcript.deinit();
+    try transcript.setSelf(nick);
+
+    var title_buf: [512]u8 = undefined;
+    const title = try std.fmt.bufPrint(&title_buf, "Comic Chat | {s} | {s}", .{ channel, nick });
+    var state: ChatState = .{};
+    defer state.deinit(gpa);
+    var network = try AsyncNetwork.init(gpa, host, port, nick, runtime);
+    defer network.deinit();
+    try presentView(win, &view, title, state.status, &transcript, &editor);
+
+    while (true) {
+        var redraw = false;
+        const now_ms = monotonicMilliseconds(io);
+        redraw = applyNetworkEvent(try network.tick(now_ms), &state) or redraw;
+        while (try win.pollEvent()) |event| {
+            const event_result = try handleWindowEvent(
+                gpa,
+                event,
+                &view,
+                &editor,
+                network.clientPtr(),
+                &transcript,
+                nick,
+                channel,
+                state.joined,
+                state.ircx_data,
+            );
+            if (!event_result.keep_running) return;
+            redraw = redraw or event_result.redraw;
+        }
+
+        if (network.clientPtr()) |client| {
+            const receive_result = client.receiveTimeout(16) catch |err| disconnected: {
+                redraw = applyNetworkEvent(network.fail(now_ms, err), &state) or redraw;
+                break :disconnected null;
+            };
+            if (receive_result) |received| {
+                if (!received) {
+                    redraw = applyNetworkEvent(network.fail(now_ms, error.EndOfStream), &state) or redraw;
+                } else if (network.clientPtr()) |active| {
+                    const processed = processBufferedMessages(active, &transcript, nick, channel, &state) catch |err| failed: {
+                        redraw = applyNetworkEvent(network.fail(now_ms, err), &state) or redraw;
+                        break :failed false;
+                    };
+                    redraw = redraw or processed;
+                }
+            }
+        } else {
+            try std.Io.sleep(io, std.Io.Duration.fromMilliseconds(16), .awake);
+        }
+
+        if (redraw) try presentView(win, &view, title, state.status, &transcript, &editor);
+    }
+}
+
+fn handleWindowEvent(
+    gpa: std.mem.Allocator,
+    event: anytype,
+    view: *cc.client.view.View,
+    editor: *cc.client.input.Editor,
+    client: ?*cc.net.client.Client,
+    transcript: *cc.comic.session.Transcript,
+    nick: []const u8,
+    channel: []const u8,
+    joined: bool,
+    ircx_data: bool,
+) !UiEventResult {
+    return switch (event) {
+        .close => .{ .keep_running = false },
+        .expose => .{ .redraw = true },
+        .resize => |size| resized: {
+            try view.resize(size.w, size.h);
+            break :resized .{ .redraw = true };
+        },
+        .key => |key| .{
+            .keep_running = try handleInputKey(gpa, key, editor, client, transcript, nick, channel, joined, ircx_data),
+            .redraw = true,
+        },
+        .other => .{},
+    };
+}
+
+fn processBufferedMessages(
+    client: *cc.net.client.Client,
+    transcript: *cc.comic.session.Transcript,
+    nick: []const u8,
+    channel: []const u8,
+    state: *ChatState,
+) !bool {
+    var redraw = false;
+    while (try client.bufferedNext()) |msg| {
+        redraw = (try transcript.observeIrc(&msg, channel, nick)) or redraw;
+        if (std.mem.eql(u8, msg.command, "800")) {
+            state.ircx_data = true;
+        } else if (std.mem.eql(u8, msg.command, "005")) {
+            var index: usize = 0;
+            while (index < msg.param_count) : (index += 1) {
+                if (std.ascii.eqlIgnoreCase(msg.params[index], "COMICCHAT=DATA"))
+                    state.ircx_data = true;
+            }
+        } else if (!state.join_requested and std.mem.eql(u8, msg.command, "001")) {
+            try client.join(channel);
+            state.join_requested = true;
+            state.status = "joining";
+            redraw = true;
+        } else if (std.mem.eql(u8, msg.command, "JOIN")) {
+            const who = if (msg.prefix) |p| cc.comic.session.nickFromPrefix(p) else "";
+            const joined_channel = msg.param(0) orelse "";
+            if (std.ascii.eqlIgnoreCase(who, nick) and std.ascii.eqlIgnoreCase(joined_channel, channel)) {
+                try finishJoin(client, transcript, nick, channel, state);
+                redraw = true;
+            }
+        } else if (std.mem.eql(u8, msg.command, "366")) {
+            const joined_channel = msg.param(1) orelse msg.param(0) orelse "";
+            if (state.join_requested and std.ascii.eqlIgnoreCase(joined_channel, channel)) {
+                try finishJoin(client, transcript, nick, channel, state);
+                redraw = true;
+            }
+        } else if (std.mem.eql(u8, msg.command, "DATA")) {
+            const target = msg.param(0) orelse continue;
+            const kind = msg.param(1) orelse continue;
+            const wire = msg.param(2) orelse continue;
+            if (!std.ascii.eqlIgnoreCase(target, channel) or !std.mem.eql(u8, kind, "CCUDI1")) continue;
+            const who = if (msg.prefix) |prefix| cc.comic.session.nickFromPrefix(prefix) else continue;
+            _ = cc.proto.udi.parseAnnotation(wire) catch continue;
+            try state.rememberUdi(transcript.gpa, who, wire);
+        } else if (std.mem.eql(u8, msg.command, "PRIVMSG")) {
+            const target = msg.param(0) orelse continue;
+            if (!std.ascii.eqlIgnoreCase(target, channel)) continue;
+            const text = msg.param(1) orelse continue;
+            const who = if (msg.prefix) |p| cc.comic.session.nickFromPrefix(p) else "someone";
+            if (try transcript.consumeAvatarAnnouncement(who, text)) {
+                redraw = true;
+                continue;
+            }
+            var pending = state.takeUdi(who);
+            defer if (pending) |*entry| entry.deinit(transcript.gpa);
+            try transcript.addWireMessage(
+                who,
+                text,
+                false,
+                if (pending) |entry| entry.wire else null,
+            );
+            transcript.trimTo(64);
+            redraw = true;
+        } else if (std.mem.eql(u8, msg.command, "433")) {
+            state.status = "nickname in use";
+            redraw = true;
+        }
+    }
+    return redraw;
+}
+
+fn presentView(
+    win: anytype,
+    view: *cc.client.view.View,
+    title: []const u8,
+    status: []const u8,
+    transcript: *const cc.comic.session.Transcript,
+    editor: *const cc.client.input.Editor,
+) !void {
+    try view.render(title, status, transcript, editor.text(), editor.cursor);
+    try win.present(view.pixels(), view.width(), view.height());
+}
+
+fn handleInputKey(
+    gpa: std.mem.Allocator,
+    key: anytype,
+    editor: *cc.client.input.Editor,
+    maybe_client: ?*cc.net.client.Client,
+    transcript: *cc.comic.session.Transcript,
+    nick: []const u8,
+    channel: []const u8,
+    joined: bool,
+    ircx_data: bool,
+) !bool {
+    switch (key) {
+        .char => |ch| if (editor.text().len < 400) try editor.insert(ch),
+        .backspace => editor.backspace(),
+        .delete => editor.delete(),
+        .left => editor.left(),
+        .right => editor.right(),
+        .home => editor.home(),
+        .end => editor.end(),
+        .escape => return false,
+        .enter => {
+            if (editor.text().len == 0) return true;
+            const line = try editor.take();
+            defer gpa.free(line);
+            if (std.mem.eql(u8, line, "/quit")) return false;
+            if (std.mem.eql(u8, line, "/clear")) {
+                transcript.trimTo(0);
+                return true;
+            }
+            if (!joined) return true;
+            const client = maybe_client orelse return true;
+            if (std.mem.eql(u8, line, "/avatar") or std.mem.startsWith(u8, line, "/avatar ")) {
+                const requested = if (line.len > "/avatar ".len) line["/avatar ".len..] else "";
+                const selected = cc.comic.session.bundledAvatarByName(requested) orelse return true;
+                try transcript.setAvatar(nick, selected);
+                try client.announceAvatar(channel, selected);
+                return true;
+            }
+            const action_text: ?[]const u8 = if (std.mem.eql(u8, line, "/me"))
+                ""
+            else if (std.mem.startsWith(u8, line, "/me "))
+                line["/me ".len..]
+            else
+                null;
+            if (action_text) |body| if (body.len == 0) return true;
+            const visible_text = action_text orelse line;
+            const modes: u16 = if (action_text != null)
+                cc.proto.udi.bm_action
+            else
+                cc.proto.udi.bm_say;
+            const avatar_name = transcript.resolvedAvatar(nick);
+            const avatar = cc.comic.strip.avatarByName(avatar_name) orelse return error.UnknownAvatar;
+            const pose_state = try cc.comic.figure.poseStateForText(gpa, avatar, visible_text);
+            var comic_message: std.ArrayList(u8) = .empty;
+            defer comic_message.deinit(gpa);
+            try cc.proto.udi.encode(&comic_message, gpa, .{
+                .gesture = pose_state.gesture,
+                .expression = pose_state.expression,
+                .requested = pose_state.requested,
+                .modes = modes,
+            }, !ircx_data);
+            var chat_message: std.ArrayList(u8) = .empty;
+            defer chat_message.deinit(gpa);
+            if (action_text) |body| {
+                try chat_message.appendSlice(gpa, cc.comic.session.ctcp_action_prefix);
+                try chat_message.appendSlice(gpa, body);
+                try chat_message.append(gpa, 0x01);
+            } else {
+                try chat_message.appendSlice(gpa, line);
+            }
+            if (ircx_data) {
+                try client.comicData(channel, comic_message.items);
+                try client.privmsg(channel, chat_message.items);
+                try transcript.addWireMessage(nick, chat_message.items, false, comic_message.items);
+            } else {
+                try comic_message.appendSlice(gpa, chat_message.items);
+                try client.privmsg(channel, comic_message.items);
+                try transcript.addWireMessage(nick, comic_message.items, false, null);
+            }
+            transcript.trimTo(64);
+        },
+        .tab, .up, .down, .page_up, .page_down, .other => {},
+    }
+    return true;
+}
+
+fn runRenderStrip(gpa: std.mem.Allocator, io: std.Io) !void {
     const lines = [_]cc.comic.strip.Line{
-        .{ .speaker = "anna", .text = "The field is open. Everyone gets one panel." },
-        .{ .speaker = "kevin", .text = "Volcano lighting makes even a short line feel dramatic." },
-        .{ .speaker = "sage", .text = "Keep the balloon clear so the character stands below it." },
-        .{ .speaker = "mike", .text = "Three columns, black gutters, a clean second row." },
-        .{ .speaker = "rebecca", .text = "Pure Zig: decoded backgrounds, assembled avatars." },
-        .{ .speaker = "xeno", .text = "The strip renderer returns one image for callers to emit." },
+        .{ .speaker = "anna", .text = "The title panel starts every comic." },
+        .{ .speaker = "kevin", .text = "Different speakers may share a panel." },
+        .{ .speaker = "anna", .text = "A repeated speaker starts a fresh panel." },
+        .{ .speaker = "mike", .text = "Two columns and source-sized interstices." },
+        .{ .speaker = "rebecca", .text = "Masks and backdrops follow the old draw order." },
+        .{ .speaker = "xeno", .text = "The source renderer returns one complete page." },
     };
     var strip = try cc.comic.strip.render(gpa, &lines);
     defer strip.deinit(gpa);
-    try emitPpm(gpa, strip.pixels, strip.width, strip.height);
+    try emitPpm(gpa, io, strip.pixels, strip.width, strip.height);
 }
 
-fn runToPng(gpa: std.mem.Allocator, name: []const u8) !void {
+fn runToPng(gpa: std.mem.Allocator, io: std.Io, name: []const u8) !void {
     const data = bgByName(name) orelse {
         elog("unknown background '{s}'\n", .{name});
         return;
@@ -461,10 +1480,10 @@ fn runToPng(gpa: std.mem.Allocator, name: []const u8) !void {
     defer img.deinit(gpa);
     const png = try cc.render.png.encode(gpa, img.pixels, img.width, img.height);
     defer gpa.free(png);
-    writeAllFd(1, png);
+    try writeStdout(io, png);
 }
 
-fn runWindow(gpa: std.mem.Allocator, name: []const u8) !void {
+fn runWindow(gpa: std.mem.Allocator, name: []const u8, prefer_wayland: bool) !void {
     const avb = avatarByName(name) orelse {
         elog("unknown avatar '{s}'\n", .{name});
         return;
@@ -480,26 +1499,43 @@ fn runWindow(gpa: std.mem.Allocator, name: []const u8) !void {
     var c = try cc.render.canvas.Canvas.init(gpa, W, H);
     defer c.deinit(gpa);
     c.clear(cc.render.canvas.white);
-    cc.comic.figure.composite(&c, fig.pixels, fig.width, fig.height, pad, pad, 0);
-    cc.platform.x11.show(gpa, c.px, W, H) catch |err| {
-        elog("x11: {s}\n", .{@errorName(err)});
-        return;
-    };
+    cc.comic.figure.composite(&c, fig.pixels, fig.width, fig.height, pad, pad);
+    if (comptime builtin.os.tag == .linux) {
+        if (prefer_wayland) {
+            cc.platform.wayland.show(gpa, c.px, W, H) catch |err| {
+                elog("wayland: {s}\n", .{@errorName(err)});
+                return;
+            };
+        } else {
+            cc.platform.x11.show(gpa, c.px, W, H) catch |err| {
+                elog("x11: {s}\n", .{@errorName(err)});
+                return;
+            };
+        }
+    } else if (comptime builtin.os.tag == .windows) {
+        try cc.platform.win32.show(gpa, c.px, W, H);
+    } else {
+        return error.UnsupportedPlatform;
+    }
 }
 
 fn runConnect(
     gpa: std.mem.Allocator,
+    io: std.Io,
     host: []const u8,
     port: u16,
     nick: []const u8,
     channel: []const u8,
+    connect_options: cc.net.client.ConnectOptions,
+    registration_options: cc.net.client.RegistrationOptions,
 ) !void {
     elog("connecting to {s}:{d} as {s} ...\n", .{ host, port, nick });
 
-    var client = try cc.net.client.Client.connect(gpa, host, port);
+    var client = try cc.net.client.Client.connectWithOptions(gpa, host, port, connect_options);
     defer client.deinit();
 
-    try client.register(nick, nick, "pure-Zig Comic Chat", true);
+    try client.registerWithOptions(nick, nick, "Comic Chat portable", registration_options);
+    try client.tick(monotonicMilliseconds(io));
 
     var registered = false;
     var joined = false;
@@ -526,7 +1562,7 @@ fn runConnect(
         {
             joined = true;
             elog("** joined; sending a line\n", .{});
-            try client.privmsg(channel, "Hello from pure-Zig Comic Chat!");
+            try client.privmsg(channel, "Hello from Comic Chat!");
         }
 
         if (joined) {
