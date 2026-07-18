@@ -27,6 +27,7 @@ pub const comic = struct {
     pub const original_title = @import("comic/original_title.zig");
     pub const original_raster = @import("comic/original_raster.zig");
     pub const original_figure = @import("comic/original_figure.zig");
+    pub const rules = @import("comic/rules.zig");
 };
 
 pub const render = struct {
@@ -80,6 +81,7 @@ test {
     _ = @import("comic/original_title.zig");
     _ = @import("comic/original_raster.zig");
     _ = @import("comic/original_figure.zig");
+    _ = @import("comic/rules.zig");
     _ = @import("comic/source_parity_test.zig");
     _ = @import("comic/source_page_balloon_test.zig");
     _ = @import("comic/source_strip_test.zig");

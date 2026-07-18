@@ -39,6 +39,14 @@ is split across:
   the 2300-logical-unit-to-315-pixel software rasterizer.
 - `src/comic/strip.zig`: public transcript-to-page integration. All shipped
   strip and panel rendering must route through this source pipeline.
+- `src/comic/rules.zig`: the dynamic auto-response rule engine (event/action
+  data model, text serialization, matching, keyword substitution, flood
+  guard, and WHO/LIST snapshot diffing for the daemon-driven events). Does
+  not include the MFC rule-editor dialogs, Registry/`.crs` binary
+  persistence, or RTF formatting-run preservation across substitution - see
+  the module's own doc comment for the exact boundary and what is inferred
+  rather than verified (`bIsMatch`'s wildcard mask algorithm is not in the
+  pinned snapshot).
 
 Fixed source-parity contracts live in `src/comic/source_*_test.zig`. When a
 deliberate source-derived raster change updates a golden hash, record the
