@@ -235,9 +235,11 @@ pub const View = struct {
             if (pointer.kind != .down or pointer.button != .primary) return .none;
             const spec = dialogs.get(id);
             const rect = dialogRect(self.canvas.width, self.canvas.height, spec);
-            const button_y = rect.bottom() - 34;
-            if (pointer.y >= button_y and pointer.y < button_y + 25) {
-                if (pointer.x >= rect.right() - 164 and pointer.x < rect.right() - 88) {
+            const button_y = rect.bottom() - 36;
+            const primary_w = dialogPrimaryButtonWidth(id);
+            const primary_x = rect.right() - 96 - primary_w;
+            if (pointer.y >= button_y and pointer.y < button_y + 27) {
+                if (pointer.x >= primary_x and pointer.x < primary_x + primary_w) {
                     return .{ .dialog_accept = id };
                 }
                 if (pointer.x >= rect.right() - 84 and pointer.x < rect.right() - 8) {
@@ -246,10 +248,10 @@ pub const View = struct {
                 }
             }
             const fields = dialogs.fields(id);
-            const body_y = rect.y + 78;
-            const available_h = @max(28, rect.bottom() - 48 - body_y);
-            const row_h = @max(34, @divTrunc(available_h, @max(1, @as(i32, @intCast(fields.len)))));
-            if (pointer.y >= body_y and pointer.y < rect.bottom() - 38) {
+            const body_y = rect.y + 80;
+            const available_h = @max(43, rect.bottom() - 48 - body_y);
+            const row_h = @min(54, @max(43, @divTrunc(available_h, @max(1, @as(i32, @intCast(fields.len))))));
+            if (pointer.y >= body_y and pointer.y < rect.bottom() - 43) {
                 const index = @divTrunc(pointer.y - body_y, row_h);
                 if (index >= 0 and index < fields.len and @as(usize, @intCast(index)) < self.dialog_editors.len) self.dialog_field = @intCast(index);
             }
@@ -426,8 +428,9 @@ pub const View = struct {
         snapshot.append(.{ .id = "status", .role = .status, .bounds = layout.status, .label = status });
         if (self.active_dialog) |id| {
             const rect = dialogRect(self.canvas.width, self.canvas.height, dialogs.get(id));
+            const primary_w = dialogPrimaryButtonWidth(id);
             snapshot.append(.{ .id = "dialog", .role = .dialog, .bounds = rect, .label = dialogs.get(id).title, .focused = true });
-            snapshot.append(.{ .id = "dialog-accept", .role = .button, .bounds = .{ .x = rect.right() - 164, .y = rect.bottom() - 34, .w = 76, .h = 25 }, .label = dialogs.primaryLabel(id) });
+            snapshot.append(.{ .id = "dialog-accept", .role = .button, .bounds = .{ .x = rect.right() - 96 - primary_w, .y = rect.bottom() - 36, .w = primary_w, .h = 27 }, .label = dialogs.primaryLabel(id) });
             snapshot.append(.{ .id = "dialog-cancel", .role = .button, .bounds = .{ .x = rect.right() - 84, .y = rect.bottom() - 34, .w = 76, .h = 25 }, .label = "Cancel" });
         }
         return snapshot;
@@ -639,25 +642,28 @@ pub const View = struct {
                 1 => self.openDialog(.personal),
                 else => {},
             },
-            7 => if (item == 0) self.openDialog(.settings),
-            8 => if (item == 0) self.openDialog(.about),
+            6 => switch (item) {
+                1 => self.openDialog(.settings),
+                2 => self.openDialog(.about),
+                else => {},
+            },
             else => {},
         }
     }
 };
 
-const menu_labels = [_][]const u8{ "File", "Edit", "View", "Format", "Room", "Member", "Favorites", "Window", "Help" };
+const menu_labels = [_][]const u8{ "File", "Edit", "View", "Format", "Room", "Member", "More" };
 
 fn menuStart(menu: u8) i32 {
-    var x: i32 = 8;
+    var x: i32 = 12;
     var index: u8 = 0;
-    while (index < menu and index < menu_labels.len) : (index += 1) x += Canvas.textWidth(menu_labels[index]) + 18;
+    while (index < menu and index < menu_labels.len) : (index += 1) x += Canvas.textWidth(menu_labels[index]) + 28;
     return x;
 }
 
 fn menuItemCount(menu: u8) u8 {
     return switch (menu) {
-        0, 2, 4 => 3,
+        0, 2, 4, 6 => 3,
         3, 5 => 2,
         else => 1,
     };
@@ -683,8 +689,11 @@ fn menuItemLabel(menu: u8, item: u8) []const u8 {
             else => "Create room",
         },
         5 => if (item == 0) "User list" else "Personal profile",
-        6 => "Favorites",
-        7 => "Settings",
+        6 => switch (item) {
+            0 => "Favorites",
+            1 => "Settings",
+            else => "About Comic Chat",
+        },
         else => "About Comic Chat",
     };
 }
@@ -703,14 +712,14 @@ fn menuPopupItem(menu: u8, x: i32, y: i32) ?u8 {
 
 fn drawMenuBar(c: *Canvas, rect: Rect, active: ?u8, hovered: ?u8) void {
     c.fillRect(rect.x, rect.y, rect.w, rect.h, chrome);
-    var x = rect.x + 8;
+    var x = rect.x + 12;
     for (menu_labels, 0..) |item, raw_index| {
         const index: u8 = @intCast(raw_index);
         const selected = active == index or hovered == index;
-        const item_w = Canvas.textWidth(item) + 12;
-        if (selected) c.fillRect(x - 6, rect.y + 2, item_w, rect.h - 4, accent_soft);
+        const item_w = Canvas.textWidth(item) + 16;
+        if (selected) c.fillRect(x - 8, rect.y + 2, item_w, rect.h - 4, accent_soft);
         _ = c.drawText(item, x, rect.y + 1, ink);
-        x += Canvas.textWidth(item) + 18;
+        x += Canvas.textWidth(item) + 28;
         if (x >= rect.right() - 40) break;
     }
     c.fillRect(rect.x, rect.bottom() - 1, rect.w, 1, divider);
@@ -735,6 +744,31 @@ fn drawMenuPopup(c: *Canvas, menu: u8, hovered: ?u8) void {
 
 fn drawToolBar(c: *Canvas, rect: Rect, comic_mode: bool, hovered: ?u8) void {
     c.fillRect(rect.x, rect.y, rect.w, rect.h, chrome);
+    // At narrow desktop widths, preserve the most-used source commands with
+    // breathing room instead of reducing two dozen glyphs into visual noise.
+    if (rect.w < 760) {
+        const compact = [_]struct { glyph: ToolGlyph, index: u8, selected: bool }{
+            .{ .glyph = .connect, .index = 0, .selected = false },
+            .{ .glyph = .enter_room, .index = 2, .selected = false },
+            .{ .glyph = .create_room, .index = 4, .selected = false },
+            .{ .glyph = .comic, .index = 5, .selected = comic_mode },
+            .{ .glyph = .text, .index = 6, .selected = !comic_mode },
+            .{ .glyph = .rooms, .index = 7, .selected = false },
+            .{ .glyph = .members, .index = 8, .selected = false },
+            .{ .glyph = .away, .index = 10, .selected = false },
+            .{ .glyph = .identity, .index = 11, .selected = false },
+            .{ .glyph = .whisper, .index = 13, .selected = false },
+            .{ .glyph = .font, .index = 17, .selected = false },
+            .{ .glyph = .color, .index = 18, .selected = false },
+        };
+        var compact_x = rect.x + 8;
+        for (compact) |item| {
+            _ = drawModernToolButton(c, item.glyph, compact_x, rect.y + 1, item.selected, hovered == item.index);
+            compact_x += 28;
+        }
+        c.fillRect(rect.x, rect.bottom() - 1, rect.w, 1, divider);
+        return;
+    }
     var x = rect.x + 5;
     var index: u8 = 0;
     // chat.rc's IDR_MAINFRAME: connect, disconnect, enter, leave, create,
@@ -1308,30 +1342,30 @@ fn drawDialog(c: *Canvas, spec: dialogs.Spec, editors: *const [3]input_mod.Edito
         while (x < @as(i32, @intCast(c.width))) : (x += 1) c.blendPixel(x, y, canvas_mod.black, 0x66);
     }
     const rect = dialogRect(c.width, c.height, spec);
+    c.fillRect(rect.x + 3, rect.y + 4, rect.w, rect.h, 0xff8793a1);
     c.fillRect(rect.x, rect.y, rect.w, rect.h, layer);
     drawRectOutline(c, rect.x, rect.y, rect.w, rect.h, focus_color);
-    c.fillRect(rect.x + 1, rect.y + 1, rect.w - 2, 34, accent);
+    c.fillRect(rect.x + 1, rect.y + 1, rect.w - 2, 38, accent);
     drawTextEllipsized(c, spec.title, rect.x + 12, rect.y + 6, rect.w - 24, layer);
-    drawTextEllipsized(c, spec.resource, rect.x + 14, rect.y + 45, rect.w - 28, secondary);
 
     const group_text = switch (spec.group) {
-        .connection => "Connection, identity, and appearance settings",
-        .rooms => "Room and member workflow",
-        .automation => "Automation and notification workflow",
+        .connection => "Connection, identity, and appearance",
+        .rooms => "Rooms and member workflow",
+        .automation => "Automation and notifications",
         .files => "Application and file workflow",
     };
-    drawTextEllipsized(c, group_text, rect.x + 14, rect.y + 72, rect.w - 28, ink);
-    const body_y = rect.y + 78;
+    drawTextEllipsized(c, group_text, rect.x + 20, rect.y + 52, rect.w - 40, secondary);
+    const body_y = rect.y + 80;
     const fields = dialogs.fields(spec.id);
-    const available_h = @max(28, rect.bottom() - 48 - body_y);
-    const row_h = @max(34, @divTrunc(available_h, @max(1, @as(i32, @intCast(fields.len)))));
+    const available_h = @max(43, rect.bottom() - 48 - body_y);
+    const row_h = @min(54, @max(43, @divTrunc(available_h, @max(1, @as(i32, @intCast(fields.len))))));
     for (fields, 0..) |field, index| {
         const row_y = body_y + @as(i32, @intCast(index)) * row_h;
-        if (row_y + 30 > rect.bottom() - 38) break;
+        if (row_y + 40 > rect.bottom() - 43) break;
         drawTextEllipsized(c, field.label, rect.x + 20, row_y, rect.w - 40, secondary);
-        const field_y = row_y + 16;
-        c.fillRect(rect.x + 20, field_y, rect.w - 40, 23, layer);
-        drawRectOutline(c, rect.x + 20, field_y, rect.w - 40, 23, if (index == active_field) accent else divider);
+        const field_y = row_y + 17;
+        c.fillRect(rect.x + 20, field_y, rect.w - 40, 24, chrome);
+        drawRectOutline(c, rect.x + 20, field_y, rect.w - 40, 24, if (index == active_field) accent else divider);
         if (index < editors.len) {
             const editor = &editors[index];
             const value = editor.text();
@@ -1339,23 +1373,28 @@ fn drawDialog(c: *Canvas, spec: dialogs.Spec, editors: *const [3]input_mod.Edito
             if (index == active_field) {
                 const safe_cursor = @min(editor.cursor, value.len);
                 const caret_x = @min(rect.right() - 27, rect.x + 26 + Canvas.textWidth(value[0..safe_cursor]));
-                c.fillRect(caret_x, field_y + 3, 1, 16, accent);
+                c.fillRect(caret_x, field_y + 3, 2, 17, accent);
             }
         }
         if (editors[index].text().len == 0) drawTextEllipsized(c, field.hint, rect.x + 26, field_y + 1, rect.w - 52, secondary);
     }
 
-    const button_y = rect.bottom() - 34;
+    const button_y = rect.bottom() - 36;
     if (notice.len != 0) drawTextEllipsized(c, notice, rect.x + 14, button_y - 19, rect.w - 28, focus_color);
-    drawDialogButton(c, rect.right() - 164, button_y, dialogs.primaryLabel(spec.id), true);
-    drawDialogButton(c, rect.right() - 84, button_y, "Cancel", false);
+    const primary_w = dialogPrimaryButtonWidth(spec.id);
+    drawDialogButton(c, rect.right() - 96 - primary_w, button_y, primary_w, dialogs.primaryLabel(spec.id), true);
+    drawDialogButton(c, rect.right() - 84, button_y, 76, "Cancel", false);
 }
 
-fn drawDialogButton(c: *Canvas, x: i32, y: i32, label: []const u8, primary: bool) void {
-    c.fillRect(x, y, 76, 25, if (primary) accent else chrome);
-    drawRectOutline(c, x, y, 76, 25, if (primary) accent else divider);
+fn dialogPrimaryButtonWidth(id: dialogs.Id) i32 {
+    return @max(84, Canvas.textWidth(dialogs.primaryLabel(id)) + 24);
+}
+
+fn drawDialogButton(c: *Canvas, x: i32, y: i32, width: i32, label: []const u8, primary: bool) void {
+    c.fillRect(x, y, width, 27, if (primary) accent else chrome);
+    drawRectOutline(c, x, y, width, 27, if (primary) accent else divider);
     const text_w = Canvas.textWidth(label);
-    _ = c.drawText(label, x + @divTrunc(76 - text_w, 2), y + 1, if (primary) layer else ink);
+    _ = c.drawText(label, x + @divTrunc(width - text_w, 2), y + 2, if (primary) layer else ink);
 }
 
 test "view renders source-shaped empty buffer and chrome" {
