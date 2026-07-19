@@ -1,0 +1,193 @@
+//! Platform-independent state for the portable Microsoft-style application
+//! shell. Rendering lives in `view.zig`; native backends only translate input
+//! and present pixels.
+
+const std = @import("std");
+const emotion_mod = @import("../comic/emotion.zig");
+
+pub const ContentMode = enum { comic, text };
+pub const SayMode = enum { say, think, whisper, action, sound };
+
+pub const Focus = enum {
+    navigation,
+    transcript,
+    composer,
+    members,
+    emotion,
+};
+
+pub const State = struct {
+    content_mode: ContentMode = .comic,
+    focus: Focus = .composer,
+    history_offset: usize = 0,
+    show_navigation: bool = true,
+    show_members: bool = true,
+    say_mode: SayMode = .say,
+    selected_member: ?usize = null,
+    emotion_x: i16 = 0,
+    emotion_y: i16 = 0,
+    emotion_radius: i16 = 1,
+
+    pub fn cycleFocus(self: *State) void {
+        self.focus = switch (self.focus) {
+            .navigation => .transcript,
+            .transcript => .composer,
+            .composer => if (self.show_members) .members else if (self.show_navigation) .navigation else .transcript,
+            .members => if (self.content_mode == .comic) .emotion else if (self.show_navigation) .navigation else .transcript,
+            .emotion => if (self.show_navigation) .navigation else .transcript,
+        };
+    }
+
+    pub fn cycleFocusBackward(self: *State) void {
+        self.focus = switch (self.focus) {
+            .navigation => if (self.show_members and self.content_mode == .comic) .emotion else if (self.show_members) .members else .composer,
+            .transcript => if (self.show_navigation) .navigation else if (self.show_members and self.content_mode == .comic) .emotion else if (self.show_members) .members else .composer,
+            .composer => .transcript,
+            .members => .composer,
+            .emotion => .members,
+        };
+    }
+
+    pub fn focusComposer(self: *State) void {
+        self.focus = .composer;
+    }
+
+    pub fn toggleContentMode(self: *State) void {
+        self.content_mode = switch (self.content_mode) {
+            .comic => .text,
+            .text => .comic,
+        };
+    }
+
+    pub fn setContentMode(self: *State, mode: ContentMode) void {
+        self.content_mode = mode;
+    }
+
+    pub fn toggleNavigation(self: *State) void {
+        self.show_navigation = !self.show_navigation;
+        if (!self.show_navigation and self.focus == .navigation) self.focus = .transcript;
+    }
+
+    pub fn toggleMembers(self: *State) void {
+        self.show_members = !self.show_members;
+        if (!self.show_members and (self.focus == .members or self.focus == .emotion)) self.focus = .composer;
+    }
+
+    pub fn selectMember(self: *State, index: usize) void {
+        self.selected_member = index;
+        self.focus = .members;
+    }
+
+    pub fn setSayMode(self: *State, mode: SayMode) void {
+        self.say_mode = mode;
+        self.focus = .composer;
+    }
+
+    pub fn setEmotionPoint(self: *State, x: i32, y: i32, radius: i32) void {
+        if (radius <= 0) return;
+        const distance_sq = @as(i64, x) * x + @as(i64, y) * y;
+        const radius_sq = @as(i64, radius) * radius;
+        if (distance_sq <= radius_sq) {
+            self.emotion_x = @intCast(std.math.clamp(x, std.math.minInt(i16), std.math.maxInt(i16)));
+            self.emotion_y = @intCast(std.math.clamp(y, std.math.minInt(i16), std.math.maxInt(i16)));
+            self.emotion_radius = @intCast(@min(radius, std.math.maxInt(i16)));
+        }
+        self.focus = .emotion;
+    }
+
+    pub fn selectedEmotion(self: *const State) emotion_mod.Emotion {
+        const x: i32 = self.emotion_x;
+        const y: i32 = self.emotion_y;
+        if (x * x + y * y < 36) return .neutral;
+        const ax = @abs(x);
+        const ay = @abs(y);
+        if (ay * 1000 < ax * 414) return if (x >= 0) .happy else .sad;
+        if (ax * 1000 < ay * 414) return if (y >= 0) .bored else .shouting;
+        if (x >= 0 and y >= 0) return .coy;
+        if (x < 0 and y >= 0) return .scared;
+        if (x < 0) return .angry;
+        return .laughing;
+    }
+
+    pub fn selectedEmotionIntensity(self: *const State) u8 {
+        const distance = @max(@abs(@as(i32, self.emotion_x)), @abs(@as(i32, self.emotion_y)));
+        return @intCast(@min(255, @divTrunc(distance * 255, @max(1, @as(i32, self.emotion_radius)))));
+    }
+
+    pub fn pageEarlier(self: *State, total_lines: usize, page_size: usize) void {
+        if (total_lines <= page_size) {
+            self.history_offset = 0;
+            return;
+        }
+        const max_offset = total_lines - page_size;
+        self.history_offset = @min(max_offset, self.history_offset + page_size);
+    }
+
+    pub fn pageLater(self: *State, page_size: usize) void {
+        self.history_offset -|= page_size;
+    }
+
+    pub fn jumpLatest(self: *State) void {
+        self.history_offset = 0;
+    }
+
+    pub fn visibleRange(self: *const State, total_lines: usize, page_size: usize) struct { start: usize, end: usize } {
+        if (total_lines == 0 or page_size == 0) return .{ .start = 0, .end = 0 };
+        const end = total_lines -| @min(self.history_offset, total_lines);
+        return .{ .start = end -| @min(page_size, end), .end = end };
+    }
+};
+
+test "focus follows visible Microsoft shell regions" {
+    var state: State = .{};
+    try std.testing.expectEqual(Focus.composer, state.focus);
+    state.cycleFocus();
+    try std.testing.expectEqual(Focus.members, state.focus);
+    state.cycleFocus();
+    try std.testing.expectEqual(Focus.emotion, state.focus);
+    state.cycleFocus();
+    try std.testing.expectEqual(Focus.navigation, state.focus);
+    state.cycleFocus();
+    try std.testing.expectEqual(Focus.transcript, state.focus);
+    state.cycleFocus();
+    try std.testing.expectEqual(Focus.composer, state.focus);
+    state.toggleMembers();
+    state.cycleFocus();
+    try std.testing.expectEqual(Focus.navigation, state.focus);
+    state.toggleNavigation();
+    try std.testing.expectEqual(Focus.transcript, state.focus);
+    state.cycleFocus();
+    try std.testing.expectEqual(Focus.composer, state.focus);
+}
+
+test "text mode skips the comic-only emotion control" {
+    var state: State = .{ .content_mode = .text, .focus = .members };
+    state.cycleFocus();
+    try std.testing.expectEqual(Focus.navigation, state.focus);
+}
+
+test "reverse focus follows the same shell order" {
+    var state: State = .{ .focus = .navigation };
+    state.cycleFocusBackward();
+    try std.testing.expectEqual(Focus.emotion, state.focus);
+    state.cycleFocusBackward();
+    try std.testing.expectEqual(Focus.members, state.focus);
+    state.cycleFocusBackward();
+    try std.testing.expectEqual(Focus.composer, state.focus);
+}
+
+test "history paging is bounded and returns to latest" {
+    var state: State = .{};
+    state.pageEarlier(30, 9);
+    try std.testing.expectEqual(@as(usize, 9), state.history_offset);
+    state.pageEarlier(30, 9);
+    state.pageEarlier(30, 9);
+    try std.testing.expectEqual(@as(usize, 21), state.history_offset);
+    const range = state.visibleRange(30, 9);
+    try std.testing.expectEqual(@as(usize, 0), range.start);
+    try std.testing.expectEqual(@as(usize, 9), range.end);
+    state.pageLater(9);
+    try std.testing.expectEqual(@as(usize, 12), state.history_offset);
+    state.jumpLatest();
+    try std.testing.expectEqual(@as(usize, 0), state.history_offset);
+}

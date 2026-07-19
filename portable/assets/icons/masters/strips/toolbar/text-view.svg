@@ -1,3 +1,0 @@
-<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><title>Text transcript page</title><defs><linearGradient id="p" x2="1" y2="1"><stop stop-color="#fffdf7"/><stop offset="1" stop-color="#ded7c9"/></linearGradient></defs>
-  <path d="M10 5h30l14 14v40H10Z" fill="url(#p)" stroke="#20252c" stroke-width="4"/><path d="M40 5v14h14" fill="#c1c5cc" stroke="#20252c" stroke-width="3"/><path d="M19 28h27M19 37h27M19 46h20" stroke="#7b828c" stroke-width="5" stroke-linecap="round"/><path d="M16 11h18" stroke="#f3c744" stroke-width="5" stroke-linecap="round"/><circle cx="48" cy="52" r="8" fill="#3d78b8" stroke="#20252c" stroke-width="3"/><path d="m45 52 2 2 4-5" fill="none" stroke="#f7f4ea" stroke-width="2.5"/>
-</svg>

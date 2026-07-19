@@ -1,3 +1,0 @@
-<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><title>Separated plug</title><defs><linearGradient id="m" x2="1" y2="1"><stop stop-color="#f7f4ea"/><stop offset="1" stop-color="#7b828c"/></linearGradient></defs>
-  <path d="M2 32h11M51 32h11" stroke="#20252c" stroke-width="6" stroke-linecap="round"/><path d="M10 18h16v28H10c-4 0-7-3-7-7V25c0-4 3-7 7-7Z" fill="url(#m)" stroke="#20252c" stroke-width="4"/><path d="M54 18H38v28h16c4 0 7-3 7-7V25c0-4-3-7-7-7Z" fill="url(#m)" stroke="#20252c" stroke-width="4"/><path d="M25 25v14m14-14v14" stroke="#f3c744" stroke-width="4"/><path d="m29 23-3-5m9 5 3-5M29 41l-3 5m9-5 3 5" stroke="#d85852" stroke-width="3" stroke-linecap="round"/>
-</svg>

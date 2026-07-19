@@ -1,3 +1,0 @@
-<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><title>New content tab balloon</title><defs><linearGradient id="r" x2="1" y2="1"><stop stop-color="#ef8e88"/><stop offset="1" stop-color="#d85852"/></linearGradient></defs>
-  <path d="M11 9h42c5 0 8 3 8 8v25c0 5-3 8-8 8H38L27 59l3-9H11c-5 0-8-3-8-8V17c0-5 3-8 8-8Z" fill="url(#r)" stroke="#20252c" stroke-width="4"/><path d="M12 16h40" stroke="#fff1ef" stroke-width="4" stroke-linecap="round" opacity=".7"/><path d="M32 20v22M21 31h22" stroke="#f7f4ea" stroke-width="6" stroke-linecap="round"/><circle cx="52" cy="13" r="7" fill="#f3c744" stroke="#20252c" stroke-width="3"/>
-</svg>

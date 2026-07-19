@@ -1,3 +1,0 @@
-<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><title>Status tab page</title><defs><linearGradient id="b" x2="1" y2="1"><stop stop-color="#8db9df"/><stop offset="1" stop-color="#3d78b8"/></linearGradient></defs>
-  <path d="M10 5h30l14 14v40H10Z" fill="url(#b)" stroke="#20252c" stroke-width="4"/><path d="M40 5v14h14" fill="#c1c5cc" stroke="#20252c" stroke-width="3"/><path d="M18 29h28M18 39h28M18 49h18" stroke="#f7f4ea" stroke-width="4" stroke-linecap="round"/><circle cx="48" cy="51" r="8" fill="#4d9e67" stroke="#20252c" stroke-width="3"/>
-</svg>

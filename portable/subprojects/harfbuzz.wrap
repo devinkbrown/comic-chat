@@ -1,8 +1,0 @@
-[wrap-file]
-directory = harfbuzz-14.2.1
-source_url = https://github.com/harfbuzz/harfbuzz/releases/download/14.2.1/harfbuzz-14.2.1.tar.xz
-source_filename = harfbuzz-14.2.1.tar.xz
-source_hash = a54a5d8e9380a41fbb762ce367bcbf7704792dfca0d93f1bbca86c5a57902e0e
-
-[provide]
-dependency_names = harfbuzz, harfbuzz-cairo, harfbuzz-gobject, harfbuzz-icu, harfbuzz-subset

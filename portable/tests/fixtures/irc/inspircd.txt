@@ -1,7 +1,0 @@
-:irc.inspircd.test 004 Alice irc.inspircd.test InspIRCd-4 io ov
-:irc.inspircd.test 005 Alice CASEMAPPING=rfc1459 MONITOR=100 TARGMAX=PRIVMSG:4,NOTICE:4 :supported
-:irc.inspircd.test CAP * LS :message-tags batch server-time sasl=PLAIN account-tag away-notify
-@time=2026-07-17T00:00:00.000Z;msgid=inspircd-1;account=Bob :Bob!u@h PRIVMSG #room :hello
-:irc.inspircd.test BATCH +inspircd-history chathistory #room
-@batch=inspircd-history;time=2026-07-17T00:00:01.000Z :Bob!u@h PRIVMSG #room :history
-:irc.inspircd.test BATCH -inspircd-history

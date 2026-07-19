@@ -1,4 +1,0 @@
-interface:
-  display_name: "Comic Chat Supply Chain"
-  short_description: "Audit native dependencies, SBOMs, and provenance"
-  default_prompt: "Use $comicchat-supply-chain to audit one release artifact's resolved dependencies, immutable pins, advisories, licenses, SBOM, and build provenance."

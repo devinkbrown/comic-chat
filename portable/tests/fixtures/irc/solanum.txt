@@ -1,7 +1,0 @@
-:irc.solanum.test 004 Alice irc.solanum.test solanum-1.0 io ov
-:irc.solanum.test 005 Alice CASEMAPPING=rfc1459 MONITOR=100 TARGMAX=PRIVMSG:4,NOTICE:4 :supported
-:irc.solanum.test CAP * LS :message-tags batch server-time sasl=PLAIN account-notify away-notify extended-join
-@time=2026-07-17T00:00:00.000Z;msgid=solanum-1 :Bob!u@h PRIVMSG #room :hello
-:irc.solanum.test BATCH +solanum-history chathistory #room
-@batch=solanum-history;time=2026-07-17T00:00:01.000Z :Bob!u@h PRIVMSG #room :history
-:irc.solanum.test BATCH -solanum-history

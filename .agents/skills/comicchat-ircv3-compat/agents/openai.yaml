@@ -1,4 +1,0 @@
-interface:
-  display_name: "Comic Chat IRCv3 Compatibility"
-  short_description: "Evolve fixture-backed IRCv3 and legacy adapters"
-  default_prompt: "Use $comicchat-ircv3-compat to implement an IRCv3 behavior from its specification and prove legacy compatibility."

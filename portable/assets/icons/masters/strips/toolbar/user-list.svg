@@ -1,3 +1,0 @@
-<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><title>User profile list</title><defs><linearGradient id="p" x2="1" y2="1"><stop stop-color="#fffdf7"/><stop offset="1" stop-color="#ded7c9"/></linearGradient></defs>
-  <path d="M7 7h50v50H7Z" fill="url(#p)" stroke="#20252c" stroke-width="4"/><circle cx="20" cy="25" r="9" fill="#7fa9ce" stroke="#20252c" stroke-width="3"/><path d="M10 47c1-9 6-14 10-14s9 5 10 14Z" fill="#3d78b8" stroke="#20252c" stroke-width="3"/><g stroke="#7b828c" stroke-width="4" stroke-linecap="round"><path d="M36 20h14M36 31h14M36 42h10"/></g><circle cx="49" cy="49" r="6" fill="#4d9e67" stroke="#20252c" stroke-width="2"/>
-</svg>

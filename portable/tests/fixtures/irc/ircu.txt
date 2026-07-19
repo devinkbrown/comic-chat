@@ -1,5 +1,0 @@
-:irc.ircu.test 004 Alice irc.ircu.test u2.10.12.19 io ov
-:irc.ircu.test 005 Alice CASEMAPPING=rfc1459 MAXTARGETS=4 :supported
-:irc.ircu.test 421 Alice CAP :Unknown command
-:irc.ircu.test 001 Alice :Welcome to an ircu network
-:Bob!u@h PRIVMSG #room :legacy hello

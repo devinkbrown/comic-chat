@@ -1,4 +1,0 @@
-interface:
-  display_name: "Comic Chat Verification and Release"
-  short_description: "Prove exact-head CI, packaging, and release safety"
-  default_prompt: "Use $comicchat-verification-release to verify the exact release head, packages, checksums, and required CI evidence."

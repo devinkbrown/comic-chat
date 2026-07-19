@@ -1,4 +1,0 @@
-interface:
-  display_name: "Comic Chat Adversarial Testing"
-  short_description: "Build deterministic fuzz and hostile-input evidence"
-  default_prompt: "Use $comicchat-adversarial-testing to add a bounded sanitizer-backed fuzz target and promote every finding into a causal regression."

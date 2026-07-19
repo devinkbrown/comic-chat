@@ -1,196 +1,182 @@
-# Comic Chat: Reinked
+# comicchat
 
-**Comic Chat: Reinked** is an unofficial, actively-developed modernization of Microsoft Comic Chat. It keeps Microsoft's original source and artwork (MIT-licensed) as the source of truth and builds **one modern version with two UIs** on top of it over a shared core: the Windows/MFC UI (a current build of the 2.5 beta-1 client) and the native C++26 *nix UI (a port for Linux and the BSDs). The builds here are **unofficial and unsupported**, and are not endorsed by Microsoft.
+A portable, source-faithful continuation of **Comic Chat**, built in Zig with
+a software renderer, native X11/Wayland/Win32 presentation, and verified TLS.
 
-Microsoft Comic Chat is a Microsoft-developed Internet Relay Chat (IRC) chat client released in 1996 that rendered conversations as automatically generated comic strips. Instead of plain text, users communicated through cartoon avatars with messages displayed in speech bubbles inside dynamically composed comic panels. The application used an expert system to determine character placement, gestures, facial expressions, balloon shape, and panel layout in real time. It shipped as part of Internet Explorer 3.0 and was later bundled with Windows 98 and MSN before being discontinued in the early 2000s.
+Comic Chat turns IRC conversations into auto-generated comic strips. Each
+participant has an avatar, and the client composes panels with speech balloons,
+poses, and emotions while remaining interoperable with ordinary IRC clients.
 
-![Comic Chat](docs/img/readme.gif)
+The rendering reference is Microsoft's open-source Comic Chat repository:
+<https://github.com/microsoft/comic-chat>. The portable implementation ports
+the original panel, avatar-placement, balloon, and emotion behavior from that
+source instead of approximating it from screenshots. The external historical
+reference is pinned to revision `c7df00f60bc8e9fdef413f139e61f7c37e024684`.
 
-## Table of Contents
+The portable page keeps the released client's visible contract: an implicit
+borderless title/starring panel, 2300×2300 logical conversation panels, two
+panels per row, 144-unit interstices, authored AVB icons and mask layers, and
+source-seeded panel/balloon layout. Comic Neue Bold and Bold Italic are bundled
+as the SIL-OFL portable substitutes for the proprietary Comic Sans MS faces
+requested by the historical Windows client. As in Microsoft's source, only
+Woodring whisper balloons select the
+italic face.
 
-- [Comic Chat: Reinked](#comic-chat-reinked)
-  - [Table of Contents](#table-of-contents)
-  - [Status](#status)
-  - [How It Works](#how-it-works)
-  - [Download Comic Chat](#download-comic-chat)
-  - [IRC servers](#irc-servers)
-  - [Repository Structure](#repository-structure)
-    - [Version notes](#version-notes)
-  - [Building](#building)
-    - [Original build (Visual C++ 4.x)](#original-build-visual-c-4x)
-    - [Modernized build (Visual Studio 2022)](#modernized-build-visual-studio-2022)
-    - [Cloud builds](#cloud-builds)
-    - [A note on the modernized folders](#a-note-on-the-modernized-folders)
-    - [Original build requirements](#original-build-requirements)
-  - [History](#history)
-  - [License](#license)
-  - [Contributing](#contributing)
-  - [Trademarks](#trademarks)
+## Project layout
 
-## Status
+| Area | Path | Purpose |
+| --- | --- | --- |
+| Portable client | `src/` | Zig IRC client, AVB/BGB decoding, original rendering behavior, software rasterizer, and native X11/Wayland/Win32 presentation |
+| Runtime assets | `assets/` and `src/assets/testdata/` | Attributed character, backdrop, and emotion content required by the portable renderer |
+| Protocol notes | `docs/PROTOCOL.md` | Comic Chat wire-format and interoperability notes |
+| Completeness audit | `docs/PORTABLE_COMPLETENESS_AUDIT.md` | Reachable, substrate-only, partial, and missing portable product surfaces |
+| UI source audit | `docs/MICROSOFT_UI_SOURCE_AUDIT.md` | Microsoft menu, geometry, body-camera, member-list, buffer, and dialog contracts |
+| Repository map | `docs/PROJECT_STRUCTURE.md` | Portable-first repository ownership and layout |
 
-Comic Chat: Reinked is under active development. It is an unofficial fork; its
-builds are not supported or endorsed by Microsoft.
+## Portable Zig client
 
-Reinked is **one version with two UIs over a shared core**:
+The active tree is tested with Zig `0.17.0-dev.1282+c0f9b51d8`:
 
-- **`v2.5-beta-1-modern/`** is the Windows UI (native Win32/MFC, **MSVC-only**).
-- **`portable/`** is the native **C++26** *nix UI for Linux, FreeBSD, and OpenBSD
-  (SDL3 + Cairo, Meson build) carrying the shared libuv + mbedTLS IRC transport.
-  Its gate is `meson test -C portable/build` (11/11 at the current audit). The
-  renderer is a source-derived title-panel foundation, not a complete
-  visual-parity client yet.
-- Both UIs sit on top of the shared engine in **`portable/src`**.
-
-The earlier `v1.0-pre-modern` Windows lane has been **archived** to the
-`version/v1.0-pre-modern` branch and is no longer part of `main`.
-
-IRC / IRCv3 capability status is tracked in one authoritative ledger,
-[`docs/IRCv3-COVERAGE.md`](docs/IRCv3-COVERAGE.md). **Reinked does not implement
-all of IRCv3.** The portable engine has substantial, bounded protocol machinery,
-but many negotiated capabilities are observe-only (retained state or typed
-events not yet consumed by the legacy model/view), and most are default-off.
-Wire support and product readiness are separate, and both are tracked there
-rather than duplicated here.
-
-## How It Works
-
-As users type messages, each Comic Chat client automatically determines:
-
-- Which characters to place in each panel
-- Gestures and facial expressions based on message content
-- Character placement and orientation
-- Word balloon shape, outline, and layout
-- When to advance to a new panel
-- Zoom factor for each panel
-
-The application connects to standard IRC servers and is fully interoperable with text-based IRC clients. Non-Comic Chat users are automatically assigned characters so the entire conversation is rendered graphically.
-
-## Download Comic Chat
-
-If you want to jump right in and try Comic Chat without cloning the source and building it yourself, you have two options.
-
-1. You can download Microsoft Comic Chat 2.5 from [Mermaid Elizabeth's Microsoft Chat Resources Link Page](https://mermeliz.com/). This is the version that shipped in the early 2000s.
-2. You can download an [unofficial modern build](https://github.com/microsoft/comic-chat/releases/tag/unofficial-modern-builds-2026-07) of version 1.0 and version 2.5b1. These versions have been modernized with support for high-resolution monitors.
-
-## IRC servers
-
-Mermaid Elizabeth maintains a list of [IRC servers](https://mermeliz.com/srvr_rms.htm) that work with Comic Chat.
-
-## Repository Structure
-
-The `main` branch carries the actively-developed **Comic Chat: Reinked** modernization as **one version with two UIs over a shared core**: the Windows **`v2.5-beta-1-modern/`** build folder and the native **`portable/`** C++26 *nix UI, both on top of the shared **`portable/src`** engine (see [the note on the modernized folders](#a-note-on-the-modernized-folders) for what they are and why they exist). The original Microsoft source snapshots — the integrity-preserved provenance import — are kept off `main` in dedicated `version/*` archival branches so the working tree stays focused on the modern lanes. Each snapshot retains its full history; check one out to browse or build it (`git checkout version/v2.5-beta-1`). The portable build's source-fidelity reference bitmaps and font were relocated onto `main` under [`portable/assets/`](portable/assets/) so the build no longer depends on the archived snapshots.
-
-| Location | Date | Description |
-|----------|------|-------------|
-| `version/v1.0-pre` branch | August 1996 | Pre-release source snapshot (rup 206 "Beta 2") — [README](docs/v1.0-pre/README.md) |
-| `version/v1.0` branch | August 1996 | Comic Chat 1.0 release source — [README](docs/v1.0/README.md) |
-| `version/v2.1b` branch | February 1998 | Comic Chat 2.1 beta source — [README](docs/v2.1b/README.md) |
-| `version/v2.5-beta-1` branch | June 1998 | Comic Chat 2.5 beta 1 source — [README](docs/v2.5-beta-1/README.md) |
-| [`artifacts/`](artifacts/) | January 1998 | SDK, companion tools, JChat, documentation |
-| `version/v1.0-pre-modern` branch | 2026 | Archived modernized v1.0-pre Windows lane (no longer on `main`) |
-| [`v2.5-beta-1-modern/`](v2.5-beta-1-modern/) | 2026 | Windows UI: modernized v2.5-beta-1, builds with current Visual Studio (nmake replaces the NT DDK build), uniform display scaling, runs live on modern IRC |
-| [`portable/`](portable/) | 2026 | Native C++26 SDL3/Cairo *nix UI for Linux, FreeBSD, OpenBSD, Wayland, and X11 — [README](portable/README.md) |
-| [`portable/src/`](portable/src/) | 2026 | Shared core engine used by both UIs |
-| [`docs/`](docs/) | — | Modernization write-ups and documentation |
-
-See [`file dates.txt`](file%20dates.txt) for the original file modification timestamps from each archive.
-
-### Version notes
-
-- **v1.0-pre** and **v1.0** share the same internal version number (`rup 206, "Beta 2"`) but differ in ~99 of 111 shared source files. `v1.0` adds build infrastructure (`build/`, `help/`, `setup/`, `shared/`).
-- **v2.1b** and **v2.5-beta-1** include an IRC protocol layer with multi-server support, OLE automation for scripting, and the Art Pack 1 character set in addition to the original characters.
-- **artifacts/** contains the Comic Chat SDK, JChat (a Java client), the Betty Bot sample, xcchat, and internal design documents.
-
-## Building
-
-### Original build (Visual C++ 4.x)
-
-All original versions target Win32 (x86) using Visual C++ 4.x with MFC and NMAKE makefiles. Their source lives in the `version/*` archival branches; check one out first.
-
-**v1.0-pre and v1.0:**
-```batch
-git checkout version/v1.0
-cd client
-NMAKE /f "chat.mak" CFG="chat - Win32 Release"
+```sh
+zig build test
+zig build
+zig build run                         # record-codec demo
+zig build run -- render-strip > comic.ppm
+zig build run -- window anna          # native window/backend smoke
+zig build run -- app irc.example nick '#channel'              # verified TLS, port 6697
+zig build run -- app irc.example 6697 nick '#channel' --ca-file ./ca.pem
+zig build run -- app irc.example nick '#channel' --socks5 127.0.0.1:1080
+zig build run -- app irc.example nick '#channel' --http-proxy proxy.example:8080
+zig build run -- app localhost 6667 nick '#channel' --plaintext
+zig build run -- app eshmaki.me kain '#root' \
+  --tls-cert ~/.weechat/tls/relay.pem --sasl-user kain --sasl-external
 ```
 
-**v2.5-beta-1:**
-```batch
-git checkout version/v2.5-beta-1
-NMAKE /f "chat.mak" CFG="chat - Win32 Release"
+The app opens before DNS/TCP/TLS setup and keeps the native event loop live
+while a bounded connector races IPv6/IPv4 candidates. `--connect-timeout-ms`
+sets the per-address and proxy-read deadline. SOCKS5 uses no-auth remote-DNS
+CONNECT; HTTP proxies use a bounded CONNECT response. TLS hostname and chain
+verification still target the IRC host after either proxy handshake.
+
+On Onyx Server, authenticated clients persist reusable `SESSION TOKEN` and
+portable `SESSION MTOKEN` credentials in `.comicchat-session` (override with
+`--session-file`). After SASL succeeds, reconnects prefer the unexpired mesh
+credential, issue `SESSION RESUME` before joining, and then request fresh
+credentials. This is the exact-token boundary required for multiple live
+clients using the same account and nickname to share one logical session.
+Session files are written atomically with owner-only permissions on POSIX.
+
+Inside the desktop client, room tabs are clickable and retain independent
+transcripts, rosters, unread counts, and unfinished drafts. The corresponding
+keyboard commands are `/join #room`, `/switch #room`, and `/part`. Use
+`/view comic`, `/view text`, `/members`, `/avatar name`, and `/dialog IDD_*`
+for view and source-dialog workflows. Conversation files and rendered UI
+captures use `/open path.ccc`, `/save path.ccc`, and `/export path.png`;
+writes are bounded and atomic.
+
+`--tls-cert <cert-and-key.pem>` presents a PEM client certificate and private
+key for SASL EXTERNAL. With the current pinned mbedTLS release, certificate
+authentication uses verified TLS 1.2 for interoperability with the live Onyx
+listener; connections without a client certificate continue to negotiate TLS
+1.2 or TLS 1.3 normally.
+
+### Regenerating the portable font atlas
+
+The generated atlas is reproducible from
+[Comic Neue](https://github.com/crozynski/comicneue) commit
+`ef5be72411141d01f0b865df8edb47e552c11c3c`. With Python and Pillow installed,
+pass that revision's `ComicNeue-Bold.ttf` and `ComicNeue-BoldItalic.ttf` to the
+generator. Pillow is pinned because its bundled FreeType rasterizer is part of
+the byte-exact atlas toolchain:
+
+```sh
+python3 -m pip install -r tools/font-requirements.txt
+python3 tools/generate_font.py \
+  /path/to/ComicNeue-Bold.ttf \
+  /path/to/ComicNeue-BoldItalic.ttf
 ```
 
-A `.mdp` (Visual C++ 4.x) project file is included in the `client/` directory of the `version/v1.0-pre` and `version/v1.0` branches for IDE use.
+The generator rejects inputs unless their SHA-256 values are respectively
+`3e7e5fccfd7e0788f317b43312151c1bd5cf058c9697a8d83eac3939050bd61e`
+and
+`5c312c2a2fa64eee82f3b87fcfab8f3b12a5e59b043124401d322eb323cfbf16`.
+It also rejects rasterizer drift before rewriting `font.zig`/`fontdata.bin` and
+`font_italic.zig`/`fontdata_italic.bin`. The SIL Open Font License covering both
+faces is retained in `src/render/COMIC_NEUE_LICENSE.txt`.
 
-### Modernized build (Visual Studio 2022)
+Cross-compile examples:
 
-`v2.5-beta-1-modern/` is the Windows UI. It brings the more advanced **Comic Chat 2.5 beta-1** (June 1998) client — which originally built with the Windows NT DDK `BUILD.EXE` system — up on the modern toolchain with its own clean `nmake` makefile:
-
-```bat
-call "<VisualStudio>\VC\Auxiliary\Build\vcvars32.bat"
-cd v2.5-beta-1-modern
-nmake /f chat.mak CFG="chat - Win32 Release"    REM everyday use
-nmake /f chat.mak CFG="chat - Win32 Debug"      REM asserts + TRACE for DebugView
+```sh
+zig build -Dtarget=x86_64-windows
+zig build -Dtarget=x86-windows
+zig build -Dtarget=aarch64-windows
+zig build -Dtarget=x86_64-linux
 ```
 
-It carries the mouse-wheel and panels-per-row work and runs **DPI-unaware** so Windows scales the whole window uniformly (rather than scaling a few surfaces and leaving the rest tiny). The chief 2.5-specific fixes were dropping the MFC-4.0 common-control struct-tag remap, adding a Common Controls v6 manifest so the rebar toolbar creates, and the runtime fixes needed to connect/join/chat on a present-day IRC network. See [`v2.5-beta-1-modern/README.md`](v2.5-beta-1-modern/README.md). The foundational DPI/UX/TLS write-ups — first developed on the now-archived `v1.0-pre-modern` lane (preserved on the `version/v1.0-pre-modern` branch) — are collected in [`docs/MODERNIZATION.md`](docs/MODERNIZATION.md).
+Cross-compilation installs the Windows binary at
+`zig-out\bin\comicchat.exe`; it does not execute it. On Linux, a nonempty
+`WAYLAND_DISPLAY` selects the Wayland backend and an unset/empty value selects
+X11. There is no automatic fallback after a Wayland connection failure. To
+force the X11 smoke explicitly:
 
-### Cloud builds
+```sh
+env -u WAYLAND_DISPLAY zig build run -- window anna
+```
 
-The manually triggered **Build unofficial modern clients** GitHub Actions
-workflow builds the modernized Windows client on a pinned Windows runner, packages
-the executable with its art and documentation, smoke-tests the extracted ZIP
-from a random folder, and uploads release-ready artifacts with SHA-256 hashes.
-Fork owners can enable Actions and run the workflow without any secrets. See
-[`docs/UNOFFICIAL-RELEASE.md`](docs/UNOFFICIAL-RELEASE.md) for the packaging and
-manual release process.
+The direct Wayland client currently uses scale 1. It parses the compositor's
+XKB keymap for base and Shift levels and implements compositor-configured
+client-side key repeat, with a US evdev fallback before a usable keymap is
+available. It does not yet support AltGr/ISO Level3, compose/dead-key sequences,
+IME, or output-scale negotiation. Win32 is system-DPI aware rather than
+per-monitor-v2 aware. Window creation, configure/resize, shared-memory
+presentation, keyboard input, IRC traffic, and clean close are implemented on
+both Wayland and Win32. Pointer input and the shared editing clipboard model
+are implemented; native OS clipboard and IME bridges remain future work.
 
-### A note on the modernized folders
+The portable lane has no SDL dependency. Native backends speak the Wayland/X11
+protocols or Win32 APIs directly, and all display the same software-rendered
+comic framebuffer. IRC connections use verified TLS by default on port 6697,
+through official mbedTLS 3.6.6 sources pinned in `build.zig.zon`. The client
+requires a trusted certificate, sends SNI, verifies the requested hostname,
+and never falls back to plaintext. It loads the Windows ROOT certificate store
+or common Unix CA bundles; `--ca-file <pem>` overrides those roots.
+`--plaintext` is an explicit compatibility mode for trusted local servers that
+do not offer TLS and must not be used for credentials on untrusted networks.
 
-This repository preserves Microsoft's original Comic Chat source as a **historical artifact** — the versioned `version/*` snapshots and `artifacts*/` are here for reference, study, and preservation, and are not modernized in place. The `v2.5-beta-1-modern/` Windows UI and the `portable/` *nix UI are the actively-developed **Comic Chat: Reinked** modernization; they are **unofficial and unsupported**, not a polished Microsoft re-release. The Windows `*-modern` UI in particular began as a set of **worked examples** of the kinds of changes it takes to get a 1996–1998 MFC application building and running on a current machine, such as:
+Live messages use the released compact UDI grammar: the portable client reads
+both embedded non-IRCX annotations and IRCX `DATA ... CCUDI1` state; preserves
+the authored face/torso ordinals, emotion, intensity, requested-pose flag,
+balloon mode, and talk-to participants; and renders that cooked AVB state. For
+outgoing text it runs the source-derived pose rules, sends standalone `DATA`
+metadata after IRCX negotiation, and otherwise uses the original embedded
+annotation form. Ordinary IRC clients still receive readable message text.
+The client also consumes the source `# Appears as ...` avatar control, announces
+its current bundled avatar after joining, and supports `/avatar <name>` in the
+interactive input so later panels use the selected character.
 
-- Getting it to **build with a current Visual Studio / MFC toolchain** on a normal developer machine (the original Visual C++ 4.x and NT DDK `BUILD.EXE` systems are long gone).
-- **Uniform display scaling** so the window and its controls are legible on today's high-DPI monitors.
-- A handful of modern-Windows compatibility fixes — Common Controls v6 for the toolbar, modern RichEdit/CRT behavior, IRC parsing that works with present-day servers, and short-circuiting the long-dead Microsoft art-download servers in favor of the bundled art.
+## Design tenets
 
-These changes are intentionally **left as an exercise for the reader**: they demonstrate an approach and a few representative fixes rather than an exhaustive, production-hardened port. If you'd like to take it further — full per-monitor DPI awareness, TLS to modern IRC networks, the other client versions — the `v2.5-beta-1-modern/` folder is a good place to start.
+- **Source-faithful rendering.** Microsoft's original implementation is the
+  behavioral source of truth for panel splitting, avatar order and scale,
+  emotion selection, text measurement, balloon routing, and tails.
+- **One portable core.** Protocol, assets, layout, rendering, and client state
+  are platform-independent; native backends own window/event integration and
+  framebuffer presentation.
+- **Interoperable IRC.** Comic metadata remains compatible with ordinary IRC;
+  clients without Comic Chat still see the conversation text.
+- **Portable product first.** This repository ships one portable client; it
+  does not vendor a second MFC/C++ implementation.
 
-### Original build requirements
+## License and provenance
 
-- Visual C++ 4.x (or compatible NMAKE toolchain)
-- MFC 4.x libraries
-- Windows 95 or Windows NT 4.0
-- 486 processor, 8 MB RAM, 256-color video (minimum)
-
-## History
-
-Comic Chat was originally a Microsoft Research project developed by DJ Kurlander. The 1.0 release shipped in June 1996 bundled with Internet Explorer 3.0 and could run standalone or embedded as an OLE server within the browser. Version 2.0 shipped with Internet Explorer 4.0 and Windows 98 in 1997–1998, adding multi-server support, OLE scripting, and the Comic Chat SDK for third-party bots and extensions. The application was discontinued in the early 2000s as graphical chat gave way to instant messaging.
-
-Microsoft open-sourced the original sources under the MIT License. **Comic Chat: Reinked** is the unofficial fork that preserves those sources and continues the client as a modern, cross-platform application — see the [Status](#status) section and [`docs/IRCv3-COVERAGE.md`](docs/IRCv3-COVERAGE.md) for its current state.
-
-## License
-
-This project is licensed under the [MIT License](LICENSE).
-
-## Contributing
-
-This project welcomes contributions and suggestions. Most contributions require you to agree to a
-Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us
-the rights to use your contribution. For details, visit https://cla.opensource.microsoft.com.
-
-When you submit a pull request, a CLA bot will automatically determine whether you need to provide
-a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions
-provided by the bot. You will only need to do this once across all repos using our CLA.
-
-This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
-For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or
-contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
-
-## Trademarks
-
-This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft
-trademarks or logos is subject to and must follow
-[Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks/usage/general).
-Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship.
-Any use of third-party trademarks or logos are subject to those third-party's policies.
+The historical Comic Chat source is MIT-licensed and remains an external
+reference at <https://github.com/microsoft/comic-chat>; its MFC/C++ tree is not
+vendored here. Microsoft names, logos, and artwork may be trademarks, and
+builds from this repository are unofficial and unsupported. The portable asset
+set has a byte-level source and transformation audit in
+[`docs/PORTABLE_ASSET_PROVENANCE.md`](docs/PORTABLE_ASSET_PROVENANCE.md).
+The generated portable font atlases are derived from Comic Neue Bold and Bold
+Italic under the SIL Open Font License; see
+[`src/render/COMIC_NEUE_LICENSE.txt`](src/render/COMIC_NEUE_LICENSE.txt).
+The fetched mbedTLS 3.6.6 dependency is used under its Apache License 2.0
+option; its license text remains in the pinned upstream package.

@@ -1,3 +1,0 @@
-<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><title>Disconnected visibly separated topology</title>
-  <path d="M1 32h13M50 32h13" stroke="#20252c" stroke-width="7" stroke-linecap="round"/><path d="M8 17h19v30H8c-4 0-7-3-7-7V24c0-4 3-7 7-7Z" fill="#c1c5cc" stroke="#20252c" stroke-width="4"/><path d="M56 17H37v30h19c4 0 7-3 7-7V24c0-4-3-7-7-7Z" fill="#c1c5cc" stroke="#20252c" stroke-width="4"/><path d="M26 24v16m12-16v16" stroke="#f3c744" stroke-width="4"/><path d="m30 20-3-6m7 6 3-6m-7 30-3 6m7-6 3 6" stroke="#d85852" stroke-width="3" stroke-linecap="round"/>
-</svg>

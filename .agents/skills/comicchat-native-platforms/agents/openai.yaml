@@ -1,4 +1,0 @@
-interface:
-  display_name: "Comic Chat Native Platforms"
-  short_description: "Maintain Unix, BSD, Wayland, and native Windows"
-  default_prompt: "Use $comicchat-native-platforms to implement a platform change across the required native lanes and acceptance gates."

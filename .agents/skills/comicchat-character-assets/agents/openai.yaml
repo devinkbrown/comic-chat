@@ -1,4 +1,0 @@
-interface:
-  display_name: "Comic Chat Character Assets"
-  short_description: "Remaster complete source-faithful character families"
-  default_prompt: "Use $comicchat-character-assets to remaster one complete Microsoft character and prove every pose preserves its anatomy and identity."

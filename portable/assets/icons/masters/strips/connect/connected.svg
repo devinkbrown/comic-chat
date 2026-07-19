@@ -1,3 +1,0 @@
-<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><title>Connected joined topology</title>
-  <path d="M2 32h16M46 32h16" stroke="#20252c" stroke-width="7" stroke-linecap="round"/><path d="M10 17h22v30H10c-4 0-7-3-7-7V24c0-4 3-7 7-7Z" fill="#c1c5cc" stroke="#20252c" stroke-width="4"/><path d="M54 17H32v30h22c4 0 7-3 7-7V24c0-4-3-7-7-7Z" fill="#c1c5cc" stroke="#20252c" stroke-width="4"/><circle cx="32" cy="32" r="7" fill="#4d9e67" stroke="#20252c" stroke-width="3"/><path d="M26 21v22m12-22v22" stroke="#f3c744" stroke-width="4"/>
-</svg>

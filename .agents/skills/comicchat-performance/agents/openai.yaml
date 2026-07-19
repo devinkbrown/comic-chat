@@ -1,4 +1,0 @@
-interface:
-  display_name: "Comic Chat Performance"
-  short_description: "Measure and improve bounded native performance"
-  default_prompt: "Use $comicchat-performance to benchmark a native hotspot and deliver a measured optimization without semantic drift."
