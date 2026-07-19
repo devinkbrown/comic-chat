@@ -1,4 +1,4 @@
-//! IRC stream transport. Verified mbedTLS is the secure default; the original
+//! IRC stream transport. Verified Onyx TLS is the secure default; the original
 //! std.Io plaintext socket remains available only through an explicit option.
 
 const std = @import("std");

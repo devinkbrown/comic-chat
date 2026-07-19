@@ -2,7 +2,7 @@
 
 This repository ships one portable implementation under `src/`. It uses a
 software framebuffer renderer with direct X11, Wayland, and Win32 backends and
-no SDL. Its sole linked C dependency is the pinned official mbedTLS 3.6.6 TLS
+no SDL. TLS is supplied by the pinned portable Onyx TLS implementation.
 implementation.
 
 The portable tree is currently tested with Zig
@@ -78,7 +78,7 @@ hash.
 
 ## Change rules
 
-- Keep rendering and platform presentation in Zig with no SDL. mbedTLS at the
+- Keep rendering and platform presentation in Zig with no SDL. Onyx TLS at the
   exact `build.zig.zon` revision is the deliberate transport exception; do not
   replace it with an unpinned system library or weaken certificate checks.
 - Add focused inline tests and aggregate a new test-only module from

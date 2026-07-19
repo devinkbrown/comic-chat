@@ -1,0 +1,14 @@
+ComicChat portable client
+Copyright (C) 2026 Comic Chat contributors
+Licensed under the GNU Affero General Public License, version 3 or later.
+
+Third-party notices
+-------------------
+The Microsoft Comic Chat source-derived code and runtime AVB/BGB assets are
+licensed under the MIT License. The complete notice is in LICENSES/MIT.txt.
+
+The embedded Comic Neue font data is licensed under the SIL Open Font License
+1.1. The complete notice is in src/render/COMIC_NEUE_LICENSE.txt.
+
+The portable Onyx TLS implementation is included as a pinned submodule and is
+licensed under AGPL-3.0-or-later.

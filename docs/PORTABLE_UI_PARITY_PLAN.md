@@ -58,7 +58,7 @@ emotion-face artwork remains source-authored product content.
 - Same-account/same-nick Onyx session resume.
 - IRCX/IRCv3 state, UDI, profile/backdrop controls, DCC codec/transfer,
   notifications and automation-rule engines.
-- No SDL; mbedTLS remains the pinned transport dependency.
+- No SDL; Onyx TLS remains the pinned transport dependency.
 
 ## Architecture
 

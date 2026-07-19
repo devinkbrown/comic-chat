@@ -76,10 +76,9 @@ captures use `/open path.ccc`, `/save path.ccc`, and `/export path.png`;
 writes are bounded and atomic.
 
 `--tls-cert <cert-and-key.pem>` presents a PEM client certificate and private
-key for SASL EXTERNAL. With the current pinned mbedTLS release, certificate
-authentication uses verified TLS 1.2 for interoperability with the live Onyx
-listener; connections without a client certificate continue to negotiate TLS
-1.2 or TLS 1.3 normally.
+key for SASL EXTERNAL. Onyx TLS presents the certificate during a verified TLS
+1.3 handshake; connections without a client certificate use the same verified
+TLS 1.3 transport.
 
 ### Regenerating the portable font atlas
 
@@ -133,8 +132,9 @@ from a clean checkout:
 ./tools/package-release.sh unofficial-modern-builds-2026-07
 ```
 
-Each archive contains the executable, this README, and the MIT license. Comic
-characters, backdrops, face expressions, and fonts are embedded in the binary.
+Each archive contains the executable, this README, the AGPL license, and
+third-party notices. Comic characters, backdrops, face expressions, and fonts
+are embedded in the binary.
 `comicchat app <nick>` defaults to the `eshmaki.me` server and `#root` channel;
 pass a host and/or channel to override either default.
 
@@ -151,7 +151,7 @@ are implemented; native OS clipboard and IME bridges remain future work.
 The portable lane has no SDL dependency. Native backends speak the Wayland/X11
 protocols or Win32 APIs directly, and all display the same software-rendered
 comic framebuffer. IRC connections use verified TLS by default on port 6697,
-through official mbedTLS 3.6.6 sources pinned in `build.zig.zon`. The client
+through the pinned Onyx TLS implementation. The client
 requires a trusted certificate, sends SNI, verifies the requested hostname,
 and never falls back to plaintext. It loads the Windows ROOT certificate store
 or common Unix CA bundles; `--ca-file <pem>` overrides those roots.
@@ -184,14 +184,15 @@ interactive input so later panels use the selected character.
 
 ## License and provenance
 
-The historical Comic Chat source is MIT-licensed and remains an external
-reference at <https://github.com/microsoft/comic-chat>; its MFC/C++ tree is not
-vendored here. Microsoft names, logos, and artwork may be trademarks, and
+ComicChat's portable code is licensed under **AGPL-3.0-or-later**. The
+historical Comic Chat source is MIT-licensed and remains an external reference
+at <https://github.com/microsoft/comic-chat>; its MFC/C++ tree is not vendored
+here. Microsoft names, logos, and artwork may be trademarks, and
 builds from this repository are unofficial and unsupported. The portable asset
 set has a byte-level source and transformation audit in
 [`docs/PORTABLE_ASSET_PROVENANCE.md`](docs/PORTABLE_ASSET_PROVENANCE.md).
 The generated portable font atlases are derived from Comic Neue Bold and Bold
 Italic under the SIL Open Font License; see
 [`src/render/COMIC_NEUE_LICENSE.txt`](src/render/COMIC_NEUE_LICENSE.txt).
-The fetched mbedTLS 3.6.6 dependency is used under its Apache License 2.0
-option; its license text remains in the pinned upstream package.
+The pinned Onyx Server TLS implementation is included as an AGPL-3.0-or-later
+submodule under `third_party/onyx-server`.

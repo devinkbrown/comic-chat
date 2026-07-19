@@ -1,166 +1,180 @@
-//! Verified TLS 1.2/1.3 client transport backed by the pinned official
-//! mbedTLS 3.6.6 sources. Certificate verification and SNI are mandatory.
+//! Verified TLS 1.3 transport backed by Onyx's portable record engine.
 
 const std = @import("std");
-const builtin = @import("builtin");
-
-const Context = opaque {};
-
-extern fn cc_tls_connect_fd(
-    host: [*:0]const u8,
-    socket_fd: isize,
-    ca_file: ?[*:0]const u8,
-    client_cert_file: ?[*:0]const u8,
-    handshake_timeout_ms: u32,
-    out_context: *?*Context,
-    native_error: *c_int,
-) c_int;
-extern fn cc_tls_free(context: ?*Context) void;
-extern fn cc_tls_fd(context: *const Context) c_int;
-extern fn cc_tls_write(context: *Context, bytes: [*]const u8, length: usize) c_int;
-extern fn cc_tls_read(context: *Context, bytes: [*]u8, length: usize) c_int;
-extern fn cc_tls_read_timeout(context: *Context, bytes: [*]u8, length: usize, milliseconds: u32) c_int;
-extern fn cc_tls_is_timeout(result: c_int) c_int;
-extern fn cc_tls_last_error(context: *const Context) c_int;
-extern fn cc_tls_last_alert(context: *const Context) c_int;
-extern fn cc_tls_error_string(result: c_int, buffer: [*]u8, length: usize) void;
-extern fn cc_tls_version_number() u32;
-
-pub const expected_version: u32 = 0x03060600;
+const onyx_root = @import("onyx_tls");
+const onyx = onyx_root.crypto.tls_client;
+const certs = onyx_root.daemon.tls_certs;
+const onyx_sign = onyx_root.crypto.sign;
 
 pub const ConnectOptions = struct {
-    /// PEM bundle override. Null loads the operating-system/default CA roots.
     ca_file: ?[]const u8 = null,
-    /// PEM certificate chain and private key used for TLS client authentication.
     client_cert_file: ?[]const u8 = null,
     handshake_timeout_ms: u32 = 15_000,
 };
 
 pub const TlsTransport = struct {
     gpa: std.mem.Allocator,
-    context: *Context,
+    threaded: std.Io.Threaded,
+    io: std.Io,
+    stream: std.Io.net.Stream,
+    client: onyx.Client,
+    roots: std.crypto.Certificate.Bundle,
+    client_material: ?certs.Loaded = null,
+    pending: std.ArrayList(u8) = .empty,
 
-    /// Start verified TLS over an already connected stream socket. Ownership
-    /// of `stream` transfers on entry, including every error path.
-    pub fn connectSocket(
-        gpa: std.mem.Allocator,
-        io: std.Io,
-        stream: std.Io.net.Stream,
-        host: []const u8,
-        options: ConnectOptions,
-    ) !*TlsTransport {
-        var native_owns_socket = false;
-        defer if (!native_owns_socket) stream.close(io);
+    pub fn connectSocket(gpa: std.mem.Allocator, io_unused: std.Io, stream: std.Io.net.Stream, host: []const u8, options: ConnectOptions) !*TlsTransport {
+        _ = io_unused;
         const self = try gpa.create(TlsTransport);
         errdefer gpa.destroy(self);
+        self.gpa = gpa;
+        self.threaded = std.Io.Threaded.init(gpa, .{});
+        errdefer self.threaded.deinit();
+        self.io = self.threaded.io();
+        self.stream = stream;
+        errdefer self.stream.close(self.io);
+        self.roots = .empty;
+        errdefer self.roots.deinit(gpa);
+        const now = std.Io.Clock.real.now(self.io);
+        if (options.ca_file) |path| {
+            try self.roots.addCertsFromFilePathAbsolute(gpa, self.io, now, path);
+        } else try self.roots.rescan(gpa, self.io, now);
 
-        const host_z = try gpa.dupeSentinel(u8, host, 0);
-        defer {
-            std.crypto.secureZero(u8, host_z);
-            gpa.free(host_z);
+        var anchors: std.ArrayList([]const u8) = .empty;
+        defer anchors.deinit(gpa);
+        var it = self.roots.map.iterator();
+        while (it.next()) |entry| {
+            const start = entry.value_ptr.*;
+            const element = try std.crypto.Certificate.der.Element.parse(self.roots.bytes.items, start);
+            try anchors.append(gpa, self.roots.bytes.items[start..element.slice.end]);
         }
-        const ca_z = if (options.ca_file) |path| try gpa.dupeSentinel(u8, path, 0) else null;
-        defer if (ca_z) |path| {
-            std.crypto.secureZero(u8, path);
-            gpa.free(path);
-        };
-        const client_cert_z = if (options.client_cert_file) |path| try gpa.dupeSentinel(u8, path, 0) else null;
-        defer if (client_cert_z) |path| {
-            std.crypto.secureZero(u8, path);
-            gpa.free(path);
-        };
-
-        var context: ?*Context = null;
-        var native_error: c_int = 0;
-        const socket_fd: isize = if (comptime builtin.os.tag == .windows)
-            @intCast(@intFromPtr(stream.socket.handle))
-        else
-            @intCast(stream.socket.handle);
-        native_owns_socket = true;
-        const stage = cc_tls_connect_fd(
-            host_z.ptr,
-            socket_fd,
-            if (ca_z) |path| path.ptr else null,
-            if (client_cert_z) |path| path.ptr else null,
-            options.handshake_timeout_ms,
-            &context,
-            &native_error,
-        );
-        if (stage != 0) return mapConnectStage(stage);
-        self.* = .{ .gpa = gpa, .context = context orelse return error.TlsConfigurationFailed };
+        if (anchors.items.len == 0) return error.CertificateAuthorityLoadFailed;
+        self.client = try onyx.Client.init(gpa, .{ .server_name = host, .trust_anchors = anchors.items, .now_unix_seconds = now.toSeconds() });
+        errdefer self.client.deinit();
+        if (options.client_cert_file) |path| {
+            var material = try certs.loadOrBootstrap(gpa, self.io, .{ .cert_path = path, .key_path = path });
+            errdefer material.deinit(gpa);
+            switch (material.key_kind) {
+                .ed25519 => self.client.setClientCertForTest(material.cert_chain[0], .{
+                    .public_key = material.signing_key.?.public_key.toBytes(),
+                    .secret_key = onyx_sign.SecretKey.init(material.signing_key.?.secret_key.toBytes()),
+                }),
+                .ecdsa_p256 => self.client.setClientCertEcdsaP256ForTest(material.cert_chain[0], material.ecdsa_p256_signing_key.?),
+                .rsa => self.client.setClientCertRsaForTest(material.cert_chain[0], material.rsa_signing_key.?),
+            }
+            self.client_material = material;
+        }
+        const hello = try self.client.start();
+        defer gpa.free(hello);
+        try self.writeAll(hello);
+        try self.finishHandshake(options.handshake_timeout_ms);
         return self;
     }
 
     pub fn deinit(self: *TlsTransport) void {
-        cc_tls_free(self.context);
-        const gpa = self.gpa;
-        std.crypto.secureZero(u8, std.mem.asBytes(self));
-        gpa.destroy(self);
+        self.client.deinit();
+        if (self.client_material) |*material| material.deinit(self.gpa);
+        self.pending.deinit(self.gpa);
+        self.roots.deinit(self.gpa);
+        self.stream.close(self.io);
+        self.threaded.deinit();
+        self.gpa.destroy(self);
     }
 
     pub fn fd(self: *const TlsTransport) i32 {
-        return @intCast(cc_tls_fd(self.context));
+        return self.stream.socket.handle;
     }
 
     pub fn send(self: *TlsTransport, bytes: []const u8) !void {
-        var offset: usize = 0;
-        while (offset < bytes.len) {
-            const result = cc_tls_write(self.context, bytes[offset..].ptr, bytes.len - offset);
-            if (result < 0) return error.TlsWriteFailed;
-            if (result == 0) return error.WriteZero;
-            offset += @intCast(result);
-        }
+        const record = try self.client.encrypt(bytes);
+        defer self.gpa.free(record);
+        try self.writeAll(record);
     }
 
     pub fn recv(self: *TlsTransport, dst: []u8) !usize {
-        if (dst.len == 0) return 0;
-        const result = cc_tls_read(self.context, dst.ptr, dst.len);
-        if (result < 0) {
-            var error_buffer: [160]u8 = @splat(0);
-            const native_error = cc_tls_last_error(self.context);
-            cc_tls_error_string(native_error, &error_buffer, error_buffer.len);
-            std.debug.print("TLS read failed: {s} ({d}), alert {d}\n", .{
-                std.mem.sliceTo(&error_buffer, 0),
-                native_error,
-                cc_tls_last_alert(self.context),
-            });
-            return error.TlsReadFailed;
-        }
-        return @intCast(result);
+        return (try self.recvInner(dst, null)) orelse 0;
+    }
+    pub fn recvTimeout(self: *TlsTransport, dst: []u8, milliseconds: i64) !?usize {
+        return self.recvInner(dst, @intCast(@max(0, milliseconds)));
     }
 
-    pub fn recvTimeout(self: *TlsTransport, dst: []u8, milliseconds: i64) !?usize {
-        if (dst.len == 0) return 0;
-        const bounded: u32 = @intCast(@max(0, @min(milliseconds, std.math.maxInt(u32))));
-        const result = cc_tls_read_timeout(self.context, dst.ptr, dst.len, bounded);
-        if (cc_tls_is_timeout(result) != 0) return null;
-        if (result < 0) return error.TlsReadFailed;
-        return @intCast(result);
+    fn finishHandshake(self: *TlsTransport, timeout_ms: u32) !void {
+        while (!self.client.handshakeDone()) {
+            const record = try self.readRecord(timeout_ms);
+            defer self.gpa.free(record);
+            switch (try self.client.feed(record)) {
+                .need_more => {},
+                .bytes_to_send => |out| {
+                    defer self.gpa.free(out);
+                    try self.writeAll(out);
+                },
+            }
+        }
+    }
+
+    fn recvInner(self: *TlsTransport, dst: []u8, timeout_ms: ?u32) !?usize {
+        if (self.pending.items.len != 0) return self.takePending(dst);
+        while (true) {
+            const record = self.readRecord(timeout_ms orelse std.math.maxInt(u32)) catch |err| switch (err) {
+                error.Timeout => return null,
+                else => return err,
+            };
+            defer self.gpa.free(record);
+            const read = try self.client.decryptApp(record);
+            switch (read) {
+                .application_data => |plain| {
+                    defer self.gpa.free(plain);
+                    try self.pending.appendSlice(self.gpa, plain);
+                    return self.takePending(dst);
+                },
+                .control => if (try self.client.takePendingSend()) |out| {
+                    defer self.gpa.free(out);
+                    try self.writeAll(out);
+                },
+            }
+        }
+    }
+
+    fn takePending(self: *TlsTransport, dst: []u8) usize {
+        const n = @min(dst.len, self.pending.items.len);
+        @memcpy(dst[0..n], self.pending.items[0..n]);
+        const rest = self.pending.items.len - n;
+        std.mem.copyForwards(u8, self.pending.items[0..rest], self.pending.items[n..]);
+        self.pending.items.len = rest;
+        return n;
+    }
+
+    fn writeAll(self: *TlsTransport, bytes: []const u8) !void {
+        var off: usize = 0;
+        while (off < bytes.len) {
+            const n = try self.io.vtable.netWrite(self.io.userdata, self.stream.socket.handle, "", &.{bytes[off..]}, 1);
+            if (n == 0) return error.WriteZero;
+            off += n;
+        }
+    }
+
+    fn readRecord(self: *TlsTransport, timeout_ms: u32) ![]u8 {
+        var header: [5]u8 = undefined;
+        try self.readExact(&header, timeout_ms);
+        const len = std.mem.readInt(u16, header[3..5], .big);
+        if (len > 18432) return error.TlsReadFailed;
+        const record = try self.gpa.alloc(u8, 5 + len);
+        errdefer self.gpa.free(record);
+        @memcpy(record[0..5], &header);
+        try self.readExact(record[5..], timeout_ms);
+        return record;
+    }
+
+    fn readExact(self: *TlsTransport, dst: []u8, timeout_ms: u32) !void {
+        var off: usize = 0;
+        while (off < dst.len) {
+            var iov = [_][]u8{dst[off..]};
+            const result = self.io.operateTimeout(.{ .net_read = .{ .socket_handle = self.stream.socket.handle, .data = iov[0..] } }, .{ .duration = .{ .raw = std.Io.Duration.fromMilliseconds(timeout_ms), .clock = .awake } }) catch |err| switch (err) {
+                error.Timeout => return error.Timeout,
+                else => return err,
+            };
+            const n = try result.net_read;
+            if (n == 0) return error.TlsReadFailed;
+            off += n;
+        }
     }
 };
-
-fn mapConnectStage(stage: c_int) anyerror {
-    return switch (stage) {
-        1 => error.OutOfMemory,
-        2 => error.PsaInitializationFailed,
-        3 => error.EntropyInitializationFailed,
-        4 => error.CertificateAuthorityLoadFailed,
-        5 => error.TlsConfigurationFailed,
-        6 => error.InvalidTlsHostname,
-        7 => error.ConnectionFailed,
-        8 => error.TlsHandshakeFailed,
-        9 => error.CertificateVerificationFailed,
-        10 => error.TlsClientAuthenticationFailed,
-        else => error.TlsConfigurationFailed,
-    };
-}
-
-test "linked mbedTLS release is exactly 3.6.6" {
-    try std.testing.expectEqual(expected_version, cc_tls_version_number());
-}
-
-test "TLS setup stages have deterministic public errors" {
-    try std.testing.expect(mapConnectStage(4) == error.CertificateAuthorityLoadFailed);
-    try std.testing.expect(mapConnectStage(8) == error.TlsHandshakeFailed);
-    try std.testing.expect(mapConnectStage(9) == error.CertificateVerificationFailed);
-}
