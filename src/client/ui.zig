@@ -1,8 +1,8 @@
 //! Reusable visual primitives for the Comic Chat desktop shell.
 //!
-//! The historical layout is deliberately retained by `geometry.zig`; this
-//! module owns the modern skin so menus, dialogs, buffer states, and status
-//! feedback share the same spacing, contrast, and focus language.
+//! `geometry.zig` preserves the established workspace proportions; this
+//! module owns a fully modern presentation for menus, dialogs, buffer states,
+//! and status feedback.
 
 const std = @import("std");
 const canvas_mod = @import("../render/canvas.zig");
@@ -23,14 +23,15 @@ pub const Theme = struct {
     pub const focus: u32 = 0xff0b4f85;
     pub const success: u32 = 0xff107c10;
     pub const warning: u32 = 0xffca5010;
+    pub const comic_paper: u32 = 0xffd8d8d8;
 };
 
 pub const ButtonKind = enum { primary, secondary, quiet };
 pub const DialogButton = enum { primary, cancel };
 pub const NoticeTone = enum { info, warning, failure, success };
 
-/// Source-shaped dialog geometry, centralized so draw, accessibility, and
-/// pointer handling cannot silently drift apart as dialogs grow.
+/// Shared dialog geometry, centralized so draw, accessibility, and pointer
+/// handling cannot silently drift apart as dialogs grow.
 pub const DialogLayout = struct {
     rect: Rect,
     body_y: i32,
@@ -197,6 +198,42 @@ pub fn drawToolbarSeparator(c: *Canvas, x: i32, rect: Rect) i32 {
 
 pub fn drawSplitter(c: *Canvas, rect: Rect) void {
     c.fillRect(rect.x, rect.y, rect.w, rect.h, Theme.divider);
+}
+
+pub fn drawContentSurface(c: *Canvas, rect: Rect, comic: bool) void {
+    c.fillRect(rect.x, rect.y, rect.w, rect.h, if (comic) Theme.comic_paper else Theme.layer);
+}
+
+pub fn drawTabStrip(c: *Canvas, rect: Rect) void {
+    c.fillRect(rect.x, rect.y, rect.w, rect.h, Theme.chrome);
+    c.fillRect(rect.x, rect.bottom() - 1, rect.w, 1, Theme.divider);
+}
+
+pub fn drawStatusTab(c: *Canvas, rect: Rect) void {
+    c.fillRect(rect.x + 4, rect.y + 3, 76, rect.h - 4, Theme.subtle);
+}
+
+pub fn drawMemberCard(c: *Canvas, rect: Rect, selected: bool, departed: bool) void {
+    const card = Rect{ .x = rect.x + 3, .y = rect.y + 3, .w = rect.w - 6, .h = rect.h - 6 };
+    c.fillRect(card.x, card.y, card.w, card.h, Theme.chrome);
+    drawOutline(c, card.x, card.y, card.w, card.h, if (selected) Theme.accent else Theme.divider);
+    c.fillRect(rect.x + 9, rect.y + 10, 7, 7, if (departed) Theme.divider else Theme.success);
+}
+
+pub fn drawCharacterPane(c: *Canvas, rect: Rect) void {
+    c.fillRect(rect.x, rect.y, rect.w, rect.h, Theme.chrome);
+    drawOutline(c, rect.x, rect.y, rect.w, rect.h, Theme.divider);
+}
+
+pub fn drawComposerSurface(c: *Canvas, rect: Rect) void {
+    c.fillRect(rect.x, rect.y, rect.w, rect.h, Theme.chrome);
+}
+
+pub fn drawHistoryBanner(c: *Canvas, rect: Rect, label: []const u8) void {
+    const width = @min(rect.w - 12, Canvas.textWidth(label) + 16);
+    c.fillRect(rect.x + 6, rect.y + 6, width, 25, Theme.layer);
+    drawOutline(c, rect.x + 6, rect.y + 6, width, 25, Theme.divider);
+    _ = c.drawText(label, rect.x + 12, rect.y + 8, Theme.secondary);
 }
 
 pub fn drawTab(c: *Canvas, x: i32, y: i32, width: i32, height: i32, selected: bool) void {

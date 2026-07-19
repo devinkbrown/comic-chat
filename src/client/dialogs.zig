@@ -61,7 +61,7 @@ pub const Spec = struct {
 
 /// Visible controls for the portable dialog surface. The first editable field
 /// is bound to the shared modal editor; remaining rows expose the rest of the
-/// source-shaped contract without collapsing every dialog into one placeholder.
+/// established dialog contract without collapsing every dialog into one placeholder.
 pub const Field = struct { label: []const u8, hint: []const u8 = "" };
 
 pub const specs = [_]Spec{

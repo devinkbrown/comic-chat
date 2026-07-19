@@ -1,6 +1,6 @@
-//! Source-shaped portable Comic Chat client view.
+//! Modern portable Comic Chat client view.
 //!
-//! The buffer geometry follows Microsoft's `CChatView` splitter composition:
+//! The workspace geometry follows the established splitter composition:
 //! room tabs above an 80/20 conversation/member split, a fixed-height say
 //! window below the page/text view, and (in comic mode) a 30/70 member/bodycam
 //! split on the right. The skin is modernized, but the spatial contract is not.
@@ -38,7 +38,7 @@ pub const Action = union(enum) {
     dialog_cancel: dialogs.Id,
 };
 
-// Windows/Fluent neutral roles applied to the source UI geometry.
+// Modern desktop color roles applied to the established workspace geometry.
 const ink = ui.Theme.ink;
 const secondary = ui.Theme.secondary;
 const chrome = ui.Theme.chrome;
@@ -443,7 +443,7 @@ pub const View = struct {
     }
 
     fn drawComicBuffer(self: *View, rect: Rect, transcript: *const session.Transcript) !void {
-        self.canvas.fillRect(rect.x, rect.y, rect.w, rect.h, 0xffd8d8d8);
+        ui.drawContentSurface(&self.canvas, rect, true);
         if (rect.w <= 0 or rect.h <= 0) return;
         if (transcript.lines.items.len == 0) {
             drawEmptyBuffer(&self.canvas, rect, "No messages yet - type below and press Enter");
@@ -500,13 +500,12 @@ pub const View = struct {
 
         if (self.shell.history_offset > 0) {
             const label = "Earlier messages - Page Down returns toward latest";
-            self.canvas.fillRect(rect.x + 6, rect.y + 6, @min(rect.w - 12, Canvas.textWidth(label) + 12), 25, layer);
-            _ = self.canvas.drawText(label, rect.x + 12, rect.y + 7, secondary);
+            ui.drawHistoryBanner(&self.canvas, rect, label);
         }
     }
 
     fn drawTextBuffer(self: *View, rect: Rect, transcript: *const session.Transcript) void {
-        self.canvas.fillRect(rect.x, rect.y, rect.w, rect.h, layer);
+        ui.drawContentSurface(&self.canvas, rect, false);
         if (transcript.lines.items.len == 0) {
             drawEmptyBuffer(&self.canvas, rect, "No messages yet - type below and press Enter");
             return;
@@ -523,7 +522,7 @@ pub const View = struct {
     }
 
     fn drawMemberList(self: *View, rect: Rect, transcript: *const session.Transcript, icon_mode: bool) !void {
-        self.canvas.fillRect(rect.x, rect.y, rect.w, rect.h, layer);
+        ui.drawContentSurface(&self.canvas, rect, false);
         if (rect.h <= 0) return;
         if (icon_mode) return self.drawMemberIcons(rect, transcript);
         var y = rect.y + 7;
@@ -548,9 +547,7 @@ pub const View = struct {
                 .h = cell_h,
             };
             if (cell.bottom() > rect.bottom()) break;
-            self.canvas.fillRect(cell.x + 3, cell.y + 3, cell.w - 6, cell.h - 6, chrome);
-            drawRectOutline(&self.canvas, cell.x + 3, cell.y + 3, cell.w - 6, cell.h - 6, if (member.is_self or self.shell.selected_member == index) accent else divider);
-            self.canvas.fillRect(cell.x + 9, cell.y + 10, 7, 7, if (member.departed) divider else 0xff107c10);
+            ui.drawMemberCard(&self.canvas, cell, member.is_self or self.shell.selected_member == index, member.departed);
             const avatar = strip.avatarByName(member.avatar) orelse continue;
             var icon = bgb.decodeIcon(self.gpa, avatar) catch continue;
             defer icon.deinit(self.gpa);
@@ -569,8 +566,7 @@ pub const View = struct {
 
     fn drawBodyCamera(self: *View, rect: Rect, transcript: *const session.Transcript) !void {
         if (rect.w <= 0 or rect.h <= 0) return;
-        self.canvas.fillRect(rect.x, rect.y, rect.w, rect.h, chrome);
-        drawRectOutline(&self.canvas, rect.x, rect.y, rect.w, rect.h, divider);
+        ui.drawCharacterPane(&self.canvas, rect);
 
         // bodycam.cpp: CacheBullSide uses min(width, 159), disabling the wheel
         // below 93 pixels. The figure occupies the remaining white rectangle.
@@ -979,9 +975,9 @@ fn drawToolbarSeparator(c: *Canvas, x: i32, rect: Rect) i32 {
 }
 
 fn drawTabBar(c: *Canvas, rect: Rect, tabs: []const View.Tab, active: usize, focused: bool) void {
-    c.fillRect(rect.x, rect.y, rect.w, rect.h, chrome);
+    ui.drawTabStrip(c, rect);
     const status_w: i32 = 76;
-    c.fillRect(rect.x + 4, rect.y + 3, status_w, rect.h - 4, subtle);
+    ui.drawStatusTab(c, rect);
     drawBubbleGlyph(c, rect.x + 7, rect.y + 6, secondary, false);
     _ = c.drawText("Status", rect.x + 27, rect.y + 4, secondary);
     const first_x = rect.x + status_w + 6;
@@ -999,7 +995,6 @@ fn drawTabBar(c: *Canvas, rect: Rect, tabs: []const View.Tab, active: usize, foc
         }
         if (focused and index == active) drawFocus(c, .{ .x = x, .y = rect.y + 2, .w = width, .h = rect.h - 2 });
     }
-    c.fillRect(rect.x, rect.bottom() - 1, rect.w, 1, divider);
 }
 
 fn sayActionLabel(index: u8) []const u8 {
@@ -1022,7 +1017,7 @@ fn drawSplitters(c: *Canvas, layout: geometry.Layout, comic_mode: bool) void {
 
 fn drawSayWindow(c: *Canvas, layout: geometry.Layout, input: []const u8, cursor: usize, selection: ?TextSelection, focused: bool, say_mode: shell_mod.SayMode) void {
     const edit = layout.say_editor;
-    c.fillRect(layout.say.x, layout.say.y, layout.say.w, layout.say.h, chrome);
+    ui.drawComposerSurface(c, layout.say);
     ui.drawComposerField(c, edit, focused);
     if (selection) |range| {
         const start = @min(range.start, input.len);
@@ -1326,7 +1321,7 @@ fn drawDialogButton(c: *Canvas, x: i32, y: i32, width: i32, label: []const u8, k
     ui.drawButton(c, x, y, width, label, kind, hovered);
 }
 
-test "view renders source-shaped empty buffer and chrome" {
+test "view renders modern empty buffer and chrome" {
     const gpa = std.testing.allocator;
     var view = try View.init(gpa, 960, 720);
     defer view.deinit();

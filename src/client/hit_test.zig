@@ -1,4 +1,4 @@
-//! Stable hit targets for the source-shaped shell.
+//! Stable hit targets for the modern desktop shell.
 
 const std = @import("std");
 const geometry = @import("geometry.zig");
