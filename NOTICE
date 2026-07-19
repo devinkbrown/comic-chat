@@ -10,6 +10,5 @@ licensed under the MIT License. The complete notice is in LICENSES/MIT.txt.
 The embedded Comic Neue font data is licensed under the SIL Open Font License
 1.1. The complete notice is in src/render/COMIC_NEUE_LICENSE.txt.
 
-The statically linked mbedTLS sources are available under GPL-2.0-or-later;
-this distribution uses that licensing option. The precise source revision is
-pinned in build.zig.zon.
+The portable Onyx TLS implementation is included as a pinned submodule and is
+licensed under AGPL-3.0-or-later.

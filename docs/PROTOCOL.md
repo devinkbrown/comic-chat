@@ -14,11 +14,11 @@ commands including `NICK`, `USER`, `JOIN`, `PRIVMSG`, `NOTICE`, `PING`, and
 `PONG`. The old client can negotiate Microsoft's IRCX extensions, but it also
 has a non-IRCX representation.
 
-The portable client secures that stream with the official mbedTLS 3.6.6 release
+The portable client secures that stream with the pinned Onyx TLS implementation
 at commit `0bebf8b8c7f07abe3571ded48a11aa907a1ffb20`. TLS is the default and the
 omitted port defaults to 6697. The client initializes PSA and CTR-DRBG entropy,
 uses stream-client defaults, sends SNI, verifies the hostname, and configures
-`MBEDTLS_SSL_VERIFY_REQUIRED`. It loads common Unix system bundles/directories
+mandatory certificate-chain and hostname verification. It loads common Unix system bundles/directories
 or the Windows ROOT certificate store; `--ca-file <pem>` supplies an explicit
 replacement bundle. Missing roots, handshake errors, and verification errors
 fail the connection without falling back to plaintext. `--plaintext` is an
