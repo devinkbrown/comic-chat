@@ -297,7 +297,6 @@ pub const View = struct {
         self.canvas.clear(chrome);
 
         drawMenuBar(&self.canvas, layout.menu);
-        if (self.active_menu) |menu| drawMenuPopup(&self.canvas, menu);
         drawToolBar(&self.canvas, layout.toolbar, comic_mode);
         drawTabBar(&self.canvas, layout.tabs, tabs, active_tab, self.shell.focus == .navigation);
         drawSplitters(&self.canvas, layout, comic_mode);
@@ -317,6 +316,7 @@ pub const View = struct {
         if (self.shell.focus == .transcript) drawFocus(&self.canvas, layout.transcript);
         if (self.shell.focus == .members) drawFocus(&self.canvas, layout.members);
         if (self.shell.focus == .emotion) drawFocus(&self.canvas, layout.body_camera);
+        if (self.active_menu) |menu| drawMenuPopup(&self.canvas, menu);
         if (self.active_dialog) |id| drawDialog(&self.canvas, dialogs.get(id), self.dialog_editor.text(), self.dialog_editor.cursor);
     }
 
