@@ -53,6 +53,7 @@ pub const View = struct {
     canvas: Canvas,
     shell: shell_mod.State = .{},
     active_dialog: ?dialogs.Id = null,
+    active_menu: ?u8 = null,
     dialog_editor: input_mod.Editor,
     room_tab_count: usize = 1,
 
@@ -123,6 +124,7 @@ pub const View = struct {
     }
 
     pub fn openDialog(self: *View, id: dialogs.Id) void {
+        self.active_menu = null;
         self.dialog_editor.clear();
         self.active_dialog = id;
     }
@@ -183,6 +185,12 @@ pub const View = struct {
             }
             return .none;
         }
+        if (self.active_menu) |menu| {
+            if (pointer.kind != .down or pointer.button != .primary) return .none;
+            self.active_menu = null;
+            if (menuPopupItem(menu, pointer.x, pointer.y)) |item| self.invokeMenuItem(menu, item);
+            return .{ .menu = menu };
+        }
         const comic_mode = self.shell.content_mode == .comic;
         const layout = geometry.Layout.compute(self.canvas.width, self.canvas.height, comic_mode, self.shell.show_members);
         const target = hit_test.shell(layout, comic_mode, pointer.x, pointer.y, member_count);
@@ -197,18 +205,8 @@ pub const View = struct {
         return switch (target) {
             .none => .none,
             .menu => |index| menu: {
-                const id: dialogs.Id = switch (index) {
-                    0 => .setup,
-                    1 => .settings,
-                    2 => .comics_view,
-                    3 => .choose_color,
-                    4 => .room_list,
-                    5 => .user_list,
-                    6 => .room_list,
-                    7 => .settings,
-                    else => .about,
-                };
-                self.openDialog(id);
+                self.active_menu = index;
+                self.shell.focus = .navigation;
                 break :menu .{ .menu = index };
             },
             .toolbar => |index| toolbar: {
@@ -299,6 +297,7 @@ pub const View = struct {
         self.canvas.clear(chrome);
 
         drawMenuBar(&self.canvas, layout.menu);
+        if (self.active_menu) |menu| drawMenuPopup(&self.canvas, menu);
         drawToolBar(&self.canvas, layout.toolbar, comic_mode);
         drawTabBar(&self.canvas, layout.tabs, tabs, active_tab, self.shell.focus == .navigation);
         drawSplitters(&self.canvas, layout, comic_mode);
@@ -527,18 +526,117 @@ pub const View = struct {
             .h = wheel_side,
         }, self.shell.emotion_x, self.shell.emotion_y);
     }
+
+    fn invokeMenuItem(self: *View, menu: u8, item: u8) void {
+        switch (menu) {
+            0 => if (item == 2) self.openDialog(.about),
+            1 => if (item == 0) self.openDialog(.settings),
+            2 => switch (item) {
+                0 => self.setContentMode(.comic),
+                1 => self.setContentMode(.text),
+                2 => self.toggleMembers(),
+                else => {},
+            },
+            3 => switch (item) {
+                0 => self.openDialog(.set_text_font),
+                1 => self.openDialog(.choose_color),
+                else => {},
+            },
+            4 => switch (item) {
+                0 => self.openDialog(.room_list),
+                1 => self.openDialog(.channel),
+                2 => self.openDialog(.channel_create),
+                else => {},
+            },
+            5 => switch (item) {
+                0 => self.openDialog(.user_list),
+                1 => self.openDialog(.personal),
+                else => {},
+            },
+            7 => if (item == 0) self.openDialog(.settings),
+            8 => if (item == 0) self.openDialog(.about),
+            else => {},
+        }
+    }
 };
+
+const menu_labels = [_][]const u8{ "File", "Edit", "View", "Format", "Room", "Member", "Favorites", "Window", "Help" };
+
+fn menuStart(menu: u8) i32 {
+    var x: i32 = 8;
+    var index: u8 = 0;
+    while (index < menu and index < menu_labels.len) : (index += 1) x += Canvas.textWidth(menu_labels[index]) + 18;
+    return x;
+}
+
+fn menuItemCount(menu: u8) u8 {
+    return switch (menu) {
+        0, 2, 4 => 3,
+        3, 5 => 2,
+        else => 1,
+    };
+}
+
+fn menuItemLabel(menu: u8, item: u8) []const u8 {
+    return switch (menu) {
+        0 => switch (item) {
+            0 => "Open conversation",
+            1 => "Save conversation",
+            else => "About Comic Chat",
+        },
+        1 => "Settings",
+        2 => switch (item) {
+            0 => "Comic view",
+            1 => "Text view",
+            else => "Show members",
+        },
+        3 => if (item == 0) "Text font" else "Colors",
+        4 => switch (item) {
+            0 => "Room list",
+            1 => "Enter room",
+            else => "Create room",
+        },
+        5 => if (item == 0) "User list" else "Personal profile",
+        6 => "Favorites",
+        7 => "Settings",
+        else => "About Comic Chat",
+    };
+}
+
+fn menuPopupRect(menu: u8) Rect {
+    return .{ .x = menuStart(menu), .y = 24, .w = 190, .h = @as(i32, menuItemCount(menu)) * 25 + 8 };
+}
+
+fn menuPopupItem(menu: u8, x: i32, y: i32) ?u8 {
+    const rect = menuPopupRect(menu);
+    if (x < rect.x or x >= rect.right() or y < rect.y + 4 or y >= rect.bottom() - 4) return null;
+    const item = @divTrunc(y - rect.y - 4, 25);
+    if (item < 0 or item >= menuItemCount(menu)) return null;
+    return @intCast(item);
+}
 
 fn drawMenuBar(c: *Canvas, rect: Rect) void {
     c.fillRect(rect.x, rect.y, rect.w, rect.h, chrome);
-    const items = [_][]const u8{ "File", "Edit", "View", "Format", "Room", "Member", "Favorites", "Window", "Help" };
     var x = rect.x + 8;
-    for (items) |item| {
+    for (menu_labels) |item| {
         _ = c.drawText(item, x, rect.y, ink);
         x += Canvas.textWidth(item) + 18;
         if (x >= rect.right() - 40) break;
     }
     c.fillRect(rect.x, rect.bottom() - 1, rect.w, 1, divider);
+}
+
+fn drawMenuPopup(c: *Canvas, menu: u8) void {
+    const rect = menuPopupRect(menu);
+    c.fillRect(rect.x + 2, rect.y + 2, rect.w, rect.h, 0xffa0a0a0);
+    c.fillRect(rect.x, rect.y, rect.w, rect.h, layer);
+    drawRectOutline(c, rect.x, rect.y, rect.w, rect.h, divider);
+    var item: u8 = 0;
+    while (item < menuItemCount(menu)) : (item += 1) {
+        const y = rect.y + 4 + @as(i32, item) * 25;
+        if (item != 0) c.fillRect(rect.x + 4, y - 1, rect.w - 8, 1, subtle);
+        _ = c.drawText(menuItemLabel(menu, item), rect.x + 12, y + 3, ink);
+    }
 }
 
 fn drawToolBar(c: *Canvas, rect: Rect, comic_mode: bool) void {
@@ -1053,7 +1151,13 @@ fn dialogRect(width: u32, height: u32, spec: dialogs.Spec) Rect {
 }
 
 fn drawDialog(c: *Canvas, spec: dialogs.Spec, value: []const u8, cursor: usize) void {
-    c.fillRect(0, 0, @intCast(c.width), @intCast(c.height), 0x66000000);
+    // `fillRect` overwrites pixels; an ARGB black fill therefore appears as a
+    // solid black frame to GDI. Blend the dimmer over the existing UI instead.
+    var y: i32 = 0;
+    while (y < @as(i32, @intCast(c.height))) : (y += 1) {
+        var x: i32 = 0;
+        while (x < @as(i32, @intCast(c.width))) : (x += 1) c.blendPixel(x, y, canvas_mod.black, 0x66);
+    }
     const rect = dialogRect(c.width, c.height, spec);
     c.fillRect(rect.x, rect.y, rect.w, rect.h, layer);
     drawRectOutline(c, rect.x, rect.y, rect.w, rect.h, focus_color);
@@ -1127,6 +1231,27 @@ test "view exposes a semantic shell snapshot without inspecting pixels" {
     try std.testing.expectEqual(accessibility.Role.window, snapshot.items()[0].role);
     try std.testing.expectEqual(accessibility.Role.tab, snapshot.items()[4].role);
     try std.testing.expect(snapshot.items()[4].selected);
+}
+
+test "menu clicks select navigation without opening a modal dialog" {
+    var view = try View.init(std.testing.allocator, 960, 720);
+    defer view.deinit();
+    const action = view.handlePointer(.{ .kind = .down, .x = 12, .y = 10, .button = .primary }, 0, 0);
+    try std.testing.expectEqual(Action{ .menu = 0 }, action);
+    try std.testing.expect(view.active_dialog == null);
+    try std.testing.expectEqual(shell_mod.Focus.navigation, view.shell.focus);
+}
+
+test "dialog dimmer preserves an opaque visible frame" {
+    var view = try View.init(std.testing.allocator, 320, 240);
+    defer view.deinit();
+    var transcript = session.Transcript.init(std.testing.allocator);
+    defer transcript.deinit();
+    view.openDialog(.settings);
+    try view.render("Comic Chat", "offline", &transcript, "", 0);
+    const pixel = view.pixels()[0];
+    try std.testing.expectEqual(@as(u32, 0xff), pixel >> 24);
+    try std.testing.expect((pixel & 0x00ffffff) != 0);
 }
 
 test "view switches text/comic buffers, pages history, and resizes" {
