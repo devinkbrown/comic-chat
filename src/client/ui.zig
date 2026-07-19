@@ -174,6 +174,31 @@ pub fn drawMenuItem(c: *Canvas, x: i32, y: i32, width: i32, label: []const u8, s
     _ = c.drawText(label, x + 8, y + 3, Theme.ink);
 }
 
+pub fn drawMenuBarSurface(c: *Canvas, rect: Rect) void {
+    c.fillRect(rect.x, rect.y, rect.w, rect.h, Theme.chrome);
+    c.fillRect(rect.x, rect.bottom() - 1, rect.w, 1, Theme.divider);
+}
+
+pub fn drawToolbarSurface(c: *Canvas, rect: Rect) void {
+    c.fillRect(rect.x, rect.y, rect.w, rect.h, Theme.chrome);
+    c.fillRect(rect.x, rect.bottom() - 1, rect.w, 1, Theme.divider);
+}
+
+pub fn drawPopupSurface(c: *Canvas, rect: Rect) void {
+    c.fillRect(rect.x + 3, rect.y + 3, rect.w, rect.h, 0xffb8c2cc);
+    c.fillRect(rect.x, rect.y, rect.w, rect.h, Theme.chrome);
+    drawOutline(c, rect.x, rect.y, rect.w, rect.h, Theme.divider);
+}
+
+pub fn drawToolbarSeparator(c: *Canvas, x: i32, rect: Rect) i32 {
+    c.fillRect(x + 3, rect.y + 5, 1, rect.h - 10, Theme.divider);
+    return x + 8;
+}
+
+pub fn drawSplitter(c: *Canvas, rect: Rect) void {
+    c.fillRect(rect.x, rect.y, rect.w, rect.h, Theme.divider);
+}
+
 pub fn drawTab(c: *Canvas, x: i32, y: i32, width: i32, height: i32, selected: bool) void {
     c.fillRect(x, y, width, height, if (selected) Theme.layer else Theme.subtle);
     if (selected) c.fillRect(x, y, width, 3, Theme.accent);

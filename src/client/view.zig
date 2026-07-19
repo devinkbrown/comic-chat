@@ -707,7 +707,7 @@ fn menuPopupItem(menu: u8, x: i32, y: i32) ?u8 {
 }
 
 fn drawMenuBar(c: *Canvas, rect: Rect, active: ?u8, hovered: ?u8) void {
-    c.fillRect(rect.x, rect.y, rect.w, rect.h, chrome);
+    ui.drawMenuBarSurface(c, rect);
     var x = rect.x + 12;
     for (menu_labels, 0..) |item, raw_index| {
         const index: u8 = @intCast(raw_index);
@@ -718,14 +718,11 @@ fn drawMenuBar(c: *Canvas, rect: Rect, active: ?u8, hovered: ?u8) void {
         x += Canvas.textWidth(item) + 28;
         if (x >= rect.right() - 40) break;
     }
-    c.fillRect(rect.x, rect.bottom() - 1, rect.w, 1, divider);
 }
 
 fn drawMenuPopup(c: *Canvas, menu: u8, hovered: ?u8) void {
     const rect = menuPopupRect(menu);
-    c.fillRect(rect.x + 3, rect.y + 3, rect.w, rect.h, 0xffb8c2cc);
-    c.fillRect(rect.x, rect.y, rect.w, rect.h, chrome);
-    drawRectOutline(c, rect.x, rect.y, rect.w, rect.h, divider);
+    ui.drawPopupSurface(c, rect);
     var item: u8 = 0;
     while (item < menuItemCount(menu)) : (item += 1) {
         const y = rect.y + 4 + @as(i32, item) * 25;
@@ -735,7 +732,7 @@ fn drawMenuPopup(c: *Canvas, menu: u8, hovered: ?u8) void {
 }
 
 fn drawToolBar(c: *Canvas, rect: Rect, comic_mode: bool, hovered: ?u8) void {
-    c.fillRect(rect.x, rect.y, rect.w, rect.h, chrome);
+    ui.drawToolbarSurface(c, rect);
     // At narrow desktop widths, preserve the most-used source commands with
     // breathing room instead of reducing two dozen glyphs into visual noise.
     if (rect.w < 760) {
@@ -758,7 +755,6 @@ fn drawToolBar(c: *Canvas, rect: Rect, comic_mode: bool, hovered: ?u8) void {
             _ = drawModernToolButton(c, item.glyph, compact_x, rect.y + 1, item.selected, hovered == item.index);
             compact_x += 28;
         }
-        c.fillRect(rect.x, rect.bottom() - 1, rect.w, 1, divider);
         return;
     }
     var x = rect.x + 5;
@@ -804,7 +800,6 @@ fn drawToolBar(c: *Canvas, rect: Rect, comic_mode: bool, hovered: ?u8) void {
         x = drawModernToolButton(c, glyph, x, rect.y + 1, false, hovered == index);
         index += 1;
     }
-    c.fillRect(rect.x, rect.bottom() - 1, rect.w, 1, divider);
 }
 
 const ToolGlyph = enum {
@@ -980,8 +975,7 @@ fn drawStarGlyph(c: *Canvas, cx: i32, cy: i32, color: u32) void {
 }
 
 fn drawToolbarSeparator(c: *Canvas, x: i32, rect: Rect) i32 {
-    c.fillRect(x + 3, rect.y + 5, 1, rect.h - 10, divider);
-    return x + 8;
+    return ui.drawToolbarSeparator(c, x, rect);
 }
 
 fn drawTabBar(c: *Canvas, rect: Rect, tabs: []const View.Tab, active: usize, focused: bool) void {
@@ -1021,9 +1015,9 @@ fn sayActionLabel(index: u8) []const u8 {
 
 fn drawSplitters(c: *Canvas, layout: geometry.Layout, comic_mode: bool) void {
     if (layout.right.w > 0)
-        c.fillRect(layout.transcript.right(), layout.buffer.y, geometry.splitter, layout.buffer.h, divider);
-    c.fillRect(layout.transcript.x, layout.transcript.bottom(), layout.transcript.w, geometry.splitter, divider);
-    if (comic_mode) c.fillRect(layout.right.x, layout.members.bottom(), layout.right.w, geometry.splitter, divider);
+        ui.drawSplitter(c, .{ .x = layout.transcript.right(), .y = layout.buffer.y, .w = geometry.splitter, .h = layout.buffer.h });
+    ui.drawSplitter(c, .{ .x = layout.transcript.x, .y = layout.transcript.bottom(), .w = layout.transcript.w, .h = geometry.splitter });
+    if (comic_mode) ui.drawSplitter(c, .{ .x = layout.right.x, .y = layout.members.bottom(), .w = layout.right.w, .h = geometry.splitter });
 }
 
 fn drawSayWindow(c: *Canvas, layout: geometry.Layout, input: []const u8, cursor: usize, selection: ?TextSelection, focused: bool, say_mode: shell_mod.SayMode) void {
