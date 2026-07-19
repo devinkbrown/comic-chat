@@ -12,18 +12,21 @@ const Canvas = canvas_mod.Canvas;
 const Rect = geometry.Rect;
 
 pub const Theme = struct {
-    pub const ink: u32 = 0xff1f2933;
-    pub const secondary: u32 = 0xff58636f;
-    pub const chrome: u32 = 0xfff7f9fc;
+    pub const ink: u32 = 0xff13243a;
+    pub const secondary: u32 = 0xff52657a;
+    pub const chrome: u32 = 0xfff4f7fb;
     pub const layer: u32 = 0xffffffff;
-    pub const subtle: u32 = 0xffe8edf3;
-    pub const divider: u32 = 0xffcbd5e1;
-    pub const accent: u32 = 0xff0f6cbd;
-    pub const accent_soft: u32 = 0xffdbeafe;
-    pub const focus: u32 = 0xff0b4f85;
+    pub const subtle: u32 = 0xffe4edf7;
+    pub const divider: u32 = 0xffc7d4e2;
+    pub const accent: u32 = 0xff0e6fcb;
+    pub const accent_soft: u32 = 0xffd9edff;
+    pub const focus: u32 = 0xff074d8f;
     pub const success: u32 = 0xff107c10;
     pub const warning: u32 = 0xffca5010;
-    pub const comic_paper: u32 = 0xffd8d8d8;
+    pub const comic_paper: u32 = 0xffe1edf8;
+    pub const workspace: u32 = 0xfff7faff;
+    pub const navigation: u32 = 0xff102a43;
+    pub const navigation_hover: u32 = 0xff1e4e79;
 };
 
 pub const ButtonKind = enum { primary, secondary, quiet };
@@ -175,13 +178,18 @@ pub fn drawMenuItem(c: *Canvas, x: i32, y: i32, width: i32, label: []const u8, s
     _ = c.drawText(label, x + 8, y + 3, Theme.ink);
 }
 
+pub fn drawMenuLabel(c: *Canvas, x: i32, y: i32, width: i32, label: []const u8, selected: bool) void {
+    if (selected) c.fillRect(x - 8, y + 2, width, 20, Theme.navigation_hover);
+    _ = c.drawText(label, x, y + 1, Theme.layer);
+}
+
 pub fn drawMenuBarSurface(c: *Canvas, rect: Rect) void {
-    c.fillRect(rect.x, rect.y, rect.w, rect.h, Theme.chrome);
-    c.fillRect(rect.x, rect.bottom() - 1, rect.w, 1, Theme.divider);
+    c.fillRect(rect.x, rect.y, rect.w, rect.h, Theme.navigation);
+    c.fillRect(rect.x, rect.bottom() - 2, rect.w, 2, Theme.accent);
 }
 
 pub fn drawToolbarSurface(c: *Canvas, rect: Rect) void {
-    c.fillRect(rect.x, rect.y, rect.w, rect.h, Theme.chrome);
+    c.fillRect(rect.x, rect.y, rect.w, rect.h, Theme.subtle);
     c.fillRect(rect.x, rect.bottom() - 1, rect.w, 1, Theme.divider);
 }
 
@@ -201,16 +209,16 @@ pub fn drawSplitter(c: *Canvas, rect: Rect) void {
 }
 
 pub fn drawContentSurface(c: *Canvas, rect: Rect, comic: bool) void {
-    c.fillRect(rect.x, rect.y, rect.w, rect.h, if (comic) Theme.comic_paper else Theme.layer);
+    c.fillRect(rect.x, rect.y, rect.w, rect.h, if (comic) Theme.comic_paper else Theme.workspace);
 }
 
 pub fn drawTabStrip(c: *Canvas, rect: Rect) void {
-    c.fillRect(rect.x, rect.y, rect.w, rect.h, Theme.chrome);
+    c.fillRect(rect.x, rect.y, rect.w, rect.h, Theme.subtle);
     c.fillRect(rect.x, rect.bottom() - 1, rect.w, 1, Theme.divider);
 }
 
 pub fn drawStatusTab(c: *Canvas, rect: Rect) void {
-    c.fillRect(rect.x + 4, rect.y + 3, 76, rect.h - 4, Theme.subtle);
+    c.fillRect(rect.x + 4, rect.y + 3, 76, rect.h - 4, Theme.navigation);
 }
 
 pub fn drawMemberCard(c: *Canvas, rect: Rect, selected: bool, departed: bool) void {
@@ -221,7 +229,7 @@ pub fn drawMemberCard(c: *Canvas, rect: Rect, selected: bool, departed: bool) vo
 }
 
 pub fn drawCharacterPane(c: *Canvas, rect: Rect) void {
-    c.fillRect(rect.x, rect.y, rect.w, rect.h, Theme.chrome);
+    c.fillRect(rect.x, rect.y, rect.w, rect.h, Theme.subtle);
     drawOutline(c, rect.x, rect.y, rect.w, rect.h, Theme.divider);
 }
 

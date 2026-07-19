@@ -709,8 +709,7 @@ fn drawMenuBar(c: *Canvas, rect: Rect, active: ?u8, hovered: ?u8) void {
         const index: u8 = @intCast(raw_index);
         const selected = active == index or hovered == index;
         const item_w = Canvas.textWidth(item) + 16;
-        if (selected) c.fillRect(x - 8, rect.y + 2, item_w, rect.h - 4, accent_soft);
-        _ = c.drawText(item, x, rect.y + 1, ink);
+        ui.drawMenuLabel(c, x, rect.y, item_w, item, selected);
         x += Canvas.textWidth(item) + 28;
         if (x >= rect.right() - 40) break;
     }
@@ -978,8 +977,8 @@ fn drawTabBar(c: *Canvas, rect: Rect, tabs: []const View.Tab, active: usize, foc
     ui.drawTabStrip(c, rect);
     const status_w: i32 = 76;
     ui.drawStatusTab(c, rect);
-    drawBubbleGlyph(c, rect.x + 7, rect.y + 6, secondary, false);
-    _ = c.drawText("Status", rect.x + 27, rect.y + 4, secondary);
+    drawBubbleGlyph(c, rect.x + 7, rect.y + 6, layer, false);
+    _ = c.drawText("Status", rect.x + 27, rect.y + 4, layer);
     const first_x = rect.x + status_w + 6;
     const tab_w: i32 = 140;
     for (tabs, 0..) |tab, index| {
@@ -1331,7 +1330,7 @@ test "view renders modern empty buffer and chrome" {
 
     try view.render("Comic Chat | #root | anna", "connected", &transcript, "hello", 3);
     const layout = geometry.Layout.compute(960, 720, true, true);
-    try std.testing.expectEqual(chrome, view.pixels()[0]);
+    try std.testing.expectEqual(ui.Theme.navigation, view.pixels()[0]);
     try std.testing.expectEqual(divider, view.pixels()[@as(usize, @intCast(layout.tabs.bottom() - 1)) * 960]);
     try std.testing.expect(view.pixels()[@as(usize, @intCast(layout.say.y + 2)) * 960 + 2] == layer or
         view.pixels()[@as(usize, @intCast(layout.say.y + 2)) * 960 + 2] == focus_color);
