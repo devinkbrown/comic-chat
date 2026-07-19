@@ -56,6 +56,44 @@ pub fn drawField(c: *Canvas, x: i32, y: i32, width: i32, active: bool) void {
     if (active) c.fillRect(x + 1, y + 1, 2, 22, Theme.accent);
 }
 
+/// A compact command tile for icon-only tools.  The top ink mark is the
+/// Comic Chat signature: selected modes read at a glance without a bulky
+/// native-toolbar bevel.
+pub fn drawCommandTile(c: *Canvas, x: i32, y: i32, selected: bool, hovered: bool) u32 {
+    if (selected) {
+        c.fillRect(x, y, 24, 24, Theme.accent_soft);
+        c.fillRect(x, y, 24, 3, Theme.accent);
+        return Theme.accent;
+    }
+    if (hovered) {
+        c.fillRect(x, y, 24, 24, Theme.layer);
+        drawOutline(c, x, y, 24, 24, Theme.divider);
+        return Theme.focus;
+    }
+    return Theme.ink;
+}
+
+pub fn drawMenuItem(c: *Canvas, x: i32, y: i32, width: i32, label: []const u8, selected: bool) void {
+    if (selected) {
+        c.fillRect(x, y, width, 23, Theme.accent_soft);
+        c.fillRect(x, y, 3, 23, Theme.accent);
+    }
+    _ = c.drawText(label, x + 8, y + 3, Theme.ink);
+}
+
+pub fn drawTab(c: *Canvas, x: i32, y: i32, width: i32, height: i32, selected: bool) void {
+    c.fillRect(x, y, width, height, if (selected) Theme.layer else Theme.subtle);
+    if (selected) c.fillRect(x, y, width, 3, Theme.accent);
+    if (selected) drawOutline(c, x, y, width, height, Theme.divider);
+}
+
+pub fn drawActionTile(c: *Canvas, x: i32, y: i32, width: i32, height: i32, selected: bool) u32 {
+    c.fillRect(x, y, width, height, if (selected) Theme.accent_soft else Theme.chrome);
+    c.fillRect(x, y, 1, height, Theme.divider);
+    if (selected) c.fillRect(x + 1, y + height - 3, @max(1, width - 1), 3, Theme.accent);
+    return if (selected) Theme.accent else Theme.ink;
+}
+
 pub fn drawStatusBar(c: *Canvas, x: i32, y: i32, width: i32, height: i32, status: []const u8, member_count: usize) void {
     c.fillRect(x, y, width, height, Theme.chrome);
     c.fillRect(x, y, width, 1, Theme.divider);
@@ -74,17 +112,22 @@ pub fn drawStatusBar(c: *Canvas, x: i32, y: i32, width: i32, height: i32, status
 pub fn drawEmptyState(c: *Canvas, x: i32, y: i32, width: i32, height: i32, detail: []const u8) void {
     c.fillRect(x, y, width, height, Theme.layer);
     const card_w = @min(360, @max(220, width - 48));
-    const card_h = 90;
+    const card_h = 132;
     const card_x = x + @divTrunc(width - card_w, 2);
     const card_y = y + @divTrunc(height - card_h, 2);
-    c.fillRect(card_x + 3, card_y + 4, card_w, card_h, 0xffd5dce5);
+    c.fillRect(card_x + 4, card_y + 5, card_w, card_h, 0xffd5dce5);
     c.fillRect(card_x, card_y, card_w, card_h, Theme.chrome);
     drawOutline(c, card_x, card_y, card_w, card_h, Theme.divider);
-    c.fillRect(card_x + 18, card_y + 18, 16, 12, Theme.accent_soft);
-    drawOutline(c, card_x + 18, card_y + 18, 16, 12, Theme.accent);
-    c.drawLine(card_x + 24, card_y + 29, card_x + 22, card_y + 34, Theme.accent);
-    _ = c.drawText("Your conversation starts here", card_x + 46, card_y + 15, Theme.ink);
-    drawEllipsized(c, detail, card_x + 18, card_y + 50, card_w - 36, Theme.secondary);
+    c.fillRect(card_x, card_y, 4, card_h, Theme.accent);
+    c.fillRect(card_x + 20, card_y + 18, 16, 12, Theme.accent_soft);
+    drawOutline(c, card_x + 20, card_y + 18, 16, 12, Theme.accent);
+    c.drawLine(card_x + 26, card_y + 29, card_x + 24, card_y + 34, Theme.accent);
+    _ = c.drawText("READY TO TALK", card_x + 48, card_y + 14, Theme.accent);
+    _ = c.drawText("Your conversation starts here", card_x + 20, card_y + 43, Theme.ink);
+    drawEllipsized(c, detail, card_x + 20, card_y + 66, card_w - 40, Theme.secondary);
+    c.fillRect(card_x + 20, card_y + 96, card_w - 40, 22, Theme.accent_soft);
+    c.fillRect(card_x + 20, card_y + 96, 3, 22, Theme.accent);
+    _ = c.drawText("Type a message below to begin", card_x + 32, card_y + 99, Theme.focus);
 }
 
 fn drawEllipsized(c: *Canvas, text: []const u8, x: i32, y: i32, max_width: i32, color: u32) void {

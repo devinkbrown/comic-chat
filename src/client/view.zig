@@ -734,12 +734,8 @@ fn drawMenuPopup(c: *Canvas, menu: u8, hovered: ?u8) void {
     var item: u8 = 0;
     while (item < menuItemCount(menu)) : (item += 1) {
         const y = rect.y + 4 + @as(i32, item) * 25;
-        if (hovered == item) {
-            c.fillRect(rect.x + 4, y, rect.w - 8, 23, accent_soft);
-            c.fillRect(rect.x + 4, y, 3, 23, accent);
-        }
         if (item != 0) c.fillRect(rect.x + 4, y - 1, rect.w - 8, 1, subtle);
-        _ = c.drawText(menuItemLabel(menu, item), rect.x + 12, y + 3, ink);
+        ui.drawMenuItem(c, rect.x + 4, y, rect.w - 8, menuItemLabel(menu, item), hovered == item);
     }
 }
 
@@ -874,14 +870,8 @@ fn toolbarLabel(index: u8) []const u8 {
 }
 
 fn drawModernToolButton(c: *Canvas, glyph: ToolGlyph, x: i32, y: i32, selected: bool, hovered: bool) i32 {
-    if (selected) {
-        c.fillRect(x, y, 24, 24, accent_soft);
-        c.fillRect(x, y + 22, 24, 2, accent);
-    } else if (hovered) {
-        c.fillRect(x, y, 24, 24, layer);
-        drawRectOutline(c, x, y, 24, 24, divider);
-    }
-    drawToolGlyph(c, glyph, x + 4, y + 4, if (selected) accent else ink);
+    const glyph_color = ui.drawCommandTile(c, x, y, selected, hovered);
+    drawToolGlyph(c, glyph, x + 4, y + 4, glyph_color);
     return x + 24;
 }
 
@@ -1011,8 +1001,7 @@ fn drawTabBar(c: *Canvas, rect: Rect, tabs: []const View.Tab, active: usize, foc
         const x = first_x + @as(i32, @intCast(index)) * tab_w;
         if (x >= rect.right()) break;
         const width = @min(tab_w, rect.right() - x);
-        c.fillRect(x, rect.y + 2, width, rect.h - 2, if (index == active) layer else subtle);
-        if (index == active) c.fillRect(x, rect.y + 2, width, 3, accent);
+        ui.drawTab(c, x, rect.y + 2, width, rect.h - 2, index == active);
         drawTextEllipsized(c, tab.label, x + 10, rect.y + 3, width - 30, if (tab.unread > 0) accent else ink);
         if (tab.unread > 0) {
             var unread_buf: [12]u8 = undefined;
@@ -1063,10 +1052,8 @@ fn drawSayWindow(c: *Canvas, layout: geometry.Layout, input: []const u8, cursor:
     var x = layout.say_actions.x;
     for (glyphs, 0..) |glyph, index| {
         const selected = @intFromEnum(say_mode) == index;
-        c.fillRect(x, layout.say_actions.y, geometry.say_button_size, layout.say_actions.h, if (selected) accent_soft else chrome);
-        c.fillRect(x, layout.say_actions.y, 1, layout.say_actions.h, divider);
-        if (selected) c.fillRect(x + 1, layout.say_actions.bottom() - 2, geometry.say_button_size - 1, 2, accent);
-        drawSayGlyph(c, glyph, x + 4, layout.say_actions.y + 3, if (selected) accent else ink);
+        const glyph_color = ui.drawActionTile(c, x, layout.say_actions.y, geometry.say_button_size, layout.say_actions.h, selected);
+        drawSayGlyph(c, glyph, x + 4, layout.say_actions.y + 3, glyph_color);
         x += geometry.say_button_size;
     }
     if (focused) drawFocus(c, layout.say);
