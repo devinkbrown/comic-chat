@@ -1526,7 +1526,7 @@ fn applyDialogAction(
         },
         else => {},
     }
-    view.closeDialog();
+    _ = view.closeDialog();
 }
 
 fn handleWorkspaceInputKey(
