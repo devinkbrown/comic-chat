@@ -125,8 +125,20 @@ env -u WAYLAND_DISPLAY zig build run -- window anna
 
 ## Release packages
 
-Build the x86_64 Windows, Linux, FreeBSD, and OpenBSD archives (with checksums)
-from a clean checkout:
+The current published release is
+[comicchat-portable-2026-07-19](https://github.com/devinkbrown/comic-chat/releases/tag/comicchat-portable-2026-07-19).
+It contains x86_64 binary packages for Windows, Linux, FreeBSD, and OpenBSD,
+an explicit buildable source archive, and a single SHA-256 manifest covering
+all five artifacts. The source archive includes the pinned Onyx TLS submodule,
+so it can be built after extraction without a separate submodule checkout.
+
+Verify downloaded artifacts before use:
+
+```sh
+sha256sum -c comicchat-unofficial-modern-builds-2026-07-SHA256SUMS.txt
+```
+
+To build the binary archives from a clean checkout:
 
 ```sh
 ./tools/package-release.sh unofficial-modern-builds-2026-07

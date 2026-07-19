@@ -3,7 +3,6 @@
 This repository ships one portable implementation under `src/`. It uses a
 software framebuffer renderer with direct X11, Wayland, and Win32 backends and
 no SDL. TLS is supplied by the pinned portable Onyx TLS implementation.
-implementation.
 
 The portable tree is currently tested with Zig
 `0.17.0-dev.1282+c0f9b51d8`. Its standard gates are:
@@ -79,8 +78,11 @@ hash.
 ## Change rules
 
 - Keep rendering and platform presentation in Zig with no SDL. Onyx TLS at the
-  exact `build.zig.zon` revision is the deliberate transport exception; do not
+  exact `third_party/onyx-server` gitlink revision is the deliberate transport exception; do not
   replace it with an unpinned system library or weaken certificate checks.
+- A source checkout must initialize that submodule with
+  `git submodule update --init --recursive`. The published source archive
+  already contains its pinned contents.
 - Add focused inline tests and aggregate a new test-only module from
   `src/root.zig` when necessary.
 - Do not add or redistribute AVB/BGB files without an exact source path,

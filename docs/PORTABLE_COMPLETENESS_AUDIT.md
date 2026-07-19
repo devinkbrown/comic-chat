@@ -6,9 +6,9 @@ the portable executable rather than inferred from module or test existence.
 
 ## Verdict
 
-The repository contains a complete, integrity-checked copy of the pinned
-Microsoft source and a substantial portable rendering, protocol, transport and
-native-window foundation. The portable desktop application now has an
+The repository contains a portable rendering, protocol, transport and
+native-window foundation. The historical Microsoft source is an external,
+pinned behavioral reference; it is not vendored. The portable desktop application now has an
 interactive Microsoft-shaped shell, unified pointer input, multi-room chat,
 Unicode editing, and an exhaustive dialog registry. It is not yet feature
 complete: clipboard/IME/accessibility, native file pickers, complete typed
@@ -31,12 +31,12 @@ This distinction is important:
 - The portable tree contains 82 files under `src/`. `src/root.zig:68-118`
   explicitly references every portable module and the four source-parity test
   modules so their inline tests are compiled and run.
-- There are 359 named Zig test blocks. The Win32 runtime smoke is intentionally
-  platform-conditional (`src/platform/win32.zig:643-653`).
-- Native Linux, `x86_64-linux-gnu`, and `x86_64-windows-gnu` builds pass.
-- The package allow-list now includes `source_ui_assets.zig`
-  (`build.zig.zon:12-22`), which is required by `build.zig` and was previously
-  missing from packaged source archives.
+- The current release test gate reports 373 passed tests and one intentionally
+  skipped platform-conditional test.
+- Native Linux plus x86_64 Windows, FreeBSD, and OpenBSD release builds pass.
+- The published source archive includes the source tree and the exact pinned
+  Onyx TLS submodule revision, while the binary archives contain the executable,
+  README, license, and third-party notices.
 
 ## Product completeness matrix
 
@@ -95,18 +95,20 @@ contracts is either reachable or deliberately classified obsolete:
 PASS  zig fmt --check build.zig source_ui_assets.zig src
 PASS  zig build test --summary all
 PASS  zig build --summary all
-PASS  zig build -Dtarget=x86_64-windows-gnu --summary all
-PASS  zig build -Dtarget=x86_64-linux-gnu --summary all
+PASS  zig build -Dtarget=x86_64-windows -Doptimize=ReleaseSafe
+PASS  zig build -Dtarget=x86_64-linux -Doptimize=ReleaseSafe
+PASS  zig build -Dtarget=x86_64-freebsd -Doptimize=ReleaseSafe
+PASS  zig build -Dtarget=x86_64-openbsd -Doptimize=ReleaseSafe
 PASS  git diff --check
 PASS  portable-only tree contains no retired MFC/C++ source directory
 PASS  record-codec demo, 650x1655 strip PPM, and 315x315 backdrop PNG
 PASS  Xvfb X11 viewer smoke and offline/reconnect application-shell smoke
-PASS  live eshmaki.me SASL EXTERNAL login as kain; TOKEN and MTOKEN persisted;
-      a second concurrent client resumed with the same account and nickname
-PASS  zig fetch . --debug-hash includes source_ui_assets.zig in package input
+PASS  release archive checksums verified for all four binary packages and the
+      source archive containing the pinned Onyx TLS source
 ```
 
-Not claimed by this audit: a VS2022/MFC build, native Win32 runtime smoke,
-real-compositor Wayland clipboard/scale behavior (not implemented). Those
-require their respective environment or the missing feature implementation
-rather than more unit tests.
+Not claimed by this audit: a live `eshmaki.me` SASL EXTERNAL login or a live
+same-nickname multi-client resume check with this transport revision, a
+VS2022/MFC build, native Win32 runtime smoke, or real-compositor Wayland
+clipboard/scale behavior. Those require their respective environment or the
+missing feature implementation rather than more unit tests.
