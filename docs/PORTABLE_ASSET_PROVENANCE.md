@@ -20,9 +20,8 @@ historical EULA prohibits third-party distribution. The one final-release-only
 artwork variant, Xeno, was therefore removed rather than attributed to the MIT
 source tree.
 
-This finding does not apply to `legacy/`: its imported files have a separate
-complete manifest and byte/Git-blob verification in `legacy/PROVENANCE.md` and
-`legacy/UPSTREAM-SHA256SUMS.txt`.
+The retired MFC/C++ source tree is deliberately not included in this portable
+repository; this audit covers every redistributed runtime AVB/BGB asset.
 
 ## Portable font atlases
 
@@ -60,10 +59,9 @@ below, not merely equivalent decoded images.
 | `xeno.avb` | `v2.5-beta-1-modern/comicart/xeno.avb` | Verbatim copy guarded by the pinned revision and source SHA-256 in `tools/import_pinned_xeno.sh`. |
 
 The background compression was reproduced with upstream zlib tag `v1.0.8`
-(commit `6759211ad8a5006689216a86c3267bb503bfccc1`). The historical
-`legacy/artifacts/lib/i386/zlib.lib` independently identifies itself as zlib
-1.0.8. Its level-9 output matches all three current compressed streams byte for
-byte; a newer zlib stream is semantically equivalent but is not always byte
+(commit `6759211ad8a5006689216a86c3267bb503bfccc1`). Its level-9 output
+matches all three current compressed streams byte for byte; a newer zlib stream
+is semantically equivalent but is not always byte
 identical.
 
 ### Resolved Xeno difference

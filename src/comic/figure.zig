@@ -169,12 +169,35 @@ pub fn poseStateForText(
     text: []const u8,
 ) !udi.PoseState {
     const analysis = emotion_mod.analyzeText(text);
+    return poseStateForAnalysis(gpa, avb_data, &analysis);
+}
+
+/// Resolve an explicit body-camera face selection through the same authored
+/// AVB availability and ordinal rules used by text-derived poses.
+pub fn poseStateForEmotion(
+    gpa: std.mem.Allocator,
+    avb_data: []const u8,
+    selected: emotion_mod.Emotion,
+    intensity: u8,
+) !udi.PoseState {
+    var analysis: emotion_mod.TextAnalysis = .{};
+    analysis.add(selected, intensity, 255);
+    var pose = try poseStateForAnalysis(gpa, avb_data, &analysis);
+    pose.requested = true;
+    return pose;
+}
+
+fn poseStateForAnalysis(
+    gpa: std.mem.Allocator,
+    avb_data: []const u8,
+    analysis: *const emotion_mod.TextAnalysis,
+) !udi.PoseState {
     const asset = try avb_asset.parse(avb_data);
     var table = try avb_asset.parsePoseTable(gpa, avb_data);
     defer table.deinit(gpa);
 
     if (asset.kind == .simple_avatar) {
-        const choice = selectAvailable(table.records, &analysis, .body, null) orelse neutralChoice();
+        const choice = selectAvailable(table.records, analysis, .body, null) orelse neutralChoice();
         const body = bgb.selectPose(table.records, .body, choice.emotion.assetIndex(), choice.intensity) orelse
             return error.PoseNotFound;
         return .{
@@ -194,8 +217,8 @@ pub fn poseStateForText(
         };
     }
 
-    const face_choice = selectAvailable(table.records, &analysis, .face, false) orelse neutralChoice();
-    const torso_choice = selectAvailable(table.records, &analysis, .torso, true) orelse neutralChoice();
+    const face_choice = selectAvailable(table.records, analysis, .face, false) orelse neutralChoice();
+    const torso_choice = selectAvailable(table.records, analysis, .torso, true) orelse neutralChoice();
     const face = bgb.selectPose(table.records, .face, face_choice.emotion.assetIndex(), face_choice.intensity) orelse
         return error.PoseNotFound;
     const torso = bgb.selectPose(table.records, .torso, torso_choice.emotion.assetIndex(), torso_choice.intensity) orelse

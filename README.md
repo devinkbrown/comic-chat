@@ -1,12 +1,7 @@
 # comicchat
 
-A source-faithful continuation of **Microsoft Comic Chat 2.5**, developed in
-two coordinated lanes:
-
-- `src/` is the new portable client, with a Zig software renderer and native
-  platform backends plus the pinned official mbedTLS transport.
-- [`legacy/`](legacy/README.md) preserves Microsoft Chat 2.5 beta 1 as a Win32
-  MFC application that builds with a current Visual Studio toolchain.
+A portable, source-faithful continuation of **Comic Chat**, built in Zig with
+a software renderer, native X11/Wayland/Win32 presentation, and verified TLS.
 
 Comic Chat turns IRC conversations into auto-generated comic strips. Each
 participant has an avatar, and the client composes panels with speech balloons,
@@ -15,25 +10,28 @@ poses, and emotions while remaining interoperable with ordinary IRC clients.
 The rendering reference is Microsoft's open-source Comic Chat repository:
 <https://github.com/microsoft/comic-chat>. The portable implementation ports
 the original panel, avatar-placement, balloon, and emotion behavior from that
-source instead of approximating it from screenshots. The legacy import is
-pinned to revision `c7df00f60bc8e9fdef413f139e61f7c37e024684`.
+source instead of approximating it from screenshots. The external historical
+reference is pinned to revision `c7df00f60bc8e9fdef413f139e61f7c37e024684`.
 
 The portable page keeps the released client's visible contract: an implicit
 borderless title/starring panel, 2300×2300 logical conversation panels, two
 panels per row, 144-unit interstices, authored AVB icons and mask layers, and
 source-seeded panel/balloon layout. Comic Neue Bold and Bold Italic are bundled
 as the SIL-OFL portable substitutes for the proprietary Comic Sans MS faces
-requested by the Windows client; the legacy Windows lane uses the original GDI
-font path. As in Microsoft's source, only Woodring whisper balloons select the
+requested by the historical Windows client. As in Microsoft's source, only
+Woodring whisper balloons select the
 italic face.
 
 ## Project layout
 
-| Lane | Path | Purpose |
+| Area | Path | Purpose |
 | --- | --- | --- |
 | Portable client | `src/` | Zig IRC client, AVB/BGB decoding, original rendering behavior, software rasterizer, and native X11/Wayland/Win32 presentation |
-| Legacy Windows client | `legacy/` | Byte-identical import of Microsoft's `v2.5-beta-1-modern` MFC source plus reproducible build, package, provenance, and smoke-test wrappers |
+| Runtime assets | `assets/` and `src/assets/testdata/` | Attributed character, backdrop, and emotion content required by the portable renderer |
 | Protocol notes | `docs/PROTOCOL.md` | Comic Chat wire-format and interoperability notes |
+| Completeness audit | `docs/PORTABLE_COMPLETENESS_AUDIT.md` | Reachable, substrate-only, partial, and missing portable product surfaces |
+| UI source audit | `docs/MICROSOFT_UI_SOURCE_AUDIT.md` | Microsoft menu, geometry, body-camera, member-list, buffer, and dialog contracts |
+| Repository map | `docs/PROJECT_STRUCTURE.md` | Portable-first repository ownership and layout |
 
 ## Portable Zig client
 
@@ -50,6 +48,8 @@ zig build run -- app irc.example 6697 nick '#channel' --ca-file ./ca.pem
 zig build run -- app irc.example nick '#channel' --socks5 127.0.0.1:1080
 zig build run -- app irc.example nick '#channel' --http-proxy proxy.example:8080
 zig build run -- app localhost 6667 nick '#channel' --plaintext
+zig build run -- app eshmaki.me kain '#root' \
+  --tls-cert ~/.weechat/tls/relay.pem --sasl-user kain --sasl-external
 ```
 
 The app opens before DNS/TCP/TLS setup and keeps the native event loop live
@@ -57,6 +57,28 @@ while a bounded connector races IPv6/IPv4 candidates. `--connect-timeout-ms`
 sets the per-address and proxy-read deadline. SOCKS5 uses no-auth remote-DNS
 CONNECT; HTTP proxies use a bounded CONNECT response. TLS hostname and chain
 verification still target the IRC host after either proxy handshake.
+
+On Onyx Server, authenticated clients persist reusable `SESSION TOKEN` and
+portable `SESSION MTOKEN` credentials in `.comicchat-session` (override with
+`--session-file`). After SASL succeeds, reconnects prefer the unexpired mesh
+credential, issue `SESSION RESUME` before joining, and then request fresh
+credentials. This is the exact-token boundary required for multiple live
+clients using the same account and nickname to share one logical session.
+Session files are written atomically with owner-only permissions on POSIX.
+
+Inside the desktop client, room tabs are clickable and retain independent
+transcripts, rosters, unread counts, and unfinished drafts. The corresponding
+keyboard commands are `/join #room`, `/switch #room`, and `/part`. Use
+`/view comic`, `/view text`, `/members`, `/avatar name`, and `/dialog IDD_*`
+for view and source-dialog workflows. Conversation files and rendered UI
+captures use `/open path.ccc`, `/save path.ccc`, and `/export path.png`;
+writes are bounded and atomic.
+
+`--tls-cert <cert-and-key.pem>` presents a PEM client certificate and private
+key for SASL EXTERNAL. With the current pinned mbedTLS release, certificate
+authentication uses verified TLS 1.2 for interoperability with the live Onyx
+listener; connections without a client certificate continue to negotiate TLS
+1.2 or TLS 1.3 normally.
 
 ### Regenerating the portable font atlas
 
@@ -101,12 +123,15 @@ force the X11 smoke explicitly:
 env -u WAYLAND_DISPLAY zig build run -- window anna
 ```
 
-The direct Wayland client currently uses scale 1 and a US evdev key map; it does
-not yet negotiate output scale or provide XKB layout/compose, IME, or key-repeat
-support. Win32 is system-DPI aware rather than per-monitor-v2 aware. Window
-creation, configure/resize, shared-memory presentation, keyboard input, IRC
-traffic, and clean close are implemented on both Wayland and Win32. Pointer
-interaction is not part of the portable client UI yet.
+The direct Wayland client currently uses scale 1. It parses the compositor's
+XKB keymap for base and Shift levels and implements compositor-configured
+client-side key repeat, with a US evdev fallback before a usable keymap is
+available. It does not yet support AltGr/ISO Level3, compose/dead-key sequences,
+IME, or output-scale negotiation. Win32 is system-DPI aware rather than
+per-monitor-v2 aware. Window creation, configure/resize, shared-memory
+presentation, keyboard input, IRC traffic, and clean close are implemented on
+both Wayland and Win32. Pointer input and the shared editing clipboard model
+are implemented; native OS clipboard and IME bridges remain future work.
 
 The portable lane has no SDL dependency. Native backends speak the Wayland/X11
 protocols or Win32 APIs directly, and all display the same software-rendered
@@ -129,36 +154,6 @@ The client also consumes the source `# Appears as ...` avatar control, announces
 its current bundled avatar after joining, and supports `/avatar <name>` in the
 interactive input so later panels use the selected character.
 
-## Legacy Windows client
-
-The faithful old-client port targets Windows x86 with Visual Studio 2022 and
-MFC. From a Windows command prompt:
-
-```bat
-cd legacy
-build.cmd Release --clean
-```
-
-On any Unix-like development host, verify the imported snapshot and its exact
-Microsoft Git blobs with:
-
-```sh
-cd legacy
-./scripts/verify-import.sh /path/to/microsoft-comic-chat
-```
-
-See [`legacy/README.md`](legacy/README.md) for Windows prerequisites, packaging,
-runtime smoke testing, and known limitations. The legacy IRC transport is
-plaintext; use a trusted local TLS tunnel or bouncer and never send sensitive
-credentials over an untrusted network.
-
-After a Windows Release build, package and exercise the isolated archive with:
-
-```powershell
-pwsh -NoProfile -File .\scripts\package.ps1
-pwsh -NoProfile -File .\scripts\smoke.ps1
-```
-
 ## Design tenets
 
 - **Source-faithful rendering.** Microsoft's original implementation is the
@@ -169,19 +164,17 @@ pwsh -NoProfile -File .\scripts\smoke.ps1
   framebuffer presentation.
 - **Interoperable IRC.** Comic metadata remains compatible with ordinary IRC;
   clients without Comic Chat still see the conversation text.
-- **Preserve the original.** The MFC application remains available as a
-  separately buildable, integrity-verifiable Windows lane.
+- **Portable product first.** This repository ships one portable client; it
+  does not vendor a second MFC/C++ implementation.
 
 ## License and provenance
 
-Microsoft's upstream repository is published under the MIT License. The legacy
-snapshot retains that license, the upstream source, and its bundled AVB/BGB art
-verbatim; see [`legacy/PROVENANCE.md`](legacy/PROVENANCE.md) and
-[`legacy/NOTICE.txt`](legacy/NOTICE.txt). Microsoft names, logos, and artwork
-may be trademarks, and builds from this repository are unofficial and
-unsupported. The portable asset set has a byte-level source and transformation
-audit in [`docs/PORTABLE_ASSET_PROVENANCE.md`](docs/PORTABLE_ASSET_PROVENANCE.md),
-including the checksum-guarded Xeno import from the pinned Microsoft revision.
+The historical Comic Chat source is MIT-licensed and remains an external
+reference at <https://github.com/microsoft/comic-chat>; its MFC/C++ tree is not
+vendored here. Microsoft names, logos, and artwork may be trademarks, and
+builds from this repository are unofficial and unsupported. The portable asset
+set has a byte-level source and transformation audit in
+[`docs/PORTABLE_ASSET_PROVENANCE.md`](docs/PORTABLE_ASSET_PROVENANCE.md).
 The generated portable font atlases are derived from Comic Neue Bold and Bold
 Italic under the SIL Open Font License; see
 [`src/render/COMIC_NEUE_LICENSE.txt`](src/render/COMIC_NEUE_LICENSE.txt).

@@ -5,6 +5,7 @@
 #include "mbedtls/entropy.h"
 #include "mbedtls/error.h"
 #include "mbedtls/net_sockets.h"
+#include "mbedtls/pk.h"
 #include "mbedtls/platform_util.h"
 #include "mbedtls/ssl.h"
 #include "mbedtls/version.h"
@@ -27,6 +28,10 @@ struct cc_tls_context {
     mbedtls_ssl_context ssl;
     mbedtls_ssl_config config;
     mbedtls_x509_crt ca;
+    mbedtls_x509_crt client_cert;
+    mbedtls_pk_context client_key;
+    int last_error;
+    int last_alert;
     int ready;
 };
 
@@ -86,10 +91,13 @@ static void initialize_context(cc_tls_context *context)
     mbedtls_ssl_init(&context->ssl);
     mbedtls_ssl_config_init(&context->config);
     mbedtls_x509_crt_init(&context->ca);
+    mbedtls_x509_crt_init(&context->client_cert);
+    mbedtls_pk_init(&context->client_key);
 }
 
 static int configure_context(cc_tls_context *context, const char *host,
-                             const char *ca_file, int *native_error)
+                             const char *ca_file, const char *client_cert_file,
+                             int *native_error)
 {
     static const unsigned char personalization[] = "comicchat-mbedtls-3.6.6";
     int result;
@@ -124,6 +132,32 @@ static int configure_context(cc_tls_context *context, const char *host,
     mbedtls_ssl_conf_rng(&context->config, mbedtls_ctr_drbg_random, &context->drbg);
     mbedtls_ssl_conf_ca_chain(&context->config, &context->ca, NULL);
     mbedtls_ssl_conf_authmode(&context->config, MBEDTLS_SSL_VERIFY_REQUIRED);
+    if (client_cert_file != NULL && client_cert_file[0] != '\0') {
+        /* mbedTLS 3.6.6 client-auth records currently trigger a TLS 1.3
+         * decode_error in the live Onyx Server listener. TLS 1.2 remains a
+         * verified, server-supported path for certificate-bound EXTERNAL. */
+        mbedtls_ssl_conf_max_tls_version(&context->config,
+                                         MBEDTLS_SSL_VERSION_TLS1_2);
+        result = mbedtls_x509_crt_parse_file(&context->client_cert, client_cert_file);
+        if (result < 0) {
+            *native_error = result;
+            return CC_TLS_CLIENT_AUTH;
+        }
+        result = mbedtls_pk_parse_keyfile(&context->client_key, client_cert_file,
+                                          NULL, mbedtls_ctr_drbg_random,
+                                          &context->drbg);
+        if (result != 0) {
+            *native_error = result;
+            return CC_TLS_CLIENT_AUTH;
+        }
+        result = mbedtls_ssl_conf_own_cert(&context->config,
+                                           &context->client_cert,
+                                           &context->client_key);
+        if (result != 0) {
+            *native_error = result;
+            return CC_TLS_CLIENT_AUTH;
+        }
+    }
     result = mbedtls_ssl_setup(&context->ssl, &context->config);
     if (result != 0) {
         *native_error = result;
@@ -165,6 +199,7 @@ static int finish_handshake(cc_tls_context *context, uint32_t timeout_ms,
 }
 
 int cc_tls_connect(const char *host, const char *port, const char *ca_file,
+                   const char *client_cert_file,
                    cc_tls_context **out_context, int *native_error)
 {
     cc_tls_context *context;
@@ -181,7 +216,7 @@ int cc_tls_connect(const char *host, const char *port, const char *ca_file,
         return CC_TLS_ALLOC;
     }
     initialize_context(context);
-    stage = configure_context(context, host, ca_file, native_error);
+    stage = configure_context(context, host, ca_file, client_cert_file, native_error);
     if (stage != CC_TLS_OK) goto fail;
     result = mbedtls_net_connect(&context->socket, host, port, MBEDTLS_NET_PROTO_TCP);
     if (result != 0) {
@@ -198,6 +233,7 @@ fail:
 }
 
 int cc_tls_connect_fd(const char *host, intptr_t socket_fd, const char *ca_file,
+                      const char *client_cert_file,
                       uint32_t handshake_timeout_ms,
                       cc_tls_context **out_context, int *native_error)
 {
@@ -224,7 +260,7 @@ int cc_tls_connect_fd(const char *host, intptr_t socket_fd, const char *ca_file,
     }
     initialize_context(context);
     context->socket.fd = (int) socket_fd;
-    stage = configure_context(context, host, ca_file, native_error);
+    stage = configure_context(context, host, ca_file, client_cert_file, native_error);
     if (stage == CC_TLS_OK) {
         stage = finish_handshake(context, handshake_timeout_ms,
                                  out_context, native_error);
@@ -246,6 +282,8 @@ void cc_tls_free(cc_tls_context *context)
     mbedtls_ssl_free(&context->ssl);
     mbedtls_ssl_config_free(&context->config);
     mbedtls_x509_crt_free(&context->ca);
+    mbedtls_x509_crt_free(&context->client_cert);
+    mbedtls_pk_free(&context->client_key);
     mbedtls_ctr_drbg_free(&context->drbg);
     mbedtls_entropy_free(&context->entropy);
     mbedtls_platform_zeroize(context, sizeof(*context));
@@ -276,8 +314,13 @@ static int read_with_timeout(cc_tls_context *context, unsigned char *bytes,
     mbedtls_ssl_conf_read_timeout(&context->config, milliseconds);
     do {
         result = mbedtls_ssl_read(&context->ssl, bytes, bounded);
-    } while (result == MBEDTLS_ERR_SSL_WANT_WRITE);
+    } while (result == MBEDTLS_ERR_SSL_WANT_READ ||
+             result == MBEDTLS_ERR_SSL_WANT_WRITE);
     mbedtls_ssl_conf_read_timeout(&context->config, 0);
+    context->last_error = result < 0 ? result : 0;
+    context->last_alert = result == MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE
+        ? context->ssl.MBEDTLS_PRIVATE(in_msg)[1]
+        : 0;
     if (result == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
         return 0;
     }
@@ -298,6 +341,16 @@ int cc_tls_read_timeout(cc_tls_context *context, unsigned char *bytes, size_t le
 int cc_tls_is_timeout(int result)
 {
     return result == MBEDTLS_ERR_SSL_TIMEOUT;
+}
+
+int cc_tls_last_error(const cc_tls_context *context)
+{
+    return context == NULL ? 0 : context->last_error;
+}
+
+int cc_tls_last_alert(const cc_tls_context *context)
+{
+    return context == NULL ? 0 : context->last_alert;
 }
 
 void cc_tls_error_string(int result, char *buffer, size_t length)

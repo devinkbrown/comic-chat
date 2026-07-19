@@ -8,6 +8,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const shared_event = @import("event.zig");
 
 pub const HWND = ?*anyopaque;
 
@@ -131,12 +132,23 @@ const wm_close: u32 = 0x0010;
 const wm_erasebkgnd: u32 = 0x0014;
 const wm_keydown: u32 = 0x0100;
 const wm_char: u32 = 0x0102;
+const wm_mousemove: u32 = 0x0200;
+const wm_lbuttondown: u32 = 0x0201;
+const wm_lbuttonup: u32 = 0x0202;
+const wm_rbuttondown: u32 = 0x0204;
+const wm_rbuttonup: u32 = 0x0205;
+const wm_mbuttondown: u32 = 0x0207;
+const wm_mbuttonup: u32 = 0x0208;
+const wm_mousewheel: u32 = 0x020a;
 const wm_nccreate: u32 = 0x0081;
 const wm_ncdestroy: u32 = 0x0082;
 const wm_quit: u32 = 0x0012;
 
 const vk_back: usize = 0x08;
 const vk_tab: usize = 0x09;
+const vk_shift: usize = 0x10;
+const vk_control: usize = 0x11;
+const vk_menu: usize = 0x12;
 const vk_return: usize = 0x0d;
 const vk_escape: usize = 0x1b;
 const vk_page_up: usize = 0x21;
@@ -195,6 +207,8 @@ extern "user32" fn GetDC(hwnd: HWND) callconv(.winapi) HDC;
 extern "user32" fn ReleaseDC(hwnd: HWND, dc: HDC) callconv(.winapi) i32;
 extern "user32" fn SetWindowTextW(hwnd: HWND, text: [*:0]const u16) callconv(.winapi) BOOL;
 extern "user32" fn SetProcessDPIAware() callconv(.winapi) BOOL;
+extern "user32" fn ScreenToClient(hwnd: HWND, point: *POINT) callconv(.winapi) BOOL;
+extern "user32" fn GetKeyState(key: i32) callconv(.winapi) i16;
 
 extern "gdi32" fn StretchDIBits(
     dc: HDC,
@@ -214,31 +228,16 @@ extern "gdi32" fn StretchDIBits(
 
 // --- Events -----------------------------------------------------------------
 
-pub const Key = union(enum) {
-    char: u8,
-    backspace,
-    enter,
-    escape,
-    tab,
-    left,
-    right,
-    up,
-    down,
-    home,
-    end,
-    page_up,
-    page_down,
-    delete,
-    other,
-};
+pub const Key = shared_event.Key;
+pub const Event = shared_event.Event;
 
-pub const Event = union(enum) {
-    key: Key,
-    resize: struct { w: u32, h: u32 },
-    expose,
-    close,
-    other,
-};
+fn currentModifiers() shared_event.Modifiers {
+    return .{
+        .shift = GetKeyState(@intCast(vk_shift)) < 0,
+        .control = GetKeyState(@intCast(vk_control)) < 0,
+        .alt = GetKeyState(@intCast(vk_menu)) < 0,
+    };
+}
 
 /// Translate Win32 virtual-key values. Text-producing keys are delivered from
 /// WM_CHAR in the actual event loop so Shift and the user's keyboard layout
@@ -262,16 +261,15 @@ pub fn virtualKeyToKey(vk: usize) Key {
     };
 }
 
-/// Convert one WM_CHAR UTF-16 code unit to the byte-oriented shared Key API.
-/// Comic Chat's editor currently accepts printable ASCII; unsupported Unicode
-/// is reported as `.other` rather than truncated.
+/// Convert one standalone WM_CHAR UTF-16 code unit to the shared Key API.
+/// Surrogate pairs are joined by Window.queueUtf16 rather than this pure helper.
 pub fn charCodeUnitToKey(unit: u16) Key {
     return switch (unit) {
         0x08 => .backspace,
         0x09 => .tab,
         0x0d => .enter,
         0x1b => .escape,
-        0x20...0x7e => .{ .char = @intCast(unit) },
+        0x20...0xd7ff, 0xe000...0xffff => .{ .char = @intCast(unit) },
         else => .other,
     };
 }
@@ -319,6 +317,7 @@ pub const Window = struct {
     width: u32,
     height: u32,
     pending: ?Event,
+    pending_high_surrogate: ?u16,
 
     pub fn open(gpa: std.mem.Allocator, w: u32, h: u32, title: []const u8) !*Window {
         if (builtin.os.tag != .windows) return error.UnsupportedPlatform;
@@ -358,6 +357,7 @@ pub const Window = struct {
             .width = w,
             .height = h,
             .pending = null,
+            .pending_high_surrogate = null,
         };
 
         const hwnd = CreateWindowExW(
@@ -489,6 +489,24 @@ pub const Window = struct {
         // an earlier synchronous event if Windows nests another notification.
         if (self.pending == null) self.pending = event;
     }
+
+    fn queueUtf16(self: *Window, unit: u16) void {
+        if (unit >= 0xd800 and unit <= 0xdbff) {
+            self.pending_high_surrogate = unit;
+            return;
+        }
+        if (unit >= 0xdc00 and unit <= 0xdfff) {
+            if (self.pending_high_surrogate) |high| {
+                self.pending_high_surrogate = null;
+                const codepoint: u21 = @intCast(0x10000 +
+                    (@as(u32, high - 0xd800) << 10) + @as(u32, unit - 0xdc00));
+                self.queue(.{ .key = .{ .key = .{ .char = codepoint }, .modifiers = currentModifiers() } });
+            }
+            return;
+        }
+        self.pending_high_surrogate = null;
+        self.queue(.{ .key = .{ .key = charCodeUnitToKey(unit), .modifiers = currentModifiers() } });
+    }
 };
 
 fn registerWindowClass(instance: HINSTANCE) !void {
@@ -567,12 +585,54 @@ fn windowProc(hwnd: HWND, message: u32, w_param: WPARAM, l_param: LPARAM) callco
         wm_erasebkgnd => return 1,
         wm_keydown => {
             if (keyDownEvent(w_param)) |key| {
-                window.queue(.{ .key = key });
+                window.queue(.{ .key = .{ .key = key, .modifiers = currentModifiers() } });
                 return 0;
             }
         },
         wm_char => {
-            window.queue(.{ .key = charCodeUnitToKey(@truncate(w_param)) });
+            window.queueUtf16(@truncate(w_param));
+            return 0;
+        },
+        wm_mousemove,
+        wm_lbuttondown,
+        wm_lbuttonup,
+        wm_rbuttondown,
+        wm_rbuttonup,
+        wm_mbuttondown,
+        wm_mbuttonup,
+        => {
+            const bits: usize = @bitCast(l_param);
+            const x: i32 = @as(i16, @bitCast(@as(u16, @truncate(bits))));
+            const y: i32 = @as(i16, @bitCast(@as(u16, @truncate(bits >> 16))));
+            const kind: shared_event.PointerKind = if (message == wm_mousemove)
+                .move
+            else if (message == wm_lbuttondown or message == wm_rbuttondown or message == wm_mbuttondown)
+                .down
+            else
+                .up;
+            const button: shared_event.PointerButton = switch (message) {
+                wm_lbuttondown, wm_lbuttonup => .primary,
+                wm_rbuttondown, wm_rbuttonup => .secondary,
+                wm_mbuttondown, wm_mbuttonup => .middle,
+                else => .none,
+            };
+            window.queue(.{ .pointer = .{ .kind = kind, .x = x, .y = y, .button = button } });
+            return 0;
+        },
+        wm_mousewheel => {
+            const bits: usize = @bitCast(l_param);
+            var point = POINT{
+                .x = @as(i16, @bitCast(@as(u16, @truncate(bits)))),
+                .y = @as(i16, @bitCast(@as(u16, @truncate(bits >> 16)))),
+            };
+            _ = ScreenToClient(hwnd, &point);
+            const delta: i16 = @bitCast(@as(u16, @truncate(w_param >> 16)));
+            window.queue(.{ .pointer = .{
+                .kind = .wheel,
+                .x = point.x,
+                .y = point.y,
+                .wheel_y = if (delta > 0) 1 else if (delta < 0) -1 else 0,
+            } });
             return 0;
         },
         else => {},
@@ -623,7 +683,7 @@ test "Win32 virtual-key and WM_CHAR translation matches shared input API" {
     try std.testing.expectEqual(Key{ .char = 'A' }, charCodeUnitToKey('A'));
     try std.testing.expectEqual(Key.backspace, charCodeUnitToKey(0x08));
     try std.testing.expectEqual(Key.enter, charCodeUnitToKey(0x0d));
-    try std.testing.expectEqual(Key.other, charCodeUnitToKey(0x20ac));
+    try std.testing.expectEqual(Key{ .char = 0x20ac }, charCodeUnitToKey(0x20ac));
 }
 
 test "Win32 DIB is 32-bit top-down BGRX-compatible" {

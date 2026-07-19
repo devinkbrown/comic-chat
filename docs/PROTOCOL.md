@@ -1,11 +1,11 @@
 # Comic Chat protocol and asset formats
 
-The behavioral reference for this document is Microsoft's MIT-licensed Comic
-Chat source at commit `c7df00f60bc8e9fdef413f139e61f7c37e024684`, especially
-`histent.cpp`, `protsupp.cpp`, `ircproto.cpp`, `ircsock.cpp`, `avbfile.h`, and
-`avbfile.cpp`. The legacy snapshot is preserved under [`legacy/source/`](../legacy/source/);
-the portable implementation is derived from that source rather than from a
-decompiler or the SIGGRAPH paper.
+The behavioral reference for this document is the MIT-licensed historical
+Comic Chat source at commit `c7df00f60bc8e9fdef413f139e61f7c37e024684`,
+especially `histent.cpp`, `protsupp.cpp`, `ircproto.cpp`, `ircsock.cpp`,
+`avbfile.h`, and `avbfile.cpp`. It is an external reference at
+<https://github.com/microsoft/comic-chat>; this portable repository does not
+vendor the retired MFC/C++ tree.
 
 ## Live transport: comic metadata over IRC
 
@@ -153,6 +153,23 @@ the complete non-deprecated client-facing CAP set in the pinned tree:
 | `setname` | `SETNAME` updates the participant realname |
 | `standard-replies` | The latest typed `FAIL`, `WARN`, or `NOTE` code and description are retained |
 | `sts` | Observed only, never requested; plaintext upgrades fail closed and verified-TLS duration policies persist by hostname |
+
+### Onyx reusable sessions and same-nick clients
+
+After successful SASL and numeric `001`, the portable client follows the live
+Onyx client contract: it sends `SESSION RESUME <credential>` when a stored
+credential exists, then `SESSION TOKEN`. Current server `NOTICE` forms for
+`SESSION TOKEN` and `SESSION MTOKEN ... expires=<unix-seconds>` are parsed with
+a 4 KiB single-atom bound and accepted only from server prefixes. The portable
+mesh credential is preferred until its advertised expiry; the local credential
+is the fallback. Credentials are stored per host/account in an atomic,
+owner-readable file.
+
+Onyx Server admits a second SASL-authenticated connection requesting the same
+nickname and account without `433`, but it remains a separate delivery group
+until it presents the first client's exact reusable credential. Successful
+`SESSION RESUME` adds the connection as another live attachment; it does not
+disconnect the existing client.
 
 The pinned client-tag specifications are covered as well. Typed send methods
 produce `+reply`, `+draft/react`, `+draft/unreact`, and rate-limited `+typing`

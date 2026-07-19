@@ -10,6 +10,7 @@ extern fn cc_tls_connect_fd(
     host: [*:0]const u8,
     socket_fd: isize,
     ca_file: ?[*:0]const u8,
+    client_cert_file: ?[*:0]const u8,
     handshake_timeout_ms: u32,
     out_context: *?*Context,
     native_error: *c_int,
@@ -20,6 +21,9 @@ extern fn cc_tls_write(context: *Context, bytes: [*]const u8, length: usize) c_i
 extern fn cc_tls_read(context: *Context, bytes: [*]u8, length: usize) c_int;
 extern fn cc_tls_read_timeout(context: *Context, bytes: [*]u8, length: usize, milliseconds: u32) c_int;
 extern fn cc_tls_is_timeout(result: c_int) c_int;
+extern fn cc_tls_last_error(context: *const Context) c_int;
+extern fn cc_tls_last_alert(context: *const Context) c_int;
+extern fn cc_tls_error_string(result: c_int, buffer: [*]u8, length: usize) void;
 extern fn cc_tls_version_number() u32;
 
 pub const expected_version: u32 = 0x03060600;
@@ -27,6 +31,8 @@ pub const expected_version: u32 = 0x03060600;
 pub const ConnectOptions = struct {
     /// PEM bundle override. Null loads the operating-system/default CA roots.
     ca_file: ?[]const u8 = null,
+    /// PEM certificate chain and private key used for TLS client authentication.
+    client_cert_file: ?[]const u8 = null,
     handshake_timeout_ms: u32 = 15_000,
 };
 
@@ -58,6 +64,11 @@ pub const TlsTransport = struct {
             std.crypto.secureZero(u8, path);
             gpa.free(path);
         };
+        const client_cert_z = if (options.client_cert_file) |path| try gpa.dupeSentinel(u8, path, 0) else null;
+        defer if (client_cert_z) |path| {
+            std.crypto.secureZero(u8, path);
+            gpa.free(path);
+        };
 
         var context: ?*Context = null;
         var native_error: c_int = 0;
@@ -70,6 +81,7 @@ pub const TlsTransport = struct {
             host_z.ptr,
             socket_fd,
             if (ca_z) |path| path.ptr else null,
+            if (client_cert_z) |path| path.ptr else null,
             options.handshake_timeout_ms,
             &context,
             &native_error,
@@ -103,7 +115,17 @@ pub const TlsTransport = struct {
     pub fn recv(self: *TlsTransport, dst: []u8) !usize {
         if (dst.len == 0) return 0;
         const result = cc_tls_read(self.context, dst.ptr, dst.len);
-        if (result < 0) return error.TlsReadFailed;
+        if (result < 0) {
+            var error_buffer: [160]u8 = @splat(0);
+            const native_error = cc_tls_last_error(self.context);
+            cc_tls_error_string(native_error, &error_buffer, error_buffer.len);
+            std.debug.print("TLS read failed: {s} ({d}), alert {d}\n", .{
+                std.mem.sliceTo(&error_buffer, 0),
+                native_error,
+                cc_tls_last_alert(self.context),
+            });
+            return error.TlsReadFailed;
+        }
         return @intCast(result);
     }
 
@@ -128,6 +150,7 @@ fn mapConnectStage(stage: c_int) anyerror {
         7 => error.ConnectionFailed,
         8 => error.TlsHandshakeFailed,
         9 => error.CertificateVerificationFailed,
+        10 => error.TlsClientAuthenticationFailed,
         else => error.TlsConfigurationFailed,
     };
 }

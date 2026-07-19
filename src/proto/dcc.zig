@@ -23,7 +23,7 @@
 //!
 //! `g_chLLQuoteIRCX` and its sibling byte constants (`g_chAtSign`, `g_chEOS`,
 //! `g_chLF`, `g_chCR`, `g_chSpace`) are not present in the pinned
-//! `legacy/source/` snapshot - they are declared in a file outside the
+//! historical source snapshot - they are declared in a file outside the
 //! imported provenance set. The source's own comment names the scheme
 //! precisely - "Quotes strings according to the CTCP draft, Feb. 2, 1997" -
 //! so this port uses that public specification's low-level quote byte

@@ -140,11 +140,15 @@ fn decodeZlibImageRef(gpa: std.mem.Allocator, bytes: []const u8, ref: avb.ImageR
                 .local => try paletteColor(palette, value),
                 .monochrome => if (value == 0) 0xffffffff else 0xff000000,
                 .masked_mono => switch (value) {
-                    // avbfile.h: 00 blank, 01 aura, 10 black, 11 white.
+                    // CPose::ConvertMasksCommon splits each two-bit pair into
+                    // drawing/mask/aura monochrome DIBs, then applies the
+                    // source's `image &= mask` aura workaround. With its
+                    // white=0, black=1 palette this leaves only 11 as black;
+                    // 01 and 10 are opaque white sticker pixels.
                     0 => 0x00000000,
                     1 => 0xffffffff,
-                    2 => 0xff000000,
-                    3 => 0xffffffff,
+                    2 => 0xffffffff,
+                    3 => 0xff000000,
                     else => unreachable,
                 },
                 .dual_mask => if (value == 0) 0x00000000 else 0xffffffff,
@@ -591,6 +595,16 @@ test "simple avatars decode whole-body records without a fake head layer" {
     var body = try decodePoseAuto(gpa, jordan, 0, true);
     defer body.deinit(gpa);
     try std.testing.expect(body.width > 0 and body.height > 0);
+    var white: usize = 0;
+    var black: usize = 0;
+    for (body.pixels) |pixel| switch (pixel) {
+        0xffffffff => white += 1,
+        0xff000000 => black += 1,
+        else => {},
+    };
+    // Microsoft's published Jordan character sheet is predominantly white
+    // with black ink and skirt, not the inverse silhouette.
+    try std.testing.expect(white > black);
 }
 
 test "every distinct primary pose in bundled avatars decodes from its record offset" {

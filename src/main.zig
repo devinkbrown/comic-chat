@@ -172,6 +172,7 @@ const ConnectionArgs = struct {
     options: cc.net.client.ConnectOptions = .{},
     auth: AuthArgs = .{},
     sts_file: []const u8 = ".comicchat-sts",
+    session_file: []const u8 = ".comicchat-session",
 };
 
 fn parseConnectionArgs(args: []const []const u8, allow_extra: bool) ?ConnectionArgs {
@@ -180,6 +181,7 @@ fn parseConnectionArgs(args: []const []const u8, allow_extra: bool) ?ConnectionA
     var options = cc.net.client.ConnectOptions{};
     var auth: AuthArgs = .{};
     var sts_file: []const u8 = ".comicchat-sts";
+    var session_file: []const u8 = ".comicchat-session";
     var index: usize = 0;
     while (index < args.len) : (index += 1) {
         const arg = args[index];
@@ -201,6 +203,16 @@ fn parseConnectionArgs(args: []const []const u8, allow_extra: bool) ?ConnectionA
             const value = arg["--ca-file=".len..];
             if (value.len == 0) return null;
             options.ca_file = value;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--tls-cert")) {
+            index += 1;
+            if (index >= args.len or args[index].len == 0) return null;
+            options.client_cert_file = args[index];
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "--tls-cert=")) {
+            options.client_cert_file = nonEmptyValue(arg, "--tls-cert=") orelse return null;
             continue;
         }
         if (std.mem.eql(u8, arg, "--socks5") or std.mem.eql(u8, arg, "--http-proxy")) {
@@ -287,6 +299,16 @@ fn parseConnectionArgs(args: []const []const u8, allow_extra: bool) ?ConnectionA
             sts_file = nonEmptyValue(arg, "--sts-file=") orelse return null;
             continue;
         }
+        if (std.mem.eql(u8, arg, "--session-file")) {
+            index += 1;
+            if (index >= args.len or args[index].len == 0) return null;
+            session_file = args[index];
+            continue;
+        }
+        if (std.mem.startsWith(u8, arg, "--session-file=")) {
+            session_file = nonEmptyValue(arg, "--session-file=") orelse return null;
+            continue;
+        }
         if (std.mem.startsWith(u8, arg, "--")) return null;
         if (positional_count == positional.len) return null;
         positional[positional_count] = arg;
@@ -305,6 +327,7 @@ fn parseConnectionArgs(args: []const []const u8, allow_extra: bool) ?ConnectionA
             .options = options,
             .auth = auth,
             .sts_file = sts_file,
+            .session_file = session_file,
         };
         if (positional_count > 4) result.extra = positional[4];
     } else |_| {
@@ -315,6 +338,7 @@ fn parseConnectionArgs(args: []const []const u8, allow_extra: bool) ?ConnectionA
             .options = options,
             .auth = auth,
             .sts_file = sts_file,
+            .session_file = session_file,
         };
         if (positional_count > 3) result.extra = positional[3];
         if (positional_count > 4) return null;
@@ -350,7 +374,7 @@ fn parseProxyEndpoint(raw: []const u8) ?cc.net.transport.ProxyEndpoint {
 
 fn printConnectionUsage(command: []const u8, allow_extra: bool) void {
     std.debug.print(
-        "usage: comicchat {s} <host> [port=6697] <nick> <#channel>{s} [--ca-file <pem>] [--plaintext] [--socks5 host:port|--http-proxy host:port] [--connect-timeout-ms <ms>] [--sasl-user <name> --sasl-password-file <path>] [--sasl-mechanism SCRAM-SHA-256|EXTERNAL|PLAIN] [--sts-file <path>]\n",
+        "usage: comicchat {s} <host> [port=6697] <nick> <#channel>{s} [--ca-file <pem>] [--tls-cert <cert-and-key.pem>] [--plaintext] [--socks5 host:port|--http-proxy host:port] [--connect-timeout-ms <ms>] [--sasl-user <name> --sasl-password-file <path>] [--sasl-mechanism SCRAM-SHA-256|EXTERNAL|PLAIN] [--sts-file <path>] [--session-file <path>]\n",
         .{ command, if (allow_extra) " [maxlines]" else "" },
     );
 }
@@ -360,6 +384,8 @@ const ConnectionRuntime = struct {
     io: std.Io,
     sts_path: []const u8,
     sts: cc.net.sts_store.Store,
+    session_path: []const u8,
+    session: cc.net.session_store.Store,
     connect_options: cc.net.client.ConnectOptions,
     now_seconds: u64,
     auth: AuthArgs,
@@ -374,11 +400,25 @@ const ConnectionRuntime = struct {
     fn init(gpa: std.mem.Allocator, io: std.Io, args: *const ConnectionArgs) !ConnectionRuntime {
         const wall_seconds = std.Io.Clock.real.now(io).toSeconds();
         const now_seconds: u64 = if (wall_seconds > 0) @intCast(wall_seconds) else 0;
+        const stores = stores: {
+            var sts = try cc.net.sts_store.Store.loadFile(gpa, io, args.sts_file);
+            errdefer sts.deinit();
+            const session = try cc.net.session_store.Store.loadFile(
+                gpa,
+                io,
+                args.session_file,
+                args.host,
+                args.auth.user orelse args.nick,
+            );
+            break :stores .{ .sts = sts, .session = session };
+        };
         var runtime = ConnectionRuntime{
             .gpa = gpa,
             .io = io,
             .sts_path = args.sts_file,
-            .sts = try cc.net.sts_store.Store.loadFile(gpa, io, args.sts_file),
+            .sts = stores.sts,
+            .session_path = args.session_file,
+            .session = stores.session,
             .connect_options = args.options,
             .now_seconds = now_seconds,
             .auth = args.auth,
@@ -434,6 +474,8 @@ const ConnectionRuntime = struct {
             .sasl_preference = if (self.preference_len == 1) self.preference[0..1] else &cc.net.sasl.default_preference,
             .io = self.io,
             .sts = &self.sts,
+            .session = &self.session,
+            .session_path = self.session_path,
             .now_seconds = self.now_seconds,
         };
     }
@@ -451,11 +493,13 @@ const ConnectionRuntime = struct {
 
     fn save(self: *ConnectionRuntime) !void {
         try self.sts.saveFile(self.io, self.sts_path);
+        try self.session.saveFile(self.io, self.session_path);
     }
 
     fn deinit(self: *ConnectionRuntime) void {
         if (self.credentials) |*credentials| if (!credentials.zeroized) credentials.zeroize();
         self.clearCredentialStorage();
+        self.session.deinit();
         self.sts.deinit();
         self.* = undefined;
     }
@@ -776,14 +820,14 @@ fn runChatComic(
             if (!std.ascii.eqlIgnoreCase(target, channel) or !std.mem.eql(u8, kind, "CCUDI1")) continue;
             const who = if (msg.prefix) |prefix| cc.comic.session.nickFromPrefix(prefix) else continue;
             _ = cc.proto.udi.parseAnnotation(wire) catch continue;
-            try metadata_state.rememberUdi(gpa, who, wire);
+            try metadata_state.rememberUdi(gpa, target, who, wire);
         } else if (std.mem.eql(u8, msg.command, "PRIVMSG")) {
             const target = msg.param(0) orelse continue;
             if (!std.ascii.eqlIgnoreCase(target, channel)) continue;
             const text = msg.param(1) orelse continue;
             const who = if (msg.prefix) |p| cc.comic.session.nickFromPrefix(p) else "someone";
             if (try transcript.consumeAvatarAnnouncement(who, text)) continue;
-            var pending = metadata_state.takeUdi(who);
+            var pending = metadata_state.takeUdi(target, who);
             defer if (pending) |*entry| entry.deinit(gpa);
             try transcript.addWireMessage(who, text, false, if (pending) |entry| entry.wire else null);
         }
@@ -859,10 +903,12 @@ fn runInteractive(
 }
 
 const PendingUdi = struct {
+    target: []u8,
     nick: []u8,
     wire: []u8,
 
     fn deinit(self: *PendingUdi, gpa: std.mem.Allocator) void {
+        gpa.free(self.target);
         gpa.free(self.nick);
         gpa.free(self.wire);
         self.* = undefined;
@@ -883,24 +929,26 @@ const ChatState = struct {
         self.* = undefined;
     }
 
-    fn rememberUdi(self: *ChatState, gpa: std.mem.Allocator, nick: []const u8, wire: []const u8) !void {
+    fn rememberUdi(self: *ChatState, gpa: std.mem.Allocator, target: []const u8, nick: []const u8, wire: []const u8) !void {
         for (self.pending_udi.items) |*entry| {
-            if (!std.ascii.eqlIgnoreCase(entry.nick, nick)) continue;
+            if (!std.ascii.eqlIgnoreCase(entry.target, target) or !std.ascii.eqlIgnoreCase(entry.nick, nick)) continue;
             const replacement = try gpa.dupe(u8, wire);
             gpa.free(entry.wire);
             entry.wire = replacement;
             return;
         }
+        const owned_target = try gpa.dupe(u8, target);
+        errdefer gpa.free(owned_target);
         const owned_nick = try gpa.dupe(u8, nick);
         errdefer gpa.free(owned_nick);
         const owned_wire = try gpa.dupe(u8, wire);
         errdefer gpa.free(owned_wire);
-        try self.pending_udi.append(gpa, .{ .nick = owned_nick, .wire = owned_wire });
+        try self.pending_udi.append(gpa, .{ .target = owned_target, .nick = owned_nick, .wire = owned_wire });
     }
 
-    fn takeUdi(self: *ChatState, nick: []const u8) ?PendingUdi {
+    fn takeUdi(self: *ChatState, target: []const u8, nick: []const u8) ?PendingUdi {
         for (self.pending_udi.items, 0..) |entry, index| {
-            if (std.ascii.eqlIgnoreCase(entry.nick, nick))
+            if (std.ascii.eqlIgnoreCase(entry.target, target) and std.ascii.eqlIgnoreCase(entry.nick, nick))
                 return self.pending_udi.orderedRemove(index);
         }
         return null;
@@ -1119,20 +1167,15 @@ fn runInteractivePollBackend(
     defer win.deinit();
     var view = try cc.client.view.View.init(gpa, win.width, win.height);
     defer view.deinit();
-    var editor = cc.client.input.Editor.init(gpa);
-    defer editor.deinit();
-    var transcript = cc.comic.session.Transcript.init(gpa);
-    defer transcript.deinit();
-    try transcript.setSelf(nick);
-
-    var title_buf: [512]u8 = undefined;
-    const title = try std.fmt.bufPrint(&title_buf, "Comic Chat | {s} | {s}", .{ channel, nick });
+    var workspace = try cc.client.workspace.Workspace.init(gpa, nick);
+    defer workspace.deinit();
+    _ = try workspace.ensure(channel);
     var state: ChatState = .{};
     defer state.deinit(gpa);
     var network = try AsyncNetwork.init(gpa, host, port, nick, runtime);
     defer network.deinit();
 
-    try presentView(win, &view, title, state.status, &transcript, &editor);
+    try presentWorkspace(win, &view, state.status, &workspace);
 
     var poll_fds = [_]posix.pollfd{
         .{ .fd = win.fd(), .events = posix.POLL.IN | posix.POLL.ERR, .revents = 0 },
@@ -1162,11 +1205,11 @@ fn runInteractivePollBackend(
         if ((poll_fds[0].revents & posix.POLL.IN) != 0) {
             const event_result = try handleWindowEvent(
                 gpa,
+                io,
                 try win.nextEvent(),
                 &view,
-                &editor,
                 network.clientPtr(),
-                &transcript,
+                &workspace,
                 nick,
                 channel,
                 state.joined,
@@ -1179,11 +1222,11 @@ fn runInteractivePollBackend(
             if (win.checkRepeat()) |repeat_event| {
                 const event_result = try handleWindowEvent(
                     gpa,
+                    io,
                     repeat_event,
                     &view,
-                    &editor,
                     network.clientPtr(),
-                    &transcript,
+                    &workspace,
                     nick,
                     channel,
                     state.joined,
@@ -1205,7 +1248,7 @@ fn runInteractivePollBackend(
                     redraw = applyNetworkEvent(network.fail(now_ms, error.EndOfStream), &state) or redraw;
                     poll_fds[1].fd = -1;
                 } else if (network.clientPtr()) |active| {
-                    const processed = processBufferedMessages(active, &transcript, nick, channel, &state) catch |err| failed: {
+                    const processed = processWorkspaceMessages(active, &workspace, nick, channel, &state) catch |err| failed: {
                         redraw = applyNetworkEvent(network.fail(now_ms, err), &state) or redraw;
                         poll_fds[1].fd = -1;
                         break :failed false;
@@ -1221,7 +1264,7 @@ fn runInteractivePollBackend(
             poll_fds[1].fd = -1;
         }
 
-        if (redraw) try presentView(win, &view, title, state.status, &transcript, &editor);
+        if (redraw) try presentWorkspace(win, &view, state.status, &workspace);
     }
 }
 
@@ -1232,19 +1275,14 @@ fn runInteractiveWin32(gpa: std.mem.Allocator, host: []const u8, port: u16, nick
     defer win.deinit();
     var view = try cc.client.view.View.init(gpa, win.width, win.height);
     defer view.deinit();
-    var editor = cc.client.input.Editor.init(gpa);
-    defer editor.deinit();
-    var transcript = cc.comic.session.Transcript.init(gpa);
-    defer transcript.deinit();
-    try transcript.setSelf(nick);
-
-    var title_buf: [512]u8 = undefined;
-    const title = try std.fmt.bufPrint(&title_buf, "Comic Chat | {s} | {s}", .{ channel, nick });
+    var workspace = try cc.client.workspace.Workspace.init(gpa, nick);
+    defer workspace.deinit();
+    _ = try workspace.ensure(channel);
     var state: ChatState = .{};
     defer state.deinit(gpa);
     var network = try AsyncNetwork.init(gpa, host, port, nick, runtime);
     defer network.deinit();
-    try presentView(win, &view, title, state.status, &transcript, &editor);
+    try presentWorkspace(win, &view, state.status, &workspace);
 
     while (true) {
         var redraw = false;
@@ -1253,11 +1291,11 @@ fn runInteractiveWin32(gpa: std.mem.Allocator, host: []const u8, port: u16, nick
         while (try win.pollEvent()) |event| {
             const event_result = try handleWindowEvent(
                 gpa,
+                io,
                 event,
                 &view,
-                &editor,
                 network.clientPtr(),
-                &transcript,
+                &workspace,
                 nick,
                 channel,
                 state.joined,
@@ -1276,7 +1314,7 @@ fn runInteractiveWin32(gpa: std.mem.Allocator, host: []const u8, port: u16, nick
                 if (!received) {
                     redraw = applyNetworkEvent(network.fail(now_ms, error.EndOfStream), &state) or redraw;
                 } else if (network.clientPtr()) |active| {
-                    const processed = processBufferedMessages(active, &transcript, nick, channel, &state) catch |err| failed: {
+                    const processed = processWorkspaceMessages(active, &workspace, nick, channel, &state) catch |err| failed: {
                         redraw = applyNetworkEvent(network.fail(now_ms, err), &state) or redraw;
                         break :failed false;
                     };
@@ -1287,22 +1325,26 @@ fn runInteractiveWin32(gpa: std.mem.Allocator, host: []const u8, port: u16, nick
             try std.Io.sleep(io, std.Io.Duration.fromMilliseconds(16), .awake);
         }
 
-        if (redraw) try presentView(win, &view, title, state.status, &transcript, &editor);
+        if (redraw) try presentWorkspace(win, &view, state.status, &workspace);
     }
 }
 
 fn handleWindowEvent(
     gpa: std.mem.Allocator,
+    io: std.Io,
     event: anytype,
     view: *cc.client.view.View,
-    editor: *cc.client.input.Editor,
     client: ?*cc.net.client.Client,
-    transcript: *cc.comic.session.Transcript,
+    workspace: *cc.client.workspace.Workspace,
     nick: []const u8,
     channel: []const u8,
     joined: bool,
     ircx_data: bool,
 ) !UiEventResult {
+    _ = channel;
+    const room = workspace.activeRoom() orelse return .{};
+    const transcript = &room.transcript;
+    const editor = &room.editor;
     return switch (event) {
         .close => .{ .keep_running = false },
         .expose => .{ .redraw = true },
@@ -1310,24 +1352,215 @@ fn handleWindowEvent(
             try view.resize(size.w, size.h);
             break :resized .{ .redraw = true };
         },
-        .key => |key| .{
-            .keep_running = try handleInputKey(gpa, key, editor, client, transcript, nick, channel, joined, ircx_data),
-            .redraw = true,
+        .key => |key_input| key_result: {
+            const key = key_input.key;
+            if (view.active_dialog != null) {
+                if (try view.handleDialogKey(key)) |action| try applyDialogAction(action, view, client, workspace, nick);
+                break :key_result .{ .redraw = true };
+            }
+            if (key_input.modifiers.control and try handleEditorShortcut(editor, key, workspace))
+                break :key_result .{ .redraw = true };
+            if (key_input.modifiers.shift and key == .tab) {
+                view.cycleFocusBackward();
+                break :key_result .{ .redraw = true };
+            }
+            if (key_input.modifiers.shift and handleEditorSelectionKey(editor, key))
+                break :key_result .{ .redraw = true };
+            break :key_result .{
+                .keep_running = try handleWorkspaceInputKey(gpa, io, key, view, editor, client, workspace, nick, joined, ircx_data),
+                .redraw = true,
+            };
+        },
+        .pointer => |pointer| pointer_result: {
+            if (pointer.kind == .move) break :pointer_result .{};
+            const action = view.handlePointer(pointer, transcript.count(), transcript.roster.items.len);
+            const keep_running = switch (action) {
+                .send => try handleWorkspaceInputKey(gpa, io, cc.platform.event.Key{ .enter = {} }, view, editor, client, workspace, nick, joined, ircx_data),
+                .room_tab => |index| workspace.activate(index),
+                .dialog_accept, .dialog_cancel => apply: {
+                    try applyDialogAction(action, view, client, workspace, nick);
+                    break :apply true;
+                },
+                else => true,
+            };
+            break :pointer_result .{ .keep_running = keep_running, .redraw = true };
         },
         .other => .{},
     };
 }
 
-fn processBufferedMessages(
+fn handleEditorSelectionKey(editor: *cc.client.input.Editor, key: cc.platform.event.Key) bool {
+    switch (key) {
+        .left => editor.extendLeft(),
+        .right => editor.extendRight(),
+        .home => editor.extendHome(),
+        .end => editor.extendEnd(),
+        else => return false,
+    }
+    return true;
+}
+
+fn handleEditorShortcut(
+    editor: *cc.client.input.Editor,
+    key: cc.platform.event.Key,
+    workspace: *cc.client.workspace.Workspace,
+) !bool {
+    const codepoint = switch (key) {
+        .char => |ch| if (ch <= 0x7f) std.ascii.toLower(@intCast(ch)) else return false,
+        else => return false,
+    };
+    switch (codepoint) {
+        'a' => editor.selectAll(),
+        'c' => if (try editor.copySelection()) |text| {
+            defer editor.gpa.free(text);
+            try workspace.setClipboard(text);
+        },
+        'x' => if (try editor.cutSelection()) |text| {
+            defer editor.gpa.free(text);
+            try workspace.setClipboard(text);
+        },
+        'v' => try editor.paste(workspace.clipboard.items),
+        'z' => editor.undo(),
+        'y' => editor.redo(),
+        else => return false,
+    }
+    return true;
+}
+
+fn applyDialogAction(
+    action: cc.client.view.Action,
+    view: *cc.client.view.View,
+    maybe_client: ?*cc.net.client.Client,
+    workspace: *cc.client.workspace.Workspace,
+    nick: []const u8,
+) !void {
+    const id = switch (action) {
+        .dialog_accept => |id| id,
+        else => return,
+    };
+    const value = std.mem.trim(u8, view.dialogValue(), " \t");
+    const room = workspace.activeRoom() orelse return;
+    switch (id) {
+        .channel, .channel_create => {
+            const index = workspace.ensure(value) catch return;
+            _ = workspace.activate(index);
+            if (maybe_client) |client| try client.join(value);
+        },
+        .character => {
+            const selected = cc.comic.session.bundledAvatarByName(value) orelse return;
+            try room.transcript.setAvatar(nick, selected);
+            if (maybe_client) |client| try client.announceAvatar(room.name, selected);
+        },
+        .background => if (maybe_client) |client| try client.syncBackdrop(room.name, value, null),
+        .nickname => if (maybe_client) |client| try client.changeNick(value),
+        .away => if (maybe_client) |client| try client.setAway(value),
+        .kick => if (maybe_client) |client| try client.kick(room.name, value),
+        .ban => if (maybe_client) |client| try client.setBan(room.name, value),
+        .invite => if (maybe_client) |client| try client.invite(value, room.name),
+        .whisper => {
+            for (room.transcript.roster.items, 0..) |member, index| if (std.ascii.eqlIgnoreCase(member.nick, value)) {
+                view.shell.selectMember(index);
+                view.shell.setSayMode(.whisper);
+                break;
+            };
+        },
+        else => {},
+    }
+}
+
+fn handleWorkspaceInputKey(
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    key: cc.platform.event.Key,
+    view: *cc.client.view.View,
+    editor: *cc.client.input.Editor,
+    maybe_client: ?*cc.net.client.Client,
+    workspace: *cc.client.workspace.Workspace,
+    nick: []const u8,
+    connected: bool,
+    ircx_data: bool,
+) !bool {
+    if (key == .enter and editor.text().len > 0) {
+        const text = editor.text();
+        if (std.mem.startsWith(u8, text, "/save ")) {
+            const path = std.mem.trim(u8, text[6..], " \t");
+            const room = workspace.activeRoom() orelse return true;
+            cc.client.files.saveConversation(io, gpa, path, &room.transcript) catch return true;
+            const consumed = try editor.take();
+            gpa.free(consumed);
+            return true;
+        }
+        if (std.mem.startsWith(u8, text, "/open ")) {
+            const path = std.mem.trim(u8, text[6..], " \t");
+            var loaded = cc.client.files.loadConversation(io, gpa, path) catch return true;
+            errdefer loaded.deinit();
+            try loaded.setSelf(nick);
+            const room = workspace.activeRoom() orelse return true;
+            room.transcript.deinit();
+            room.transcript = loaded;
+            const consumed = try editor.take();
+            gpa.free(consumed);
+            view.jumpLatest();
+            return true;
+        }
+        if (std.mem.startsWith(u8, text, "/export ")) {
+            const path = std.mem.trim(u8, text[8..], " \t");
+            const png = cc.render.png.encode(gpa, view.pixels(), view.width(), view.height()) catch return true;
+            defer gpa.free(png);
+            cc.client.files.saveBytesAtomic(io, gpa, path, png) catch return true;
+            const consumed = try editor.take();
+            gpa.free(consumed);
+            return true;
+        }
+        if (std.mem.startsWith(u8, text, "/join ")) {
+            const name = std.mem.trim(u8, text[6..], " \t");
+            const index = workspace.ensure(name) catch return true;
+            _ = workspace.activate(index);
+            if (maybe_client) |client| try client.join(name);
+            const consumed = try editor.take();
+            gpa.free(consumed);
+            return true;
+        }
+        if (std.mem.startsWith(u8, text, "/switch ")) {
+            const name = std.mem.trim(u8, text[8..], " \t");
+            if (workspace.find(name)) |index| _ = workspace.activate(index);
+            const consumed = try editor.take();
+            gpa.free(consumed);
+            return true;
+        }
+        if (std.mem.eql(u8, text, "/part")) {
+            if (workspace.active) |index| {
+                if (workspace.rooms.items.len > 1) {
+                    if (maybe_client) |client| try client.part(workspace.rooms.items[index].name);
+                    _ = workspace.remove(index);
+                }
+            }
+            const consumed = try editor.take();
+            gpa.free(consumed);
+            return true;
+        }
+    }
+    const room = workspace.activeRoom() orelse return true;
+    return handleInputKey(gpa, key, view, editor, maybe_client, &room.transcript, nick, room.name, room.joined or connected, ircx_data);
+}
+
+fn processWorkspaceMessages(
     client: *cc.net.client.Client,
-    transcript: *cc.comic.session.Transcript,
+    workspace: *cc.client.workspace.Workspace,
     nick: []const u8,
     channel: []const u8,
     state: *ChatState,
 ) !bool {
     var redraw = false;
     while (try client.bufferedNext()) |msg| {
-        redraw = (try transcript.observeIrc(&msg, channel, nick)) or redraw;
+        if (std.ascii.eqlIgnoreCase(msg.command, "QUIT") or std.ascii.eqlIgnoreCase(msg.command, "NICK")) {
+            for (workspace.rooms.items) |*room| redraw = (try room.transcript.observeIrc(&msg, room.name, nick)) or redraw;
+        } else if (messageRoom(&msg)) |room_name| {
+            if (room_name.len > 1 and (room_name[0] == '#' or room_name[0] == '&')) {
+                const room_index = try workspace.ensure(room_name);
+                redraw = (try workspace.rooms.items[room_index].transcript.observeIrc(&msg, room_name, nick)) or redraw;
+            }
+        }
         if (std.mem.eql(u8, msg.command, "800")) {
             state.ircx_data = true;
         } else if (std.mem.eql(u8, msg.command, "005")) {
@@ -1344,34 +1577,45 @@ fn processBufferedMessages(
         } else if (std.mem.eql(u8, msg.command, "JOIN")) {
             const who = if (msg.prefix) |p| cc.comic.session.nickFromPrefix(p) else "";
             const joined_channel = msg.param(0) orelse "";
-            if (std.ascii.eqlIgnoreCase(who, nick) and std.ascii.eqlIgnoreCase(joined_channel, channel)) {
-                try finishJoin(client, transcript, nick, channel, state);
+            if (std.ascii.eqlIgnoreCase(who, nick)) {
+                const room_index = try workspace.ensure(joined_channel);
+                var room = &workspace.rooms.items[room_index];
+                room.joined = true;
+                state.joined = true;
+                state.status = "connected";
+                try client.announceAvatar(room.name, room.transcript.resolvedAvatar(nick));
                 redraw = true;
             }
         } else if (std.mem.eql(u8, msg.command, "366")) {
             const joined_channel = msg.param(1) orelse msg.param(0) orelse "";
-            if (state.join_requested and std.ascii.eqlIgnoreCase(joined_channel, channel)) {
-                try finishJoin(client, transcript, nick, channel, state);
+            if (workspace.find(joined_channel)) |room_index| {
+                workspace.rooms.items[room_index].joined = true;
+                state.joined = true;
+                state.status = "connected";
                 redraw = true;
             }
         } else if (std.mem.eql(u8, msg.command, "DATA")) {
             const target = msg.param(0) orelse continue;
             const kind = msg.param(1) orelse continue;
             const wire = msg.param(2) orelse continue;
-            if (!std.ascii.eqlIgnoreCase(target, channel) or !std.mem.eql(u8, kind, "CCUDI1")) continue;
+            if (!std.mem.eql(u8, kind, "CCUDI1")) continue;
+            const room_index = workspace.find(target) orelse continue;
             const who = if (msg.prefix) |prefix| cc.comic.session.nickFromPrefix(prefix) else continue;
             _ = cc.proto.udi.parseAnnotation(wire) catch continue;
-            try state.rememberUdi(transcript.gpa, who, wire);
+            try state.rememberUdi(workspace.gpa, target, who, wire);
+            _ = room_index;
         } else if (std.mem.eql(u8, msg.command, "PRIVMSG")) {
             const target = msg.param(0) orelse continue;
-            if (!std.ascii.eqlIgnoreCase(target, channel)) continue;
+            const room_index = workspace.find(target) orelse continue;
+            var room = &workspace.rooms.items[room_index];
+            const transcript = &room.transcript;
             const text = msg.param(1) orelse continue;
             const who = if (msg.prefix) |p| cc.comic.session.nickFromPrefix(p) else "someone";
             if (try transcript.consumeAvatarAnnouncement(who, text)) {
                 redraw = true;
                 continue;
             }
-            var pending = state.takeUdi(who);
+            var pending = state.takeUdi(target, who);
             defer if (pending) |*entry| entry.deinit(transcript.gpa);
             try transcript.addWireMessage(
                 who,
@@ -1380,6 +1624,7 @@ fn processBufferedMessages(
                 if (pending) |entry| entry.wire else null,
             );
             transcript.trimTo(64);
+            if (workspace.active != room_index) room.unread +|= 1;
             redraw = true;
         } else if (std.mem.eql(u8, msg.command, "433")) {
             state.status = "nickname in use";
@@ -1387,6 +1632,19 @@ fn processBufferedMessages(
         }
     }
     return redraw;
+}
+
+fn messageRoom(msg: *const cc.net.message.Message) ?[]const u8 {
+    if (std.ascii.eqlIgnoreCase(msg.command, "353")) {
+        if (msg.param_count < 2) return null;
+        return msg.params[msg.param_count - 2];
+    }
+    if (std.ascii.eqlIgnoreCase(msg.command, "366")) return msg.param(1) orelse msg.param(0);
+    if (std.ascii.eqlIgnoreCase(msg.command, "JOIN") or
+        std.ascii.eqlIgnoreCase(msg.command, "PART") or
+        std.ascii.eqlIgnoreCase(msg.command, "DATA") or
+        std.ascii.eqlIgnoreCase(msg.command, "PRIVMSG")) return msg.param(0);
+    return null;
 }
 
 fn presentView(
@@ -1401,9 +1659,26 @@ fn presentView(
     try win.present(view.pixels(), view.width(), view.height());
 }
 
+fn presentWorkspace(
+    win: anytype,
+    view: *cc.client.view.View,
+    status: []const u8,
+    workspace: *cc.client.workspace.Workspace,
+) !void {
+    const room = workspace.activeRoom() orelse return;
+    var tabs: [cc.client.workspace.max_rooms]cc.client.view.View.Tab = undefined;
+    for (workspace.rooms.items, 0..) |item, index| tabs[index] = .{
+        .label = item.name,
+        .unread = item.unread,
+    };
+    try view.renderTabs(status, &room.transcript, room.editor.text(), room.editor.cursor, room.editor.selection(), tabs[0..workspace.rooms.items.len], workspace.active.?);
+    try win.present(view.pixels(), view.width(), view.height());
+}
+
 fn handleInputKey(
     gpa: std.mem.Allocator,
     key: anytype,
+    view: *cc.client.view.View,
     editor: *cc.client.input.Editor,
     maybe_client: ?*cc.net.client.Client,
     transcript: *cc.comic.session.Transcript,
@@ -1413,21 +1688,50 @@ fn handleInputKey(
     ircx_data: bool,
 ) !bool {
     switch (key) {
-        .char => |ch| if (editor.text().len < 400) try editor.insert(ch),
+        .char => |ch| {
+            view.focusComposer();
+            const encoded_len = std.unicode.utf8CodepointSequenceLength(ch) catch return true;
+            if (editor.text().len + encoded_len <= 400) try editor.insert(ch);
+        },
         .backspace => editor.backspace(),
         .delete => editor.delete(),
         .left => editor.left(),
         .right => editor.right(),
         .home => editor.home(),
         .end => editor.end(),
-        .escape => return false,
+        .escape => if (!view.closeDialog()) return false,
         .enter => {
+            if (view.active_dialog != null) {
+                _ = view.closeDialog();
+                return true;
+            }
             if (editor.text().len == 0) return true;
             const line = try editor.take();
             defer gpa.free(line);
             if (std.mem.eql(u8, line, "/quit")) return false;
             if (std.mem.eql(u8, line, "/clear")) {
                 transcript.trimTo(0);
+                view.jumpLatest();
+                return true;
+            }
+            if (std.mem.eql(u8, line, "/view comic") or std.mem.eql(u8, line, "/comic")) {
+                view.setContentMode(.comic);
+                return true;
+            }
+            if (std.mem.eql(u8, line, "/view text") or std.mem.eql(u8, line, "/text")) {
+                view.setContentMode(.text);
+                return true;
+            }
+            if (std.mem.eql(u8, line, "/members")) {
+                view.toggleMembers();
+                return true;
+            }
+            if (std.mem.eql(u8, line, "/latest")) {
+                view.jumpLatest();
+                return true;
+            }
+            if (std.mem.startsWith(u8, line, "/dialog ")) {
+                _ = view.openDialogByResource(std.mem.trim(u8, line["/dialog ".len..], " \t"));
                 return true;
             }
             if (!joined) return true;
@@ -1439,21 +1743,37 @@ fn handleInputKey(
                 try client.announceAvatar(channel, selected);
                 return true;
             }
+            const selected_mode = view.shell.say_mode;
             const action_text: ?[]const u8 = if (std.mem.eql(u8, line, "/me"))
                 ""
             else if (std.mem.startsWith(u8, line, "/me "))
                 line["/me ".len..]
+            else if (selected_mode == .action)
+                line
             else
                 null;
             if (action_text) |body| if (body.len == 0) return true;
             const visible_text = action_text orelse line;
-            const modes: u16 = if (action_text != null)
-                cc.proto.udi.bm_action
-            else
-                cc.proto.udi.bm_say;
+            const modes: u16 = if (action_text != null) cc.proto.udi.bm_action else switch (selected_mode) {
+                .say => cc.proto.udi.bm_say,
+                .think => cc.proto.udi.bm_think,
+                .whisper => cc.proto.udi.bm_whisper,
+                .action => unreachable,
+                .sound => cc.proto.udi.bm_sound,
+            };
+            const target = if (selected_mode == .whisper) whisper: {
+                const member_index = view.shell.selected_member orelse return true;
+                if (member_index >= transcript.roster.items.len) return true;
+                break :whisper transcript.roster.items[member_index].nick;
+            } else channel;
+            const is_private = selected_mode == .whisper;
             const avatar_name = transcript.resolvedAvatar(nick);
             const avatar = cc.comic.strip.avatarByName(avatar_name) orelse return error.UnknownAvatar;
-            const pose_state = try cc.comic.figure.poseStateForText(gpa, avatar, visible_text);
+            const selected_emotion = view.shell.selectedEmotion();
+            const pose_state = if (selected_emotion == .neutral)
+                try cc.comic.figure.poseStateForText(gpa, avatar, visible_text)
+            else
+                try cc.comic.figure.poseStateForEmotion(gpa, avatar, selected_emotion, view.shell.selectedEmotionIntensity());
             var comic_message: std.ArrayList(u8) = .empty;
             defer comic_message.deinit(gpa);
             try cc.proto.udi.encode(&comic_message, gpa, .{
@@ -1472,17 +1792,22 @@ fn handleInputKey(
                 try chat_message.appendSlice(gpa, line);
             }
             if (ircx_data) {
-                try client.comicData(channel, comic_message.items);
-                try client.privmsg(channel, chat_message.items);
-                try transcript.addWireMessage(nick, chat_message.items, false, comic_message.items);
+                try client.comicData(target, comic_message.items);
+                try client.privmsg(target, chat_message.items);
+                try transcript.addWireMessage(nick, chat_message.items, is_private, comic_message.items);
             } else {
                 try comic_message.appendSlice(gpa, chat_message.items);
-                try client.privmsg(channel, comic_message.items);
-                try transcript.addWireMessage(nick, comic_message.items, false, null);
+                try client.privmsg(target, comic_message.items);
+                try transcript.addWireMessage(nick, comic_message.items, is_private, null);
             }
+            view.shell.setSayMode(.say);
             transcript.trimTo(64);
+            view.jumpLatest();
         },
-        .tab, .up, .down, .page_up, .page_down, .other => {},
+        .tab => view.cycleFocus(),
+        .page_up => view.pageEarlier(transcript.lines.items.len),
+        .page_down => view.pageLater(),
+        .up, .down, .other => {},
     }
     return true;
 }
@@ -1587,12 +1912,21 @@ fn runConnect(
             registered = true;
             elog("** registered; joining {s}\n", .{channel});
             try client.join(channel);
-        } else if (registered and !joined and
-            (std.mem.eql(u8, msg.command, "366") or std.mem.eql(u8, msg.command, "JOIN")))
-        {
-            joined = true;
-            elog("** joined; sending a line\n", .{});
-            try client.privmsg(channel, "Hello from Comic Chat!");
+        } else if (registered and !joined and std.mem.eql(u8, msg.command, "JOIN")) {
+            const who = if (msg.prefix) |prefix| cc.comic.session.nickFromPrefix(prefix) else "";
+            const joined_channel = msg.param(0) orelse "";
+            if (std.ascii.eqlIgnoreCase(who, nick) and std.ascii.eqlIgnoreCase(joined_channel, channel)) {
+                joined = true;
+                elog("** joined; sending a line\n", .{});
+                try client.privmsg(channel, "Hello from Comic Chat!");
+            }
+        } else if (registered and !joined and std.mem.eql(u8, msg.command, "366")) {
+            const joined_channel = msg.param(1) orelse msg.param(0) orelse "";
+            if (std.ascii.eqlIgnoreCase(joined_channel, channel)) {
+                joined = true;
+                elog("** joined; sending a line\n", .{});
+                try client.privmsg(channel, "Hello from Comic Chat!");
+            }
         }
 
         if (joined) {

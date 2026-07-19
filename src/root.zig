@@ -39,13 +39,21 @@ pub const render = struct {
 };
 
 pub const platform = struct {
+    pub const event = @import("platform/event.zig");
     pub const x11 = @import("platform/x11.zig");
     pub const win32 = @import("platform/win32.zig");
     pub const wayland = if (builtin.os.tag == .linux) @import("platform/wayland.zig") else struct {};
 };
 
 pub const client = struct {
+    pub const geometry = @import("client/geometry.zig");
+    pub const hit_test = @import("client/hit_test.zig");
+    pub const dialogs = @import("client/dialogs.zig");
+    pub const workspace = @import("client/workspace.zig");
+    pub const files = @import("client/files.zig");
+    pub const accessibility = @import("client/accessibility.zig");
     pub const input = @import("client/input.zig");
+    pub const shell = @import("client/shell.zig");
     pub const view = @import("client/view.zig");
 };
 
@@ -56,6 +64,7 @@ pub const net = struct {
     pub const features = @import("net/features.zig");
     pub const connection_policy = @import("net/connection_policy.zig");
     pub const sts_store = @import("net/sts_store.zig");
+    pub const session_store = @import("net/session_store.zig");
     pub const irc = @import("net/irc.zig");
     pub const transport = @import("net/transport.zig");
     pub const tls = @import("net/tls.zig");
@@ -91,13 +100,20 @@ test {
     _ = @import("comic/source_strip_test.zig");
     _ = @import("comic/source_modes_test.zig");
     _ = @import("render/png.zig");
+    _ = @import("platform/event.zig");
     _ = @import("platform/x11.zig");
     _ = @import("platform/win32.zig");
     if (builtin.os.tag == .linux) {
         _ = @import("platform/wayland.zig");
         _ = @import("platform/xkb.zig");
     }
+    _ = @import("client/geometry.zig");
+    _ = @import("client/hit_test.zig");
+    _ = @import("client/dialogs.zig");
+    _ = @import("client/workspace.zig");
+    _ = @import("client/files.zig");
     _ = @import("client/input.zig");
+    _ = @import("client/shell.zig");
     _ = @import("client/view.zig");
     _ = @import("net/message.zig");
     _ = @import("net/ircv3.zig");
@@ -105,6 +121,7 @@ test {
     _ = @import("net/features.zig");
     _ = @import("net/connection_policy.zig");
     _ = @import("net/sts_store.zig");
+    _ = @import("net/session_store.zig");
     _ = @import("net/irc.zig");
     _ = @import("net/transport.zig"); // compile-checked (no live socket test)
     _ = @import("net/tls.zig");

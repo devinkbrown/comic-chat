@@ -25,6 +25,7 @@ pub const Proxy = union(enum) {
 pub const ConnectOptions = struct {
     security: Security = .tls,
     ca_file: ?[]const u8 = null,
+    client_cert_file: ?[]const u8 = null,
     proxy: Proxy = .direct,
     /// Applied to each concurrently raced address and each proxy read.
     connect_timeout_ms: u32 = 15_000,
@@ -65,7 +66,11 @@ pub const Transport = struct {
                     io,
                     stream,
                     host,
-                    .{ .ca_file = options.ca_file, .handshake_timeout_ms = options.connect_timeout_ms },
+                    .{
+                        .ca_file = options.ca_file,
+                        .client_cert_file = options.client_cert_file,
+                        .handshake_timeout_ms = options.connect_timeout_ms,
+                    },
                 ) };
             },
             .plaintext => .{ .plaintext = try PlainTransport.connectWithOptions(gpa, host, port, options) },
@@ -229,18 +234,19 @@ fn connectStream(
 }
 
 fn connectEndpoint(io: std.Io, endpoint: ProxyEndpoint, timeout_ms: u32) !net.Stream {
-    const timeout: std.Io.Timeout = .{ .duration = .{
-        .raw = std.Io.Duration.fromMilliseconds(timeout_ms),
-        .clock = .awake,
-    } };
+    // Zig 0.17's Threaded POSIX backend currently panics when netConnectIp is
+    // given a non-null timeout. The whole connect runs on Connector's owned
+    // worker, so keep the UI nonblocking and let the bounded proxy reads and
+    // TLS handshake enforce their own deadlines until std supports this.
+    _ = timeout_ms;
     if (net.IpAddress.resolve(io, endpoint.host, endpoint.port)) |address| {
-        return address.connect(io, .{ .mode = .stream, .timeout = timeout });
+        return address.connect(io, .{ .mode = .stream });
     } else |_| {}
     const host_name = try net.HostName.init(endpoint.host);
     // HostName.connect resolves both families, races a bounded 32-address
     // queue concurrently, cancels losing sockets, and returns the first
     // successful stream.
-    return host_name.connect(io, endpoint.port, .{ .mode = .stream, .timeout = timeout });
+    return host_name.connect(io, endpoint.port, .{ .mode = .stream });
 }
 
 fn streamWriteAll(io: std.Io, stream: *const net.Stream, bytes: []const u8) !void {
@@ -354,6 +360,7 @@ pub const Connector = struct {
     port: u16,
     options: ConnectOptions,
     owned_ca: ?[]u8 = null,
+    owned_client_cert: ?[]u8 = null,
     owned_proxy_host: ?[]u8 = null,
     thread: std.Thread = undefined,
     state: std.atomic.Value(State) = .init(.pending),
@@ -390,6 +397,11 @@ pub const Connector = struct {
             self.options.ca_file = self.owned_ca;
         }
         errdefer if (self.owned_ca) |path| gpa.free(path);
+        if (options.client_cert_file) |path| {
+            self.owned_client_cert = try gpa.dupe(u8, path);
+            self.options.client_cert_file = self.owned_client_cert;
+        }
+        errdefer if (self.owned_client_cert) |path| gpa.free(path);
         switch (options.proxy) {
             .direct => {},
             .socks5, .http_connect => |endpoint| {
@@ -480,6 +492,7 @@ pub const Connector = struct {
         if (self.references.fetchSub(1, .acq_rel) != 1) return;
         if (self.transport) |connected| connected.deinit();
         if (self.owned_proxy_host) |proxy_host| self.gpa.free(proxy_host);
+        if (self.owned_client_cert) |path| self.gpa.free(path);
         if (self.owned_ca) |path| self.gpa.free(path);
         self.gpa.free(self.host);
         const gpa = self.gpa;
@@ -495,6 +508,8 @@ fn validateConnectInputs(host: []const u8, port: u16, options: ConnectOptions) !
     if (port == 0) return error.InvalidConnectPort;
     if (options.connect_timeout_ms == 0) return error.InvalidConnectTimeout;
     if (options.ca_file) |path| if (path.len == 0 or path.len > 32 * 1024 or
+        std.mem.indexOfScalar(u8, path, 0) != null) return error.InvalidCertificatePath;
+    if (options.client_cert_file) |path| if (path.len == 0 or path.len > 32 * 1024 or
         std.mem.indexOfScalar(u8, path, 0) != null) return error.InvalidCertificatePath;
     switch (options.proxy) {
         .direct => {},

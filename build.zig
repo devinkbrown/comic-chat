@@ -9,10 +9,18 @@ pub fn build(b: *std.Build) void {
     const mbedtls_dep = b.dependency("mbedtls", .{});
     const mbedtls = addMbedTls(b, mbedtls_dep, target, optimize);
 
+    const source_ui_assets = b.createModule(.{
+        .root_source_file = b.path("source_ui_assets.zig"),
+        .target = target,
+    });
+
     // The reusable library: protocol codec, asset decoders, IRC, comic layout.
     const mod = b.addModule("comicchat", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
+        .imports = &.{
+            .{ .name = "source_ui_assets", .module = source_ui_assets },
+        },
     });
 
     // The CLI / app entry point.

@@ -393,9 +393,15 @@ const named_char_keysyms = std.StaticStringMap(u8).initComptime(.{
 /// bare-letter/digit case ("a", "A", "5") and the named-punctuation table
 /// above; returns null for anything else (a named key, or an unrecognized
 /// keysym this bounded parser does not translate).
-pub fn charForKeysym(name: []const u8) ?u8 {
+pub fn charForKeysym(name: []const u8) ?u21 {
     if (name.len == 1 and std.ascii.isPrint(name[0])) return name[0];
-    return named_char_keysyms.get(name);
+    if (named_char_keysyms.get(name)) |character| return character;
+    if (name.len >= 5 and name.len <= 7 and name[0] == 'U') {
+        const value = std.fmt.parseInt(u21, name[1..], 16) catch return null;
+        if (value > 0x10ffff or (value >= 0xd800 and value <= 0xdfff)) return null;
+        return value;
+    }
+    return null;
 }
 
 /// Resolves a keysym name to a named (non-character) key, if it is one.
@@ -465,7 +471,7 @@ test "parse translates a realistic US-shaped fragment for base and shifted level
     try std.testing.expectEqualStrings("Return", keymap.keysymFor(28, false).?);
     try std.testing.expectEqualStrings("Return", keymap.keysymFor(28, true).?);
     try std.testing.expectEqual(NamedKey.enter, namedKeyForKeysym("Return").?);
-    try std.testing.expectEqual(@as(?u8, null), charForKeysym("Return"));
+    try std.testing.expectEqual(@as(?u21, null), charForKeysym("Return"));
 
     // A key with no entry at all (never declared).
     try std.testing.expectEqual(@as(?[]const u8, null), keymap.keysymFor(999, false));
@@ -490,7 +496,8 @@ test "charForKeysym and namedKeyForKeysym cover the documented tables" {
     try std.testing.expectEqual(@as(u8, ' '), charForKeysym("space").?);
     try std.testing.expectEqual(@as(u8, '!'), charForKeysym("exclam").?);
     try std.testing.expectEqual(@as(u8, '5'), charForKeysym("5").?);
-    try std.testing.expectEqual(@as(?u8, null), charForKeysym("nonexistent_keysym_name"));
+    try std.testing.expectEqual(@as(?u21, null), charForKeysym("nonexistent_keysym_name"));
+    try std.testing.expectEqual(@as(?u21, 0x20ac), charForKeysym("U20AC"));
     try std.testing.expectEqual(NamedKey.backspace, namedKeyForKeysym("BackSpace").?);
     try std.testing.expectEqual(NamedKey.page_up, namedKeyForKeysym("Prior").?);
     try std.testing.expectEqual(@as(?NamedKey, null), namedKeyForKeysym("nonexistent_keysym_name"));

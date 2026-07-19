@@ -11,6 +11,7 @@ const sasl = @import("sasl.zig");
 const features_mod = @import("features.zig");
 const policy = @import("connection_policy.zig");
 const sts_store = @import("sts_store.zig");
+const session_store = @import("session_store.zig");
 const message = @import("message.zig");
 const transport = @import("transport.zig");
 const dcc = @import("../proto/dcc.zig");
@@ -41,6 +42,8 @@ pub const RegistrationOptions = struct {
     /// CSPRNG. Kept optional for registrations which do not authenticate.
     io: ?std.Io = null,
     sts: ?*sts_store.Store = null,
+    session: ?*session_store.Store = null,
+    session_path: ?[]const u8 = null,
     now_seconds: u64 = 0,
 };
 
@@ -65,12 +68,16 @@ const Registration = struct {
     sasl_preference: []const sasl.Mechanism,
     io: ?std.Io,
     store: ?*sts_store.Store,
+    session: ?*session_store.Store,
+    session_path: ?[]const u8,
     now_seconds: u64,
     security: Security,
     host: []const u8,
     want_ircx: bool,
     ircx_sent: bool = false,
     done: bool = false,
+    authenticated: bool = false,
+    session_commands_sent: bool = false,
     nonce: [24]u8 = undefined,
 
     fn init(
@@ -90,6 +97,8 @@ const Registration = struct {
             .sasl_preference = options.sasl_preference,
             .io = options.io,
             .store = options.sts,
+            .session = options.session,
+            .session_path = options.session_path,
             .now_seconds = options.now_seconds,
             .security = security,
             .host = host,
@@ -133,7 +142,12 @@ const Registration = struct {
                     else => return err,
                 };
                 switch (event) {
-                    .succeeded, .failed, .already_authenticated => {
+                    .succeeded, .already_authenticated => {
+                        self.authenticated = true;
+                        const cap_event = try self.cap.saslComplete(out);
+                        try self.handleCapEvent(out, cap_event);
+                    },
+                    .failed => {
                         const cap_event = try self.cap.saslComplete(out);
                         try self.handleCapEvent(out, cap_event);
                     },
@@ -201,6 +215,24 @@ const Registration = struct {
                 try store.update(self.host, policy_value.duration_seconds, self.now_seconds);
             },
         }
+    }
+
+    fn sendSessionCommands(self: *Registration, out: *std.ArrayList(u8)) !bool {
+        if (self.session_commands_sent or !self.authenticated) return false;
+        self.session_commands_sent = true;
+        if (self.session) |store| if (store.resumeToken(self.now_seconds)) |token| {
+            try out.appendSlice(self.cap.gpa, "SESSION RESUME ");
+            try out.appendSlice(self.cap.gpa, token);
+            try out.appendSlice(self.cap.gpa, "\r\n");
+        };
+        try out.appendSlice(self.cap.gpa, "SESSION TOKEN\r\n");
+        return true;
+    }
+
+    fn observeSessionCredential(self: *Registration, msg: Message) !void {
+        const store = self.session orelse return;
+        if (!try store.observe(msg)) return;
+        if (self.session_path) |path| try store.saveFile(self.io orelse return, path);
     }
 };
 
@@ -363,6 +395,36 @@ pub const Client = struct {
     pub fn join(self: *Client, channel: []const u8) !void {
         try self.appendCommand("JOIN", &.{channel});
         if (self.capabilityEnabled("no-implicit-names")) try self.appendCommand("NAMES", &.{channel});
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn part(self: *Client, channel: []const u8) !void {
+        try self.appendCommand("PART", &.{channel});
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn changeNick(self: *Client, nick: []const u8) !void {
+        try self.appendCommand("NICK", &.{nick});
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn setAway(self: *Client, message_text: []const u8) !void {
+        if (message_text.len == 0) try self.appendCommand("AWAY", &.{}) else try self.appendCommand("AWAY", &.{message_text});
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn kick(self: *Client, channel: []const u8, nick: []const u8) !void {
+        try self.appendCommand("KICK", &.{ channel, nick });
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn invite(self: *Client, nick: []const u8, channel: []const u8) !void {
+        try self.appendCommand("INVITE", &.{ nick, channel });
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn setBan(self: *Client, channel: []const u8, mask: []const u8) !void {
+        try self.appendCommand("MODE", &.{ channel, "+b", mask });
         try self.queueOut(.interactive, true, false);
     }
 
@@ -641,6 +703,9 @@ pub const Client = struct {
                     try self.queueOut(.control, false, true);
                     continue;
                 }
+                try registration.observeSessionCredential(msg);
+                if (std.mem.eql(u8, msg.command, "001") and try registration.sendSessionCommands(&self.out))
+                    try self.queueOut(.control, false, true);
             }
 
             if (try self.aggregator.ingest(line)) {
@@ -706,6 +771,39 @@ test "autoRespond ignores non-PING" {
 
     const did = try autoRespond(&out, gpa, message.parse(":srv PRIVMSG me :hi"));
     try std.testing.expect(!did);
+    try std.testing.expectEqual(@as(usize, 0), out.items.len);
+}
+
+test "authenticated registration resumes once then requests a fresh session token" {
+    const gpa = std.testing.allocator;
+    var store = try session_store.Store.init(gpa, "eshmaki.me", "kain");
+    defer store.deinit();
+    try std.testing.expect(try store.observe(message.parse(":eshmaki.me NOTICE kain :SESSION TOKEN reusable")));
+    var registration = Registration.init(gpa, "eshmaki.me", .tls, .{
+        .session = &store,
+        .now_seconds = 100,
+    });
+    defer registration.deinit();
+    registration.authenticated = true;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+
+    try std.testing.expect(try registration.sendSessionCommands(&out));
+    try std.testing.expectEqualStrings("SESSION RESUME reusable\r\nSESSION TOKEN\r\n", out.items);
+    try std.testing.expect(!try registration.sendSessionCommands(&out));
+}
+
+test "unauthenticated registration never transmits a session bearer" {
+    const gpa = std.testing.allocator;
+    var store = try session_store.Store.init(gpa, "eshmaki.me", "kain");
+    defer store.deinit();
+    try std.testing.expect(try store.observe(message.parse(":eshmaki.me NOTICE kain :SESSION TOKEN reusable")));
+    var registration = Registration.init(gpa, "eshmaki.me", .tls, .{ .session = &store });
+    defer registration.deinit();
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+
+    try std.testing.expect(!try registration.sendSessionCommands(&out));
     try std.testing.expectEqual(@as(usize, 0), out.items.len);
 }
 

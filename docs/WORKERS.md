@@ -1,13 +1,9 @@
 # Worker brief — Comic Chat
 
-This repository has two intentionally separate implementation lanes:
-
-- `src/` is the portable client. It uses one software framebuffer renderer
-  with direct X11, Wayland, and Win32 backends and no SDL. Its sole linked C
-  dependency is the pinned official mbedTLS 3.6.6 TLS implementation.
-- `legacy/` is the byte-verified Microsoft Chat 2.5 beta 1 MFC source plus
-  modern Windows build/package wrappers. It requires Visual Studio 2022, MFC,
-  and an x86 Windows toolchain.
+This repository ships one portable implementation under `src/`. It uses a
+software framebuffer renderer with direct X11, Wayland, and Win32 backends and
+no SDL. Its sole linked C dependency is the pinned official mbedTLS 3.6.6 TLS
+implementation.
 
 The portable tree is currently tested with Zig
 `0.17.0-dev.1282+c0f9b51d8`. Its standard gates are:
@@ -22,10 +18,10 @@ zig build -Dtarget=aarch64-windows
 
 ## Rendering source of truth
 
-Microsoft's repository at <https://github.com/microsoft/comic-chat>, pinned by
-`legacy/PROVENANCE.md`, is the behavioral source of truth. Do not introduce a
-second heuristic layout or balloon path. The source-derived portable pipeline
-is split across:
+The historical Comic Chat repository at
+<https://github.com/microsoft/comic-chat> is the external behavioral reference.
+Do not introduce a second heuristic layout or balloon path. The source-derived
+portable pipeline is split across:
 
 - `src/comic/original_page.zig`: AddLine/AddReaction, title accounting,
   retries, clones, continuations, and the shared random stream.
@@ -70,7 +66,7 @@ hash.
   A nonempty `WAYLAND_DISPLAY` selects Wayland; there is no automatic X11
   fallback after a Wayland connection failure.
 - `src/platform/win32.zig` uses direct Win32 declarations and presents the
-  same software framebuffer. It is not the MFC legacy lane.
+  same software framebuffer; no MFC layer is part of this product.
 - `src/client/` owns portable view/input behavior shared by native backends.
 - The direct Wayland keyboard path parses the compositor's real XKB keymap
   (`src/platform/xkb.zig`, base + Shift levels only) and implements
@@ -87,9 +83,6 @@ hash.
   replace it with an unpinned system library or weaken certificate checks.
 - Add focused inline tests and aggregate a new test-only module from
   `src/root.zig` when necessary.
-- Preserve the imported paths enumerated in `legacy/PROVENANCE.md`. Verify
-  them with `legacy/scripts/verify-import.sh <upstream-checkout>`; put build or
-  packaging adaptations outside those paths.
 - Do not add or redistribute AVB/BGB files without an exact source path,
   checksum, and applicable license. The current portable asset audit and Xeno
   import procedure are in `PORTABLE_ASSET_PROVENANCE.md`.

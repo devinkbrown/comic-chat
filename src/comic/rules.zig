@@ -29,7 +29,7 @@
 //!   drive `eOnConnect`/`eOnDisconnect`/`eOnNewRoom` (events with no direct
 //!   wire trigger; they fire from noticing a WHO/LIST snapshot change).
 //!
-//! Two pieces are *not* in the pinned `legacy/source/` snapshot at all
+//! Two pieces are *not* in the pinned historical source snapshot at all
 //! (declared in a file outside the imported provenance set), so they are
 //! not "ported" in the verified sense the rest of this codebase holds
 //! itself to:

@@ -173,8 +173,9 @@ pub const Canvas = struct {
 
     fn textWidthFor(comptime atlas: type, text: []const u8) i32 {
         var w: i32 = 0;
-        for (text) |c| {
-            if (c < atlas.first or c >= atlas.first + atlas.count) continue;
+        var index: usize = 0;
+        while (index < text.len) {
+            const c = displayGlyphByte(atlas, text, &index);
             w += atlas.glyphs[c - atlas.first].advance;
         }
         return w;
@@ -200,8 +201,9 @@ pub const Canvas = struct {
         color: Color,
     ) i32 {
         var pen = x;
-        for (text) |c| {
-            if (c < atlas.first or c >= atlas.first + atlas.count) continue;
+        var index: usize = 0;
+        while (index < text.len) {
+            const c = displayGlyphByte(atlas, text, &index);
             const g = atlas.glyphs[c - atlas.first];
             var row: u32 = 0;
             while (row < g.h) : (row += 1) {
@@ -214,6 +216,21 @@ pub const Canvas = struct {
             pen += g.advance;
         }
         return pen;
+    }
+
+    fn displayGlyphByte(comptime atlas: type, text: []const u8, index: *usize) u8 {
+        const first = text[index.*];
+        const sequence_len: usize = std.unicode.utf8ByteSequenceLength(first) catch 1;
+        var codepoint: u21 = '?';
+        if (sequence_len <= text.len - index.*) {
+            codepoint = std.unicode.utf8Decode(text[index.*..][0..sequence_len]) catch '?';
+        }
+        index.* += sequence_len;
+        if (codepoint <= std.math.maxInt(u8)) {
+            const byte: u8 = @intCast(codepoint);
+            if (byte >= atlas.first and byte < atlas.first + atlas.count) return byte;
+        }
+        return if ('?' >= atlas.first and '?' < atlas.first + atlas.count) '?' else atlas.first;
     }
 
     pub fn drawTextStyled(self: *Canvas, text: []const u8, x: i32, y: i32, color: Color, style: FontStyle) i32 {
@@ -391,6 +408,16 @@ test "drawText advances and lights pixels for visible glyphs" {
         if ((p & 0xff) > 40) lit += 1;
     }
     try std.testing.expect(lit > 0);
+}
+
+test "UTF-8 text advances once per codepoint with visible fallback glyphs" {
+    const expected = Canvas.textWidth("A??");
+    try std.testing.expectEqual(expected, Canvas.textWidth("A€🙂"));
+    var canvas = try Canvas.init(std.testing.allocator, 120, 30);
+    defer canvas.deinit(std.testing.allocator);
+    canvas.clear(white);
+    const end = canvas.drawText("A€🙂", 0, 0, black);
+    try std.testing.expectEqual(expected, end);
 }
 
 test "whisper text uses the generated italic atlas for metrics and pixels" {

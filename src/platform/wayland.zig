@@ -24,10 +24,12 @@ const linux = std.os.linux;
 const posix = std.posix;
 const net = std.Io.net;
 const xkb = @import("xkb.zig");
+const shared_event = @import("event.zig");
 
 const wl_display: u32 = 1;
 const max_message_size: usize = 1024 * 1024;
 const shm_argb8888: u32 = 0;
+const seat_pointer: u32 = 1 << 0;
 const seat_keyboard: u32 = 1 << 1;
 
 // Request opcodes from wayland.xml and stable/xdg-shell/xdg-shell.xml.
@@ -44,6 +46,7 @@ const surface_attach: u16 = 1;
 const surface_damage: u16 = 2;
 const surface_commit: u16 = 6;
 const surface_damage_buffer: u16 = 9;
+const seat_get_pointer: u16 = 0;
 const seat_get_keyboard: u16 = 1;
 const seat_release: u16 = 3;
 const keyboard_release: u16 = 0;
@@ -57,31 +60,8 @@ const xdg_toplevel_destroy: u16 = 0;
 const xdg_toplevel_set_title: u16 = 2;
 const xdg_toplevel_set_app_id: u16 = 3;
 
-pub const Key = union(enum) {
-    char: u8,
-    backspace,
-    enter,
-    escape,
-    tab,
-    left,
-    right,
-    up,
-    down,
-    home,
-    end,
-    page_up,
-    page_down,
-    delete,
-    other,
-};
-
-pub const Event = union(enum) {
-    key: Key,
-    resize: struct { w: u32, h: u32 },
-    expose,
-    close,
-    other,
-};
+pub const Key = shared_event.Key;
+pub const Event = shared_event.Event;
 
 const Global = struct {
     name: u32 = 0,
@@ -311,6 +291,9 @@ pub const Window = struct {
     seat_id: u32 = 0,
     seat_version: u32 = 0,
     keyboard_id: u32 = 0,
+    pointer_id: u32 = 0,
+    pointer_x: i32 = 0,
+    pointer_y: i32 = 0,
     surface_id: u32 = 0,
     xdg_wm_base_id: u32 = 0,
     xdg_surface_id: u32 = 0,
@@ -324,6 +307,8 @@ pub const Window = struct {
     argb_supported: bool = false,
     shift_left: bool = false,
     shift_right: bool = false,
+    control_left: bool = false,
+    control_right: bool = false,
     caps_lock: bool = false,
     /// The compositor's layout, once a keymap event with a supported format
     /// has been received and successfully parsed. Null before that (falls
@@ -341,6 +326,7 @@ pub const Window = struct {
     /// leaves repeat entirely to the client (see the module doc).
     held_key_code: ?u32 = null,
     held_key_shift: bool = false,
+    held_key_control: bool = false,
     next_repeat_at_ms: u64 = 0,
     buffers: std.ArrayList(Buffer) = .empty,
 
@@ -368,6 +354,9 @@ pub const Window = struct {
         self.seat_id = 0;
         self.seat_version = 0;
         self.keyboard_id = 0;
+        self.pointer_id = 0;
+        self.pointer_x = 0;
+        self.pointer_y = 0;
         self.surface_id = 0;
         self.xdg_wm_base_id = 0;
         self.xdg_surface_id = 0;
@@ -502,7 +491,7 @@ pub const Window = struct {
         if (now < self.next_repeat_at_ms) return null;
         const interval_ms: u64 = @intCast(@max(1, @divTrunc(1000, self.repeat_rate_per_sec)));
         self.next_repeat_at_ms = now +| interval_ms;
-        return .{ .key = self.translateKey(code, self.held_key_shift) };
+        return .{ .key = .{ .key = self.translateKey(code, self.held_key_shift), .modifiers = .{ .shift = self.held_key_shift, .control = self.held_key_control } } };
     }
 
     fn discoverGlobals(self: *Window, globals: *Globals) !void {
@@ -554,6 +543,9 @@ pub const Window = struct {
         if (self.keyboard_id != 0 and msg.object == self.keyboard_id) {
             return try self.keyboardEvent(msg.opcode, msg.body);
         }
+        if (self.pointer_id != 0 and msg.object == self.pointer_id) {
+            return try self.pointerEvent(msg.opcode, msg.body);
+        }
         if (msg.object == self.xdg_toplevel_id) {
             switch (msg.opcode) {
                 0 => {
@@ -596,6 +588,15 @@ pub const Window = struct {
     }
 
     fn updateSeatCapabilities(self: *Window, capabilities: u32) !void {
+        if ((capabilities & seat_pointer) != 0) {
+            if (self.pointer_id == 0) {
+                self.pointer_id = try self.conn.allocId();
+                try sendOneU32(&self.conn, self.seat_id, seat_get_pointer, self.pointer_id);
+            }
+        } else if (self.pointer_id != 0) {
+            if (self.seat_version >= 3) try sendEmpty(&self.conn, self.pointer_id, pointer_release);
+            self.pointer_id = 0;
+        }
         if ((capabilities & seat_keyboard) != 0) {
             if (self.keyboard_id == 0) {
                 self.keyboard_id = try self.conn.allocId();
@@ -606,6 +607,54 @@ pub const Window = struct {
             self.keyboard_id = 0;
             self.shift_left = false;
             self.shift_right = false;
+        }
+    }
+
+    fn pointerEvent(self: *Window, opcode: u16, body: []const u8) !?Event {
+        switch (opcode) {
+            0 => { // enter(serial, surface, x, y)
+                if (body.len != 16) return error.InvalidWaylandMessage;
+                self.pointer_x = @divTrunc(getI32(body[8..12]), 256);
+                self.pointer_y = @divTrunc(getI32(body[12..16]), 256);
+                return .{ .pointer = .{ .kind = .move, .x = self.pointer_x, .y = self.pointer_y } };
+            },
+            1 => { // leave(serial, surface)
+                if (body.len != 8) return error.InvalidWaylandMessage;
+                return null;
+            },
+            2 => { // motion(time, x, y)
+                if (body.len != 12) return error.InvalidWaylandMessage;
+                self.pointer_x = @divTrunc(getI32(body[4..8]), 256);
+                self.pointer_y = @divTrunc(getI32(body[8..12]), 256);
+                return .{ .pointer = .{ .kind = .move, .x = self.pointer_x, .y = self.pointer_y } };
+            },
+            3 => { // button(serial, time, button, state)
+                if (body.len != 16) return error.InvalidWaylandMessage;
+                const button: shared_event.PointerButton = switch (get32(body[8..12])) {
+                    0x110 => .primary,
+                    0x111 => .secondary,
+                    0x112 => .middle,
+                    else => .none,
+                };
+                return .{ .pointer = .{
+                    .kind = if (get32(body[12..16]) != 0) .down else .up,
+                    .x = self.pointer_x,
+                    .y = self.pointer_y,
+                    .button = button,
+                } };
+            },
+            4 => { // axis(time, axis, value)
+                if (body.len != 12) return error.InvalidWaylandMessage;
+                if (get32(body[4..8]) != 0) return null;
+                const value = getI32(body[8..12]);
+                return .{ .pointer = .{
+                    .kind = .wheel,
+                    .x = self.pointer_x,
+                    .y = self.pointer_y,
+                    .wheel_y = if (value < 0) 1 else if (value > 0) -1 else 0,
+                } };
+            },
+            else => return null,
         }
     }
 
@@ -640,6 +689,8 @@ pub const Window = struct {
                 if (body.len != 8) return error.InvalidWaylandMessage;
                 self.shift_left = false;
                 self.shift_right = false;
+                self.control_left = false;
+                self.control_right = false;
                 self.held_key_code = null;
                 return null;
             },
@@ -651,6 +702,8 @@ pub const Window = struct {
                 switch (code) {
                     42 => self.shift_left = down,
                     54 => self.shift_right = down,
+                    29 => self.control_left = down,
+                    97 => self.control_right = down,
                     58 => if (state == 1) {
                         self.caps_lock = !self.caps_lock;
                     },
@@ -660,13 +713,15 @@ pub const Window = struct {
                     if (down) {
                         self.held_key_code = code;
                         self.held_key_shift = self.shift_left or self.shift_right;
+                        self.held_key_control = self.control_left or self.control_right;
                         self.next_repeat_at_ms = nowMs(self.conn.io) +| @as(u64, @intCast(@max(0, self.repeat_delay_ms)));
                     } else if (self.held_key_code == code) {
                         self.held_key_code = null;
                     }
                 }
-                if (!down or code == 42 or code == 54 or code == 58) return null;
-                return .{ .key = self.translateKey(code, self.shift_left or self.shift_right) };
+                if (!down or code == 42 or code == 54 or code == 29 or code == 97 or code == 58) return null;
+                const shifted = self.shift_left or self.shift_right;
+                return .{ .key = .{ .key = self.translateKey(code, shifted), .modifiers = .{ .shift = shifted, .control = self.control_left or self.control_right } } };
             },
             4 => { // modifiers(serial, depressed, latched, locked, group)
                 if (body.len != 20) return error.InvalidWaylandMessage;
@@ -782,6 +837,7 @@ pub const Window = struct {
     fn destroyProtocolObjects(self: *Window) !void {
         for (self.buffers.items) |buffer| try sendEmpty(&self.conn, buffer.id, buffer_destroy);
         if (self.keyboard_id != 0 and self.seat_version >= 3) try sendEmpty(&self.conn, self.keyboard_id, keyboard_release);
+        if (self.pointer_id != 0 and self.seat_version >= 3) try sendEmpty(&self.conn, self.pointer_id, pointer_release);
         if (self.xdg_toplevel_id != 0) try sendEmpty(&self.conn, self.xdg_toplevel_id, xdg_toplevel_destroy);
         if (self.xdg_surface_id != 0) try sendEmpty(&self.conn, self.xdg_surface_id, xdg_surface_destroy);
         if (self.surface_id != 0) try sendEmpty(&self.conn, self.surface_id, surface_destroy);
@@ -1376,7 +1432,7 @@ test "a real keymap event overrides evdevToKey's US table for the same physical 
     try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(key_written));
     try std.testing.expectEqual(key_wire.len, @as(usize, @intCast(key_written)));
 
-    try std.testing.expectEqual(Event{ .key = .{ .char = 'q' } }, try window.nextEvent());
+    try std.testing.expectEqual(Event{ .key = .{ .key = .{ .char = 'q' } } }, try window.nextEvent());
 }
 
 fn checkRepeatTestWindow(threaded: *std.Io.Threaded) Window {
@@ -1421,7 +1477,7 @@ test "checkRepeat fires once the deadline has passed and reschedules from now, n
 
     const before = window.next_repeat_at_ms;
     const event = window.checkRepeat();
-    try std.testing.expectEqual(Event{ .key = .{ .char = 'a' } }, event.?);
+    try std.testing.expectEqual(Event{ .key = .{ .key = .{ .char = 'a' } } }, event.?);
     // Rescheduled forward from *now* (>= before, by roughly one interval),
     // not left at the stale deadline that just fired.
     try std.testing.expect(window.next_repeat_at_ms >= before);
@@ -1465,7 +1521,7 @@ test "releasing the held key stops repeat, and repeat_info updates rate/delay" {
     put32(key_down[20..24], 1); // pressed
     wrote = linux.write(sockets[1], &key_down, key_down.len);
     try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(wrote));
-    try std.testing.expectEqual(Event{ .key = .{ .char = 'a' } }, try window.nextEvent());
+    try std.testing.expectEqual(Event{ .key = .{ .key = .{ .char = 'a' } } }, try window.nextEvent());
     try std.testing.expectEqual(@as(?u32, 30), window.held_key_code);
 
     var key_up: [24]u8 = @splat(0);
@@ -1484,3 +1540,4 @@ test "Wayland Window entry points compile without a compositor" {
     // Zig analyze the complete native backend call graph.
     try std.testing.expectError(error.InvalidWindowSize, show(std.testing.allocator, &.{}, 0, 1));
 }
+const pointer_release: u16 = 1;

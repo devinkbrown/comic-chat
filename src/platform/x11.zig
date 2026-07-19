@@ -13,6 +13,7 @@
 const std = @import("std");
 const linux = std.os.linux;
 const net = std.Io.net;
+const shared_event = @import("event.zig");
 
 const image_depth = 24;
 const z_pixmap = 2;
@@ -20,6 +21,9 @@ const z_pixmap = 2;
 const input_output = 1;
 
 const event_key_press: u32 = 1 << 0;
+const event_button_press: u32 = 1 << 2;
+const event_button_release: u32 = 1 << 3;
+const event_pointer_motion: u32 = 1 << 6;
 const event_exposure: u32 = 1 << 15;
 const event_structure: u32 = 1 << 17;
 
@@ -81,31 +85,8 @@ const Setup = struct {
 
 // --- Events -----------------------------------------------------------------
 
-pub const Key = union(enum) {
-    char: u8,
-    backspace,
-    enter,
-    escape,
-    tab,
-    left,
-    right,
-    up,
-    down,
-    home,
-    end,
-    page_up,
-    page_down,
-    delete,
-    other,
-};
-
-pub const Event = union(enum) {
-    key: Key,
-    resize: struct { w: u32, h: u32 },
-    expose,
-    close,
-    other,
-};
+pub const Key = shared_event.Key;
+pub const Event = shared_event.Event;
 
 // --- Keyboard mapping --------------------------------------------------------
 
@@ -147,7 +128,8 @@ pub const Keymap = struct {
 };
 
 pub fn keysymToKey(sym: u32) Key {
-    if (sym >= 0x20 and sym <= 0x7e) return .{ .char = @intCast(sym) };
+    if (sym >= 0x20 and sym <= 0xff) return .{ .char = @intCast(sym) };
+    if (sym >= 0x01000000 and sym <= 0x0110ffff) return .{ .char = @intCast(sym - 0x01000000) };
     return switch (sym) {
         0xff08 => .backspace,
         0xff09 => .tab,
@@ -261,7 +243,38 @@ pub const Window = struct {
             2 => { // KeyPress
                 const keycode = event[1];
                 const state = get16(event[28..30]);
-                return .{ .key = self.keymap.translate(keycode, state) };
+                return .{ .key = .{
+                    .key = self.keymap.translate(keycode, state),
+                    .modifiers = .{
+                        .shift = state & 1 != 0,
+                        .control = state & 4 != 0,
+                        .alt = state & 8 != 0,
+                    },
+                } };
+            },
+            4, 5, 6 => {
+                const x: i32 = @as(i16, @bitCast(get16(event[24..26])));
+                const y: i32 = @as(i16, @bitCast(get16(event[26..28])));
+                if (kind == 6) return .{ .pointer = .{ .kind = .move, .x = x, .y = y } };
+                const detail = event[1];
+                if (kind == 4 and (detail == 4 or detail == 5)) return .{ .pointer = .{
+                    .kind = .wheel,
+                    .x = x,
+                    .y = y,
+                    .wheel_y = if (detail == 4) 1 else -1,
+                } };
+                const button: shared_event.PointerButton = switch (detail) {
+                    1 => .primary,
+                    2 => .middle,
+                    3 => .secondary,
+                    else => .none,
+                };
+                return .{ .pointer = .{
+                    .kind = if (kind == 4) .down else .up,
+                    .x = x,
+                    .y = y,
+                    .button = button,
+                } };
             },
             12 => return .expose,
             17 => return .close, // DestroyNotify
@@ -410,7 +423,8 @@ fn createWindow(conn: *XConn, window: u32, w: u16, h: u16) !void {
     const values = [_]u32{
         conn.screen.white_pixel,
         conn.screen.black_pixel,
-        event_key_press | event_exposure | event_structure,
+        event_key_press | event_button_press | event_button_release |
+            event_pointer_motion | event_exposure | event_structure,
     };
     const value_mask = cw_back_pixel | cw_border_pixel | cw_event_mask;
     var req: [44]u8 = @splat(0);
