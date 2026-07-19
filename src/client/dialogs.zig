@@ -177,6 +177,10 @@ pub fn requiresInput(id: Id) bool {
 
 pub fn primaryLabel(id: Id) []const u8 {
     return switch (id) {
+        .setup, .settings, .servers => "Save changes",
+        .personal, .character, .background, .text_font, .set_text_font, .choose_color, .comics_view => "Apply",
+        .room_list => "Join room",
+        .user_list => "Select",
         .channel, .channel_create => "Join",
         .kick => "Kick",
         .ban => "Apply",
@@ -184,6 +188,9 @@ pub fn primaryLabel(id: Id) []const u8 {
         .whisper => "Open",
         .file_transfer => "Send",
         .away => "Set Away",
+        .automation, .rules, .edit_rule, .rule_sets, .add_to_sets, .rename_loaded_set, .rename_set, .create_set, .advanced_event_params, .advanced_rule_settings => "Save rule",
+        .notifications, .notification_users => "Save notifications",
+        .about, .motd => "Close",
         else => "OK",
     };
 }

@@ -1206,7 +1206,7 @@ fn drawDialog(c: *Canvas, spec: dialogs.Spec, editors: *const [3]input_mod.Edito
         drawTextEllipsized(c, field.label, rect.x + 20, row_y, rect.w - 40, secondary);
         const field_y = row_y + 16;
         c.fillRect(rect.x + 20, field_y, rect.w - 40, 23, layer);
-        drawRectOutline(c, rect.x + 20, field_y, rect.w - 40, 23, if (index == 0) accent else divider);
+        drawRectOutline(c, rect.x + 20, field_y, rect.w - 40, 23, if (index == active_field) accent else divider);
         if (index < editors.len) {
             const editor = &editors[index];
             const value = editor.text();
@@ -1217,7 +1217,7 @@ fn drawDialog(c: *Canvas, spec: dialogs.Spec, editors: *const [3]input_mod.Edito
                 c.fillRect(caret_x, field_y + 3, 1, 16, accent);
             }
         }
-        if (index != active_field and editors[index].text().len == 0) drawTextEllipsized(c, field.hint, rect.x + 26, field_y + 1, rect.w - 52, secondary);
+        if (editors[index].text().len == 0) drawTextEllipsized(c, field.hint, rect.x + 26, field_y + 1, rect.w - 52, secondary);
     }
 
     const button_y = rect.bottom() - 34;
