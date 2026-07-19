@@ -16,7 +16,8 @@ package_target() {
     (cd "$repo_root" && zig build -Dtarget="$target" -Doptimize=ReleaseSafe -p "$prefix")
     mkdir -p "$package_dir"
     cp "$prefix/bin/$executable" "$package_dir/"
-    cp "$repo_root/README.md" "$repo_root/LICENSE" "$package_dir/"
+    cp "$repo_root/README.md" "$repo_root/LICENSE" "$repo_root/NOTICE" "$package_dir/"
+    cp "$repo_root/LICENSES/MIT.txt" "$repo_root/src/render/COMIC_NEUE_LICENSE.txt" "$package_dir/"
 
     if [[ "$format" == zip ]]; then
         (cd "$prefix" && 7z a -tzip -bd "$output_dir/$archive" "$(basename "$package_dir")")

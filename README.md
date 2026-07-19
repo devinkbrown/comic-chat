@@ -133,8 +133,9 @@ from a clean checkout:
 ./tools/package-release.sh unofficial-modern-builds-2026-07
 ```
 
-Each archive contains the executable, this README, and the MIT license. Comic
-characters, backdrops, face expressions, and fonts are embedded in the binary.
+Each archive contains the executable, this README, the AGPL license, and
+third-party notices. Comic characters, backdrops, face expressions, and fonts
+are embedded in the binary.
 `comicchat app <nick>` defaults to the `eshmaki.me` server and `#root` channel;
 pass a host and/or channel to override either default.
 
@@ -184,9 +185,10 @@ interactive input so later panels use the selected character.
 
 ## License and provenance
 
-The historical Comic Chat source is MIT-licensed and remains an external
-reference at <https://github.com/microsoft/comic-chat>; its MFC/C++ tree is not
-vendored here. Microsoft names, logos, and artwork may be trademarks, and
+ComicChat's portable code is licensed under **AGPL-3.0-or-later**. The
+historical Comic Chat source is MIT-licensed and remains an external reference
+at <https://github.com/microsoft/comic-chat>; its MFC/C++ tree is not vendored
+here. Microsoft names, logos, and artwork may be trademarks, and
 builds from this repository are unofficial and unsupported. The portable asset
 set has a byte-level source and transformation audit in
 [`docs/PORTABLE_ASSET_PROVENANCE.md`](docs/PORTABLE_ASSET_PROVENANCE.md).
