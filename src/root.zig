@@ -7,6 +7,7 @@ pub const proto = struct {
     pub const record = @import("proto/record.zig");
     pub const udi = @import("proto/udi.zig");
     pub const dcc = @import("proto/dcc.zig");
+    pub const keystring = @import("proto/keystring.zig");
 };
 
 pub const assets = struct {
@@ -67,6 +68,7 @@ test {
     _ = @import("proto/record.zig");
     _ = @import("proto/udi.zig");
     _ = @import("proto/dcc.zig");
+    _ = @import("proto/keystring.zig");
     _ = @import("assets/avb.zig");
     _ = @import("assets/bgb.zig");
     _ = @import("render/canvas.zig");

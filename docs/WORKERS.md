@@ -133,6 +133,9 @@ Keep `src/net/` ownership-oriented and transport-independent above the socket:
   low-level quoting) and the stop-and-wait, ACK'd chunked transfer socket
   state machine (`sendFile`/`receiveFile`). `client.zig`'s `offerFile` only
   composes and sends the offer; callers drive the transfer directly.
+- `proto/keystring.zig` owns IRCX semicolon-delimited client-data key strings,
+  bounded pure property mutation, enumeration, and two-pass property diffing;
+  live PROP query/send plumbing remains a caller concern.
 
 The native app opens its window before connection setup. `AsyncNetwork` polls
 the connector, performs first-contact STS TLS upgrades, and schedules jittered
