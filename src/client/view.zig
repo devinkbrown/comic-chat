@@ -53,6 +53,7 @@ pub const View = struct {
     canvas: Canvas,
     shell: shell_mod.State = .{},
     active_dialog: ?dialogs.Id = null,
+    dialog_notice: []const u8 = "",
     active_menu: ?u8 = null,
     dialog_editors: [3]input_mod.Editor,
     dialog_field: usize = 0,
@@ -128,6 +129,7 @@ pub const View = struct {
         self.active_menu = null;
         for (&self.dialog_editors) |*editor| editor.clear();
         self.dialog_field = 0;
+        self.dialog_notice = "";
         self.active_dialog = id;
     }
 
@@ -151,6 +153,10 @@ pub const View = struct {
         return self.dialog_editors[@min(index, self.dialog_editors.len - 1)].text();
     }
 
+    pub fn setDialogNotice(self: *View, notice: []const u8) void {
+        self.dialog_notice = notice;
+    }
+
     pub fn handleDialogKey(self: *View, key: platform_event.Key) !?Action {
         const id = self.active_dialog orelse return null;
         const field_count = @min(dialogs.fields(id).len, self.dialog_editors.len);
@@ -161,7 +167,6 @@ pub const View = struct {
                 return .{ .dialog_cancel = id };
             },
             .enter => {
-                self.active_dialog = null;
                 return .{ .dialog_accept = id };
             },
             .tab => {
@@ -187,7 +192,6 @@ pub const View = struct {
             const button_y = rect.bottom() - 34;
             if (pointer.y >= button_y and pointer.y < button_y + 25) {
                 if (pointer.x >= rect.right() - 164 and pointer.x < rect.right() - 88) {
-                    self.active_dialog = null;
                     return .{ .dialog_accept = id };
                 }
                 if (pointer.x >= rect.right() - 84 and pointer.x < rect.right() - 8) {
@@ -337,7 +341,7 @@ pub const View = struct {
         if (self.shell.focus == .members) drawFocus(&self.canvas, layout.members);
         if (self.shell.focus == .emotion) drawFocus(&self.canvas, layout.body_camera);
         if (self.active_menu) |menu| drawMenuPopup(&self.canvas, menu);
-        if (self.active_dialog) |id| drawDialog(&self.canvas, dialogs.get(id), &self.dialog_editors, self.dialog_field);
+        if (self.active_dialog) |id| drawDialog(&self.canvas, dialogs.get(id), &self.dialog_editors, self.dialog_field, self.dialog_notice);
     }
 
     pub fn semanticSnapshot(self: *const View, status: []const u8, tabs: []const Tab, active_tab: usize) accessibility.Snapshot {
@@ -1170,7 +1174,7 @@ fn dialogRect(width: u32, height: u32, spec: dialogs.Spec) Rect {
     return .{ .x = @divTrunc(canvas_w - w, 2), .y = @divTrunc(canvas_h - h, 2), .w = w, .h = h };
 }
 
-fn drawDialog(c: *Canvas, spec: dialogs.Spec, editors: *const [3]input_mod.Editor, active_field: usize) void {
+fn drawDialog(c: *Canvas, spec: dialogs.Spec, editors: *const [3]input_mod.Editor, active_field: usize, notice: []const u8) void {
     // `fillRect` overwrites pixels; an ARGB black fill therefore appears as a
     // solid black frame to GDI. Blend the dimmer over the existing UI instead.
     var y: i32 = 0;
@@ -1217,6 +1221,7 @@ fn drawDialog(c: *Canvas, spec: dialogs.Spec, editors: *const [3]input_mod.Edito
     }
 
     const button_y = rect.bottom() - 34;
+    if (notice.len != 0) drawTextEllipsized(c, notice, rect.x + 14, button_y - 19, rect.w - 28, focus_color);
     drawDialogButton(c, rect.right() - 164, button_y, dialogs.primaryLabel(spec.id), true);
     drawDialogButton(c, rect.right() - 84, button_y, "Cancel", false);
 }

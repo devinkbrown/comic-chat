@@ -1495,6 +1495,10 @@ fn applyDialogAction(
         else => return,
     };
     const value = std.mem.trim(u8, view.dialogValue(), " \t");
+    if (cc.client.dialogs.requiresInput(id) and value.len == 0) {
+        view.setDialogNotice("Complete the first field before continuing.");
+        return;
+    }
     const room = workspace.activeRoom() orelse return;
     switch (id) {
         .channel, .channel_create => {
@@ -1522,6 +1526,7 @@ fn applyDialogAction(
         },
         else => {},
     }
+    view.closeDialog();
 }
 
 fn handleWorkspaceInputKey(

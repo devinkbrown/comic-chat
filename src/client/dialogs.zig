@@ -168,6 +168,13 @@ pub fn acceptsText(id: Id) bool {
     return fields(id).len != 0;
 }
 
+pub fn requiresInput(id: Id) bool {
+    return switch (id) {
+        .about, .room_list, .user_list, .motd, .comics_view, .automation, .rules, .rule_sets, .notifications, .servers, .settings, .setup => false,
+        else => true,
+    };
+}
+
 pub fn primaryLabel(id: Id) []const u8 {
     return switch (id) {
         .channel, .channel_create => "Join",
