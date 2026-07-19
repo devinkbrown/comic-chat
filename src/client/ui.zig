@@ -6,8 +6,10 @@
 
 const std = @import("std");
 const canvas_mod = @import("../render/canvas.zig");
+const geometry = @import("geometry.zig");
 
 const Canvas = canvas_mod.Canvas;
+const Rect = geometry.Rect;
 
 pub const Theme = struct {
     pub const ink: u32 = 0xff1f2933;
@@ -24,6 +26,60 @@ pub const Theme = struct {
 };
 
 pub const ButtonKind = enum { primary, secondary, quiet };
+
+/// Source-shaped dialog geometry, centralized so draw, accessibility, and
+/// pointer handling cannot silently drift apart as dialogs grow.
+pub const DialogLayout = struct {
+    rect: Rect,
+    body_y: i32,
+    row_h: i32,
+    field_count: usize,
+    primary: Rect,
+    cancel: Rect,
+
+    pub fn init(canvas_width: u32, canvas_height: u32, source_width: u16, source_height: u16, field_count: usize, primary_width: i32) DialogLayout {
+        const canvas_w: i32 = @intCast(canvas_width);
+        const canvas_h: i32 = @intCast(canvas_height);
+        const desired_w = @divTrunc(@as(i32, source_width) * 3, 2);
+        const desired_h = @divTrunc(@as(i32, source_height) * 3, 2);
+        const rect = Rect{
+            .x = @divTrunc(canvas_w - @min(@max(300, desired_w), @max(240, canvas_w - 32)), 2),
+            .y = @divTrunc(canvas_h - @min(@max(170, desired_h), @max(140, canvas_h - 32)), 2),
+            .w = @min(@max(300, desired_w), @max(240, canvas_w - 32)),
+            .h = @min(@max(170, desired_h), @max(140, canvas_h - 32)),
+        };
+        const body_y = rect.y + 80;
+        const available_h = @max(43, rect.bottom() - 48 - body_y);
+        const row_h = @min(54, @max(43, @divTrunc(available_h, @max(1, @as(i32, @intCast(field_count))))));
+        return .{
+            .rect = rect,
+            .body_y = body_y,
+            .row_h = row_h,
+            .field_count = field_count,
+            .primary = .{ .x = rect.right() - 96 - primary_width, .y = rect.bottom() - 36, .w = primary_width, .h = 28 },
+            .cancel = .{ .x = rect.right() - 84, .y = rect.bottom() - 36, .w = 76, .h = 28 },
+        };
+    }
+
+    pub fn fieldLabelY(self: DialogLayout, index: usize) i32 {
+        return self.body_y + @as(i32, @intCast(index)) * self.row_h;
+    }
+
+    pub fn fieldRect(self: DialogLayout, index: usize) Rect {
+        return .{ .x = self.rect.x + 20, .y = self.fieldLabelY(index) + 17, .w = self.rect.w - 40, .h = 24 };
+    }
+
+    pub fn fieldIndexAt(self: DialogLayout, y: i32) ?usize {
+        if (y < self.body_y or y >= self.rect.bottom() - 43) return null;
+        const raw = @divTrunc(y - self.body_y, self.row_h);
+        if (raw < 0 or raw >= self.field_count) return null;
+        return @intCast(raw);
+    }
+};
+
+pub fn contains(rect: Rect, x: i32, y: i32) bool {
+    return x >= rect.x and y >= rect.y and x < rect.right() and y < rect.bottom();
+}
 
 pub fn drawOutline(c: *Canvas, x: i32, y: i32, w: i32, h: i32, color: u32) void {
     if (w <= 0 or h <= 0) return;
@@ -48,6 +104,23 @@ pub fn drawButton(c: *Canvas, x: i32, y: i32, width: i32, label: []const u8, kin
     const text_w = Canvas.textWidth(label);
     const text_color = if (kind == .primary) Theme.layer else Theme.ink;
     _ = c.drawText(label, x + @divTrunc(width - text_w, 2), y + 3, text_color);
+}
+
+pub fn drawModalBackdrop(c: *Canvas) void {
+    var y: i32 = 0;
+    while (y < @as(i32, @intCast(c.height))) : (y += 1) {
+        var x: i32 = 0;
+        while (x < @as(i32, @intCast(c.width))) : (x += 1) c.blendPixel(x, y, 0xff000000, 0x66);
+    }
+}
+
+pub fn drawDialogSurface(c: *Canvas, rect: Rect, title: []const u8, subtitle: []const u8) void {
+    c.fillRect(rect.x + 3, rect.y + 4, rect.w, rect.h, 0xff8793a1);
+    c.fillRect(rect.x, rect.y, rect.w, rect.h, Theme.layer);
+    drawOutline(c, rect.x, rect.y, rect.w, rect.h, Theme.focus);
+    c.fillRect(rect.x + 1, rect.y + 1, rect.w - 2, 38, Theme.accent);
+    _ = c.drawText(title, rect.x + 12, rect.y + 6, Theme.layer);
+    _ = c.drawText(subtitle, rect.x + 20, rect.y + 52, Theme.secondary);
 }
 
 pub fn drawField(c: *Canvas, x: i32, y: i32, width: i32, active: bool) void {
@@ -152,4 +225,14 @@ test "primary buttons and focused fields use the shared accent" {
     drawField(&canvas, 4, 38, 120, true);
     try testing.expectEqual(Theme.accent, canvas.px[4 + 4 * 160]);
     try testing.expectEqual(Theme.accent, canvas.px[5 + 40 * 160]);
+}
+
+test "dialog layout keeps fields and actions inside the modal" {
+    const layout = DialogLayout.init(640, 430, 252, 226, 3, 108);
+    try std.testing.expect(layout.rect.w >= 300);
+    try std.testing.expect(contains(layout.primary, layout.primary.x + 1, layout.primary.y + 1));
+    try std.testing.expect(contains(layout.cancel, layout.cancel.x + 1, layout.cancel.y + 1));
+    const last_field = layout.fieldRect(2);
+    try std.testing.expect(last_field.y > layout.fieldRect(0).y);
+    try std.testing.expect(last_field.y + last_field.h < layout.primary.y);
 }

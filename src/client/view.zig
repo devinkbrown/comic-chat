@@ -235,26 +235,14 @@ pub const View = struct {
         if (self.active_dialog) |id| {
             if (pointer.kind != .down or pointer.button != .primary) return .none;
             const spec = dialogs.get(id);
-            const rect = dialogRect(self.canvas.width, self.canvas.height, spec);
-            const button_y = rect.bottom() - 36;
-            const primary_w = dialogPrimaryButtonWidth(id);
-            const primary_x = rect.right() - 96 - primary_w;
-            if (pointer.y >= button_y and pointer.y < button_y + 27) {
-                if (pointer.x >= primary_x and pointer.x < primary_x + primary_w) {
-                    return .{ .dialog_accept = id };
-                }
-                if (pointer.x >= rect.right() - 84 and pointer.x < rect.right() - 8) {
-                    self.active_dialog = null;
-                    return .{ .dialog_cancel = id };
-                }
+            const dialog_layout = dialogLayout(self.canvas.width, self.canvas.height, spec);
+            if (ui.contains(dialog_layout.primary, pointer.x, pointer.y)) return .{ .dialog_accept = id };
+            if (ui.contains(dialog_layout.cancel, pointer.x, pointer.y)) {
+                self.active_dialog = null;
+                return .{ .dialog_cancel = id };
             }
-            const fields = dialogs.fields(id);
-            const body_y = rect.y + 80;
-            const available_h = @max(43, rect.bottom() - 48 - body_y);
-            const row_h = @min(54, @max(43, @divTrunc(available_h, @max(1, @as(i32, @intCast(fields.len))))));
-            if (pointer.y >= body_y and pointer.y < rect.bottom() - 43) {
-                const index = @divTrunc(pointer.y - body_y, row_h);
-                if (index >= 0 and index < fields.len and @as(usize, @intCast(index)) < self.dialog_editors.len) self.dialog_field = @intCast(index);
+            if (dialog_layout.fieldIndexAt(pointer.y)) |index| {
+                if (index < self.dialog_editors.len) self.dialog_field = index;
             }
             return .none;
         }
@@ -428,11 +416,10 @@ pub const View = struct {
         });
         snapshot.append(.{ .id = "status", .role = .status, .bounds = layout.status, .label = status });
         if (self.active_dialog) |id| {
-            const rect = dialogRect(self.canvas.width, self.canvas.height, dialogs.get(id));
-            const primary_w = dialogPrimaryButtonWidth(id);
-            snapshot.append(.{ .id = "dialog", .role = .dialog, .bounds = rect, .label = dialogs.get(id).title, .focused = true });
-            snapshot.append(.{ .id = "dialog-accept", .role = .button, .bounds = .{ .x = rect.right() - 96 - primary_w, .y = rect.bottom() - 36, .w = primary_w, .h = 27 }, .label = dialogs.primaryLabel(id) });
-            snapshot.append(.{ .id = "dialog-cancel", .role = .button, .bounds = .{ .x = rect.right() - 84, .y = rect.bottom() - 34, .w = 76, .h = 25 }, .label = "Cancel" });
+            const dialog_layout = dialogLayout(self.canvas.width, self.canvas.height, dialogs.get(id));
+            snapshot.append(.{ .id = "dialog", .role = .dialog, .bounds = dialog_layout.rect, .label = dialogs.get(id).title, .focused = true });
+            snapshot.append(.{ .id = "dialog-accept", .role = .button, .bounds = dialog_layout.primary, .label = dialogs.primaryLabel(id) });
+            snapshot.append(.{ .id = "dialog-cancel", .role = .button, .bounds = dialog_layout.cancel, .label = "Cancel" });
         }
         return snapshot;
     }
@@ -1293,48 +1280,29 @@ fn fitRect(sw: u32, sh: u32, x: i32, y: i32, max_w: i32, max_h: i32) ?Rect {
     };
 }
 
-fn dialogRect(width: u32, height: u32, spec: dialogs.Spec) Rect {
-    const canvas_w: i32 = @intCast(width);
-    const canvas_h: i32 = @intCast(height);
-    const desired_w = @divTrunc(@as(i32, spec.source_w) * 3, 2);
-    const desired_h = @divTrunc(@as(i32, spec.source_h) * 3, 2);
-    const w = @min(@max(300, desired_w), @max(240, canvas_w - 32));
-    const h = @min(@max(170, desired_h), @max(140, canvas_h - 32));
-    return .{ .x = @divTrunc(canvas_w - w, 2), .y = @divTrunc(canvas_h - h, 2), .w = w, .h = h };
+fn dialogLayout(width: u32, height: u32, spec: dialogs.Spec) ui.DialogLayout {
+    return ui.DialogLayout.init(width, height, spec.source_w, spec.source_h, dialogs.fields(spec.id).len, dialogPrimaryButtonWidth(spec.id));
 }
 
 fn drawDialog(c: *Canvas, spec: dialogs.Spec, editors: *const [3]input_mod.Editor, active_field: usize, notice: []const u8) void {
-    // `fillRect` overwrites pixels; an ARGB black fill therefore appears as a
-    // solid black frame to GDI. Blend the dimmer over the existing UI instead.
-    var y: i32 = 0;
-    while (y < @as(i32, @intCast(c.height))) : (y += 1) {
-        var x: i32 = 0;
-        while (x < @as(i32, @intCast(c.width))) : (x += 1) c.blendPixel(x, y, canvas_mod.black, 0x66);
-    }
-    const rect = dialogRect(c.width, c.height, spec);
-    c.fillRect(rect.x + 3, rect.y + 4, rect.w, rect.h, 0xff8793a1);
-    c.fillRect(rect.x, rect.y, rect.w, rect.h, layer);
-    drawRectOutline(c, rect.x, rect.y, rect.w, rect.h, focus_color);
-    c.fillRect(rect.x + 1, rect.y + 1, rect.w - 2, 38, accent);
-    drawTextEllipsized(c, spec.title, rect.x + 12, rect.y + 6, rect.w - 24, layer);
-
+    ui.drawModalBackdrop(c);
+    const dialog_layout = dialogLayout(c.width, c.height, spec);
+    const rect = dialog_layout.rect;
     const group_text = switch (spec.group) {
         .connection => "Connection, identity, and appearance",
         .rooms => "Rooms and member workflow",
         .automation => "Automation and notifications",
         .files => "Application and file workflow",
     };
-    drawTextEllipsized(c, group_text, rect.x + 20, rect.y + 52, rect.w - 40, secondary);
-    const body_y = rect.y + 80;
+    ui.drawDialogSurface(c, rect, spec.title, group_text);
     const fields = dialogs.fields(spec.id);
-    const available_h = @max(43, rect.bottom() - 48 - body_y);
-    const row_h = @min(54, @max(43, @divTrunc(available_h, @max(1, @as(i32, @intCast(fields.len))))));
     for (fields, 0..) |field, index| {
-        const row_y = body_y + @as(i32, @intCast(index)) * row_h;
+        const row_y = dialog_layout.fieldLabelY(index);
         if (row_y + 40 > rect.bottom() - 43) break;
         drawTextEllipsized(c, field.label, rect.x + 20, row_y, rect.w - 40, secondary);
-        const field_y = row_y + 17;
-        ui.drawField(c, rect.x + 20, field_y, rect.w - 40, index == active_field);
+        const field_rect = dialog_layout.fieldRect(index);
+        const field_y = field_rect.y;
+        ui.drawField(c, field_rect.x, field_y, field_rect.w, index == active_field);
         if (index < editors.len) {
             const editor = &editors[index];
             const value = editor.text();
@@ -1348,11 +1316,9 @@ fn drawDialog(c: *Canvas, spec: dialogs.Spec, editors: *const [3]input_mod.Edito
         if (editors[index].text().len == 0) drawTextEllipsized(c, field.hint, rect.x + 26, field_y + 1, rect.w - 52, secondary);
     }
 
-    const button_y = rect.bottom() - 36;
-    if (notice.len != 0) drawTextEllipsized(c, notice, rect.x + 14, button_y - 19, rect.w - 28, focus_color);
-    const primary_w = dialogPrimaryButtonWidth(spec.id);
-    drawDialogButton(c, rect.right() - 96 - primary_w, button_y, primary_w, dialogs.primaryLabel(spec.id), .primary);
-    drawDialogButton(c, rect.right() - 84, button_y, 76, "Cancel", .secondary);
+    if (notice.len != 0) drawTextEllipsized(c, notice, rect.x + 14, dialog_layout.primary.y - 19, rect.w - 28, focus_color);
+    drawDialogButton(c, dialog_layout.primary.x, dialog_layout.primary.y, dialog_layout.primary.w, dialogs.primaryLabel(spec.id), .primary);
+    drawDialogButton(c, dialog_layout.cancel.x, dialog_layout.cancel.y, dialog_layout.cancel.w, "Cancel", .secondary);
 }
 
 fn dialogPrimaryButtonWidth(id: dialogs.Id) i32 {
