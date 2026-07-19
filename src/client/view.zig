@@ -56,6 +56,7 @@ pub const View = struct {
     dialog_notice: []const u8 = "",
     active_menu: ?u8 = null,
     hovered_menu: ?u8 = null,
+    hovered_menu_item: ?u8 = null,
     hovered_toolbar: ?u8 = null,
     dialog_editors: [3]input_mod.Editor,
     dialog_field: usize = 0,
@@ -153,6 +154,25 @@ pub const View = struct {
     /// status hint.
     pub fn handlePointerMove(self: *View, pointer: platform_event.Pointer, member_count: usize) bool {
         if (self.active_dialog != null) return self.setHover(null, null);
+        if (self.active_menu) |menu| {
+            const layout = geometry.Layout.compute(self.canvas.width, self.canvas.height, self.shell.content_mode == .comic, self.shell.show_members);
+            const target = hit_test.shell(layout, self.shell.content_mode == .comic, pointer.x, pointer.y, member_count);
+            if (target == .menu) {
+                const next_menu = target.menu;
+                const changed = self.active_menu != next_menu or self.hovered_menu != next_menu or self.hovered_menu_item != null;
+                self.active_menu = next_menu;
+                self.hovered_menu = next_menu;
+                self.hovered_menu_item = null;
+                self.hovered_toolbar = null;
+                return changed;
+            }
+            const item = menuPopupItem(menu, pointer.x, pointer.y);
+            const changed = self.hovered_menu_item != item or self.hovered_menu != null or self.hovered_toolbar != null;
+            self.hovered_menu_item = item;
+            self.hovered_menu = null;
+            self.hovered_toolbar = null;
+            return changed;
+        }
         const comic_mode = self.shell.content_mode == .comic;
         const layout = geometry.Layout.compute(self.canvas.width, self.canvas.height, comic_mode, self.shell.show_members);
         const target = hit_test.shell(layout, comic_mode, pointer.x, pointer.y, member_count);
@@ -164,8 +184,9 @@ pub const View = struct {
     }
 
     fn setHover(self: *View, menu: ?u8, toolbar: ?u8) bool {
-        const changed = self.hovered_menu != menu or self.hovered_toolbar != toolbar;
+        const changed = self.hovered_menu != menu or self.hovered_menu_item != null or self.hovered_toolbar != toolbar;
         self.hovered_menu = menu;
+        self.hovered_menu_item = null;
         self.hovered_toolbar = toolbar;
         return changed;
     }
@@ -365,7 +386,7 @@ pub const View = struct {
         if (self.shell.focus == .transcript) drawFocus(&self.canvas, layout.transcript);
         if (self.shell.focus == .members) drawFocus(&self.canvas, layout.members);
         if (self.shell.focus == .emotion) drawFocus(&self.canvas, layout.body_camera);
-        if (self.active_menu) |menu| drawMenuPopup(&self.canvas, menu);
+        if (self.active_menu) |menu| drawMenuPopup(&self.canvas, menu, self.hovered_menu_item);
         if (self.active_dialog) |id| drawDialog(&self.canvas, dialogs.get(id), &self.dialog_editors, self.dialog_field, self.dialog_notice);
     }
 
@@ -695,14 +716,18 @@ fn drawMenuBar(c: *Canvas, rect: Rect, active: ?u8, hovered: ?u8) void {
     c.fillRect(rect.x, rect.bottom() - 1, rect.w, 1, divider);
 }
 
-fn drawMenuPopup(c: *Canvas, menu: u8) void {
+fn drawMenuPopup(c: *Canvas, menu: u8, hovered: ?u8) void {
     const rect = menuPopupRect(menu);
-    c.fillRect(rect.x + 2, rect.y + 2, rect.w, rect.h, 0xffa0a0a0);
-    c.fillRect(rect.x, rect.y, rect.w, rect.h, layer);
+    c.fillRect(rect.x + 3, rect.y + 3, rect.w, rect.h, 0xffb8c2cc);
+    c.fillRect(rect.x, rect.y, rect.w, rect.h, chrome);
     drawRectOutline(c, rect.x, rect.y, rect.w, rect.h, divider);
     var item: u8 = 0;
     while (item < menuItemCount(menu)) : (item += 1) {
         const y = rect.y + 4 + @as(i32, item) * 25;
+        if (hovered == item) {
+            c.fillRect(rect.x + 4, y, rect.w - 8, 23, accent_soft);
+            c.fillRect(rect.x + 4, y, 3, 23, accent);
+        }
         if (item != 0) c.fillRect(rect.x + 4, y - 1, rect.w - 8, 1, subtle);
         _ = c.drawText(menuItemLabel(menu, item), rect.x + 12, y + 3, ink);
     }
