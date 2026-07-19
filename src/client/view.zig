@@ -55,6 +55,7 @@ pub const View = struct {
     shell: shell_mod.State = .{},
     active_dialog: ?dialogs.Id = null,
     dialog_notice: []const u8 = "",
+    hovered_dialog_button: ?ui.DialogButton = null,
     active_menu: ?u8 = null,
     hovered_menu: ?u8 = null,
     hovered_menu_item: ?u8 = null,
@@ -134,6 +135,7 @@ pub const View = struct {
         for (&self.dialog_editors) |*editor| editor.clear();
         self.dialog_field = 0;
         self.dialog_notice = "";
+        self.hovered_dialog_button = null;
         self.active_dialog = id;
     }
 
@@ -146,6 +148,7 @@ pub const View = struct {
     pub fn closeDialog(self: *View) bool {
         if (self.active_dialog == null) return false;
         self.active_dialog = null;
+        self.hovered_dialog_button = null;
         return true;
     }
 
@@ -154,7 +157,16 @@ pub const View = struct {
     /// custom-drawn controls an equivalent hover response and plain-language
     /// status hint.
     pub fn handlePointerMove(self: *View, pointer: platform_event.Pointer, member_count: usize) bool {
-        if (self.active_dialog != null) return self.setHover(null, null);
+        if (self.active_dialog) |id| {
+            const dialog_layout = dialogLayout(self.canvas.width, self.canvas.height, dialogs.get(id));
+            const next = ui.dialogButtonAt(dialog_layout, pointer.x, pointer.y);
+            const changed = self.hovered_dialog_button != next or self.hovered_menu != null or self.hovered_toolbar != null;
+            self.hovered_dialog_button = next;
+            self.hovered_menu = null;
+            self.hovered_menu_item = null;
+            self.hovered_toolbar = null;
+            return changed;
+        }
         if (self.active_menu) |menu| {
             const layout = geometry.Layout.compute(self.canvas.width, self.canvas.height, self.shell.content_mode == .comic, self.shell.show_members);
             const target = hit_test.shell(layout, self.shell.content_mode == .comic, pointer.x, pointer.y, member_count);
@@ -211,6 +223,7 @@ pub const View = struct {
         switch (key) {
             .escape => {
                 self.active_dialog = null;
+                self.hovered_dialog_button = null;
                 return .{ .dialog_cancel = id };
             },
             .enter => {
@@ -236,10 +249,15 @@ pub const View = struct {
             if (pointer.kind != .down or pointer.button != .primary) return .none;
             const spec = dialogs.get(id);
             const dialog_layout = dialogLayout(self.canvas.width, self.canvas.height, spec);
-            if (ui.contains(dialog_layout.primary, pointer.x, pointer.y)) return .{ .dialog_accept = id };
-            if (ui.contains(dialog_layout.cancel, pointer.x, pointer.y)) {
-                self.active_dialog = null;
-                return .{ .dialog_cancel = id };
+            if (ui.dialogButtonAt(dialog_layout, pointer.x, pointer.y)) |button| {
+                switch (button) {
+                    .primary => return .{ .dialog_accept = id },
+                    .cancel => {
+                        self.active_dialog = null;
+                        self.hovered_dialog_button = null;
+                        return .{ .dialog_cancel = id };
+                    },
+                }
             }
             if (dialog_layout.fieldIndexAt(pointer.y)) |index| {
                 if (index < self.dialog_editors.len) self.dialog_field = index;
@@ -378,7 +396,7 @@ pub const View = struct {
         if (self.shell.focus == .members) drawFocus(&self.canvas, layout.members);
         if (self.shell.focus == .emotion) drawFocus(&self.canvas, layout.body_camera);
         if (self.active_menu) |menu| drawMenuPopup(&self.canvas, menu, self.hovered_menu_item);
-        if (self.active_dialog) |id| drawDialog(&self.canvas, dialogs.get(id), &self.dialog_editors, self.dialog_field, self.dialog_notice);
+        if (self.active_dialog) |id| drawDialog(&self.canvas, dialogs.get(id), &self.dialog_editors, self.dialog_field, self.dialog_notice, self.hovered_dialog_button);
     }
 
     fn hoveredToolbarLabel(self: *const View) ?[]const u8 {
@@ -1269,7 +1287,7 @@ fn dialogLayout(width: u32, height: u32, spec: dialogs.Spec) ui.DialogLayout {
     return ui.DialogLayout.init(width, height, spec.source_w, spec.source_h, dialogs.fields(spec.id).len, dialogPrimaryButtonWidth(spec.id));
 }
 
-fn drawDialog(c: *Canvas, spec: dialogs.Spec, editors: *const [3]input_mod.Editor, active_field: usize, notice: []const u8) void {
+fn drawDialog(c: *Canvas, spec: dialogs.Spec, editors: *const [3]input_mod.Editor, active_field: usize, notice: []const u8, hovered_button: ?ui.DialogButton) void {
     ui.drawModalBackdrop(c);
     const dialog_layout = dialogLayout(c.width, c.height, spec);
     const rect = dialog_layout.rect;
@@ -1301,17 +1319,17 @@ fn drawDialog(c: *Canvas, spec: dialogs.Spec, editors: *const [3]input_mod.Edito
         if (editors[index].text().len == 0) drawTextEllipsized(c, field.hint, rect.x + 26, field_y + 1, rect.w - 52, secondary);
     }
 
-    if (notice.len != 0) drawTextEllipsized(c, notice, rect.x + 14, dialog_layout.primary.y - 19, rect.w - 28, focus_color);
-    drawDialogButton(c, dialog_layout.primary.x, dialog_layout.primary.y, dialog_layout.primary.w, dialogs.primaryLabel(spec.id), .primary);
-    drawDialogButton(c, dialog_layout.cancel.x, dialog_layout.cancel.y, dialog_layout.cancel.w, "Cancel", .secondary);
+    if (notice.len != 0) ui.drawNotice(c, rect.x + 14, dialog_layout.primary.y - 22, rect.w - 28, notice, .warning);
+    drawDialogButton(c, dialog_layout.primary.x, dialog_layout.primary.y, dialog_layout.primary.w, dialogs.primaryLabel(spec.id), .primary, hovered_button == .primary);
+    drawDialogButton(c, dialog_layout.cancel.x, dialog_layout.cancel.y, dialog_layout.cancel.w, "Cancel", .secondary, hovered_button == .cancel);
 }
 
 fn dialogPrimaryButtonWidth(id: dialogs.Id) i32 {
     return @max(84, Canvas.textWidth(dialogs.primaryLabel(id)) + 24);
 }
 
-fn drawDialogButton(c: *Canvas, x: i32, y: i32, width: i32, label: []const u8, kind: ui.ButtonKind) void {
-    ui.drawButton(c, x, y, width, label, kind, false);
+fn drawDialogButton(c: *Canvas, x: i32, y: i32, width: i32, label: []const u8, kind: ui.ButtonKind, hovered: bool) void {
+    ui.drawButton(c, x, y, width, label, kind, hovered);
 }
 
 test "view renders source-shaped empty buffer and chrome" {

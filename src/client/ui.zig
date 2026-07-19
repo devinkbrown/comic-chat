@@ -26,6 +26,8 @@ pub const Theme = struct {
 };
 
 pub const ButtonKind = enum { primary, secondary, quiet };
+pub const DialogButton = enum { primary, cancel };
+pub const NoticeTone = enum { info, warning, failure, success };
 
 /// Source-shaped dialog geometry, centralized so draw, accessibility, and
 /// pointer handling cannot silently drift apart as dialogs grow.
@@ -81,6 +83,12 @@ pub fn contains(rect: Rect, x: i32, y: i32) bool {
     return x >= rect.x and y >= rect.y and x < rect.right() and y < rect.bottom();
 }
 
+pub fn dialogButtonAt(layout: DialogLayout, x: i32, y: i32) ?DialogButton {
+    if (contains(layout.primary, x, y)) return .primary;
+    if (contains(layout.cancel, x, y)) return .cancel;
+    return null;
+}
+
 pub fn drawOutline(c: *Canvas, x: i32, y: i32, w: i32, h: i32, color: u32) void {
     if (w <= 0 or h <= 0) return;
     c.drawLine(x, y, x + w - 1, y, color);
@@ -121,6 +129,18 @@ pub fn drawDialogSurface(c: *Canvas, rect: Rect, title: []const u8, subtitle: []
     c.fillRect(rect.x + 1, rect.y + 1, rect.w - 2, 38, Theme.accent);
     _ = c.drawText(title, rect.x + 12, rect.y + 6, Theme.layer);
     _ = c.drawText(subtitle, rect.x + 20, rect.y + 52, Theme.secondary);
+}
+
+pub fn drawNotice(c: *Canvas, x: i32, y: i32, width: i32, label: []const u8, tone: NoticeTone) void {
+    const colors = switch (tone) {
+        .info => .{ Theme.accent_soft, Theme.accent },
+        .warning => .{ 0xfffff4ce, Theme.warning },
+        .failure => .{ 0xffffe5e5, 0xffc42b1c },
+        .success => .{ 0xffdff6dd, Theme.success },
+    };
+    c.fillRect(x, y, width, 20, colors[0]);
+    c.fillRect(x, y, 3, 20, colors[1]);
+    drawEllipsized(c, label, x + 10, y + 2, width - 16, colors[1]);
 }
 
 pub fn drawField(c: *Canvas, x: i32, y: i32, width: i32, active: bool) void {
@@ -205,8 +225,12 @@ pub fn drawPaneHeader(c: *Canvas, rect: Rect, title: []const u8) void {
 pub fn drawStatusBar(c: *Canvas, x: i32, y: i32, width: i32, height: i32, status: []const u8, member_count: usize) void {
     c.fillRect(x, y, width, height, Theme.chrome);
     c.fillRect(x, y, width, 1, Theme.divider);
-    const is_connected = std.mem.indexOf(u8, status, "connected") != null and std.mem.indexOf(u8, status, "reconnecting") == null;
-    const status_color = if (is_connected) Theme.success else Theme.warning;
+    const status_color = switch (statusTone(status)) {
+        .success => Theme.success,
+        .warning => Theme.warning,
+        .failure => 0xffc42b1c,
+        .info => Theme.accent,
+    };
     c.fillRect(x + 9, y + 8, 6, 6, status_color);
     var buf: [32]u8 = undefined;
     const members = std.fmt.bufPrint(&buf, "{d} members", .{member_count}) catch "members";
@@ -215,6 +239,13 @@ pub fn drawStatusBar(c: *Canvas, x: i32, y: i32, width: i32, height: i32, status
     c.fillRect(badge_x, y + 3, badge_w, @max(1, height - 6), Theme.subtle);
     drawEllipsized(c, status, x + 22, y + 2, badge_x - x - 30, Theme.secondary);
     _ = c.drawText(members, badge_x + 8, y + 2, Theme.secondary);
+}
+
+pub fn statusTone(status: []const u8) NoticeTone {
+    if (std.mem.indexOf(u8, status, "connected") != null and std.mem.indexOf(u8, status, "reconnecting") == null) return .success;
+    if (std.mem.indexOf(u8, status, "error") != null or std.mem.indexOf(u8, status, "failed") != null) return .failure;
+    if (std.mem.indexOf(u8, status, "reconnect") != null or std.mem.indexOf(u8, status, "offline") != null) return .warning;
+    return .info;
 }
 
 pub fn drawEmptyState(c: *Canvas, x: i32, y: i32, width: i32, height: i32, detail: []const u8) void {
@@ -270,4 +301,13 @@ test "dialog layout keeps fields and actions inside the modal" {
     const last_field = layout.fieldRect(2);
     try std.testing.expect(last_field.y > layout.fieldRect(0).y);
     try std.testing.expect(last_field.y + last_field.h < layout.primary.y);
+}
+
+test "semantic feedback primitives classify status and button targets" {
+    const layout = DialogLayout.init(640, 430, 252, 218, 2, 96);
+    try std.testing.expectEqual(NoticeTone.success, statusTone("connected"));
+    try std.testing.expectEqual(NoticeTone.warning, statusTone("reconnecting"));
+    try std.testing.expectEqual(NoticeTone.failure, statusTone("connection failed"));
+    try std.testing.expectEqual(DialogButton.primary, dialogButtonAt(layout, layout.primary.x + 1, layout.primary.y + 1).?);
+    try std.testing.expectEqual(DialogButton.cancel, dialogButtonAt(layout, layout.cancel.x + 1, layout.cancel.y + 1).?);
 }
