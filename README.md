@@ -48,6 +48,7 @@ zig build run -- app irc.example 6697 nick '#channel' --ca-file ./ca.pem
 zig build run -- app irc.example nick '#channel' --socks5 127.0.0.1:1080
 zig build run -- app irc.example nick '#channel' --http-proxy proxy.example:8080
 zig build run -- app localhost 6667 nick '#channel' --plaintext
+zig build run -- app kain                               # eshmaki.me, #root
 zig build run -- app eshmaki.me kain '#root' \
   --tls-cert ~/.weechat/tls/relay.pem --sasl-user kain --sasl-external
 ```
@@ -122,6 +123,20 @@ force the X11 smoke explicitly:
 ```sh
 env -u WAYLAND_DISPLAY zig build run -- window anna
 ```
+
+## Release packages
+
+Build the x86_64 Windows, Linux, FreeBSD, and OpenBSD archives (with checksums)
+from a clean checkout:
+
+```sh
+./tools/package-release.sh unofficial-modern-builds-2026-07
+```
+
+Each archive contains the executable, this README, and the MIT license. Comic
+characters, backdrops, face expressions, and fonts are embedded in the binary.
+`comicchat app <nick>` defaults to the `eshmaki.me` server and `#root` channel;
+pass a host and/or channel to override either default.
 
 The direct Wayland client currently uses scale 1. It parses the compositor's
 XKB keymap for base and Shift levels and implements compositor-configured

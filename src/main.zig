@@ -149,6 +149,8 @@ pub fn main(init: std.process.Init) !void {
 }
 
 const default_tls_port: u16 = 6697;
+const default_server = "eshmaki.me";
+const default_channel = "#root";
 
 const AuthArgs = struct {
     user: ?[]const u8 = null,
@@ -314,10 +316,30 @@ fn parseConnectionArgs(args: []const []const u8, allow_extra: bool) ?ConnectionA
         positional[positional_count] = arg;
         positional_count += 1;
     }
-    if (positional_count < 3) return null;
-
     var result: ConnectionArgs = undefined;
-    if (std.fmt.parseInt(u16, positional[1], 10)) |port| {
+    if (positional_count == 1) {
+        result = .{
+            .host = default_server,
+            .nick = positional[0],
+            .channel = default_channel,
+            .options = options,
+            .auth = auth,
+            .sts_file = sts_file,
+            .session_file = session_file,
+        };
+    } else if (positional_count == 2) {
+        result = .{
+            .host = positional[0],
+            .nick = positional[1],
+            .channel = default_channel,
+            .options = options,
+            .auth = auth,
+            .sts_file = sts_file,
+            .session_file = session_file,
+        };
+    } else if (positional_count < 3) {
+        return null;
+    } else if (std.fmt.parseInt(u16, positional[1], 10)) |port| {
         if (positional_count < 4) return null;
         result = .{
             .host = positional[0],
@@ -374,9 +396,24 @@ fn parseProxyEndpoint(raw: []const u8) ?cc.net.transport.ProxyEndpoint {
 
 fn printConnectionUsage(command: []const u8, allow_extra: bool) void {
     std.debug.print(
-        "usage: comicchat {s} <host> [port=6697] <nick> <#channel>{s} [--ca-file <pem>] [--tls-cert <cert-and-key.pem>] [--plaintext] [--socks5 host:port|--http-proxy host:port] [--connect-timeout-ms <ms>] [--sasl-user <name> --sasl-password-file <path>] [--sasl-mechanism SCRAM-SHA-256|EXTERNAL|PLAIN] [--sts-file <path>] [--session-file <path>]\n",
+        "usage: comicchat {s} <nick> (defaults: eshmaki.me #root) | <host> <nick> [#channel] | <host> [port=6697] <nick> <#channel>{s} [--ca-file <pem>] [--tls-cert <cert-and-key.pem>] [--plaintext] [--socks5 host:port|--http-proxy host:port] [--connect-timeout-ms <ms>] [--sasl-user <name> --sasl-password-file <path>] [--sasl-mechanism SCRAM-SHA-256|EXTERNAL|PLAIN] [--sts-file <path>] [--session-file <path>]\n",
         .{ command, if (allow_extra) " [maxlines]" else "" },
     );
+}
+
+test "connection defaults use eshmaki root" {
+    const args = [_][]const u8{"kain"};
+    const connection = parseConnectionArgs(&args, false).?;
+    try std.testing.expectEqualStrings("eshmaki.me", connection.host);
+    try std.testing.expectEqualStrings("kain", connection.nick);
+    try std.testing.expectEqualStrings("#root", connection.channel);
+}
+
+test "explicit host retains the default channel" {
+    const args = [_][]const u8{ "irc.example", "kain" };
+    const connection = parseConnectionArgs(&args, false).?;
+    try std.testing.expectEqualStrings("irc.example", connection.host);
+    try std.testing.expectEqualStrings("#root", connection.channel);
 }
 
 const ConnectionRuntime = struct {
