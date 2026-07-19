@@ -38,15 +38,15 @@ pub const Action = union(enum) {
 };
 
 // Windows/Fluent neutral roles applied to the source UI geometry.
-const ink: u32 = 0xff1b1b1b;
-const secondary: u32 = 0xff5d5d5d;
-const chrome: u32 = 0xfff3f3f3;
+const ink: u32 = 0xff1f2933;
+const secondary: u32 = 0xff58636f;
+const chrome: u32 = 0xfff7f9fc;
 const layer: u32 = 0xffffffff;
-const subtle: u32 = 0xffe5e5e5;
-const divider: u32 = 0xffc8c8c8;
-const accent: u32 = 0xff0067c0;
-const accent_soft: u32 = 0xffe5f1fb;
-const focus_color: u32 = 0xff003e73;
+const subtle: u32 = 0xffe8edf3;
+const divider: u32 = 0xffcbd5e1;
+const accent: u32 = 0xff0f6cbd;
+const accent_soft: u32 = 0xffdbeafe;
+const focus_color: u32 = 0xff0b4f85;
 
 pub const View = struct {
     gpa: std.mem.Allocator,
@@ -55,6 +55,8 @@ pub const View = struct {
     active_dialog: ?dialogs.Id = null,
     dialog_notice: []const u8 = "",
     active_menu: ?u8 = null,
+    hovered_menu: ?u8 = null,
+    hovered_toolbar: ?u8 = null,
     dialog_editors: [3]input_mod.Editor,
     dialog_field: usize = 0,
     room_tab_count: usize = 1,
@@ -143,6 +145,29 @@ pub const View = struct {
         if (self.active_dialog == null) return false;
         self.active_dialog = null;
         return true;
+    }
+
+    /// Update transient pointer affordances.  The original client depended on
+    /// raised Win32 controls; this port keeps the source geometry but gives the
+    /// custom-drawn controls an equivalent hover response and plain-language
+    /// status hint.
+    pub fn handlePointerMove(self: *View, pointer: platform_event.Pointer, member_count: usize) bool {
+        if (self.active_dialog != null) return self.setHover(null, null);
+        const comic_mode = self.shell.content_mode == .comic;
+        const layout = geometry.Layout.compute(self.canvas.width, self.canvas.height, comic_mode, self.shell.show_members);
+        const target = hit_test.shell(layout, comic_mode, pointer.x, pointer.y, member_count);
+        return switch (target) {
+            .menu => |index| self.setHover(index, null),
+            .toolbar => |index| self.setHover(null, index),
+            else => self.setHover(null, null),
+        };
+    }
+
+    fn setHover(self: *View, menu: ?u8, toolbar: ?u8) bool {
+        const changed = self.hovered_menu != menu or self.hovered_toolbar != toolbar;
+        self.hovered_menu = menu;
+        self.hovered_toolbar = toolbar;
+        return changed;
     }
 
     pub fn dialogValue(self: *const View) []const u8 {
@@ -320,8 +345,8 @@ pub const View = struct {
         const layout = geometry.Layout.compute(self.canvas.width, self.canvas.height, comic_mode, self.shell.show_members);
         self.canvas.clear(chrome);
 
-        drawMenuBar(&self.canvas, layout.menu);
-        drawToolBar(&self.canvas, layout.toolbar, comic_mode);
+        drawMenuBar(&self.canvas, layout.menu, self.active_menu, self.hovered_menu);
+        drawToolBar(&self.canvas, layout.toolbar, comic_mode, self.hovered_toolbar);
         drawTabBar(&self.canvas, layout.tabs, tabs, active_tab, self.shell.focus == .navigation);
         drawSplitters(&self.canvas, layout, comic_mode);
 
@@ -335,13 +360,18 @@ pub const View = struct {
             if (comic_mode) try self.drawBodyCamera(layout.body_camera, transcript);
         }
         drawSayWindow(&self.canvas, layout, input, cursor, selection, self.shell.focus == .composer, self.shell.say_mode);
-        drawStatusBar(&self.canvas, layout.status, status, transcript.roster.items.len);
+        drawStatusBar(&self.canvas, layout.status, self.hoveredToolbarLabel() orelse status, transcript.roster.items.len);
 
         if (self.shell.focus == .transcript) drawFocus(&self.canvas, layout.transcript);
         if (self.shell.focus == .members) drawFocus(&self.canvas, layout.members);
         if (self.shell.focus == .emotion) drawFocus(&self.canvas, layout.body_camera);
         if (self.active_menu) |menu| drawMenuPopup(&self.canvas, menu);
         if (self.active_dialog) |id| drawDialog(&self.canvas, dialogs.get(id), &self.dialog_editors, self.dialog_field, self.dialog_notice);
+    }
+
+    fn hoveredToolbarLabel(self: *const View) ?[]const u8 {
+        const index = self.hovered_toolbar orelse return null;
+        return toolbarLabel(index);
     }
 
     pub fn semanticSnapshot(self: *const View, status: []const u8, tabs: []const Tab, active_tab: usize) accessibility.Snapshot {
@@ -451,14 +481,17 @@ pub const View = struct {
             drawEmptyBuffer(&self.canvas, rect, "No messages yet - type below and press Enter");
             return;
         }
-        const row_h: i32 = 25;
+        const row_h: i32 = 31;
         const capacity: usize = @intCast(@max(1, @divTrunc(rect.h - 12, row_h)));
         const range = self.shell.visibleRange(transcript.lines.items.len, capacity);
         var y = rect.y + 6;
-        for (transcript.lines.items[range.start..range.end]) |line| {
+        for (transcript.lines.items[range.start..range.end], 0..) |line, index| {
             const nick_w = @min(112, @max(54, Canvas.textWidth(line.nick) + 14));
-            drawTextEllipsized(&self.canvas, line.nick, rect.x + 8, y, nick_w - 8, accent);
-            drawTextEllipsized(&self.canvas, line.text, rect.x + nick_w, y, rect.w - nick_w - 10, ink);
+            self.canvas.fillRect(rect.x + 7, y - 2, rect.w - 14, row_h - 3, if (index % 2 == 0) chrome else layer);
+            self.canvas.fillRect(rect.x + 7, y - 2, 3, row_h - 3, accent);
+            self.canvas.fillRect(rect.x + 16, y + 2, nick_w - 8, 18, accent_soft);
+            drawTextEllipsized(&self.canvas, line.nick, rect.x + 20, y + 3, nick_w - 16, accent);
+            drawTextEllipsized(&self.canvas, line.text, rect.x + nick_w + 14, y + 3, rect.w - nick_w - 24, ink);
             y += row_h;
             if (y + row_h > rect.bottom()) break;
         }
@@ -480,9 +513,9 @@ pub const View = struct {
     }
 
     fn drawMemberIcons(self: *View, rect: Rect, transcript: *const session.Transcript) !void {
-        const cell_w: i32 = 72;
-        const cell_h: i32 = 68;
-        const columns = @max(1, @divTrunc(rect.w, cell_w));
+        const columns = @max(1, @divTrunc(rect.w, 88));
+        const cell_w = @divTrunc(rect.w, columns);
+        const cell_h: i32 = 72;
         for (transcript.roster.items, 0..) |member, index| {
             const column: i32 = @intCast(index % @as(usize, @intCast(columns)));
             const row: i32 = @intCast(index / @as(usize, @intCast(columns)));
@@ -493,17 +526,19 @@ pub const View = struct {
                 .h = cell_h,
             };
             if (cell.bottom() > rect.bottom()) break;
-            if (member.is_self or self.shell.selected_member == index) self.canvas.fillRect(cell.x + 2, cell.y + 2, cell.w - 4, cell.h - 4, accent_soft);
+            self.canvas.fillRect(cell.x + 3, cell.y + 3, cell.w - 6, cell.h - 6, chrome);
+            drawRectOutline(&self.canvas, cell.x + 3, cell.y + 3, cell.w - 6, cell.h - 6, if (member.is_self or self.shell.selected_member == index) accent else divider);
+            self.canvas.fillRect(cell.x + 9, cell.y + 10, 7, 7, if (member.departed) divider else 0xff107c10);
             const avatar = strip.avatarByName(member.avatar) orelse continue;
             var icon = bgb.decodeIcon(self.gpa, avatar) catch continue;
             defer icon.deinit(self.gpa);
-            blitHeightBottomAlpha(&self.canvas, icon.pixels, icon.width, icon.height, cell.x + 16, cell.y + 3, 40, 40);
+            blitHeightBottomAlpha(&self.canvas, icon.pixels, icon.width, icon.height, cell.x + @divTrunc(cell.w - 40, 2), cell.y + 7, 40, 40);
             const name_w = Canvas.textWidth(member.nick);
             drawTextEllipsized(
                 &self.canvas,
                 member.nick,
                 cell.x + @max(3, @divTrunc(cell.w - name_w, 2)),
-                cell.y + 43,
+                cell.y + 47,
                 cell.w - 6,
                 if (member.departed) secondary else ink,
             );
@@ -512,7 +547,8 @@ pub const View = struct {
 
     fn drawBodyCamera(self: *View, rect: Rect, transcript: *const session.Transcript) !void {
         if (rect.w <= 0 or rect.h <= 0) return;
-        self.canvas.fillRect(rect.x, rect.y, rect.w, rect.h, layer);
+        self.canvas.fillRect(rect.x, rect.y, rect.w, rect.h, chrome);
+        drawRectOutline(&self.canvas, rect.x, rect.y, rect.w, rect.h, divider);
 
         // bodycam.cpp: CacheBullSide uses min(width, 159), disabling the wheel
         // below 93 pixels. The figure occupies the remaining white rectangle.
@@ -539,9 +575,9 @@ pub const View = struct {
             rendered.width,
             rendered.height,
             rect.x,
-            rect.y,
+            rect.y + 20,
             rect.w,
-            body_h,
+            @max(0, body_h - 20),
         );
         if (wheel_side > 0) drawEmotionWheel(&self.canvas, .{
             .x = rect.x,
@@ -549,6 +585,11 @@ pub const View = struct {
             .w = rect.w,
             .h = wheel_side,
         }, self.shell.emotion_x, self.shell.emotion_y);
+        // Avatar pixels can be opaque even around the figure. Draw the card
+        // header last so it remains legible on every source avatar.
+        self.canvas.fillRect(rect.x, rect.y, rect.w, 21, chrome);
+        self.canvas.fillRect(rect.x, rect.y, rect.w, 3, accent);
+        _ = self.canvas.drawText("Character", rect.x + 9, rect.y + 5, secondary);
     }
 
     fn invokeMenuItem(self: *View, menu: u8, item: u8) void {
@@ -639,11 +680,15 @@ fn menuPopupItem(menu: u8, x: i32, y: i32) ?u8 {
     return @intCast(item);
 }
 
-fn drawMenuBar(c: *Canvas, rect: Rect) void {
+fn drawMenuBar(c: *Canvas, rect: Rect, active: ?u8, hovered: ?u8) void {
     c.fillRect(rect.x, rect.y, rect.w, rect.h, chrome);
     var x = rect.x + 8;
-    for (menu_labels) |item| {
-        _ = c.drawText(item, x, rect.y, ink);
+    for (menu_labels, 0..) |item, raw_index| {
+        const index: u8 = @intCast(raw_index);
+        const selected = active == index or hovered == index;
+        const item_w = Canvas.textWidth(item) + 12;
+        if (selected) c.fillRect(x - 6, rect.y + 2, item_w, rect.h - 4, accent_soft);
+        _ = c.drawText(item, x, rect.y + 1, ink);
         x += Canvas.textWidth(item) + 18;
         if (x >= rect.right() - 40) break;
     }
@@ -663,34 +708,50 @@ fn drawMenuPopup(c: *Canvas, menu: u8) void {
     }
 }
 
-fn drawToolBar(c: *Canvas, rect: Rect, comic_mode: bool) void {
+fn drawToolBar(c: *Canvas, rect: Rect, comic_mode: bool, hovered: ?u8) void {
     c.fillRect(rect.x, rect.y, rect.w, rect.h, chrome);
     var x = rect.x + 5;
+    var index: u8 = 0;
     // chat.rc's IDR_MAINFRAME: connect, disconnect, enter, leave, create,
     // comic, text, room list, user list, favorites.
     const main_first = [_]ToolGlyph{ .connect, .disconnect, .enter_room, .leave_room, .create_room };
-    for (main_first) |glyph| x = drawModernToolButton(c, glyph, x, rect.y + 1, false);
+    for (main_first) |glyph| {
+        x = drawModernToolButton(c, glyph, x, rect.y + 1, false, hovered == index);
+        index += 1;
+    }
     x = drawToolbarSeparator(c, x, rect);
-    x = drawModernToolButton(c, .comic, x, rect.y + 1, comic_mode);
-    x = drawModernToolButton(c, .text, x, rect.y + 1, !comic_mode);
+    x = drawModernToolButton(c, .comic, x, rect.y + 1, comic_mode, hovered == index);
+    index += 1;
+    x = drawModernToolButton(c, .text, x, rect.y + 1, !comic_mode, hovered == index);
+    index += 1;
     x = drawToolbarSeparator(c, x, rect);
-    x = drawModernToolButton(c, .rooms, x, rect.y + 1, false);
-    x = drawModernToolButton(c, .members, x, rect.y + 1, false);
+    x = drawModernToolButton(c, .rooms, x, rect.y + 1, false, hovered == index);
+    index += 1;
+    x = drawModernToolButton(c, .members, x, rect.y + 1, false, hovered == index);
+    index += 1;
     x = drawToolbarSeparator(c, x, rect);
-    x = drawModernToolButton(c, .favorite, x, rect.y + 1, false);
+    x = drawModernToolButton(c, .favorite, x, rect.y + 1, false, hovered == index);
+    index += 1;
 
     // The source coolbar orders member tools before text-formatting tools.
     x = drawToolbarSeparator(c, x, rect);
     const member_first = [_]ToolGlyph{ .away, .identity, .ignore, .whisper };
-    for (member_first) |glyph| x = drawModernToolButton(c, glyph, x, rect.y + 1, false);
+    for (member_first) |glyph| {
+        x = drawModernToolButton(c, glyph, x, rect.y + 1, false, hovered == index);
+        index += 1;
+    }
     x = drawToolbarSeparator(c, x, rect);
     const member_last = [_]ToolGlyph{ .email, .home_page, .meeting };
-    for (member_last) |glyph| x = drawModernToolButton(c, glyph, x, rect.y + 1, false);
+    for (member_last) |glyph| {
+        x = drawModernToolButton(c, glyph, x, rect.y + 1, false, hovered == index);
+        index += 1;
+    }
     x = drawToolbarSeparator(c, x, rect);
     const format = [_]ToolGlyph{ .font, .color, .bold, .italic, .underline, .fixed, .symbol };
     for (format) |glyph| {
         if (x + 24 > rect.right()) break;
-        x = drawModernToolButton(c, glyph, x, rect.y + 1, false);
+        x = drawModernToolButton(c, glyph, x, rect.y + 1, false, hovered == index);
+        index += 1;
     }
     c.fillRect(rect.x, rect.bottom() - 1, rect.w, 1, divider);
 }
@@ -722,10 +783,43 @@ const ToolGlyph = enum {
     symbol,
 };
 
-fn drawModernToolButton(c: *Canvas, glyph: ToolGlyph, x: i32, y: i32, selected: bool) i32 {
+fn toolbarLabel(index: u8) []const u8 {
+    return switch (index) {
+        0 => "Connection setup",
+        1 => "Disconnect",
+        2 => "Enter room",
+        3 => "Leave room",
+        4 => "Create room",
+        5 => "Comic view",
+        6 => "Text view",
+        7 => "Browse rooms",
+        8 => "Show or hide members",
+        9 => "Favorite rooms",
+        10 => "Set away message",
+        11 => "Personal profile",
+        12 => "Ignore member",
+        13 => "Send a whisper",
+        14 => "Email member",
+        15 => "Open home page",
+        16 => "Start meeting",
+        17 => "Choose text font",
+        18 => "Choose text color",
+        19 => "Bold",
+        20 => "Italic",
+        21 => "Underline",
+        22 => "Fixed-width text",
+        23 => "Insert symbol",
+        else => "Comic Chat tool",
+    };
+}
+
+fn drawModernToolButton(c: *Canvas, glyph: ToolGlyph, x: i32, y: i32, selected: bool, hovered: bool) i32 {
     if (selected) {
         c.fillRect(x, y, 24, 24, accent_soft);
         c.fillRect(x, y + 22, 24, 2, accent);
+    } else if (hovered) {
+        c.fillRect(x, y, 24, 24, layer);
+        drawRectOutline(c, x, y, 24, 24, divider);
     }
     drawToolGlyph(c, glyph, x + 4, y + 4, if (selected) accent else ink);
     return x + 24;
@@ -851,7 +945,7 @@ fn drawToolbarSeparator(c: *Canvas, x: i32, rect: Rect) i32 {
 fn drawTabBar(c: *Canvas, rect: Rect, tabs: []const View.Tab, active: usize, focused: bool) void {
     c.fillRect(rect.x, rect.y, rect.w, rect.h, chrome);
     const status_w: i32 = 76;
-    c.fillRect(rect.x + 4, rect.y + 4, status_w, rect.h - 4, subtle);
+    c.fillRect(rect.x + 4, rect.y + 3, status_w, rect.h - 4, subtle);
     drawBubbleGlyph(c, rect.x + 7, rect.y + 6, secondary, false);
     _ = c.drawText("Status", rect.x + 27, rect.y + 4, secondary);
     const first_x = rect.x + status_w + 6;
@@ -860,8 +954,8 @@ fn drawTabBar(c: *Canvas, rect: Rect, tabs: []const View.Tab, active: usize, foc
         const x = first_x + @as(i32, @intCast(index)) * tab_w;
         if (x >= rect.right()) break;
         const width = @min(tab_w, rect.right() - x);
-        c.fillRect(x, rect.y + 2, width, rect.h - 2, if (index == active) layer else chrome);
-        if (index == active) c.fillRect(x, rect.y + 2, width, 2, accent);
+        c.fillRect(x, rect.y + 2, width, rect.h - 2, if (index == active) layer else subtle);
+        if (index == active) c.fillRect(x, rect.y + 2, width, 3, accent);
         drawTextEllipsized(c, tab.label, x + 10, rect.y + 3, width - 30, if (tab.unread > 0) accent else ink);
         if (tab.unread > 0) {
             var unread_buf: [12]u8 = undefined;
@@ -895,7 +989,7 @@ fn drawSayWindow(c: *Canvas, layout: geometry.Layout, input: []const u8, cursor:
     const edit = layout.say_editor;
     c.fillRect(layout.say.x, layout.say.y, layout.say.w, layout.say.h, chrome);
     c.fillRect(edit.x, edit.y, edit.w, edit.h, layer);
-    c.fillRect(edit.x, edit.y, edit.w, 1, divider);
+    drawRectOutline(c, edit.x, edit.y, edit.w, edit.h, if (focused) accent else divider);
     if (selection) |range| {
         const start = @min(range.start, input.len);
         const end = @min(@max(range.end, start), input.len);
@@ -961,9 +1055,15 @@ fn drawStatusBar(c: *Canvas, rect: Rect, status: []const u8, member_count: usize
 
 fn drawEmptyBuffer(c: *Canvas, rect: Rect, text: []const u8) void {
     c.fillRect(rect.x, rect.y, rect.w, rect.h, layer);
-    const x = rect.x + @max(8, @divTrunc(rect.w - Canvas.textWidth(text), 2));
-    const y = rect.y + @max(8, @divTrunc(rect.h - 23, 2));
-    drawTextEllipsized(c, text, x, y, rect.right() - x - 8, secondary);
+    const card_w = @min(360, @max(220, rect.w - 48));
+    const card_h = 82;
+    const card_x = rect.x + @divTrunc(rect.w - card_w, 2);
+    const card_y = rect.y + @divTrunc(rect.h - card_h, 2);
+    c.fillRect(card_x, card_y, card_w, card_h, chrome);
+    drawRectOutline(c, card_x, card_y, card_w, card_h, divider);
+    drawBubbleGlyph(c, card_x + 18, card_y + 18, accent, false);
+    drawTextEllipsized(c, "Your conversation starts here", card_x + 46, card_y + 14, card_w - 60, ink);
+    drawTextEllipsized(c, text, card_x + 18, card_y + 45, card_w - 36, secondary);
 }
 
 fn drawFocus(c: *Canvas, rect: Rect) void {

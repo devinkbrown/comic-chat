@@ -1428,7 +1428,7 @@ fn handleWindowEvent(
             };
         },
         .pointer => |pointer| pointer_result: {
-            if (pointer.kind == .move) break :pointer_result .{};
+            if (pointer.kind == .move) break :pointer_result .{ .redraw = view.handlePointerMove(pointer, transcript.roster.items.len) };
             const action = view.handlePointer(pointer, transcript.count(), transcript.roster.items.len);
             const keep_running = switch (action) {
                 .send => try handleWorkspaceInputKey(gpa, io, cc.platform.event.Key{ .enter = {} }, view, editor, client, workspace, nick, joined, ircx_data),
