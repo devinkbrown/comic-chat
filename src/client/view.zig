@@ -498,12 +498,7 @@ pub const View = struct {
         const range = self.shell.visibleRange(transcript.lines.items.len, capacity);
         var y = rect.y + 6;
         for (transcript.lines.items[range.start..range.end], 0..) |line, index| {
-            const nick_w = @min(112, @max(54, Canvas.textWidth(line.nick) + 14));
-            self.canvas.fillRect(rect.x + 7, y - 2, rect.w - 14, row_h - 3, if (index % 2 == 0) chrome else layer);
-            self.canvas.fillRect(rect.x + 7, y - 2, 3, row_h - 3, accent);
-            self.canvas.fillRect(rect.x + 16, y + 2, nick_w - 8, 18, accent_soft);
-            drawTextEllipsized(&self.canvas, line.nick, rect.x + 20, y + 3, nick_w - 16, accent);
-            drawTextEllipsized(&self.canvas, line.text, rect.x + nick_w + 14, y + 3, rect.w - nick_w - 24, ink);
+            ui.drawMessageRow(&self.canvas, .{ .x = rect.x, .y = y, .w = rect.w, .h = row_h }, line.nick, line.text, index % 2 == 0);
             y += row_h;
             if (y + row_h > rect.bottom()) break;
         }
@@ -516,10 +511,7 @@ pub const View = struct {
         var y = rect.y + 7;
         for (transcript.roster.items, 0..) |member, index| {
             if (y + 24 > rect.bottom()) break;
-            if (member.is_self or self.shell.selected_member == index) self.canvas.fillRect(rect.x + 3, y - 1, rect.w - 6, 23, accent_soft);
-            self.canvas.fillRect(rect.x + 8, y + 5, 8, 8, if (member.departed) divider else 0xff107c10);
-            const label_x = rect.x + 24;
-            drawTextEllipsized(&self.canvas, member.nick, label_x, y, rect.right() - label_x - 6, if (member.departed) secondary else ink);
+            ui.drawMemberRow(&self.canvas, .{ .x = rect.x, .y = y, .w = rect.w, .h = 24 }, member.nick, member.is_self or self.shell.selected_member == index, member.departed);
             y += 24;
         }
     }
@@ -599,9 +591,7 @@ pub const View = struct {
         }, self.shell.emotion_x, self.shell.emotion_y);
         // Avatar pixels can be opaque even around the figure. Draw the card
         // header last so it remains legible on every source avatar.
-        self.canvas.fillRect(rect.x, rect.y, rect.w, 21, chrome);
-        self.canvas.fillRect(rect.x, rect.y, rect.w, 3, accent);
-        _ = self.canvas.drawText("Character", rect.x + 9, rect.y + 5, secondary);
+        ui.drawPaneHeader(&self.canvas, rect, "Character");
     }
 
     fn invokeMenuItem(self: *View, menu: u8, item: u8) void {
@@ -1021,8 +1011,7 @@ fn drawSplitters(c: *Canvas, layout: geometry.Layout, comic_mode: bool) void {
 fn drawSayWindow(c: *Canvas, layout: geometry.Layout, input: []const u8, cursor: usize, selection: ?TextSelection, focused: bool, say_mode: shell_mod.SayMode) void {
     const edit = layout.say_editor;
     c.fillRect(layout.say.x, layout.say.y, layout.say.w, layout.say.h, chrome);
-    c.fillRect(edit.x, edit.y, edit.w, edit.h, layer);
-    drawRectOutline(c, edit.x, edit.y, edit.w, edit.h, if (focused) accent else divider);
+    ui.drawComposerField(c, edit, focused);
     if (selection) |range| {
         const start = @min(range.start, input.len);
         const end = @min(@max(range.end, start), input.len);
@@ -1083,11 +1072,7 @@ fn drawEmptyBuffer(c: *Canvas, rect: Rect, text: []const u8) void {
 }
 
 fn drawFocus(c: *Canvas, rect: Rect) void {
-    if (rect.w < 4 or rect.h < 4) return;
-    c.fillRect(rect.x, rect.y, rect.w, 2, focus_color);
-    c.fillRect(rect.x, rect.bottom() - 2, rect.w, 2, focus_color);
-    c.fillRect(rect.x, rect.y, 2, rect.h, focus_color);
-    c.fillRect(rect.right() - 2, rect.y, 2, rect.h, focus_color);
+    ui.drawFocusRing(c, rect);
 }
 
 fn drawTextEllipsized(c: *Canvas, text: []const u8, x: i32, y: i32, max_w: i32, color: u32) void {

@@ -167,6 +167,41 @@ pub fn drawActionTile(c: *Canvas, x: i32, y: i32, width: i32, height: i32, selec
     return if (selected) Theme.accent else Theme.ink;
 }
 
+pub fn drawFocusRing(c: *Canvas, rect: Rect) void {
+    if (rect.w < 4 or rect.h < 4) return;
+    c.fillRect(rect.x, rect.y, rect.w, 2, Theme.focus);
+    c.fillRect(rect.x, rect.bottom() - 2, rect.w, 2, Theme.focus);
+    c.fillRect(rect.x, rect.y, 2, rect.h, Theme.focus);
+    c.fillRect(rect.right() - 2, rect.y, 2, rect.h, Theme.focus);
+}
+
+pub fn drawComposerField(c: *Canvas, rect: Rect, focused: bool) void {
+    c.fillRect(rect.x, rect.y, rect.w, rect.h, Theme.layer);
+    drawOutline(c, rect.x, rect.y, rect.w, rect.h, if (focused) Theme.accent else Theme.divider);
+    if (focused) c.fillRect(rect.x, rect.y, rect.w, 2, Theme.accent);
+}
+
+pub fn drawMessageRow(c: *Canvas, rect: Rect, nick: []const u8, text: []const u8, alternate: bool) void {
+    const nick_w = @min(112, @max(54, Canvas.textWidth(nick) + 14));
+    c.fillRect(rect.x + 7, rect.y - 2, rect.w - 14, rect.h - 3, if (alternate) Theme.chrome else Theme.layer);
+    c.fillRect(rect.x + 7, rect.y - 2, 3, rect.h - 3, Theme.accent);
+    c.fillRect(rect.x + 16, rect.y + 2, nick_w - 8, 18, Theme.accent_soft);
+    drawEllipsized(c, nick, rect.x + 20, rect.y + 3, nick_w - 16, Theme.accent);
+    drawEllipsized(c, text, rect.x + nick_w + 14, rect.y + 3, rect.w - nick_w - 24, Theme.ink);
+}
+
+pub fn drawMemberRow(c: *Canvas, rect: Rect, label: []const u8, selected: bool, departed: bool) void {
+    if (selected) c.fillRect(rect.x + 3, rect.y - 1, rect.w - 6, 23, Theme.accent_soft);
+    c.fillRect(rect.x + 8, rect.y + 5, 8, 8, if (departed) Theme.divider else Theme.success);
+    drawEllipsized(c, label, rect.x + 24, rect.y, rect.w - 30, if (departed) Theme.secondary else Theme.ink);
+}
+
+pub fn drawPaneHeader(c: *Canvas, rect: Rect, title: []const u8) void {
+    c.fillRect(rect.x, rect.y, rect.w, 21, Theme.chrome);
+    c.fillRect(rect.x, rect.y, rect.w, 3, Theme.accent);
+    _ = c.drawText(title, rect.x + 9, rect.y + 5, Theme.secondary);
+}
+
 pub fn drawStatusBar(c: *Canvas, x: i32, y: i32, width: i32, height: i32, status: []const u8, member_count: usize) void {
     c.fillRect(x, y, width, height, Theme.chrome);
     c.fillRect(x, y, width, 1, Theme.divider);
