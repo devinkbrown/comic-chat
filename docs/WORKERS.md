@@ -47,6 +47,15 @@ is split across:
   the module's own doc comment for the exact boundary and what is inferred
   rather than verified (`bIsMatch`'s wildcard mask algorithm is not in the
   pinned snapshot).
+- `src/comic/notify.zig`: the notify list / buddy-list feature (watched
+  nickname/user/host/network entries, operator-driven wildcard-mask
+  assembly for the WHO query and reply matching, and the tracked-user
+  online/offline overlay driven by folding successive WHO-poll snapshots).
+  Does not include the MFC notify-list dialog, Registry binary persistence
+  (`CCNotif` has no text grammar to fall back to, unlike `CCRule`), or list
+  sort order - see the module's own doc comment for the exact boundary,
+  including why it does not reuse `rules.zig`'s `newUsers`/`goneUsers` (a
+  different diff key).
 
 Fixed source-parity contracts live in `src/comic/source_*_test.zig`. When a
 deliberate source-derived raster change updates a golden hash, record the
