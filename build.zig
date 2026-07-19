@@ -173,6 +173,10 @@ fn addMbedTls(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
 ) *std.Build.Step.Compile {
+    const c_flags: []const []const u8 = if (target.result.os.tag == .freebsd)
+        &.{ "-std=c99", "-D__BSD_VISIBLE" }
+    else
+        &.{"-std=c99"};
     const library = b.addLibrary(.{
         .name = "comicchat-mbedtls",
         .linkage = .static,
@@ -183,9 +187,9 @@ fn addMbedTls(
     library.root_module.addCSourceFiles(.{
         .root = dependency.path(""),
         .files = &mbedtls_sources,
-        .flags = &.{"-std=c99"},
+        .flags = c_flags,
     });
-    library.root_module.addCSourceFile(.{ .file = b.path("src/net/mbedtls_shim.c"), .flags = &.{"-std=c99"} });
+    library.root_module.addCSourceFile(.{ .file = b.path("src/net/mbedtls_shim.c"), .flags = c_flags });
     library.root_module.link_libc = true;
     return library;
 }
