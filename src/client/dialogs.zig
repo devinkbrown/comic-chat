@@ -59,6 +59,11 @@ pub const Spec = struct {
     source_h: u16,
 };
 
+/// Visible controls for the portable dialog surface. The first editable field
+/// is bound to the shared modal editor; remaining rows expose the rest of the
+/// source-shaped contract without collapsing every dialog into one placeholder.
+pub const Field = struct { label: []const u8, hint: []const u8 = "" };
+
 pub const specs = [_]Spec{
     .{ .id = .about, .resource = "IDD_ABOUTBOX", .title = "About Comic Chat", .group = .files, .source_w = 279, .source_h = 137 },
     .{ .id = .room_list, .resource = "IDD_ROOMLIST", .title = "Room List", .group = .rooms, .source_w = 400, .source_h = 255 },
@@ -129,6 +134,38 @@ pub fn prompt(id: Id) ?[]const u8 {
         .personal => "Profile text",
         else => null,
     };
+}
+
+pub fn fields(id: Id) []const Field {
+    return switch (id) {
+        .setup, .settings, .servers => &.{ .{ .label = "Server", .hint = "Secure IRC endpoint" }, .{ .label = "Port", .hint = "6697" }, .{ .label = "Security", .hint = "Verified TLS" } },
+        .personal => &.{ .{ .label = "Profile text" }, .{ .label = "Display name" }, .{ .label = "Homepage" } },
+        .character => &.{ .{ .label = "Character name" }, .{ .label = "Preview", .hint = "Bundled Comic Chat character" } },
+        .background => &.{ .{ .label = "Backdrop name" }, .{ .label = "Preview", .hint = "Bundled background" } },
+        .nickname => &.{.{ .label = "Nickname" }},
+        .password => &.{ .{ .label = "Account" }, .{ .label = "Password" } },
+        .channel, .channel_create => &.{ .{ .label = "Room name" }, .{ .label = "Topic", .hint = "Optional" } },
+        .channel_properties => &.{ .{ .label = "Topic" }, .{ .label = "Modes" }, .{ .label = "Limit" } },
+        .channel_password => &.{.{ .label = "Room password" }},
+        .room_list => &.{ .{ .label = "Rooms", .hint = "Select a discovered room" }, .{ .label = "Filter", .hint = "Optional room filter" } },
+        .user_list => &.{ .{ .label = "Members", .hint = "Select a member" }, .{ .label = "Filter", .hint = "Optional nickname filter" } },
+        .kick, .ban, .invite, .whisper, .notification_users => &.{ .{ .label = "Member nickname" }, .{ .label = "Reason", .hint = "Optional" } },
+        .away => &.{.{ .label = "Away message" }},
+        .sound => &.{ .{ .label = "Sound name" }, .{ .label = "Volume", .hint = "100%" } },
+        .set_text_font, .text_font => &.{ .{ .label = "Font name and size" }, .{ .label = "Style", .hint = "Bold" } },
+        .choose_color => &.{ .{ .label = "Color value" }, .{ .label = "Preview", .hint = "Current theme color" } },
+        .comics_view => &.{ .{ .label = "View mode", .hint = "Comic" }, .{ .label = "Panel scale", .hint = "Fit window" } },
+        .automation, .rules, .edit_rule, .rule_sets, .add_to_sets, .rename_loaded_set, .rename_set, .create_set, .advanced_event_params, .advanced_rule_settings => &.{ .{ .label = "Rule or set name" }, .{ .label = "Condition", .hint = "Event match" }, .{ .label = "Action", .hint = "Portable action" } },
+        .notifications => &.{ .{ .label = "Notify on", .hint = "Join, part, mention" }, .{ .label = "Delivery", .hint = "Desktop notification" } },
+        .file_transfer => &.{ .{ .label = "File path" }, .{ .label = "Destination", .hint = "Ask before receiving" } },
+        .motd => &.{.{ .label = "Message of the day", .hint = "Server supplied" }},
+        .invitation => &.{ .{ .label = "Room" }, .{ .label = "Invitation note" } },
+        .about => &.{ .{ .label = "ComicChat", .hint = "Portable Zig client" }, .{ .label = "License", .hint = "AGPL-3.0-or-later" } },
+    };
+}
+
+pub fn acceptsText(id: Id) bool {
+    return fields(id).len != 0;
 }
 
 pub fn primaryLabel(id: Id) []const u8 {

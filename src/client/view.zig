@@ -156,7 +156,7 @@ pub const View = struct {
                 self.active_dialog = null;
                 return .{ .dialog_accept = id };
             },
-            .char => |ch| if (dialogs.prompt(id) != null and self.dialog_editor.text().len < 512) try self.dialog_editor.insert(ch),
+            .char => |ch| if (dialogs.acceptsText(id) and self.dialog_editor.text().len < 512) try self.dialog_editor.insert(ch),
             .backspace => self.dialog_editor.backspace(),
             .delete => self.dialog_editor.delete(),
             .left => self.dialog_editor.left(),
@@ -1172,19 +1172,23 @@ fn drawDialog(c: *Canvas, spec: dialogs.Spec, value: []const u8, cursor: usize) 
         .files => "Application and file workflow",
     };
     drawTextEllipsized(c, group_text, rect.x + 14, rect.y + 72, rect.w - 28, ink);
-    const body_y = rect.y + 102;
-    c.fillRect(rect.x + 14, body_y, rect.w - 28, @max(24, rect.h - 154), subtle);
-    if (dialogs.prompt(spec.id)) |prompt| {
-        drawTextEllipsized(c, prompt, rect.x + 24, body_y + 8, rect.w - 48, secondary);
-        const field_y = body_y + 32;
-        c.fillRect(rect.x + 24, field_y, rect.w - 48, 25, layer);
-        drawRectOutline(c, rect.x + 24, field_y, rect.w - 48, 25, divider);
-        drawTextEllipsized(c, value, rect.x + 30, field_y + 1, rect.w - 60, ink);
-        const safe_cursor = @min(cursor, value.len);
-        const caret_x = @min(rect.right() - 31, rect.x + 30 + Canvas.textWidth(value[0..safe_cursor]));
-        c.fillRect(caret_x, field_y + 3, 1, 18, accent);
-    } else {
-        drawTextEllipsized(c, "Microsoft source field contract", rect.x + 24, body_y + 8, rect.w - 48, secondary);
+    const body_y = rect.y + 78;
+    const fields = dialogs.fields(spec.id);
+    const available_h = @max(28, rect.bottom() - 48 - body_y);
+    const row_h = @max(34, @divTrunc(available_h, @max(1, @as(i32, @intCast(fields.len)))));
+    for (fields, 0..) |field, index| {
+        const row_y = body_y + @as(i32, @intCast(index)) * row_h;
+        if (row_y + 30 > rect.bottom() - 38) break;
+        drawTextEllipsized(c, field.label, rect.x + 20, row_y, rect.w - 40, secondary);
+        const field_y = row_y + 16;
+        c.fillRect(rect.x + 20, field_y, rect.w - 40, 23, layer);
+        drawRectOutline(c, rect.x + 20, field_y, rect.w - 40, 23, if (index == 0) accent else divider);
+        if (index == 0) {
+            drawTextEllipsized(c, value, rect.x + 26, field_y + 1, rect.w - 52, ink);
+            const safe_cursor = @min(cursor, value.len);
+            const caret_x = @min(rect.right() - 27, rect.x + 26 + Canvas.textWidth(value[0..safe_cursor]));
+            c.fillRect(caret_x, field_y + 3, 1, 16, accent);
+        } else drawTextEllipsized(c, field.hint, rect.x + 26, field_y + 1, rect.w - 52, secondary);
     }
 
     const button_y = rect.bottom() - 34;
