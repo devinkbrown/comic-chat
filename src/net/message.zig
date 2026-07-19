@@ -233,7 +233,7 @@ test "parse: full message with prefix and trailing" {
 }
 
 test "IRCv3 tags parse before prefix and preserve null versus empty values" {
-    const m = parse("@time=2026-07-16T10:20:30.000Z;account=kain;flag;empty= :nick!u@h PRIVMSG #comic :hello");
+    const m = parse("@time=2026-07-16T10:20:30.000Z;account=alex;flag;empty= :nick!u@h PRIVMSG #comic :hello");
     try std.testing.expectEqualStrings("nick!u@h", m.prefix.?);
     try std.testing.expectEqualStrings("PRIVMSG", m.command);
     try std.testing.expectEqualStrings("2026-07-16T10:20:30.000Z", m.tag("time").?.raw_value.?);

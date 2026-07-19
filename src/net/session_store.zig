@@ -193,21 +193,21 @@ fn lowerDup(gpa: std.mem.Allocator, value: []const u8) ![]u8 {
 }
 
 test "session credentials parse current notices and reject injection" {
-    const local = parseCredential(message.parse(":eshmaki.me NOTICE kain :SESSION TOKEN abc123")).?;
+    const local = parseCredential(message.parse(":server.example NOTICE alex :SESSION TOKEN abc123")).?;
     try std.testing.expectEqual(Kind.local, local.kind);
     try std.testing.expectEqualStrings("abc123", local.token);
-    const mesh = parseCredential(message.parse(":eshmaki.me NOTICE kain :SESSION MTOKEN deadbeef expires=1800000000")).?;
+    const mesh = parseCredential(message.parse(":server.example NOTICE alex :SESSION MTOKEN deadbeef expires=1800000000")).?;
     try std.testing.expectEqual(Kind.mesh, mesh.kind);
     try std.testing.expectEqual(@as(?u64, 1800000000), mesh.expires_at);
-    try std.testing.expect(parseCredential(message.parse(":srv NOTICE kain :SESSION TOKEN bad extra")) == null);
-    try std.testing.expect(parseCredential(message.parse(":mallory!u@host NOTICE kain :SESSION TOKEN stolen")) == null);
+    try std.testing.expect(parseCredential(message.parse(":srv NOTICE alex :SESSION TOKEN bad extra")) == null);
+    try std.testing.expect(parseCredential(message.parse(":mallory!u@host NOTICE alex :SESSION TOKEN stolen")) == null);
 }
 
 test "session store prefers live mesh token and falls back to local" {
-    var store = try Store.init(std.testing.allocator, "ESHMAKI.ME", "Kain");
+    var store = try Store.init(std.testing.allocator, "SERVER.EXAMPLE", "Alex");
     defer store.deinit();
-    try std.testing.expect(try store.observe(message.parse(":srv NOTICE kain :SESSION TOKEN local")));
-    try std.testing.expect(try store.observe(message.parse(":srv NOTICE kain :SESSION MTOKEN mesh expires=200")));
+    try std.testing.expect(try store.observe(message.parse(":srv NOTICE alex :SESSION TOKEN local")));
+    try std.testing.expect(try store.observe(message.parse(":srv NOTICE alex :SESSION MTOKEN mesh expires=200")));
     try std.testing.expectEqualStrings("mesh", store.resumeToken(199).?);
     try std.testing.expectEqualStrings("local", store.resumeToken(200).?);
 }

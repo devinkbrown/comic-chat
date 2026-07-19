@@ -152,7 +152,7 @@ pub fn main(init: std.process.Init) !void {
 const default_tls_port: u16 = 6697;
 const default_server = "eshmaki.me";
 const default_channel = "#root";
-const default_nick = "kain";
+const default_nick = "comicchat";
 
 const AuthArgs = struct {
     user: ?[]const u8 = null,
@@ -414,22 +414,22 @@ fn printConnectionUsage(command: []const u8, allow_extra: bool) void {
 }
 
 test "connection defaults use eshmaki root" {
-    const args = [_][]const u8{"kain"};
+    const args = [_][]const u8{"alex"};
     const connection = parseConnectionArgs(&args, false).?;
     try std.testing.expectEqualStrings("eshmaki.me", connection.host);
-    try std.testing.expectEqualStrings("kain", connection.nick);
+    try std.testing.expectEqualStrings("alex", connection.nick);
     try std.testing.expectEqualStrings("#root", connection.channel);
 }
 
 test "empty app arguments open the configured desktop default" {
     const connection = parseConnectionArgs(&.{}, false).?;
     try std.testing.expectEqualStrings("eshmaki.me", connection.host);
-    try std.testing.expectEqualStrings("kain", connection.nick);
+    try std.testing.expectEqualStrings("comicchat", connection.nick);
     try std.testing.expectEqualStrings("#root", connection.channel);
 }
 
 test "explicit host retains the default channel" {
-    const args = [_][]const u8{ "irc.example", "kain" };
+    const args = [_][]const u8{ "irc.example", "alex" };
     const connection = parseConnectionArgs(&args, false).?;
     try std.testing.expectEqualStrings("irc.example", connection.host);
     try std.testing.expectEqualStrings("#root", connection.channel);

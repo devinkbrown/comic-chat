@@ -2,7 +2,7 @@
 
 **Status:** source-geometry shell implemented; interaction foundation active  
 **Date:** 2026-07-19  
-**Scope:** `/home/kain/comicchat/src/`; the historical Comic Chat repository
+**Scope:** the portable `src/` tree; the historical Comic Chat repository
 at the pinned upstream revision is an external behavior reference.
 
 ## Outcome
@@ -45,9 +45,7 @@ emotion-face artwork remains source-authored product content.
 - Portable protocol/network behavior: `src/net/`, `src/proto/`, and
   `../../docs/PROTOCOL.md`.
 - Portable UI today: `src/client/`, `src/main.zig`, and `src/platform/`.
-- Workflow: `/home/kain/CLAUDE_CODEX_WORKFLOW.md`.
-- Research: `/home/kain/research/INDEX.md`, especially UI architecture,
-  accessibility, deterministic testing, IRCX/IRCv3 and Windows architecture.
+- Workflow and research references are external to this repository.
 
 ## Current substrate to preserve
 

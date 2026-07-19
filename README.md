@@ -48,13 +48,13 @@ zig build run -- app irc.example 6697 nick '#channel' --ca-file ./ca.pem
 zig build run -- app irc.example nick '#channel' --socks5 127.0.0.1:1080
 zig build run -- app irc.example nick '#channel' --http-proxy proxy.example:8080
 zig build run -- app localhost 6667 nick '#channel' --plaintext
-zig build run -- app kain                               # eshmaki.me, #root
-zig build run -- app eshmaki.me kain '#root' \
-  --tls-cert ./client-cert-and-key.pem --sasl-user kain --sasl-external
+zig build run -- app your-nick                          # eshmaki.me, #root
+zig build run -- app eshmaki.me your-nick '#root' \
+  --tls-cert ./client-cert-and-key.pem --sasl-user your-account --sasl-external
 ```
 
 On Windows, double-clicking `comicchat.exe` opens the desktop client directly
-with the configured `eshmaki.me`, `kain`, and `#root` defaults. Use
+with the configured `eshmaki.me`, `comicchat`, and `#root` defaults. Use
 `comicchat.exe app <nick>` or the full command form above to override them.
 
 The app opens before DNS/TCP/TLS setup and keeps the native event loop live
@@ -129,8 +129,7 @@ env -u WAYLAND_DISPLAY zig build run -- window anna
 
 ## Release packages
 
-The current published release is
-[comicchat-portable-2026-07-19](https://github.com/devinkbrown/comic-chat/releases/tag/comicchat-portable-2026-07-19).
+The current published release is `comicchat-portable-2026-07-19.2`.
 It contains x86_64 binary packages for Windows, Linux, FreeBSD, and OpenBSD,
 an explicit buildable source archive, and a single SHA-256 manifest covering
 all five artifacts. The source archive includes the pinned Onyx TLS submodule,

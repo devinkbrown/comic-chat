@@ -776,9 +776,9 @@ test "autoRespond ignores non-PING" {
 
 test "authenticated registration resumes once then requests a fresh session token" {
     const gpa = std.testing.allocator;
-    var store = try session_store.Store.init(gpa, "eshmaki.me", "kain");
+    var store = try session_store.Store.init(gpa, "server.example", "alex");
     defer store.deinit();
-    try std.testing.expect(try store.observe(message.parse(":eshmaki.me NOTICE kain :SESSION TOKEN reusable")));
+    try std.testing.expect(try store.observe(message.parse(":server.example NOTICE alex :SESSION TOKEN reusable")));
     var registration = Registration.init(gpa, "eshmaki.me", .tls, .{
         .session = &store,
         .now_seconds = 100,
@@ -795,9 +795,9 @@ test "authenticated registration resumes once then requests a fresh session toke
 
 test "unauthenticated registration never transmits a session bearer" {
     const gpa = std.testing.allocator;
-    var store = try session_store.Store.init(gpa, "eshmaki.me", "kain");
+    var store = try session_store.Store.init(gpa, "server.example", "alex");
     defer store.deinit();
-    try std.testing.expect(try store.observe(message.parse(":eshmaki.me NOTICE kain :SESSION TOKEN reusable")));
+    try std.testing.expect(try store.observe(message.parse(":server.example NOTICE alex :SESSION TOKEN reusable")));
     var registration = Registration.init(gpa, "eshmaki.me", .tls, .{ .session = &store });
     defer registration.deinit();
     var out: std.ArrayList(u8) = .empty;
