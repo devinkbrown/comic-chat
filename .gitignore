@@ -5,6 +5,13 @@ zig-out/
 .comicchat-*-smoke.ppm
 .comicchat-sts
 .comicchat-session
-# Zig package-manager fetch cache (build.zig.zon dependencies, e.g. mbedTLS);
+# Never commit client credentials or certificate material.
+*.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
+# Zig package-manager fetch cache; regenerated from pinned dependencies.
 # regenerated on demand from the pinned url+hash, never hand-authored.
 zig-pkg/

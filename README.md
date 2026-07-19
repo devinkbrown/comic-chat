@@ -50,7 +50,7 @@ zig build run -- app irc.example nick '#channel' --http-proxy proxy.example:8080
 zig build run -- app localhost 6667 nick '#channel' --plaintext
 zig build run -- app kain                               # eshmaki.me, #root
 zig build run -- app eshmaki.me kain '#root' \
-  --tls-cert ~/.weechat/tls/relay.pem --sasl-user kain --sasl-external
+  --tls-cert ./client-cert-and-key.pem --sasl-user kain --sasl-external
 ```
 
 On Windows, double-clicking `comicchat.exe` opens the desktop client directly
