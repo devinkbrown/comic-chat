@@ -54,20 +54,21 @@ pub const View = struct {
     shell: shell_mod.State = .{},
     active_dialog: ?dialogs.Id = null,
     active_menu: ?u8 = null,
-    dialog_editor: input_mod.Editor,
+    dialog_editors: [3]input_mod.Editor,
+    dialog_field: usize = 0,
     room_tab_count: usize = 1,
 
     pub fn init(gpa: std.mem.Allocator, initial_width: u32, initial_height: u32) !View {
         return .{
             .gpa = gpa,
             .canvas = try Canvas.init(gpa, @max(initial_width, min_width), @max(initial_height, min_height)),
-            .dialog_editor = input_mod.Editor.init(gpa),
+            .dialog_editors = .{ input_mod.Editor.init(gpa), input_mod.Editor.init(gpa), input_mod.Editor.init(gpa) },
         };
     }
 
     pub fn deinit(self: *View) void {
         self.canvas.deinit(self.gpa);
-        self.dialog_editor.deinit();
+        for (&self.dialog_editors) |*editor| editor.deinit();
     }
 
     pub fn resize(self: *View, new_width: u32, new_height: u32) !void {
@@ -125,7 +126,8 @@ pub const View = struct {
 
     pub fn openDialog(self: *View, id: dialogs.Id) void {
         self.active_menu = null;
-        self.dialog_editor.clear();
+        for (&self.dialog_editors) |*editor| editor.clear();
+        self.dialog_field = 0;
         self.active_dialog = id;
     }
 
@@ -142,11 +144,17 @@ pub const View = struct {
     }
 
     pub fn dialogValue(self: *const View) []const u8 {
-        return self.dialog_editor.text();
+        return self.dialog_editors[0].text();
+    }
+
+    pub fn dialogValueAt(self: *const View, index: usize) []const u8 {
+        return self.dialog_editors[@min(index, self.dialog_editors.len - 1)].text();
     }
 
     pub fn handleDialogKey(self: *View, key: platform_event.Key) !?Action {
         const id = self.active_dialog orelse return null;
+        const field_count = @min(dialogs.fields(id).len, self.dialog_editors.len);
+        const editor = &self.dialog_editors[self.dialog_field];
         switch (key) {
             .escape => {
                 self.active_dialog = null;
@@ -156,13 +164,16 @@ pub const View = struct {
                 self.active_dialog = null;
                 return .{ .dialog_accept = id };
             },
-            .char => |ch| if (dialogs.acceptsText(id) and self.dialog_editor.text().len < 512) try self.dialog_editor.insert(ch),
-            .backspace => self.dialog_editor.backspace(),
-            .delete => self.dialog_editor.delete(),
-            .left => self.dialog_editor.left(),
-            .right => self.dialog_editor.right(),
-            .home => self.dialog_editor.home(),
-            .end => self.dialog_editor.end(),
+            .tab => {
+                if (field_count > 0) self.dialog_field = (self.dialog_field + 1) % field_count;
+            },
+            .char => |ch| if (dialogs.acceptsText(id) and editor.text().len < 512) try editor.insert(ch),
+            .backspace => editor.backspace(),
+            .delete => editor.delete(),
+            .left => editor.left(),
+            .right => editor.right(),
+            .home => editor.home(),
+            .end => editor.end(),
             else => {},
         }
         return .none;
@@ -171,7 +182,8 @@ pub const View = struct {
     pub fn handlePointer(self: *View, pointer: platform_event.Pointer, total_lines: usize, member_count: usize) Action {
         if (self.active_dialog) |id| {
             if (pointer.kind != .down or pointer.button != .primary) return .none;
-            const rect = dialogRect(self.canvas.width, self.canvas.height, dialogs.get(id));
+            const spec = dialogs.get(id);
+            const rect = dialogRect(self.canvas.width, self.canvas.height, spec);
             const button_y = rect.bottom() - 34;
             if (pointer.y >= button_y and pointer.y < button_y + 25) {
                 if (pointer.x >= rect.right() - 164 and pointer.x < rect.right() - 88) {
@@ -182,6 +194,14 @@ pub const View = struct {
                     self.active_dialog = null;
                     return .{ .dialog_cancel = id };
                 }
+            }
+            const fields = dialogs.fields(id);
+            const body_y = rect.y + 78;
+            const available_h = @max(28, rect.bottom() - 48 - body_y);
+            const row_h = @max(34, @divTrunc(available_h, @max(1, @as(i32, @intCast(fields.len)))));
+            if (pointer.y >= body_y and pointer.y < rect.bottom() - 38) {
+                const index = @divTrunc(pointer.y - body_y, row_h);
+                if (index >= 0 and index < fields.len and @as(usize, @intCast(index)) < self.dialog_editors.len) self.dialog_field = @intCast(index);
             }
             return .none;
         }
@@ -317,7 +337,7 @@ pub const View = struct {
         if (self.shell.focus == .members) drawFocus(&self.canvas, layout.members);
         if (self.shell.focus == .emotion) drawFocus(&self.canvas, layout.body_camera);
         if (self.active_menu) |menu| drawMenuPopup(&self.canvas, menu);
-        if (self.active_dialog) |id| drawDialog(&self.canvas, dialogs.get(id), self.dialog_editor.text(), self.dialog_editor.cursor);
+        if (self.active_dialog) |id| drawDialog(&self.canvas, dialogs.get(id), &self.dialog_editors, self.dialog_field);
     }
 
     pub fn semanticSnapshot(self: *const View, status: []const u8, tabs: []const Tab, active_tab: usize) accessibility.Snapshot {
@@ -1150,7 +1170,7 @@ fn dialogRect(width: u32, height: u32, spec: dialogs.Spec) Rect {
     return .{ .x = @divTrunc(canvas_w - w, 2), .y = @divTrunc(canvas_h - h, 2), .w = w, .h = h };
 }
 
-fn drawDialog(c: *Canvas, spec: dialogs.Spec, value: []const u8, cursor: usize) void {
+fn drawDialog(c: *Canvas, spec: dialogs.Spec, editors: *const [3]input_mod.Editor, active_field: usize) void {
     // `fillRect` overwrites pixels; an ARGB black fill therefore appears as a
     // solid black frame to GDI. Blend the dimmer over the existing UI instead.
     var y: i32 = 0;
@@ -1183,12 +1203,17 @@ fn drawDialog(c: *Canvas, spec: dialogs.Spec, value: []const u8, cursor: usize) 
         const field_y = row_y + 16;
         c.fillRect(rect.x + 20, field_y, rect.w - 40, 23, layer);
         drawRectOutline(c, rect.x + 20, field_y, rect.w - 40, 23, if (index == 0) accent else divider);
-        if (index == 0) {
+        if (index < editors.len) {
+            const editor = &editors[index];
+            const value = editor.text();
             drawTextEllipsized(c, value, rect.x + 26, field_y + 1, rect.w - 52, ink);
-            const safe_cursor = @min(cursor, value.len);
-            const caret_x = @min(rect.right() - 27, rect.x + 26 + Canvas.textWidth(value[0..safe_cursor]));
-            c.fillRect(caret_x, field_y + 3, 1, 16, accent);
-        } else drawTextEllipsized(c, field.hint, rect.x + 26, field_y + 1, rect.w - 52, secondary);
+            if (index == active_field) {
+                const safe_cursor = @min(editor.cursor, value.len);
+                const caret_x = @min(rect.right() - 27, rect.x + 26 + Canvas.textWidth(value[0..safe_cursor]));
+                c.fillRect(caret_x, field_y + 3, 1, 16, accent);
+            }
+        }
+        if (index != active_field and editors[index].text().len == 0) drawTextEllipsized(c, field.hint, rect.x + 26, field_y + 1, rect.w - 52, secondary);
     }
 
     const button_y = rect.bottom() - 34;
