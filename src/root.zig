@@ -54,6 +54,7 @@ pub const client = struct {
     pub const accessibility = @import("client/accessibility.zig");
     pub const input = @import("client/input.zig");
     pub const shell = @import("client/shell.zig");
+    pub const ui = @import("client/ui.zig");
     pub const view = @import("client/view.zig");
 };
 
@@ -114,6 +115,7 @@ test {
     _ = @import("client/files.zig");
     _ = @import("client/input.zig");
     _ = @import("client/shell.zig");
+    _ = @import("client/ui.zig");
     _ = @import("client/view.zig");
     _ = @import("net/message.zig");
     _ = @import("net/ircv3.zig");

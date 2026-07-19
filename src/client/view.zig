@@ -17,6 +17,7 @@ const hit_test = @import("hit_test.zig");
 const dialogs = @import("dialogs.zig");
 const input_mod = @import("input.zig");
 const accessibility = @import("accessibility.zig");
+const ui = @import("ui.zig");
 const platform_event = @import("../platform/event.zig");
 const source_ui = @import("source_ui_assets");
 
@@ -38,15 +39,15 @@ pub const Action = union(enum) {
 };
 
 // Windows/Fluent neutral roles applied to the source UI geometry.
-const ink: u32 = 0xff1f2933;
-const secondary: u32 = 0xff58636f;
-const chrome: u32 = 0xfff7f9fc;
-const layer: u32 = 0xffffffff;
-const subtle: u32 = 0xffe8edf3;
-const divider: u32 = 0xffcbd5e1;
-const accent: u32 = 0xff0f6cbd;
-const accent_soft: u32 = 0xffdbeafe;
-const focus_color: u32 = 0xff0b4f85;
+const ink = ui.Theme.ink;
+const secondary = ui.Theme.secondary;
+const chrome = ui.Theme.chrome;
+const layer = ui.Theme.layer;
+const subtle = ui.Theme.subtle;
+const divider = ui.Theme.divider;
+const accent = ui.Theme.accent;
+const accent_soft = ui.Theme.accent_soft;
+const focus_color = ui.Theme.focus;
 
 pub const View = struct {
     gpa: std.mem.Allocator,
@@ -971,10 +972,7 @@ fn drawToolGlyph(c: *Canvas, glyph: ToolGlyph, x: i32, y: i32, color: u32) void 
 }
 
 fn drawRectOutline(c: *Canvas, x: i32, y: i32, w: i32, h: i32, color: u32) void {
-    c.drawLine(x, y, x + w - 1, y, color);
-    c.drawLine(x, y + h - 1, x + w - 1, y + h - 1, color);
-    c.drawLine(x, y, x, y + h - 1, color);
-    c.drawLine(x + w - 1, y, x + w - 1, y + h - 1, color);
+    ui.drawOutline(c, x, y, w, h, color);
 }
 
 fn drawBubbleGlyph(c: *Canvas, x: i32, y: i32, color: u32, dotted: bool) void {
@@ -1103,26 +1101,11 @@ fn drawSayGlyph(c: *Canvas, glyph: SayGlyph, x: i32, y: i32, color: u32) void {
 }
 
 fn drawStatusBar(c: *Canvas, rect: Rect, status: []const u8, member_count: usize) void {
-    c.fillRect(rect.x, rect.y, rect.w, rect.h, chrome);
-    c.fillRect(rect.x, rect.y, rect.w, 1, divider);
-    _ = c.drawText(status, rect.x + 8, rect.y, secondary);
-    var buf: [64]u8 = undefined;
-    const members = std.fmt.bufPrint(&buf, "{d} members", .{member_count}) catch "members";
-    const mw = Canvas.textWidth(members);
-    _ = c.drawText(members, rect.right() - mw - 8, rect.y, secondary);
+    ui.drawStatusBar(c, rect.x, rect.y, rect.w, rect.h, status, member_count);
 }
 
 fn drawEmptyBuffer(c: *Canvas, rect: Rect, text: []const u8) void {
-    c.fillRect(rect.x, rect.y, rect.w, rect.h, layer);
-    const card_w = @min(360, @max(220, rect.w - 48));
-    const card_h = 82;
-    const card_x = rect.x + @divTrunc(rect.w - card_w, 2);
-    const card_y = rect.y + @divTrunc(rect.h - card_h, 2);
-    c.fillRect(card_x, card_y, card_w, card_h, chrome);
-    drawRectOutline(c, card_x, card_y, card_w, card_h, divider);
-    drawBubbleGlyph(c, card_x + 18, card_y + 18, accent, false);
-    drawTextEllipsized(c, "Your conversation starts here", card_x + 46, card_y + 14, card_w - 60, ink);
-    drawTextEllipsized(c, text, card_x + 18, card_y + 45, card_w - 36, secondary);
+    ui.drawEmptyState(c, rect.x, rect.y, rect.w, rect.h, text);
 }
 
 fn drawFocus(c: *Canvas, rect: Rect) void {
@@ -1364,8 +1347,7 @@ fn drawDialog(c: *Canvas, spec: dialogs.Spec, editors: *const [3]input_mod.Edito
         if (row_y + 40 > rect.bottom() - 43) break;
         drawTextEllipsized(c, field.label, rect.x + 20, row_y, rect.w - 40, secondary);
         const field_y = row_y + 17;
-        c.fillRect(rect.x + 20, field_y, rect.w - 40, 24, chrome);
-        drawRectOutline(c, rect.x + 20, field_y, rect.w - 40, 24, if (index == active_field) accent else divider);
+        ui.drawField(c, rect.x + 20, field_y, rect.w - 40, index == active_field);
         if (index < editors.len) {
             const editor = &editors[index];
             const value = editor.text();
@@ -1382,19 +1364,16 @@ fn drawDialog(c: *Canvas, spec: dialogs.Spec, editors: *const [3]input_mod.Edito
     const button_y = rect.bottom() - 36;
     if (notice.len != 0) drawTextEllipsized(c, notice, rect.x + 14, button_y - 19, rect.w - 28, focus_color);
     const primary_w = dialogPrimaryButtonWidth(spec.id);
-    drawDialogButton(c, rect.right() - 96 - primary_w, button_y, primary_w, dialogs.primaryLabel(spec.id), true);
-    drawDialogButton(c, rect.right() - 84, button_y, 76, "Cancel", false);
+    drawDialogButton(c, rect.right() - 96 - primary_w, button_y, primary_w, dialogs.primaryLabel(spec.id), .primary);
+    drawDialogButton(c, rect.right() - 84, button_y, 76, "Cancel", .secondary);
 }
 
 fn dialogPrimaryButtonWidth(id: dialogs.Id) i32 {
     return @max(84, Canvas.textWidth(dialogs.primaryLabel(id)) + 24);
 }
 
-fn drawDialogButton(c: *Canvas, x: i32, y: i32, width: i32, label: []const u8, primary: bool) void {
-    c.fillRect(x, y, width, 27, if (primary) accent else chrome);
-    drawRectOutline(c, x, y, width, 27, if (primary) accent else divider);
-    const text_w = Canvas.textWidth(label);
-    _ = c.drawText(label, x + @divTrunc(width - text_w, 2), y + 2, if (primary) layer else ink);
+fn drawDialogButton(c: *Canvas, x: i32, y: i32, width: i32, label: []const u8, kind: ui.ButtonKind) void {
+    ui.drawButton(c, x, y, width, label, kind, false);
 }
 
 test "view renders source-shaped empty buffer and chrome" {
