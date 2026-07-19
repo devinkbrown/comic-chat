@@ -53,6 +53,10 @@ zig build run -- app eshmaki.me kain '#root' \
   --tls-cert ~/.weechat/tls/relay.pem --sasl-user kain --sasl-external
 ```
 
+On Windows, double-clicking `comicchat.exe` opens the desktop client directly
+with the configured `eshmaki.me`, `kain`, and `#root` defaults. Use
+`comicchat.exe app <nick>` or the full command form above to override them.
+
 The app opens before DNS/TCP/TLS setup and keeps the native event loop live
 while a bounded connector races IPv6/IPv4 candidates. `--connect-timeout-ms`
 sets the per-address and proxy-read deadline. SOCKS5 uses no-auth remote-DNS

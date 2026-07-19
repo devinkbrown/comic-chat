@@ -1,7 +1,7 @@
 //! comicchat — source-faithful Microsoft Comic Chat continuation (CLI/app).
 //!
 //! Subcommands:
-//!   (none) / codec                       headless record-codec demo
+//!   (none) / app                         open the desktop client
 //!   render-bg | render-panel | render-figure | render-strip | topng
 //!                                        source art/render diagnostics
 //!   window <avatar>                      native backend smoke
@@ -73,8 +73,9 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
-    if (argc >= 1 and std.mem.eql(u8, argv[0], "app")) {
-        const connection = parseConnectionArgs(argv[1..argc], false) orelse {
+    if (argc == 0 or (argc >= 1 and std.mem.eql(u8, argv[0], "app"))) {
+        const app_args: []const []const u8 = if (argc == 0) &.{} else argv[1..argc];
+        const connection = parseConnectionArgs(app_args, false) orelse {
             printConnectionUsage("app", false);
             return;
         };
@@ -151,6 +152,7 @@ pub fn main(init: std.process.Init) !void {
 const default_tls_port: u16 = 6697;
 const default_server = "eshmaki.me";
 const default_channel = "#root";
+const default_nick = "kain";
 
 const AuthArgs = struct {
     user: ?[]const u8 = null,
@@ -317,7 +319,17 @@ fn parseConnectionArgs(args: []const []const u8, allow_extra: bool) ?ConnectionA
         positional_count += 1;
     }
     var result: ConnectionArgs = undefined;
-    if (positional_count == 1) {
+    if (positional_count == 0) {
+        result = .{
+            .host = default_server,
+            .nick = default_nick,
+            .channel = default_channel,
+            .options = options,
+            .auth = auth,
+            .sts_file = sts_file,
+            .session_file = session_file,
+        };
+    } else if (positional_count == 1) {
         result = .{
             .host = default_server,
             .nick = positional[0],
@@ -404,6 +416,13 @@ fn printConnectionUsage(command: []const u8, allow_extra: bool) void {
 test "connection defaults use eshmaki root" {
     const args = [_][]const u8{"kain"};
     const connection = parseConnectionArgs(&args, false).?;
+    try std.testing.expectEqualStrings("eshmaki.me", connection.host);
+    try std.testing.expectEqualStrings("kain", connection.nick);
+    try std.testing.expectEqualStrings("#root", connection.channel);
+}
+
+test "empty app arguments open the configured desktop default" {
+    const connection = parseConnectionArgs(&.{}, false).?;
     try std.testing.expectEqualStrings("eshmaki.me", connection.host);
     try std.testing.expectEqualStrings("kain", connection.nick);
     try std.testing.expectEqualStrings("#root", connection.channel);
