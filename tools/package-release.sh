@@ -18,6 +18,7 @@ package_target() {
     cp "$prefix/bin/$executable" "$package_dir/"
     cp "$repo_root/README.md" "$repo_root/LICENSE" "$repo_root/NOTICE" "$package_dir/"
     cp "$repo_root/LICENSES/MIT.txt" "$repo_root/src/render/COMIC_NEUE_LICENSE.txt" "$package_dir/"
+    cp -R "$repo_root/docs" "$package_dir/docs"
 
     if [[ "$format" == zip ]]; then
         (cd "$prefix" && 7z a -tzip -bd "$output_dir/$archive" "$(basename "$package_dir")")

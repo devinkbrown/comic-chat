@@ -43,7 +43,7 @@ emotion-face artwork remains source-authored product content.
 - Rendering/layout behavior: the pinned upstream source and `src/comic/source_*_test.zig`.
 - Original menus/dialogs: the upstream `chat.rc` and their owning MFC classes.
 - Portable protocol/network behavior: `src/net/`, `src/proto/`, and
-  `docs/PROTOCOL.md`.
+  `../../docs/PROTOCOL.md`.
 - Portable UI today: `src/client/`, `src/main.zig`, and `src/platform/`.
 - Workflow: `/home/kain/CLAUDE_CODEX_WORKFLOW.md`.
 - Research: `/home/kain/research/INDEX.md`, especially UI architecture,

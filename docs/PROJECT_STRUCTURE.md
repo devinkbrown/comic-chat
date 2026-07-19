@@ -11,7 +11,8 @@ not vendored here.
 | `src/net/` and `src/proto/` | IRC/IRCX, TLS, session, and Comic Chat wire protocols |
 | `src/assets/testdata/` | Runtime AVB/BGB characters and backdrops used by the application |
 | `assets/reference/emotions/` | Runtime emotion-face bitmaps retained as content assets |
-| `docs/` | Product, protocol, provenance, and migration documentation |
+| `docs/` | Current product, protocol, release, and contributor documentation |
+| `legacy/docs/` | Historical Microsoft-reference audits and migration records; excluded from binary packages |
 | `tools/` | Reproducible asset and font tooling |
 | `third_party/onyx-server/` | Pinned Onyx TLS source submodule used by the transport |
 

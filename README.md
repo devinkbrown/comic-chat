@@ -30,8 +30,8 @@ italic face.
 | Runtime assets | `assets/` and `src/assets/testdata/` | Attributed character, backdrop, and emotion content required by the portable renderer |
 | Protocol notes | `docs/PROTOCOL.md` | Comic Chat wire-format and interoperability notes |
 | Completeness audit | `docs/PORTABLE_COMPLETENESS_AUDIT.md` | Reachable, substrate-only, partial, and missing portable product surfaces |
-| UI source audit | `docs/MICROSOFT_UI_SOURCE_AUDIT.md` | Microsoft menu, geometry, body-camera, member-list, buffer, and dialog contracts |
 | Repository map | `docs/PROJECT_STRUCTURE.md` | Portable-first repository ownership and layout |
+| Historical reference | `legacy/docs/` | Microsoft-source audit, source-parity plan, and asset provenance record; not packaged in binary releases |
 
 ## Portable Zig client
 
@@ -201,8 +201,8 @@ historical Comic Chat source is MIT-licensed and remains an external reference
 at <https://github.com/microsoft/comic-chat>; its MFC/C++ tree is not vendored
 here. Microsoft names, logos, and artwork may be trademarks, and
 builds from this repository are unofficial and unsupported. The portable asset
-set has a byte-level source and transformation audit in
-[`docs/PORTABLE_ASSET_PROVENANCE.md`](docs/PORTABLE_ASSET_PROVENANCE.md).
+set's historical source and transformation record is kept in
+[`legacy/docs/PORTABLE_ASSET_PROVENANCE.md`](legacy/docs/PORTABLE_ASSET_PROVENANCE.md).
 The generated portable font atlases are derived from Comic Neue Bold and Bold
 Italic under the SIL Open Font License; see
 [`src/render/COMIC_NEUE_LICENSE.txt`](src/render/COMIC_NEUE_LICENSE.txt).
