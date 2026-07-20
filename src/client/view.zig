@@ -1335,23 +1335,24 @@ fn drawMoodGlyph(c: *Canvas, cx: i32, cy: i32, row: i32, column: i32, selected: 
     const face_fill = if (selected) accent else layer;
     const face_border = if (selected) accent else divider;
     const feature = if (selected) layer else ink;
-    fillOutlinedCircle(c, cx, cy, 11, face_fill, face_border);
+    ui.drawAaDisc(c, cx, cy, 13.0, face_border);
+    ui.drawAaDisc(c, cx, cy, 11.4, face_fill);
 
     const mood = row * 3 + column;
     switch (mood) {
         0 => { // angry
             drawFeatureLine(c, cx - 6, cy - 5, cx - 2, cy - 3, feature);
             drawFeatureLine(c, cx + 2, cy - 3, cx + 6, cy - 5, feature);
-            c.fillRect(cx - 5, cy - 1, 2, 2, feature);
-            c.fillRect(cx + 3, cy - 1, 2, 2, feature);
+            drawMoodEye(c, cx - 4, cy, feature);
+            drawMoodEye(c, cx + 4, cy, feature);
             drawFeatureLine(c, cx - 4, cy + 6, cx, cy + 3, feature);
             drawFeatureLine(c, cx, cy + 3, cx + 4, cy + 6, feature);
         },
         1 => { // loud
-            c.fillRect(cx - 5, cy - 3, 3, 2, feature);
-            c.fillRect(cx + 2, cy - 3, 3, 2, feature);
-            fillOutlinedCircle(c, cx, cy + 4, 4, feature, feature);
-            c.fillRect(cx - 2, cy + 3, 4, 2, face_fill);
+            drawMoodEye(c, cx - 4, cy - 2, feature);
+            drawMoodEye(c, cx + 4, cy - 2, feature);
+            ui.drawAaDisc(c, cx, cy + 4, 4.2, feature);
+            ui.drawAaDisc(c, cx, cy + 3, 2.0, face_fill);
         },
         2 => { // laughing
             drawFeatureLine(c, cx - 6, cy - 2, cx - 4, cy - 4, feature);
@@ -1362,37 +1363,37 @@ fn drawMoodGlyph(c: *Canvas, cx: i32, cy: i32, row: i32, column: i32, selected: 
             drawFeatureLine(c, cx, cy + 6, cx + 5, cy + 2, feature);
         },
         3 => { // sad
-            c.fillRect(cx - 5, cy - 3, 2, 2, feature);
-            c.fillRect(cx + 3, cy - 3, 2, 2, feature);
+            drawMoodEye(c, cx - 4, cy - 2, feature);
+            drawMoodEye(c, cx + 4, cy - 2, feature);
             drawFeatureLine(c, cx - 5, cy + 6, cx, cy + 3, feature);
             drawFeatureLine(c, cx, cy + 3, cx + 5, cy + 6, feature);
         },
         4 => { // neutral
-            c.fillRect(cx - 5, cy - 3, 2, 2, feature);
-            c.fillRect(cx + 3, cy - 3, 2, 2, feature);
+            drawMoodEye(c, cx - 4, cy - 2, feature);
+            drawMoodEye(c, cx + 4, cy - 2, feature);
             drawFeatureLine(c, cx - 4, cy + 4, cx + 4, cy + 4, feature);
         },
         5 => { // happy
-            c.fillRect(cx - 5, cy - 3, 2, 2, feature);
-            c.fillRect(cx + 3, cy - 3, 2, 2, feature);
+            drawMoodEye(c, cx - 4, cy - 2, feature);
+            drawMoodEye(c, cx + 4, cy - 2, feature);
             drawFeatureLine(c, cx - 5, cy + 2, cx, cy + 6, feature);
             drawFeatureLine(c, cx, cy + 6, cx + 5, cy + 2, feature);
         },
         6 => { // uneasy
-            c.fillRect(cx - 5, cy - 3, 2, 2, feature);
-            c.fillRect(cx + 3, cy - 2, 2, 2, feature);
+            drawMoodEye(c, cx - 4, cy - 2, feature);
+            drawMoodEye(c, cx + 4, cy - 1, feature);
             drawFeatureLine(c, cx - 5, cy + 5, cx - 1, cy + 3, feature);
             drawFeatureLine(c, cx - 1, cy + 3, cx + 4, cy + 5, feature);
         },
         7 => { // bored
             drawFeatureLine(c, cx - 6, cy - 3, cx - 2, cy - 3, feature);
             drawFeatureLine(c, cx + 2, cy - 3, cx + 6, cy - 3, feature);
-            c.fillRect(cx - 5, cy - 1, 2, 1, feature);
-            c.fillRect(cx + 3, cy - 1, 2, 1, feature);
+            ui.drawAaLine(c, cx - 5, cy - 1, cx - 3, cy - 1, 1.4, feature);
+            ui.drawAaLine(c, cx + 3, cy - 1, cx + 5, cy - 1, 1.4, feature);
             drawFeatureLine(c, cx - 4, cy + 5, cx + 4, cy + 5, feature);
         },
         else => { // coy
-            c.fillRect(cx - 5, cy - 3, 2, 2, feature);
+            drawMoodEye(c, cx - 4, cy - 2, feature);
             drawFeatureLine(c, cx + 2, cy - 3, cx + 6, cy - 3, feature);
             drawFeatureLine(c, cx - 3, cy + 3, cx + 1, cy + 5, feature);
             drawFeatureLine(c, cx + 1, cy + 5, cx + 5, cy + 2, feature);
@@ -1401,8 +1402,11 @@ fn drawMoodGlyph(c: *Canvas, cx: i32, cy: i32, row: i32, column: i32, selected: 
 }
 
 fn drawFeatureLine(c: *Canvas, x1: i32, y1: i32, x2: i32, y2: i32, color: u32) void {
-    c.drawLine(x1, y1, x2, y2, color);
-    c.drawLine(x1, y1 + 1, x2, y2 + 1, color);
+    ui.drawAaLine(c, x1, y1, x2, y2, 1.8, color);
+}
+
+fn drawMoodEye(c: *Canvas, x: i32, y: i32, color: u32) void {
+    ui.drawAaDisc(c, x, y, 1.45, color);
 }
 
 fn fillOutlinedCircle(c: *Canvas, cx: i32, cy: i32, radius: i32, fill: u32, outline: u32) void {

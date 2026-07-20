@@ -151,6 +151,54 @@ pub fn drawRoundedBorder(c: *Canvas, x: i32, y: i32, w: i32, h: i32, radius: i32
     fillRoundedRect(c, x + 1, y + 1, w - 2, h - 2, @max(0, radius - 1), fill);
 }
 
+/// Four-by-four supersampling for compact vector-like icon artwork. These
+/// primitives stay deterministic across every native framebuffer backend.
+pub fn drawAaDisc(c: *Canvas, cx: i32, cy: i32, radius: f64, color: u32) void {
+    const extent: i32 = @intFromFloat(@ceil(radius + 1.0));
+    var py = cy - extent;
+    while (py <= cy + extent) : (py += 1) {
+        var px = cx - extent;
+        while (px <= cx + extent) : (px += 1) {
+            var covered: u32 = 0;
+            for (0..4) |sample_y| for (0..4) |sample_x| {
+                const sx = @as(f64, @floatFromInt(px)) + (@as(f64, @floatFromInt(sample_x)) + 0.5) / 4.0;
+                const sy = @as(f64, @floatFromInt(py)) + (@as(f64, @floatFromInt(sample_y)) + 0.5) / 4.0;
+                const dx = sx - (@as(f64, @floatFromInt(cx)) + 0.5);
+                const dy = sy - (@as(f64, @floatFromInt(cy)) + 0.5);
+                if (dx * dx + dy * dy <= radius * radius) covered += 1;
+            };
+            if (covered != 0) c.blendPixel(px, py, color, @divTrunc(covered * 255, 16));
+        }
+    }
+}
+
+pub fn drawAaLine(c: *Canvas, x1: i32, y1: i32, x2: i32, y2: i32, width: f64, color: u32) void {
+    const extent: i32 = @intFromFloat(@ceil(width));
+    var py = @min(y1, y2) - extent;
+    while (py <= @max(y1, y2) + extent) : (py += 1) {
+        var px = @min(x1, x2) - extent;
+        while (px <= @max(x1, x2) + extent) : (px += 1) {
+            var covered: u32 = 0;
+            for (0..4) |sample_y| for (0..4) |sample_x| {
+                const sx = @as(f64, @floatFromInt(px)) + (@as(f64, @floatFromInt(sample_x)) + 0.5) / 4.0;
+                const sy = @as(f64, @floatFromInt(py)) + (@as(f64, @floatFromInt(sample_y)) + 0.5) / 4.0;
+                if (pointSegmentDistanceSquared(sx, sy, @floatFromInt(x1), @floatFromInt(y1), @floatFromInt(x2), @floatFromInt(y2)) <= width * width / 4.0) covered += 1;
+            };
+            if (covered != 0) c.blendPixel(px, py, color, @divTrunc(covered * 255, 16));
+        }
+    }
+}
+
+fn pointSegmentDistanceSquared(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) f64 {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    if (dx == 0 and dy == 0) return (px - x1) * (px - x1) + (py - y1) * (py - y1);
+    const t = std.math.clamp(((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy), 0.0, 1.0);
+    const nearest_x = x1 + t * dx;
+    const nearest_y = y1 + t * dy;
+    return (px - nearest_x) * (px - nearest_x) + (py - nearest_y) * (py - nearest_y);
+}
+
 pub fn drawSurface(c: *Canvas, rect: Rect, kind: SurfaceKind) void {
     const fill = switch (kind) {
         .canvas => Theme.workspace,
@@ -557,4 +605,22 @@ test "control states resolve selected pressed and disabled colors consistently" 
     try std.testing.expectEqual(Theme.layer, resolveControlColors(.{ .pressed = true }).content);
     try std.testing.expectEqual(Theme.accent, resolveControlColors(.{ .focused = true }).border);
     try std.testing.expectEqual(Theme.divider, resolveControlColors(.{ .disabled = true }).content);
+}
+
+test "supersampled icon primitives produce smooth partial edge coverage" {
+    var canvas = try Canvas.init(std.testing.allocator, 32, 32);
+    defer canvas.deinit(std.testing.allocator);
+    canvas.clear(Theme.layer);
+    drawAaDisc(&canvas, 16, 16, 8.4, Theme.accent);
+    drawAaLine(&canvas, 9, 16, 23, 16, 1.8, Theme.ink);
+    const center = canvas.px[16 * 32 + 16];
+    try std.testing.expect(center != Theme.layer and center != Theme.accent);
+    var has_partial_coverage = false;
+    for (canvas.px) |pixel| {
+        if (pixel != Theme.layer and pixel != Theme.accent and pixel != Theme.ink) {
+            has_partial_coverage = true;
+            break;
+        }
+    }
+    try std.testing.expect(has_partial_coverage);
 }

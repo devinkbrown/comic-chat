@@ -39,6 +39,7 @@ visual contract.
 and disabled behavior. New screens should compose the existing primitives:
 
 - `drawSurface`, `drawRoundedBorder`, and `fillRoundedRect`
+- `drawAaDisc` and `drawAaLine` for supersampled compact icon artwork
 - `drawButton`, `drawCommandTile`, `drawActionTile`, and `drawFocusRing`
 - `drawPill`, `drawTooltip`, `drawNotice`, and `drawHistoryBanner`
 - `drawField`, `drawComposerField`, and `DialogLayout`
