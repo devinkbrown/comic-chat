@@ -32,6 +32,25 @@ pub const Theme = struct {
 pub const ButtonKind = enum { primary, secondary, quiet };
 pub const DialogButton = enum { primary, cancel };
 pub const NoticeTone = enum { info, warning, failure, success };
+pub const SurfaceKind = enum { canvas, panel, raised, accent };
+
+pub const ControlState = struct {
+    hovered: bool = false,
+    selected: bool = false,
+    focused: bool = false,
+    pressed: bool = false,
+    disabled: bool = false,
+};
+
+pub const ControlColors = struct { fill: u32, border: u32, content: u32 };
+
+pub fn resolveControlColors(state: ControlState) ControlColors {
+    if (state.disabled) return .{ .fill = Theme.chrome, .border = Theme.divider, .content = Theme.divider };
+    if (state.pressed) return .{ .fill = Theme.accent, .border = Theme.focus, .content = Theme.layer };
+    if (state.selected) return .{ .fill = Theme.accent_soft, .border = Theme.accent_soft, .content = Theme.accent };
+    if (state.hovered) return .{ .fill = Theme.layer, .border = Theme.divider, .content = Theme.focus };
+    return .{ .fill = Theme.chrome, .border = Theme.chrome, .content = Theme.ink };
+}
 
 /// Shared dialog geometry, centralized so draw, accessibility, and pointer
 /// handling cannot silently drift apart as dialogs grow.
@@ -127,6 +146,30 @@ pub fn drawRoundedBorder(c: *Canvas, x: i32, y: i32, w: i32, h: i32, radius: i32
     fillRoundedRect(c, x + 1, y + 1, w - 2, h - 2, @max(0, radius - 1), fill);
 }
 
+pub fn drawSurface(c: *Canvas, rect: Rect, kind: SurfaceKind) void {
+    const fill = switch (kind) {
+        .canvas => Theme.workspace,
+        .panel => Theme.layer,
+        .raised => Theme.chrome,
+        .accent => Theme.accent_soft,
+    };
+    if (kind == .raised) fillRoundedRect(c, rect.x + 3, rect.y + 4, rect.w, rect.h, 7, 0xffc3ceda);
+    drawRoundedBorder(c, rect.x, rect.y, rect.w, rect.h, 7, fill, Theme.divider);
+}
+
+pub fn drawPill(c: *Canvas, rect: Rect, label: []const u8, active: bool) void {
+    const fill = if (active) Theme.accent_soft else Theme.chrome;
+    const color = if (active) Theme.accent else Theme.secondary;
+    drawRoundedBorder(c, rect.x, rect.y, rect.w, rect.h, @divTrunc(rect.h, 2), fill, if (active) Theme.accent_soft else Theme.divider);
+    drawEllipsized(c, label, rect.x + 8, rect.y + @max(1, @divTrunc(rect.h - 17, 2)), rect.w - 16, color);
+}
+
+pub fn drawTooltip(c: *Canvas, rect: Rect, label: []const u8) void {
+    fillRoundedRect(c, rect.x + 3, rect.y + 4, rect.w, rect.h, 5, 0xffaeb9c5);
+    drawRoundedBorder(c, rect.x, rect.y, rect.w, rect.h, 5, Theme.navigation, Theme.navigation_hover);
+    drawEllipsized(c, label, rect.x + 9, rect.y + 5, rect.w - 18, Theme.layer);
+}
+
 pub fn drawButton(c: *Canvas, x: i32, y: i32, width: i32, label: []const u8, kind: ButtonKind, hovered: bool) void {
     const fill = switch (kind) {
         .primary => if (hovered) Theme.focus else Theme.accent,
@@ -181,25 +224,27 @@ pub fn drawField(c: *Canvas, x: i32, y: i32, width: i32, active: bool) void {
 /// Comic Chat signature: selected modes read at a glance without a bulky
 /// native-toolbar bevel.
 pub fn drawCommandTile(c: *Canvas, x: i32, y: i32, selected: bool, hovered: bool) u32 {
+    const state: ControlState = .{ .selected = selected, .hovered = hovered };
+    const colors = resolveControlColors(state);
     if (selected) {
-        fillRoundedRect(c, x, y, 32, 32, 5, Theme.accent_soft);
+        fillRoundedRect(c, x, y, 32, 32, 5, colors.fill);
         c.fillRect(x, y + 29, 32, 3, Theme.accent);
-        return Theme.accent;
+        return colors.content;
     }
     if (hovered) {
-        drawRoundedBorder(c, x, y, 32, 32, 5, Theme.layer, Theme.divider);
-        return Theme.focus;
+        drawRoundedBorder(c, x, y, 32, 32, 5, colors.fill, colors.border);
+        return colors.content;
     }
-    fillRoundedRect(c, x, y, 32, 32, 5, Theme.chrome);
-    return Theme.ink;
+    fillRoundedRect(c, x, y, 32, 32, 5, colors.fill);
+    return colors.content;
 }
 
 pub fn drawMenuItem(c: *Canvas, x: i32, y: i32, width: i32, label: []const u8, selected: bool) void {
     if (selected) {
-        c.fillRect(x, y, width, 23, Theme.accent_soft);
-        c.fillRect(x, y, 3, 23, Theme.accent);
+        fillRoundedRect(c, x, y, width, 25, 4, Theme.accent_soft);
+        c.fillRect(x, y + 4, 3, 17, Theme.accent);
     }
-    _ = c.drawUiText(label, x + 8, y + 3, Theme.ink);
+    _ = c.drawUiText(label, x + 10, y + 4, Theme.ink);
 }
 
 pub fn drawMenuLabel(c: *Canvas, x: i32, y: i32, width: i32, label: []const u8, selected: bool) void {
@@ -247,7 +292,7 @@ pub fn drawStatusTab(c: *Canvas, rect: Rect) void {
 pub fn drawMemberCard(c: *Canvas, rect: Rect, selected: bool, departed: bool) void {
     const card = Rect{ .x = rect.x + 3, .y = rect.y + 3, .w = rect.w - 6, .h = rect.h - 6 };
     drawRoundedBorder(c, card.x, card.y, card.w, card.h, 5, Theme.layer, if (selected) Theme.accent else Theme.divider);
-    c.fillRect(rect.x + 9, rect.y + 10, 7, 7, if (departed) Theme.divider else Theme.success);
+    fillRoundedRect(c, rect.x + 9, rect.y + 10, 7, 7, 4, if (departed) Theme.divider else Theme.success);
 }
 
 pub fn drawCharacterPane(c: *Canvas, rect: Rect) void {
@@ -263,10 +308,9 @@ pub fn drawExpressionPanel(c: *Canvas, rect: Rect, selection: []const u8) void {
     c.fillRect(rect.x, rect.y, rect.w, 2, Theme.accent);
     c.fillRect(rect.x + 9, rect.y + 9, 4, 4, Theme.accent);
     _ = c.drawUiText("MOOD", rect.x + 20, rect.y + 5, Theme.ink);
-    const label_w = Canvas.uiTextWidth(selection) + 12;
+    const label_w = Canvas.uiTextWidth(selection) + 20;
     const label_x = rect.right() - label_w - 8;
-    c.fillRect(label_x, rect.y + 5, label_w, 17, Theme.accent_soft);
-    _ = c.drawUiText(selection, label_x + 6, rect.y + 5, Theme.accent);
+    drawPill(c, .{ .x = label_x, .y = rect.y + 4, .w = label_w, .h = 19 }, selection, true);
     c.fillRect(rect.x + 8, rect.y + 25, rect.w - 16, 1, Theme.divider);
 }
 
@@ -277,8 +321,7 @@ pub fn drawComposerSurface(c: *Canvas, rect: Rect) void {
 
 pub fn drawHistoryBanner(c: *Canvas, rect: Rect, label: []const u8) void {
     const width = @min(rect.w - 12, Canvas.uiTextWidth(label) + 16);
-    c.fillRect(rect.x + 6, rect.y + 6, width, 25, Theme.layer);
-    drawOutline(c, rect.x + 6, rect.y + 6, width, 25, Theme.divider);
+    drawRoundedBorder(c, rect.x + 6, rect.y + 6, width, 25, 5, Theme.layer, Theme.divider);
     _ = c.drawUiText(label, rect.x + 12, rect.y + 8, Theme.secondary);
 }
 
@@ -289,8 +332,7 @@ pub fn drawTab(c: *Canvas, x: i32, y: i32, width: i32, height: i32, selected: bo
 }
 
 pub fn drawActionTile(c: *Canvas, x: i32, y: i32, width: i32, height: i32, selected: bool) u32 {
-    c.fillRect(x, y, width, height, if (selected) Theme.accent_soft else Theme.chrome);
-    c.fillRect(x, y, 1, height, Theme.divider);
+    drawRoundedBorder(c, x + 3, y + 7, width - 6, height - 14, 5, if (selected) Theme.accent_soft else Theme.layer, if (selected) Theme.accent_soft else Theme.divider);
     if (selected) c.fillRect(x + 1, y + height - 3, @max(1, width - 1), 3, Theme.accent);
     return if (selected) Theme.accent else Theme.ink;
 }
@@ -310,16 +352,16 @@ pub fn drawComposerField(c: *Canvas, rect: Rect, focused: bool) void {
 
 pub fn drawMessageRow(c: *Canvas, rect: Rect, nick: []const u8, text: []const u8, alternate: bool) void {
     const nick_w = @min(112, @max(54, Canvas.uiTextWidth(nick) + 14));
-    c.fillRect(rect.x + 7, rect.y - 2, rect.w - 14, rect.h - 3, if (alternate) Theme.chrome else Theme.layer);
-    c.fillRect(rect.x + 7, rect.y - 2, 3, rect.h - 3, Theme.accent);
-    c.fillRect(rect.x + 16, rect.y + 2, nick_w - 8, 18, Theme.accent_soft);
+    drawRoundedBorder(c, rect.x + 7, rect.y - 2, rect.w - 14, rect.h - 3, 5, if (alternate) Theme.chrome else Theme.layer, Theme.divider);
+    c.fillRect(rect.x + 7, rect.y + 3, 3, rect.h - 13, Theme.accent);
+    fillRoundedRect(c, rect.x + 16, rect.y + 2, nick_w - 8, 18, 4, Theme.accent_soft);
     drawEllipsized(c, nick, rect.x + 20, rect.y + 3, nick_w - 16, Theme.accent);
     drawEllipsized(c, text, rect.x + nick_w + 14, rect.y + 3, rect.w - nick_w - 24, Theme.ink);
 }
 
 pub fn drawMemberRow(c: *Canvas, rect: Rect, label: []const u8, selected: bool, departed: bool) void {
-    if (selected) c.fillRect(rect.x + 3, rect.y - 1, rect.w - 6, 23, Theme.accent_soft);
-    c.fillRect(rect.x + 8, rect.y + 5, 8, 8, if (departed) Theme.divider else Theme.success);
+    if (selected) fillRoundedRect(c, rect.x + 3, rect.y - 1, rect.w - 6, 23, 4, Theme.accent_soft);
+    fillRoundedRect(c, rect.x + 8, rect.y + 5, 8, 8, 4, if (departed) Theme.divider else Theme.success);
     drawEllipsized(c, label, rect.x + 24, rect.y, rect.w - 30, if (departed) Theme.secondary else Theme.ink);
 }
 
@@ -365,9 +407,7 @@ pub fn drawEmptyState(c: *Canvas, x: i32, y: i32, width: i32, height: i32, detai
     const card_h = 144;
     const card_x = x + @divTrunc(width - card_w, 2);
     const card_y = y + @divTrunc(height - card_h, 2);
-    c.fillRect(card_x + 5, card_y + 6, card_w, card_h, 0xffbecddd);
-    c.fillRect(card_x, card_y, card_w, card_h, Theme.layer);
-    drawOutline(c, card_x, card_y, card_w, card_h, Theme.divider);
+    drawSurface(c, .{ .x = card_x, .y = card_y, .w = card_w, .h = card_h }, .raised);
     c.fillRect(card_x, card_y, card_w, 34, Theme.subtle);
     c.fillRect(card_x, card_y, 4, 34, Theme.accent);
     c.fillRect(card_x, card_y + 33, card_w, 1, Theme.divider);
@@ -421,4 +461,10 @@ test "semantic feedback primitives classify status and button targets" {
     try std.testing.expectEqual(NoticeTone.failure, statusTone("connection failed"));
     try std.testing.expectEqual(DialogButton.primary, dialogButtonAt(layout, layout.primary.x + 1, layout.primary.y + 1).?);
     try std.testing.expectEqual(DialogButton.cancel, dialogButtonAt(layout, layout.cancel.x + 1, layout.cancel.y + 1).?);
+}
+
+test "control states resolve selected pressed and disabled colors consistently" {
+    try std.testing.expectEqual(Theme.accent, resolveControlColors(.{ .selected = true }).content);
+    try std.testing.expectEqual(Theme.layer, resolveControlColors(.{ .pressed = true }).content);
+    try std.testing.expectEqual(Theme.divider, resolveControlColors(.{ .disabled = true }).content);
 }

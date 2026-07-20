@@ -12,6 +12,7 @@ not vendored here.
 | `src/assets/testdata/` | Runtime AVB/BGB characters and backdrops used by the application |
 | `assets/reference/emotions/` | Runtime emotion-face bitmaps retained as content assets |
 | `docs/` | Current product, protocol, release, and contributor documentation |
+| `docs/UI_LIBRARY.md` | Shared desktop design tokens, components, interaction states, and visual checks |
 | `legacy/docs/` | Historical Microsoft-reference audits and migration records; excluded from binary packages |
 | `tools/` | Reproducible asset and font tooling |
 | `third_party/onyx-server/` | Pinned Onyx TLS source submodule used by the transport |

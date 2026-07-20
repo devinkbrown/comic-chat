@@ -738,7 +738,6 @@ fn drawMenuPopup(c: *Canvas, menu: u8, hovered: ?u8) void {
     var item: u8 = 0;
     while (item < menuItemCount(menu)) : (item += 1) {
         const y = rect.y + 5 + @as(i32, item) * 29;
-        if (item != 0) c.fillRect(rect.x + 4, y - 1, rect.w - 8, 1, subtle);
         ui.drawMenuItem(c, rect.x + 5, y, rect.w - 10, menuItemLabel(menu, item), hovered == item);
     }
 }

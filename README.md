@@ -79,6 +79,12 @@ for view and source-dialog workflows. Conversation files and rendered UI
 captures use `/open path.ccc`, `/save path.ccc`, and `/export path.png`;
 writes are bounded and atomic.
 
+The portable desktop UI has a shared Fluent-style component library and a
+separate neutral application font; Comic Neue remains confined to comic
+content. See `docs/UI_LIBRARY.md`. Exact headless previews are available with
+`zig build run -- render-ui`, plus the `conversation`, `menu`, and `settings`
+variants.
+
 `--tls-cert <cert-and-key.pem>` presents a PEM client certificate and private
 key for SASL EXTERNAL. Onyx TLS presents the certificate during a verified TLS
 1.3 handshake; connections without a client certificate use the same verified

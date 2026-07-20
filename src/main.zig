@@ -1914,6 +1914,12 @@ fn runUiPreview(gpa: std.mem.Allocator, io: std.Io, surface: []const u8) !void {
     var transcript = cc.comic.session.Transcript.init(gpa);
     defer transcript.deinit();
     try transcript.setSelf("comicchat");
+    if (std.mem.eql(u8, surface, "conversation")) {
+        try transcript.setAvatar("comicchat", "anna");
+        try transcript.setAvatar("alex", "armando");
+        try transcript.add("alex", "Welcome to #root. The new studio is ready.");
+        try transcript.add("comicchat", "Great. The comic view feels much clearer now.");
+    }
     if (std.mem.eql(u8, surface, "settings")) view.openDialog(.settings);
     if (std.mem.eql(u8, surface, "menu")) view.active_menu = 0;
     try view.render("#root", "reconnecting", &transcript, "", 0);
