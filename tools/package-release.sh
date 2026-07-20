@@ -6,7 +6,8 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 version=${1:-$(git -C "$repo_root" describe --tags --always --dirty)}
 output_dir=${OUTPUT_DIR:-"$repo_root/dist"}
-stage_dir=$(mktemp -d)
+temp_root=${TMPDIR:-/tmp}
+stage_dir=$(mktemp -d "$temp_root/comicchat-release.XXXXXX")
 trap 'rm -rf "$stage_dir"' EXIT
 source_epoch=${SOURCE_DATE_EPOCH:-$(git -C "$repo_root" show -s --format=%ct HEAD)}
 
