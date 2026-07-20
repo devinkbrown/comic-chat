@@ -89,7 +89,7 @@ pub const View = struct {
     context_y: i32 = 0,
     hovered_context_item: ?u8 = null,
     emotion_dragging: bool = false,
-    dialog_editors: [3]input_mod.Editor,
+    dialog_editors: [5]input_mod.Editor,
     dialog_field: usize = 0,
     room_tab_count: usize = 1,
 
@@ -97,7 +97,13 @@ pub const View = struct {
         return .{
             .gpa = gpa,
             .canvas = try Canvas.init(gpa, @max(initial_width, min_width), @max(initial_height, min_height)),
-            .dialog_editors = .{ input_mod.Editor.init(gpa), input_mod.Editor.init(gpa), input_mod.Editor.init(gpa) },
+            .dialog_editors = .{
+                input_mod.Editor.init(gpa),
+                input_mod.Editor.init(gpa),
+                input_mod.Editor.init(gpa),
+                input_mod.Editor.init(gpa),
+                input_mod.Editor.init(gpa),
+            },
         };
     }
 
@@ -377,6 +383,12 @@ pub const View = struct {
         return self.dialog_editors[@min(index, self.dialog_editors.len - 1)].text();
     }
 
+    pub fn setDialogValueAt(self: *View, index: usize, value: []const u8) !void {
+        if (index >= self.dialog_editors.len) return;
+        self.dialog_editors[index].clear();
+        try self.dialog_editors[index].paste(value);
+    }
+
     pub fn activeDialogEditor(self: *View) ?*input_mod.Editor {
         const id = self.active_dialog orelse return null;
         if (!dialogs.fieldAcceptsText(id, self.dialog_field)) return null;
@@ -582,6 +594,10 @@ pub const View = struct {
                 break :focus .{ .composer_cursor = pointer.x };
             },
             .say_action => |index| say: {
+                if (index == @intFromEnum(shell_mod.SayMode.sound)) {
+                    self.openDialog(.sound);
+                    break :say .none;
+                }
                 self.shell.setSayMode(@enumFromInt(index));
                 break :say .send;
             },
@@ -882,7 +898,7 @@ pub const View = struct {
         for (transcript.roster.items[start..], start..) |member, index| {
             if (y + 24 > content.bottom()) break;
             const selected = if (self.shell.selected_member) |selected_index| selected_index == index else member.is_self;
-            ui.drawMemberRow(&self.canvas, .{ .x = content.x, .y = y, .w = content.w, .h = 24 }, member.nick, selected, member.departed, self.hovered_member == index);
+            ui.drawMemberRow(&self.canvas, .{ .x = content.x, .y = y, .w = content.w, .h = 24 }, member.nick, selected, member.departed, member.away, self.hovered_member == index);
             y += 24;
         }
         ui.drawVerticalScrollbar(&self.canvas, content, transcript.roster.items.len, visible_rows, start);
@@ -907,7 +923,7 @@ pub const View = struct {
             };
             if (cell.bottom() > rect.bottom()) break;
             const selected = if (self.shell.selected_member) |selected_index| selected_index == index else member.is_self;
-            ui.drawMemberCard(&self.canvas, cell, selected, member.departed, self.hovered_member == index);
+            ui.drawMemberCard(&self.canvas, cell, selected, member.departed, member.away, self.hovered_member == index);
             const avatar = strip.avatarByName(member.avatar) orelse continue;
             var icon = bgb.decodeIcon(self.gpa, avatar) catch continue;
             defer icon.deinit(self.gpa);
@@ -2006,11 +2022,13 @@ fn dialogLayout(width: u32, height: u32, spec: dialogs.Spec) ui.DialogLayout {
     return ui.DialogLayout.init(width, height, spec.source_w, spec.source_h, dialogs.fields(spec.id).len, dialogPrimaryButtonWidth(spec.id));
 }
 
-fn drawDialog(c: *Canvas, spec: dialogs.Spec, editors: *const [3]input_mod.Editor, active_field: usize, hovered_field: ?usize, notice: []const u8, hovered_button: ?ui.DialogButton) void {
+fn drawDialog(c: *Canvas, spec: dialogs.Spec, editors: *const [5]input_mod.Editor, active_field: usize, hovered_field: ?usize, notice: []const u8, hovered_button: ?ui.DialogButton) void {
     ui.drawModalBackdrop(c);
     const dialog_layout = dialogLayout(c.width, c.height, spec);
     const rect = dialog_layout.rect;
-    const group_text = switch (spec.group) {
+    const group_text = if (spec.id == .sound)
+        "Choose a sound and message"
+    else switch (spec.group) {
         .connection => "Connection, identity, and appearance",
         .rooms => "Rooms and member workflow",
         .automation => "Automation and notifications",
@@ -2097,7 +2115,7 @@ fn dialogBackgroundByName(name: []const u8) ?[]const u8 {
     return null;
 }
 
-fn drawDialogPreview(c: *Canvas, id: dialogs.Id, editors: *const [3]input_mod.Editor, rect: Rect) void {
+fn drawDialogPreview(c: *Canvas, id: dialogs.Id, editors: *const [5]input_mod.Editor, rect: Rect) void {
     const selected = editors[0].text();
     switch (id) {
         .character => {
@@ -2232,6 +2250,22 @@ test "composer and member controls expose hover state" {
     try std.testing.expectEqual(@as(?u8, 2), view.hovered_say_action);
     try std.testing.expect(view.handlePointerMove(.{ .kind = .move, .x = layout.members.x + 8, .y = layout.members.y + 35 }, 2));
     try std.testing.expectEqual(@as(?usize, 0), view.hovered_member);
+}
+
+test "sound action opens its source dialog instead of sending malformed UDI" {
+    var view = try View.init(std.testing.allocator, 960, 720);
+    defer view.deinit();
+    const layout = geometry.Layout.compute(960, 720, true, true);
+    const sound_x = layout.say_actions.x + 4 * layout.say_action_size + 4;
+    const action = view.handlePointer(.{
+        .kind = .down,
+        .x = sound_x,
+        .y = layout.say_actions.y + 8,
+        .button = .primary,
+    }, 0, 0);
+    try std.testing.expectEqual(Action.none, action);
+    try std.testing.expectEqual(dialogs.Id.sound, view.active_dialog.?);
+    try std.testing.expectEqual(shell_mod.SayMode.say, view.shell.say_mode);
 }
 
 test "status and connect toolbar expose a prefilled connection workflow" {

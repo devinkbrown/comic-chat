@@ -31,7 +31,7 @@ This distinction is important:
 - The portable tree contains 92 files under `src/`. `src/root.zig:68-118`
   explicitly references every portable module and the four source-parity test
   modules so their inline tests are compiled and run.
-- The current release test gate reports 409 passed tests and one intentionally
+- The current release test gate reports 417 passed tests and one intentionally
   skipped platform-conditional test.
 - Native Linux plus x86_64 Windows, FreeBSD, and OpenBSD release builds pass.
 - The published source archive includes the source tree and the crypto,
@@ -52,7 +52,7 @@ This distinction is important:
 | Member list | Reachable core | NAMES/JOIN/PART/QUIT/NICK update the live roster; active counts exclude departed history. Icon/list modes, bounded wheel scrolling, retained viewport position, keyboard reveal, selection, character preview, and right-click actions are reachable. Dynamic role-badge artwork remains incomplete. |
 | Menus/toolbars/buttons | Partial | The condensed modern toolbar is backed by complete popups for File, Edit, View, Format, Room, Member, and More. Checked view state, stable hit testing, context menus, and command-specific dialogs are live. Settings reconnects from the current endpoint, Room List joins, User List selects, and Comic View applies mode and density; command enablement remains incomplete. |
 | Composer | Partial | UTF-8 scalar insertion, codepoint-safe movement/delete, selection, mouse caret placement, horizontal caret tracking, per-room drafts, bounded copy/cut/paste, undo/redo, and the 400-byte wire bound are live. Native clipboard, multiline input, IME, and formatting controls remain. |
-| Live IRC/IRCX comic chat | Reachable core | Connect/register/reconnect, multi-room JOIN/PART, per-room roster/transcript routing, IRCX `DATA CCUDI1`, embedded UDI, avatar announcements and all five say modes are wired. |
+| Live IRC/IRCX comic chat | Reachable core | Connect/register/reconnect, source-ordered two-stage IRCX discovery, multi-room JOIN/PART, password JOIN, CREATE/TOPIC, reasoned KICK/ban/invite, channel and private-message routing, source-exact IRCX `DATA CCUDI1` versus embedded UDI, raw comic action text, UDI talk-to recipients, SOUND/AWAY/information CTCP controls, avatar/profile controls, and all five say modes are wired. |
 | TLS, proxies, CAP, SASL, STS | Reachable | The live client composes verified TLS, proxy connection, IRCv3 negotiation, SASL and persisted STS. Credential input is file-based and refused over plaintext. |
 | Resolver and sockets | Reachable | The Onyx DNS wire codec and resolv.conf policy drive hostname lookup. Pure-Zig native socket adapters cover Unix and direct Winsock; Wine falls back to the Windows DNS service only when direct UDP resolution is unavailable. No C transport or resolver source is shipped. |
 | Onyx reusable sessions | Reachable | TOKEN/MTOKEN parsing, host/account-scoped persistence, expiry and resume preference are implemented in `src/net/session_store.zig:19-187` and connected through `ConnectionRuntime`. This supports separate same-account/same-nick clients when the server honors `SESSION RESUME`. |

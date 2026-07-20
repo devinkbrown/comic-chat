@@ -74,7 +74,8 @@ const Registration = struct {
     security: Security,
     host: []const u8,
     want_ircx: bool,
-    ircx_sent: bool = false,
+    ircx_probe_sent: bool = false,
+    ircx_enable_sent: bool = false,
     done: bool = false,
     authenticated: bool = false,
     session_commands_sent: bool = false,
@@ -121,6 +122,19 @@ const Registration = struct {
         msg: *const Message,
         sts_upgrade_port: *?u16,
     ) !bool {
+        if (self.want_ircx and self.ircx_probe_sent and
+            std.mem.eql(u8, msg.command, "800") and msg.param_count >= 2)
+        {
+            if (std.mem.eql(u8, msg.params[1], "0") and !self.ircx_enable_sent) {
+                try irc.writeIrcx(out, self.cap.gpa);
+                self.ircx_enable_sent = true;
+                return true;
+            }
+            // State one must reach the application so it can select DATA for
+            // Comic Chat annotations and comment controls.
+            if (std.mem.eql(u8, msg.params[1], "1")) return false;
+        }
+
         if (std.ascii.eqlIgnoreCase(msg.command, "CAP")) {
             const event = try self.cap.handle(out, msg.*);
             try self.applySts(sts_upgrade_port);
@@ -190,9 +204,9 @@ const Registration = struct {
 
     fn finish(self: *Registration, out: *std.ArrayList(u8)) !void {
         if (self.done) return;
-        if (self.want_ircx and !self.ircx_sent) {
-            try irc.writeIrcx(out, self.cap.gpa);
-            self.ircx_sent = true;
+        if (self.want_ircx and !self.ircx_probe_sent) {
+            try irc.writeIrcxProbe(out, self.cap.gpa);
+            self.ircx_probe_sent = true;
         }
         if (self.credentials) |credentials| {
             if (self.sasl_session == null and !credentials.zeroized) credentials.zeroize();
@@ -235,6 +249,26 @@ const Registration = struct {
         if (self.session_path) |path| try store.saveFile(self.io orelse return, path);
     }
 };
+
+fn appendRegistrationStart(
+    registration: *Registration,
+    out: *std.ArrayList(u8),
+    gpa: std.mem.Allocator,
+    nick: []const u8,
+    user: []const u8,
+    realname: []const u8,
+) !void {
+    // Microsoft probes before it sends NICK/USER (ircsock.cpp:1048-1053).
+    // Do the same ahead of modern CAP negotiation so an IRCX server can
+    // complete both numeric 800 phases before the first room JOIN.
+    if (registration.want_ircx) {
+        try irc.writeIrcxProbe(out, gpa);
+        registration.ircx_probe_sent = true;
+    }
+    try registration.cap.begin(out);
+    try irc.writeNick(out, gpa, nick);
+    try irc.writeUser(out, gpa, user, realname);
+}
 
 fn isSaslNumeric(command: []const u8) bool {
     if (command.len != 3 or command[0] != '9' or command[1] != '0') return false;
@@ -386,15 +420,38 @@ pub const Client = struct {
             self.features.?.deinit();
             self.features = null;
         }
-        try self.registration.?.cap.begin(&self.out);
-        try irc.writeNick(&self.out, self.gpa, nick);
-        try irc.writeUser(&self.out, self.gpa, user, realname);
+        try appendRegistrationStart(&self.registration.?, &self.out, self.gpa, nick, user, realname);
         try self.queueOut(.control, false, false);
     }
 
     pub fn join(self: *Client, channel: []const u8) !void {
-        try self.appendCommand("JOIN", &.{channel});
+        return self.joinWithKey(channel, "");
+    }
+
+    /// Source `ChatJoinAux` emits `JOIN <room> <password>` when the Enter Room
+    /// dialog supplies its optional password.
+    pub fn joinWithKey(self: *Client, channel: []const u8, key: []const u8) !void {
+        if (key.len == 0)
+            try self.appendCommand("JOIN", &.{channel})
+        else
+            try self.appendCommand("JOIN", &.{ channel, key });
         if (self.capabilityEnabled("no-implicit-names")) try self.appendCommand("NAMES", &.{channel});
+        try self.queueOut(.interactive, true, false);
+    }
+
+    /// Microsoft IRCX `ChatCreateAux` wire order is
+    /// `CREATE <room> [creation-modes] [limit] [password]`.
+    pub fn create(self: *Client, channel: []const u8, creation_modes: []const u8, limit: []const u8, key: []const u8) !void {
+        var params: [4][]const u8 = undefined;
+        var count: usize = 0;
+        params[count] = channel;
+        count += 1;
+        for ([_][]const u8{ creation_modes, limit, key }) |value| {
+            if (value.len == 0) continue;
+            params[count] = value;
+            count += 1;
+        }
+        try self.appendCommand("CREATE", params[0..count]);
         try self.queueOut(.interactive, true, false);
     }
 
@@ -409,12 +466,14 @@ pub const Client = struct {
     }
 
     pub fn setAway(self: *Client, message_text: []const u8) !void {
-        if (message_text.len == 0) try self.appendCommand("AWAY", &.{}) else try self.appendCommand("AWAY", &.{message_text});
+        if (message_text.len == 0) try self.appendCommand("AWAY", &.{}) else try self.appendCommandTrailing("AWAY", &.{message_text});
         try self.queueOut(.interactive, true, false);
     }
 
-    pub fn kick(self: *Client, channel: []const u8, nick: []const u8) !void {
-        try self.appendCommand("KICK", &.{ channel, nick });
+    pub fn kick(self: *Client, channel: []const u8, nick: []const u8, reason: []const u8) !void {
+        // The source always includes the trailing reason, including an empty
+        // one: `KICK <room> <nick> :<reason>`.
+        try self.appendCommandTrailing("KICK", &.{ channel, nick, reason });
         try self.queueOut(.interactive, true, false);
     }
 
@@ -428,11 +487,57 @@ pub const Client = struct {
         try self.queueOut(.interactive, true, false);
     }
 
+    pub fn setTopic(self: *Client, channel: []const u8, topic: []const u8) !void {
+        try self.appendCommandTrailing("TOPIC", &.{ channel, topic });
+        try self.queueOut(.interactive, true, false);
+    }
+
+    /// In addition to standard `AWAY`, Microsoft broadcasts this CTCP control
+    /// to every joined room so peers can update their local member state.
+    pub fn sendAwayControl(self: *Client, target: []const u8, message_text: []const u8) !void {
+        if (std.mem.indexOfAny(u8, message_text, "\r\n\x00\x01") != null)
+            return error.InvalidIrcParameter;
+        var wire: std.ArrayList(u8) = .empty;
+        defer wire.deinit(self.gpa);
+        try wire.appendSlice(self.gpa, "\x01AWAY");
+        if (message_text.len != 0) {
+            try wire.append(self.gpa, ' ');
+            try wire.appendSlice(self.gpa, message_text);
+        }
+        try wire.append(self.gpa, 0x01);
+        return self.privmsg(target, wire.items);
+    }
+
     pub fn privmsg(self: *Client, target: []const u8, text: []const u8) !void {
         try self.validateOutgoingText(text);
         if (self.capabilityEnabled("echo-message")) if (self.features) |*state| try state.recordEcho(target, text);
-        try self.appendCommand("PRIVMSG", &.{ target, text });
+        try self.appendCommandTrailing("PRIVMSG", &.{ target, text });
         try self.queueOut(.interactive, false, false);
+    }
+
+    pub fn notice(self: *Client, target: []const u8, text: []const u8) !void {
+        try self.validateOutgoingText(text);
+        try self.appendCommandTrailing("NOTICE", &.{ target, text });
+        try self.queueOut(.interactive, false, false);
+    }
+
+    /// Emit the NOTICE form used by Microsoft's CTCP information replies.
+    /// A non-null empty payload intentionally retains the separating space.
+    pub fn ctcpReply(self: *Client, target: []const u8, command: []const u8, payload: ?[]const u8) !void {
+        if (command.len == 0 or std.mem.indexOfAny(u8, command, " \r\n\x00\x01") != null)
+            return error.InvalidIrcParameter;
+        var wire: std.ArrayList(u8) = .empty;
+        defer wire.deinit(self.gpa);
+        try wire.append(self.gpa, 0x01);
+        try wire.appendSlice(self.gpa, command);
+        if (payload) |value| {
+            if (std.mem.indexOfAny(u8, value, "\r\n\x00\x01") != null)
+                return error.InvalidIrcParameter;
+            try wire.append(self.gpa, ' ');
+            try wire.appendSlice(self.gpa, value);
+        }
+        try wire.append(self.gpa, 0x01);
+        return self.notice(target, wire.items);
     }
 
     pub fn reply(self: *Client, target: []const u8, msgid: []const u8, text: []const u8) !void {
@@ -481,25 +586,50 @@ pub const Client = struct {
         return self.sendTyping(target, status);
     }
 
-    pub fn announceAvatar(self: *Client, target: []const u8, avatar: []const u8) !void {
+    /// Source `ChatAnnounceNewAvatar` passes this comment as the annotation
+    /// argument: IRCX therefore carries it in `DATA ... CCUDI1`, while plain
+    /// IRC carries the same bytes in a `PRIVMSG`.
+    pub fn announceAvatar(self: *Client, target: []const u8, avatar: []const u8, ircx_data: bool) !void {
         if (avatar.len == 0 or std.mem.indexOfAny(u8, avatar, " .\r\n") != null)
             return error.InvalidIrcParameter;
         var text: std.ArrayList(u8) = .empty;
         defer text.deinit(self.gpa);
         try text.appendSlice(self.gpa, "# Appears as ");
         try text.appendSlice(self.gpa, avatar);
-        return self.privmsg(target, text.items);
+        return self.comicComment(target, text.items, ircx_data);
     }
 
     pub fn comicData(self: *Client, target: []const u8, annotation: []const u8) !void {
-        try self.appendCommand("DATA", &.{ target, "CCUDI1", annotation });
+        try self.appendCommandTrailing("DATA", &.{ target, "CCUDI1", annotation });
         try self.queueOut(.interactive, false, false);
+    }
+
+    /// `bChatSendSound` sends no UDI. Its entire wire payload is the source
+    /// CTCP form `SOUND <filename> <accompanying-message>` in a PRIVMSG.
+    pub fn sendSound(self: *Client, target: []const u8, filename: []const u8, accompanying_message: []const u8) !void {
+        if (filename.len == 0 or std.mem.indexOfScalar(u8, filename, 0) != null)
+            return error.InvalidIrcParameter;
+        if (std.mem.indexOfAny(u8, accompanying_message, "\r\n\x00\x01") != null)
+            return error.InvalidIrcParameter;
+
+        const quoted_filename = try dcc.ctcpQuote(self.gpa, filename);
+        defer if (quoted_filename) |owned| self.gpa.free(owned);
+        const wire_filename = quoted_filename orelse filename;
+
+        var wire: std.ArrayList(u8) = .empty;
+        defer wire.deinit(self.gpa);
+        try wire.appendSlice(self.gpa, "\x01SOUND ");
+        try wire.appendSlice(self.gpa, wire_filename);
+        try wire.append(self.gpa, ' ');
+        try wire.appendSlice(self.gpa, accompanying_message);
+        try wire.append(self.gpa, 0x01);
+        return self.privmsg(target, wire.items);
     }
 
     /// `# GetInfo` (`ChatGetInfo`, protsupp.cpp:3415-3422): request the
     /// target's profile text.
-    pub fn requestProfile(self: *Client, target: []const u8) !void {
-        return self.privmsg(target, "# GetInfo");
+    pub fn requestProfile(self: *Client, target: []const u8, ircx_data: bool) !void {
+        return self.comicComment(target, "# GetInfo", ircx_data);
     }
 
     /// `# HeresInfo: <profile>` (protsupp.cpp:919-920): reply to a profile
@@ -516,8 +646,8 @@ pub const Client = struct {
     /// target to (re)announce its avatar name/URL. This port has no avatar
     /// file-transfer path (`filesend.cpp`), so a reply only ever updates the
     /// name via `announceAvatar`/`parseAvatarAnnouncement`.
-    pub fn requestAvatarInfo(self: *Client, target: []const u8) !void {
-        return self.privmsg(target, "# GetCharInfo");
+    pub fn requestAvatarInfo(self: *Client, target: []const u8, ircx_data: bool) !void {
+        return self.comicComment(target, "# GetCharInfo", ircx_data);
     }
 
     /// `ChatSendFile`'s offer (filesend.cpp:130-198): announce a `DCC SEND`
@@ -535,7 +665,7 @@ pub const Client = struct {
     /// backdrop change, in both the modern and legacy-compat wire forms so
     /// either kind of receiver picks it up. `name` keeps its extension
     /// (e.g. "cave.bmp"); `url` may be omitted.
-    pub fn syncBackdrop(self: *Client, target: []const u8, name: []const u8, url: ?[]const u8) !void {
+    pub fn syncBackdrop(self: *Client, target: []const u8, name: []const u8, url: ?[]const u8, ircx_data: bool) !void {
         if (name.len == 0) return error.InvalidIrcParameter;
 
         var modern: std.ArrayList(u8) = .empty;
@@ -544,7 +674,7 @@ pub const Client = struct {
         try modern.appendSlice(self.gpa, name);
         try modern.append(self.gpa, ',');
         if (url) |u| try modern.appendSlice(self.gpa, u);
-        try self.privmsg(target, modern.items);
+        try self.comicComment(target, modern.items, ircx_data);
 
         const dot = std.mem.indexOfScalar(u8, name, '.');
         const base_name = if (dot) |i| name[0..i] else name;
@@ -556,7 +686,12 @@ pub const Client = struct {
         // whitespace after the prefix (protsupp.cpp:975-976).
         try legacy.appendSlice(self.gpa, "# BDrop:  ");
         try legacy.appendSlice(self.gpa, base_name);
-        try self.privmsg(target, legacy.items);
+        try self.comicComment(target, legacy.items, ircx_data);
+    }
+
+    fn comicComment(self: *Client, target: []const u8, text: []const u8, ircx_data: bool) !void {
+        if (ircx_data) return self.comicData(target, text);
+        return self.privmsg(target, text);
     }
 
     pub fn accountRegister(
@@ -603,12 +738,20 @@ pub const Client = struct {
     }
 
     fn appendCommand(self: *Client, command: []const u8, params: []const []const u8) !void {
-        return self.appendCommandWithTags(command, params, null);
+        return self.appendCommandWithTagsAndTrailing(command, params, null, false);
+    }
+
+    fn appendCommandTrailing(self: *Client, command: []const u8, params: []const []const u8) !void {
+        return self.appendCommandWithTagsAndTrailing(command, params, null, true);
     }
 
     fn appendCommandWithTags(self: *Client, command: []const u8, params: []const []const u8, client_tags: ?[]const u8) !void {
+        return self.appendCommandWithTagsAndTrailing(command, params, client_tags, false);
+    }
+
+    fn appendCommandWithTagsAndTrailing(self: *Client, command: []const u8, params: []const []const u8, client_tags: ?[]const u8, force_trailing: bool) !void {
         if (client_tags != null and !self.capabilityEnabled("message-tags")) return error.MessageTagsNotEnabled;
-        var msg = Message{ .command = command };
+        var msg = Message{ .command = command, .force_trailing = force_trailing };
         if (params.len > message.max_params) return error.InvalidIrcParameter;
         for (params, 0..) |param, index| msg.params[index] = param;
         msg.param_count = params.len;
@@ -807,7 +950,7 @@ test "unauthenticated registration never transmits a session bearer" {
     try std.testing.expectEqual(@as(usize, 0), out.items.len);
 }
 
-test "registration advances CAP asynchronously and starts IRCX only after CAP END" {
+test "registration advances CAP then follows Microsoft IRCX probe and enable states" {
     const gpa = std.testing.allocator;
     var registration = Registration.init(gpa, "irc.example", .tls, .{});
     defer registration.deinit();
@@ -825,8 +968,18 @@ test "registration advances CAP asynchronously and starts IRCX only after CAP EN
     out.clearRetainingCapacity();
     var ack = message.parse(":irc CAP * ACK :echo-message message-tags");
     try std.testing.expect(try registration.consume(&out, &ack, &upgrade));
-    try std.testing.expectEqualStrings("CAP END\r\nIRCX\r\n", out.items);
+    try std.testing.expectEqualStrings("CAP END\r\nMODE ISIRCX\r\n", out.items);
     try std.testing.expect(registration.done);
+
+    out.clearRetainingCapacity();
+    var probe_reply = message.parse(":irc 800 * 0 0 ANON 512 *");
+    try std.testing.expect(try registration.consume(&out, &probe_reply, &upgrade));
+    try std.testing.expectEqualStrings("IRCX\r\n", out.items);
+
+    out.clearRetainingCapacity();
+    var enabled_reply = message.parse(":irc 800 comicchat 1 0 ANON 512 *");
+    try std.testing.expect(!try registration.consume(&out, &enabled_reply, &upgrade));
+    try std.testing.expectEqual(@as(usize, 0), out.items.len);
 }
 
 test "registration drives PLAIN SASL and zeroizes caller credentials" {
@@ -868,7 +1021,7 @@ test "registration drives PLAIN SASL and zeroizes caller credentials" {
     sasl.secureClear(&out);
     var success = message.parse(":irc 903 alice :SASL authentication successful");
     _ = try registration.consume(&out, &success, &upgrade);
-    try std.testing.expectEqualStrings("CAP END\r\nIRCX\r\n", out.items);
+    try std.testing.expectEqualStrings("CAP END\r\nMODE ISIRCX\r\n", out.items);
     try std.testing.expect(credentials.zeroized);
     try std.testing.expectEqualSlices(u8, &@as([6]u8, @splat(0)), &password);
 }
@@ -915,7 +1068,7 @@ test "unsupported advertised SASL mechanisms complete CAP without blocking regis
     out.clearRetainingCapacity();
     var ack = message.parse(":irc CAP * ACK :sasl");
     _ = try registration.consume(&out, &ack, &upgrade);
-    try std.testing.expectEqualStrings("CAP END\r\nIRCX\r\n", out.items);
+    try std.testing.expectEqualStrings("CAP END\r\nMODE ISIRCX\r\n", out.items);
     try std.testing.expect(registration.done);
     try std.testing.expect(credentials.zeroized);
 }
@@ -978,4 +1131,117 @@ test "reply reaction and typing commands are bounded tagged client messages" {
     try std.testing.expectEqualSlices(u8, &.{ 0, 0 }, &password);
     try std.testing.expect(client.tx.items.items[4].sensitive);
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[4].bytes, "REGISTER * user@example.test pw") != null);
+}
+
+test "live registration probes IRCX before CAP NICK and USER" {
+    const gpa = std.testing.allocator;
+    var registration = Registration.init(gpa, "irc.example", .tls, .{ .want_ircx = true });
+    defer registration.deinit();
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+
+    try appendRegistrationStart(&registration, &out, gpa, "comicchat", "comicchat", "Comic Chat");
+    try std.testing.expectEqualStrings(
+        "MODE ISIRCX\r\nCAP LS 302\r\nNICK comicchat\r\nUSER comicchat 0 * :Comic Chat\r\n",
+        out.items,
+    );
+    try std.testing.expect(registration.ircx_probe_sent);
+}
+
+test "Microsoft comment controls select DATA only after IRCX negotiation" {
+    const gpa = std.testing.allocator;
+    const owned_host = try gpa.dupe(u8, "irc.example");
+    var client = Client{
+        .gpa = gpa,
+        .transport = undefined,
+        .host = owned_host,
+        .port = 6697,
+        .connect_options = .{},
+        .framer = irc.LineFramer.init(gpa),
+        .tx = policy.TxQueue.init(gpa, .{}, 0, 1, 0),
+        .deadlines = policy.Deadlines.init(0, .{}),
+        .aggregator = features_mod.Aggregator.init(gpa, .{}),
+    };
+    defer {
+        client.aggregator.deinit();
+        client.tx.deinit();
+        client.framer.deinit();
+        client.out.deinit(gpa);
+        gpa.free(owned_host);
+    }
+
+    try client.announceAvatar("#root", "anna", false);
+    try std.testing.expectEqualStrings(
+        "PRIVMSG #root :# Appears as anna\r\n",
+        client.tx.items.items[0].bytes,
+    );
+    try client.comicData("#root", "#G123E456M1");
+    try std.testing.expectEqualStrings(
+        "DATA #root CCUDI1 :#G123E456M1\r\n",
+        client.tx.items.items[1].bytes,
+    );
+    try client.announceAvatar("#root", "anna", true);
+    try std.testing.expectEqualStrings(
+        "DATA #root CCUDI1 :# Appears as anna\r\n",
+        client.tx.items.items[2].bytes,
+    );
+    try client.syncBackdrop("#root", "room.bgb", null, true);
+    try std.testing.expectEqualStrings(
+        "DATA #root CCUDI1 :# BDrop2: room.bgb,\r\n",
+        client.tx.items.items[3].bytes,
+    );
+    try std.testing.expectEqualStrings(
+        "DATA #root CCUDI1 :# BDrop:  room\r\n",
+        client.tx.items.items[4].bytes,
+    );
+    try client.sendSound("#root", "Chime.wav", "hello there");
+    try std.testing.expectEqualStrings(
+        "PRIVMSG #root :\x01SOUND Chime.wav hello there\x01\r\n",
+        client.tx.items.items[5].bytes,
+    );
+    try client.sendSound("alice", "Door bell.wav", "come in");
+    try std.testing.expectEqualStrings(
+        "PRIVMSG alice :\x01SOUND Door\x10@bell.wav come in\x01\r\n",
+        client.tx.items.items[6].bytes,
+    );
+    try client.joinWithKey("#locked", "swordfish");
+    try std.testing.expectEqualStrings(
+        "JOIN #locked swordfish\r\n",
+        client.tx.items.items[7].bytes,
+    );
+    try client.create("#new", "+nt", "42", "secret");
+    try std.testing.expectEqualStrings(
+        "CREATE #new +nt 42 secret\r\n",
+        client.tx.items.items[8].bytes,
+    );
+    try client.kick("#root", "trouble", "flooding the room");
+    try std.testing.expectEqualStrings(
+        "KICK #root trouble :flooding the room\r\n",
+        client.tx.items.items[9].bytes,
+    );
+    try client.kick("#root", "quiet", "");
+    try std.testing.expectEqualStrings(
+        "KICK #root quiet :\r\n",
+        client.tx.items.items[10].bytes,
+    );
+    try client.setTopic("#root", "Welcome");
+    try std.testing.expectEqualStrings(
+        "TOPIC #root :Welcome\r\n",
+        client.tx.items.items[11].bytes,
+    );
+    try client.sendAwayControl("#root", "getting coffee");
+    try std.testing.expectEqualStrings(
+        "PRIVMSG #root :\x01AWAY getting coffee\x01\r\n",
+        client.tx.items.items[12].bytes,
+    );
+    try client.ctcpReply("alice", "PING", "12345");
+    try std.testing.expectEqualStrings(
+        "NOTICE alice :\x01PING 12345\x01\r\n",
+        client.tx.items.items[13].bytes,
+    );
+    try client.ctcpReply("alice", "EMAIL", "");
+    try std.testing.expectEqualStrings(
+        "NOTICE alice :\x01EMAIL \x01\r\n",
+        client.tx.items.items[14].bytes,
+    );
 }

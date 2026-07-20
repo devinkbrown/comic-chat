@@ -479,13 +479,13 @@ pub fn drawStatusTab(c: *Canvas, rect: Rect) void {
     c.fillRect(rect.x + 20, rect.bottom() - 5, 72, 2, Theme.divider);
 }
 
-pub fn drawMemberCard(c: *Canvas, rect: Rect, selected: bool, departed: bool, hovered: bool) void {
+pub fn drawMemberCard(c: *Canvas, rect: Rect, selected: bool, departed: bool, away: bool, hovered: bool) void {
     const card = Rect{ .x = rect.x + 4, .y = rect.y + 4, .w = rect.w - 8, .h = rect.h - 8 };
     const fill = if (selected) Theme.accent_soft else if (hovered) Theme.layer else Theme.rail;
     const border = if (selected) Theme.accent else if (hovered) Theme.divider else Theme.rail;
     drawRoundedBorder(c, card.x, card.y, card.w, card.h, 9, fill, border);
     if (selected) fillRoundedRect(c, card.x + 8, card.bottom() - 4, card.w - 16, 3, 2, Theme.accent);
-    fillRoundedRect(c, rect.x + 9, rect.y + 9, 8, 8, 4, if (departed) Theme.divider else Theme.success);
+    fillRoundedRect(c, rect.x + 9, rect.y + 9, 8, 8, 4, if (departed) Theme.divider else if (away) Theme.warning else Theme.success);
 }
 
 pub fn drawInspectorRail(c: *Canvas, rect: Rect) void {
@@ -575,9 +575,9 @@ pub fn drawMessageRow(c: *Canvas, rect: Rect, nick: []const u8, text: []const u8
     drawEllipsized(c, text, rect.x + nick_w + 14, rect.y + 3, rect.w - nick_w - 24, Theme.ink);
 }
 
-pub fn drawMemberRow(c: *Canvas, rect: Rect, label: []const u8, selected: bool, departed: bool, hovered: bool) void {
+pub fn drawMemberRow(c: *Canvas, rect: Rect, label: []const u8, selected: bool, departed: bool, away: bool, hovered: bool) void {
     if (selected or hovered) fillRoundedRect(c, rect.x + 3, rect.y - 1, rect.w - 6, 23, 6, if (selected) Theme.accent_soft else Theme.chrome);
-    fillRoundedRect(c, rect.x + 8, rect.y + 5, 8, 8, 4, if (departed) Theme.divider else Theme.success);
+    fillRoundedRect(c, rect.x + 8, rect.y + 5, 8, 8, 4, if (departed) Theme.divider else if (away) Theme.warning else Theme.success);
     drawEllipsized(c, label, rect.x + 24, rect.y, rect.w - 30, if (departed) Theme.secondary else Theme.ink);
 }
 

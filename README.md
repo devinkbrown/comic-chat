@@ -29,6 +29,7 @@ italic face.
 | Portable client | `src/` | Zig IRC client, AVB/BGB decoding, original rendering behavior, software rasterizer, and native X11/Wayland/Win32 presentation |
 | Runtime assets | `assets/` and `src/assets/testdata/` | Attributed character, backdrop, and emotion content required by the portable renderer |
 | Protocol notes | `docs/PROTOCOL.md` | Comic Chat wire-format and interoperability notes |
+| Microsoft wire audit | `docs/MICROSOFT_WIRE_AUDIT.md` | Source-by-source IRC/IRCX/UDI/CTCP compatibility ledger |
 | Completeness audit | `docs/PORTABLE_COMPLETENESS_AUDIT.md` | Reachable, substrate-only, partial, and missing portable product surfaces |
 | Repository map | `docs/PROJECT_STRUCTURE.md` | Portable-first repository ownership and layout |
 | Historical reference | `legacy/docs/` | Repository-only Microsoft-source audits and migration records; excluded from release packages |
@@ -96,6 +97,19 @@ accepts and joins a room, User List selects an active member, and Comic View
 applies both content mode and one-to-six panel density. Sparse conversations
 reserve that selected desktop grid, so a single message or break control can
 never expand into a full-buffer panel.
+
+The live comic wire path is checked against Microsoft's released
+`bInsertAnnotations`, `bChatSendToTarget`, `OnDataMsg`, and `ProcessSay`
+implementations. IRCX uses `DATA ... CCUDI1` for both UDI and comment controls;
+plain IRC embeds UDI or sends comment controls with `PRIVMSG`. Comic actions
+stay as readable text with mode `M5`, and selected/whisper members are included
+in the UDI `T` list.
+
+The complete source-to-wire ledger is
+[`docs/MICROSOFT_WIRE_AUDIT.md`](docs/MICROSOFT_WIRE_AUDIT.md). It also covers
+the two-stage IRCX probe, exact trailing parameters, password JOIN, CREATE,
+reasoned KICK, CTCP SOUND/AWAY/information controls, and the Onyx same-account
+same-nick session extension.
 
 The portable desktop UI has a shared Fluent-style component library and a
 separate neutral application font; Comic Neue remains confined to comic
