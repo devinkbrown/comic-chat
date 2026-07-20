@@ -27,6 +27,7 @@ pub const State = struct {
     say_mode: SayMode = .say,
     selected_member: ?usize = null,
     member_view: MemberView = .icons,
+    member_offset: usize = 0,
     emotion_x: i16 = 0,
     emotion_y: i16 = 0,
     emotion_radius: i16 = 1,
@@ -99,7 +100,31 @@ pub const State = struct {
 
     pub fn setMemberView(self: *State, view: MemberView) void {
         self.member_view = view;
+        self.member_offset = 0;
         self.show_members = true;
+    }
+
+    pub fn scrollMembers(self: *State, count: usize, visible: usize, step: usize, forward: bool) void {
+        if (count <= visible) {
+            self.member_offset = 0;
+            return;
+        }
+        const max_offset = count - visible;
+        if (forward) {
+            self.member_offset = @min(max_offset, self.member_offset +| @max(step, 1));
+        } else {
+            self.member_offset -|= @max(step, 1);
+        }
+    }
+
+    pub fn revealMember(self: *State, count: usize, visible: usize, index: usize) void {
+        if (count <= visible) {
+            self.member_offset = 0;
+        } else if (index < self.member_offset) {
+            self.member_offset = index;
+        } else if (index >= self.member_offset + visible) {
+            self.member_offset = @min(count - visible, index - visible + 1);
+        }
     }
 
     pub fn setSayMode(self: *State, mode: SayMode) void {
@@ -274,4 +299,19 @@ test "member roving and body camera keyboard controls stay bounded" {
     state.neutralEmotion();
     try std.testing.expectEqual(@as(i16, 0), state.emotion_x);
     try std.testing.expectEqual(@as(i16, 0), state.emotion_y);
+}
+
+test "member viewport scrolling and selection reveal stay bounded" {
+    var state: State = .{};
+    state.scrollMembers(7, 2, 2, true);
+    try std.testing.expectEqual(@as(usize, 2), state.member_offset);
+    state.scrollMembers(7, 2, 2, true);
+    state.scrollMembers(7, 2, 2, true);
+    try std.testing.expectEqual(@as(usize, 5), state.member_offset);
+    state.scrollMembers(7, 2, 2, false);
+    try std.testing.expectEqual(@as(usize, 3), state.member_offset);
+    state.revealMember(7, 2, 0);
+    try std.testing.expectEqual(@as(usize, 0), state.member_offset);
+    state.revealMember(7, 2, 6);
+    try std.testing.expectEqual(@as(usize, 5), state.member_offset);
 }

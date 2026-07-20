@@ -558,6 +558,22 @@ const ConnectionRuntime = struct {
         try self.session.saveFile(self.io, self.session_path);
     }
 
+    fn rebindEndpoint(self: *ConnectionRuntime, host: []const u8, requested_security: cc.net.client.Security) !void {
+        try self.session.saveFile(self.io, self.session_path);
+        var replacement = try cc.net.session_store.Store.loadFile(
+            self.gpa,
+            self.io,
+            self.session_path,
+            host,
+            self.auth.user orelse self.nick,
+        );
+        errdefer replacement.deinit();
+        self.session.deinit();
+        self.session = replacement;
+        self.connect_options.security = requested_security;
+        if (self.sts.requiresTls(host, self.now_seconds)) self.connect_options.security = .tls;
+    }
+
     fn deinit(self: *ConnectionRuntime) void {
         if (self.credentials) |*credentials| if (!credentials.zeroized) credentials.zeroize();
         self.clearCredentialStorage();
@@ -979,6 +995,7 @@ const PendingUdi = struct {
 
 const ChatState = struct {
     status: []const u8 = "connecting",
+    status_storage: [160]u8 = undefined,
     joined: bool = false,
     join_requested: bool = false,
     avatar_announced: bool = false,
@@ -1015,6 +1032,14 @@ const ChatState = struct {
         }
         return null;
     }
+
+    fn setConnectionFailure(self: *ChatState, err: anyerror) void {
+        self.status = std.fmt.bufPrint(
+            &self.status_storage,
+            "Connection failed ({s}) - click for settings",
+            .{@errorName(err)},
+        ) catch "Connection failed - click for settings";
+    }
 };
 
 /// JOIN and end-of-NAMES may both confirm the same join. Announce the current
@@ -1038,14 +1063,20 @@ const UiEventResult = struct {
     redraw: bool = false,
 };
 
-const NetworkEvent = enum { none, connecting, transport_ready, retry_scheduled, sts_upgrading };
+const NetworkEvent = union(enum) {
+    none,
+    connecting,
+    transport_ready,
+    retry_scheduled: anyerror,
+    sts_upgrading,
+};
 
 /// UI-owned nonblocking connection lifecycle. DNS/TCP/proxy/TLS runs inside
 /// Transport.Connector; this owner only swaps immutable endpoint snapshots,
 /// registers a completed client, and schedules bounded reconnects.
 const AsyncNetwork = struct {
     gpa: std.mem.Allocator,
-    host: []const u8,
+    host: []u8,
     nick: []const u8,
     base_options: cc.net.client.ConnectOptions,
     runtime: *ConnectionRuntime,
@@ -1060,9 +1091,11 @@ const AsyncNetwork = struct {
         nick: []const u8,
         runtime: *ConnectionRuntime,
     ) !AsyncNetwork {
+        const owned_host = try gpa.dupe(u8, host);
+        errdefer gpa.free(owned_host);
         var self = AsyncNetwork{
             .gpa = gpa,
-            .host = host,
+            .host = owned_host,
             .nick = nick,
             .base_options = runtime.connect_options,
             .runtime = runtime,
@@ -1074,10 +1107,41 @@ const AsyncNetwork = struct {
     }
 
     fn deinit(self: *AsyncNetwork) void {
-        self.reconnect.cancel();
-        if (self.connector) |connector| connector.deinit();
-        if (self.client) |*client| client.deinit();
+        self.stop();
+        self.gpa.free(self.host);
         self.* = undefined;
+    }
+
+    fn stop(self: *AsyncNetwork) void {
+        self.reconnect.cancel();
+        if (self.connector) |connector| {
+            connector.deinit();
+            self.connector = null;
+        }
+        if (self.client) |*client| {
+            client.deinit();
+            self.client = null;
+        }
+    }
+
+    fn reconfigure(self: *AsyncNetwork, host: []const u8, port: u16, security: cc.net.client.Security, now_ms: u64) !void {
+        if (host.len == 0 or host.len > 253 or std.mem.indexOfAny(u8, host, " \t\r\n\x00") != null) return error.InvalidHost;
+        if (port == 0) return error.InvalidPort;
+        const replacement_host = try self.gpa.dupe(u8, host);
+        var owns_replacement = true;
+        errdefer if (owns_replacement) self.gpa.free(replacement_host);
+        try self.runtime.rebindEndpoint(host, security);
+        self.stop();
+        self.gpa.free(self.host);
+        self.host = replacement_host;
+        owns_replacement = false;
+        self.base_options = self.runtime.connect_options;
+        self.reconnect = .init(port, 0x434f4d4943434841);
+        _ = self.reconnect.start();
+        self.startConnector() catch |err| {
+            self.reconnect.disconnected(now_ms);
+            return err;
+        };
     }
 
     fn effectiveOptions(self: *const AsyncNetwork) cc.net.client.ConnectOptions {
@@ -1102,11 +1166,11 @@ const AsyncNetwork = struct {
             return .none;
         }
         if (self.connector) |connector| {
-            const maybe_transport = connector.poll() catch {
+            const maybe_transport = connector.poll() catch |err| {
                 connector.deinit();
                 self.connector = null;
                 self.reconnect.disconnected(now_ms);
-                return .retry_scheduled;
+                return .{ .retry_scheduled = err };
             };
             const connected = maybe_transport orelse return .none;
             connector.deinit();
@@ -1117,24 +1181,24 @@ const AsyncNetwork = struct {
                 self.reconnect.port,
                 self.effectiveOptions(),
                 connected,
-            ) catch {
+            ) catch |err| {
                 connected.deinit();
                 self.reconnect.disconnected(now_ms);
-                return .retry_scheduled;
+                return .{ .retry_scheduled = err };
             };
             var owns_client = true;
             defer if (owns_client) client.deinit();
-            const registration_options = self.runtime.registrationOptionsForAttempt() catch {
+            const registration_options = self.runtime.registrationOptionsForAttempt() catch |err| {
                 self.reconnect.disconnected(now_ms);
-                return .retry_scheduled;
+                return .{ .retry_scheduled = err };
             };
-            client.registerWithOptions(self.nick, self.nick, "Comic Chat for Zig", registration_options) catch {
+            client.registerWithOptions(self.nick, self.nick, "Comic Chat for Zig", registration_options) catch |err| {
                 self.reconnect.disconnected(now_ms);
-                return .retry_scheduled;
+                return .{ .retry_scheduled = err };
             };
-            client.tick(now_ms) catch {
+            client.tick(now_ms) catch |err| {
                 self.reconnect.disconnected(now_ms);
-                return .retry_scheduled;
+                return .{ .retry_scheduled = err };
             };
             self.client = client;
             owns_client = false;
@@ -1142,16 +1206,16 @@ const AsyncNetwork = struct {
             return .transport_ready;
         }
         if (self.reconnect.due(now_ms)) {
-            self.startConnector() catch {
+            self.startConnector() catch |err| {
                 self.reconnect.disconnected(now_ms);
-                return .retry_scheduled;
+                return .{ .retry_scheduled = err };
             };
             return .connecting;
         }
         return .none;
     }
 
-    fn fail(self: *AsyncNetwork, now_ms: u64, _: anyerror) NetworkEvent {
+    fn fail(self: *AsyncNetwork, now_ms: u64, failure: anyerror) NetworkEvent {
         var upgrade_port: ?u16 = null;
         if (self.client) |*client| {
             upgrade_port = client.takeStsUpgradePort();
@@ -1159,14 +1223,14 @@ const AsyncNetwork = struct {
             self.client = null;
         }
         if (upgrade_port) |tls_port| {
-            self.reconnect.stsUpgrade(tls_port, now_ms) catch {
+            self.reconnect.stsUpgrade(tls_port, now_ms) catch |err| {
                 self.reconnect.disconnected(now_ms);
-                return .retry_scheduled;
+                return .{ .retry_scheduled = err };
             };
             return .sts_upgrading;
         }
         self.reconnect.disconnected(now_ms);
-        return .retry_scheduled;
+        return .{ .retry_scheduled = failure };
     }
 
     fn clientPtr(self: *AsyncNetwork) ?*cc.net.client.Client {
@@ -1186,9 +1250,9 @@ fn applyNetworkEvent(event: NetworkEvent, state: *ChatState) bool {
             state.status = "registering";
             break :changed true;
         },
-        .retry_scheduled => changed: {
+        .retry_scheduled => |err| changed: {
             resetChatConnectionState(state);
-            state.status = "reconnecting";
+            state.setConnectionFailure(err);
             break :changed true;
         },
         .sts_upgrading => changed: {
@@ -1270,12 +1334,11 @@ fn runInteractivePollBackend(
                 io,
                 try win.nextEvent(),
                 &view,
-                network.clientPtr(),
+                &network,
+                &state,
                 &workspace,
                 nick,
                 channel,
-                state.joined,
-                state.ircx_data,
             );
             if (!event_result.keep_running) return;
             redraw = redraw or event_result.redraw;
@@ -1287,12 +1350,11 @@ fn runInteractivePollBackend(
                     io,
                     repeat_event,
                     &view,
-                    network.clientPtr(),
+                    &network,
+                    &state,
                     &workspace,
                     nick,
                     channel,
-                    state.joined,
-                    state.ircx_data,
                 );
                 if (!event_result.keep_running) return;
                 redraw = redraw or event_result.redraw;
@@ -1356,12 +1418,11 @@ fn runInteractiveWin32(gpa: std.mem.Allocator, host: []const u8, port: u16, nick
                 io,
                 event,
                 &view,
-                network.clientPtr(),
+                &network,
+                &state,
                 &workspace,
                 nick,
                 channel,
-                state.joined,
-                state.ircx_data,
             );
             if (!event_result.keep_running) return;
             redraw = redraw or event_result.redraw;
@@ -1396,14 +1457,14 @@ fn handleWindowEvent(
     io: std.Io,
     event: anytype,
     view: *cc.client.view.View,
-    client: ?*cc.net.client.Client,
+    network: *AsyncNetwork,
+    state: *ChatState,
     workspace: *cc.client.workspace.Workspace,
     nick: []const u8,
     channel: []const u8,
-    joined: bool,
-    ircx_data: bool,
 ) !UiEventResult {
     _ = channel;
+    const client = network.clientPtr();
     const room = workspace.activeRoom() orelse return .{};
     const transcript = &room.transcript;
     const editor = &room.editor;
@@ -1421,7 +1482,7 @@ fn handleWindowEvent(
                     if (try handleEditorShortcut(dialog_editor, key, workspace))
                         break :key_result .{ .redraw = true };
                 };
-                if (try view.handleDialogKey(key, key_input.modifiers)) |action| try applyDialogAction(gpa, io, action, view, client, workspace, nick);
+                if (try view.handleDialogKey(key, key_input.modifiers)) |action| try applyDialogAction(gpa, io, action, view, network, state, workspace, nick);
                 break :key_result .{ .redraw = true };
             }
             if (view.handleFocusedKey(key, transcript.roster.items.len))
@@ -1435,7 +1496,7 @@ fn handleWindowEvent(
             if (key_input.modifiers.shift and handleEditorSelectionKey(editor, key))
                 break :key_result .{ .redraw = true };
             break :key_result .{
-                .keep_running = try handleWorkspaceInputKey(gpa, io, key, view, editor, client, workspace, nick, joined, ircx_data),
+                .keep_running = try handleWorkspaceInputKey(gpa, io, key, view, editor, client, workspace, nick, state.joined, state.ircx_data),
                 .redraw = true,
             };
         },
@@ -1443,7 +1504,11 @@ fn handleWindowEvent(
             if (pointer.kind == .move) break :pointer_result .{ .redraw = view.handlePointerMove(pointer, transcript.roster.items.len) };
             const action = view.handlePointer(pointer, transcript.count(), transcript.roster.items.len);
             const keep_running = switch (action) {
-                .send => try handleWorkspaceInputKey(gpa, io, cc.platform.event.Key{ .enter = {} }, view, editor, client, workspace, nick, joined, ircx_data),
+                .send => try handleWorkspaceInputKey(gpa, io, cc.platform.event.Key{ .enter = {} }, view, editor, client, workspace, nick, state.joined, state.ircx_data),
+                .connection => connection: {
+                    view.openConnectionDialog(network.host, network.reconnect.port, network.effectiveOptions().security == .tls);
+                    break :connection true;
+                },
                 .toolbar => |index| toolbar: {
                     if (index == 1) break :toolbar false;
                     if (index == 3) {
@@ -1461,7 +1526,7 @@ fn handleWindowEvent(
                     break :cursor true;
                 },
                 .dialog_accept, .dialog_cancel => apply: {
-                    try applyDialogAction(gpa, io, action, view, client, workspace, nick);
+                    try applyDialogAction(gpa, io, action, view, network, state, workspace, nick);
                     break :apply true;
                 },
                 else => true,
@@ -1515,7 +1580,8 @@ fn applyDialogAction(
     io: std.Io,
     action: cc.client.view.Action,
     view: *cc.client.view.View,
-    maybe_client: ?*cc.net.client.Client,
+    network: *AsyncNetwork,
+    state: *ChatState,
     workspace: *cc.client.workspace.Workspace,
     nick: []const u8,
 ) !void {
@@ -1524,10 +1590,28 @@ fn applyDialogAction(
         else => return,
     };
     const value = std.mem.trim(u8, view.dialogValue(), " \t");
+    if (id == .setup) {
+        const request = parseConnectionDialog(value, view.dialogValueAt(1), view.dialogValueAt(2)) catch |err| {
+            view.setDialogNotice(switch (err) {
+                error.InvalidHost => "Enter a valid server name without spaces.",
+                error.InvalidPort => "Port must be between 1 and 65535.",
+            });
+            return;
+        };
+        network.reconfigure(request.host, request.port, request.security, monotonicMilliseconds(io)) catch {
+            view.setDialogNotice("Could not start that connection. Check the server and security mode.");
+            return;
+        };
+        resetChatConnectionState(state);
+        state.status = "connecting";
+        _ = view.closeDialog();
+        return;
+    }
     if (cc.client.dialogs.requiresInput(id) and value.len == 0) {
         view.setDialogNotice("Complete the first field before continuing.");
         return;
     }
+    const maybe_client = network.clientPtr();
     const room = workspace.activeRoom() orelse return;
     switch (id) {
         .channel, .channel_create => {
@@ -1582,6 +1666,44 @@ fn applyDialogAction(
         else => {},
     }
     _ = view.closeDialog();
+}
+
+const ConnectionDialogRequest = struct {
+    host: []const u8,
+    port: u16,
+    security: cc.net.client.Security,
+};
+
+fn parseConnectionDialog(host_text: []const u8, port_text: []const u8, security_text: []const u8) error{ InvalidHost, InvalidPort }!ConnectionDialogRequest {
+    const host = std.mem.trim(u8, host_text, " \t");
+    if (host.len == 0 or host.len > 253 or std.mem.indexOfAny(u8, host, " \t\r\n\x00") != null) return error.InvalidHost;
+    const port = std.fmt.parseInt(u16, std.mem.trim(u8, port_text, " \t"), 10) catch return error.InvalidPort;
+    if (port == 0) return error.InvalidPort;
+    return .{
+        .host = host,
+        .port = port,
+        .security = if (std.ascii.eqlIgnoreCase(std.mem.trim(u8, security_text, " \t"), "Plaintext (unsafe)")) .plaintext else .tls,
+    };
+}
+
+test "connection dialog validates a usable endpoint" {
+    const secure = try parseConnectionDialog(" eshmaki.me ", "6697", "Verified TLS");
+    try std.testing.expectEqualStrings("eshmaki.me", secure.host);
+    try std.testing.expectEqual(@as(u16, 6697), secure.port);
+    try std.testing.expectEqual(cc.net.client.Security.tls, secure.security);
+    const plaintext = try parseConnectionDialog("irc.example", "6667", "Plaintext (unsafe)");
+    try std.testing.expectEqual(cc.net.client.Security.plaintext, plaintext.security);
+    try std.testing.expectError(error.InvalidHost, parseConnectionDialog("bad host", "6697", "Verified TLS"));
+    try std.testing.expectError(error.InvalidPort, parseConnectionDialog("eshmaki.me", "0", "Verified TLS"));
+    try std.testing.expectError(error.InvalidPort, parseConnectionDialog("eshmaki.me", "nope", "Verified TLS"));
+}
+
+test "connection failures remain actionable" {
+    var state: ChatState = .{ .joined = true, .join_requested = true };
+    try std.testing.expect(applyNetworkEvent(.{ .retry_scheduled = error.ConnectionRefused }, &state));
+    try std.testing.expect(!state.joined);
+    try std.testing.expect(std.mem.indexOf(u8, state.status, "ConnectionRefused") != null);
+    try std.testing.expect(std.mem.indexOf(u8, state.status, "click for settings") != null);
 }
 
 fn handleWorkspaceInputKey(

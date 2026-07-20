@@ -15,7 +15,7 @@ commands including `NICK`, `USER`, `JOIN`, `PRIVMSG`, `NOTICE`, `PING`, and
 has a non-IRCX representation.
 
 The portable client secures that stream with the pinned Onyx TLS implementation
-at commit `8bc3b9ad7d314196dcf09afa845829e77c25adcf`. TLS is the default and
+at commit `06bb3500b4fd62e2f307cb4004340c58062c0f59`. TLS is the default and
 the omitted port defaults to 6697. The client sends SNI and verifies both the
 certificate chain and requested hostname. It loads common Unix system bundles
 or the Windows ROOT certificate store; `--ca-file <pem>` supplies an explicit

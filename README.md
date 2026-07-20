@@ -63,6 +63,12 @@ sets the per-address and proxy-read deadline. SOCKS5 uses no-auth remote-DNS
 CONNECT; HTTP proxies use a bounded CONNECT response. TLS hostname and chain
 verification still target the IRC host after either proxy handshake.
 
+Hostname lookup uses the pinned Onyx Server DNS wire codec and resolver policy.
+The transport, resolver, TLS client, and native socket adapters are Zig-only;
+Windows uses a direct Winsock boundary so the same executable works on Windows
+and Wine without Zig's AFD backend. The Windows DNS service is used only if
+direct Onyx UDP resolution is unavailable.
+
 On Onyx Server, authenticated clients persist reusable `SESSION TOKEN` and
 portable `SESSION MTOKEN` credentials in `.comicchat-session` (override with
 `--session-file`). After SASL succeeds, reconnects prefer the unexpired mesh
@@ -78,6 +84,13 @@ keyboard commands are `/join #room`, `/switch #room`, and `/part`. Use
 for view and source-dialog workflows. Conversation files and rendered UI
 captures use `/open path.ccc`, `/save path.ccc`, and `/export path.png`;
 writes are bounded and atomic.
+
+The status bar and the first toolbar button both open a prefilled live
+Connection Setup dialog. Applying it stops the current connection, validates
+the endpoint and security choice, and reconnects immediately. The room member
+pane consumes live NAMES/JOIN/PART/QUIT/NICK state, reports active rather than
+historical members, scrolls with the wheel, keeps keyboard selection visible,
+and maps selection and context actions to the correct scrolled member.
 
 The portable desktop UI has a shared Fluent-style component library and a
 separate neutral application font; Comic Neue remains confined to comic
@@ -135,7 +148,7 @@ env -u WAYLAND_DISPLAY zig build run -- window anna
 
 ## Release packages
 
-The current published release is `comicchat-portable-2026-07-20.1`.
+The current published release is `comicchat-portable-2026-07-20.2`.
 It contains x86_64 binary packages for Windows, Linux, FreeBSD, and OpenBSD,
 an explicit buildable source archive, and a single SHA-256 manifest covering
 all five artifacts. The source archive includes the narrow Onyx TLS dependency
@@ -145,13 +158,13 @@ without a separate submodule checkout.
 Verify downloaded artifacts before use:
 
 ```sh
-sha256sum -c comicchat-portable-2026-07-20.1-SHA256SUMS.txt
+sha256sum -c comicchat-portable-2026-07-20.2-SHA256SUMS.txt
 ```
 
 To build the binary archives from a clean checkout:
 
 ```sh
-./tools/package-release.sh portable-2026-07-20.1
+./tools/package-release.sh portable-2026-07-20.2
 ```
 
 Each archive contains the executable, this README, the AGPL license, and

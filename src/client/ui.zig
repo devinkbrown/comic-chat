@@ -588,7 +588,7 @@ pub fn drawPaneHeader(c: *Canvas, rect: Rect, title: []const u8) void {
     c.fillRect(rect.x + 12, rect.y + 29, @max(0, rect.w - 24), 1, Theme.divider);
 }
 
-pub fn drawStatusBar(c: *Canvas, x: i32, y: i32, width: i32, height: i32, status: []const u8, member_count: usize) void {
+pub fn drawStatusBar(c: *Canvas, x: i32, y: i32, width: i32, height: i32, status: []const u8, member_count: usize, hovered: bool) void {
     c.fillRect(x, y, width, height, Theme.navigation);
     c.fillRect(x, y, width, 1, Theme.navigation_hover);
     const status_color = switch (statusTone(status)) {
@@ -605,8 +605,15 @@ pub fn drawStatusBar(c: *Canvas, x: i32, y: i32, width: i32, height: i32, status
         std.fmt.bufPrint(&buf, "{d} members", .{member_count}) catch "members";
     const badge_w = Canvas.uiTextWidth(members) + 16;
     const badge_x = x + @max(108, width - badge_w - 8);
+    if (hovered) fillRoundedRect(c, x + 5, y + 3, @max(1, badge_x - x - 10), @max(1, height - 6), 7, Theme.navigation_hover);
     fillRoundedRect(c, badge_x, y + 4, badge_w, @max(1, height - 8), 7, Theme.navigation_hover);
-    drawEllipsized(c, status, x + 25, y + 4, badge_x - x - 33, Theme.navigation_muted);
+    const action = "Connection";
+    const action_w = if (hovered and badge_x - x >= 250) Canvas.uiTextWidth(action) + 18 else 0;
+    drawEllipsized(c, status, x + 25, y + 4, badge_x - x - 33 - action_w, if (hovered) Theme.layer else Theme.navigation_muted);
+    if (action_w > 0) {
+        _ = c.drawUiText(action, badge_x - action_w + 2, y + 4, Theme.layer);
+        _ = c.drawUiText(">", badge_x - 12, y + 4, Theme.navigation_muted);
+    }
     _ = c.drawUiText(members, badge_x + 8, y + 4, Theme.layer);
 }
 

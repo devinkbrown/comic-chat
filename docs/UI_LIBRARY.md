@@ -32,7 +32,9 @@ visual contract.
 - Roster and character previews use alpha-aware smooth scaling and larger
   portrait targets. Authored art inside comic panels stays source-faithful.
 - The inspector is one continuous rail rather than nested gray cards. Members
-  support icon/list modes, keyboard roving, selection, hover, and context menus.
+  support icon/list modes, keyboard roving, wheel scrolling, retained viewport
+  position, selection, hover, and context menus. Visible cards always map back
+  to their actual live-roster entry after scrolling.
 - History and long rosters expose deterministic scroll position indicators.
 - Dialog fields are typed: text, password, choice, list, preview, and read-only
   controls render and interact according to their actual purpose. The shared
@@ -94,7 +96,10 @@ cover control geometry.
 The UI acceptance gate also exercises all 43 registered dialogs at 640x480,
 800x600, and 960x720; every menu row at the 640px minimum; Debug and
 ReleaseSafe tests; native X11 menu/dialog/composer input under Xvfb; and the
-same live Win32 interaction path under headless Wine. Linux and Windows
+same live Win32 interaction path under headless Wine. The Wine path also
+exercises status-bar connection setup, invalid-port recovery, verified-TLS
+reconnect, live member scrolling/selection/context actions, and composer input.
+Linux and Windows
 `render-ui` output must remain byte-identical for the main, compact menu,
 settings, password input, long composer, and conversation surfaces.
 

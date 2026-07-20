@@ -255,6 +255,14 @@ pub const Transcript = struct {
         return avatarForNick(nick);
     }
 
+    pub fn activeMemberCount(self: *const Transcript) usize {
+        var active_count: usize = 0;
+        for (self.roster.items) |member| if (!member.departed) {
+            active_count += 1;
+        };
+        return active_count;
+    }
+
     /// Establish the local participant before NAMES arrives. `AddStarsAux`
     /// always inserts this member first regardless of activity or send count.
     pub fn setSelf(self: *Transcript, nick: []const u8) !void {
@@ -663,6 +671,7 @@ test "live roster follows NAMES membership speech and current avatars" {
     var names = irc_message.parse(":server 353 Me = #room :@Me +Alice %Bob");
     try std.testing.expect(try transcript.observeIrc(&names, "#room", "Me"));
     try std.testing.expectEqual(@as(usize, 3), transcript.roster.items.len);
+    try std.testing.expectEqual(@as(usize, 3), transcript.activeMemberCount());
     try std.testing.expect(transcript.roster.items[transcript.findRosterIndex("me").?].is_self);
     try std.testing.expect(transcript.findRosterIndex("@Me") == null);
     try std.testing.expect(transcript.findRosterIndex("+Alice") == null);
@@ -687,6 +696,7 @@ test "live roster follows NAMES membership speech and current avatars" {
     var part = irc_message.parse(":Bob!u@h PART #room :later");
     try std.testing.expect(try transcript.observeIrc(&part, "#room", "Me"));
     try std.testing.expect(transcript.roster.items[transcript.findRosterIndex("Bob").?].departed);
+    try std.testing.expectEqual(@as(usize, 2), transcript.activeMemberCount());
 
     var rename = irc_message.parse(":Alice!u@h NICK :Alicia");
     try std.testing.expect(try transcript.observeIrc(&rename, "#room", "Me"));
@@ -698,9 +708,11 @@ test "live roster follows NAMES membership speech and current avatars" {
     var quit = irc_message.parse(":Alicia!u@h QUIT :gone");
     try std.testing.expect(try transcript.observeIrc(&quit, "#room", "Me"));
     try std.testing.expect(transcript.roster.items[transcript.findRosterIndex("Alicia").?].departed);
+    try std.testing.expectEqual(@as(usize, 1), transcript.activeMemberCount());
     var join = irc_message.parse(":Alicia!u@h JOIN :#room");
     try std.testing.expect(try transcript.observeIrc(&join, "#room", "Me"));
     try std.testing.expect(!transcript.roster.items[transcript.findRosterIndex("Alicia").?].departed);
+    try std.testing.expectEqual(@as(usize, 2), transcript.activeMemberCount());
 }
 
 test "transcript owns its copies" {
