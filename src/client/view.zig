@@ -242,7 +242,7 @@ pub const View = struct {
                 self.hovered_member = null;
                 return changed;
             }
-            const item = menuPopupItem(menu, pointer.x, pointer.y);
+            const item = menuPopupItem(self.canvas.width, menu, pointer.x, pointer.y);
             const changed = self.hovered_menu_item != item or self.hovered_menu != null or self.hovered_toolbar != null or self.hovered_say_action != null or self.hovered_column_control != null or self.hovered_member != null;
             self.hovered_menu_item = item;
             self.hovered_menu = null;
@@ -411,7 +411,7 @@ pub const View = struct {
         if (self.active_menu) |menu| {
             if (pointer.kind != .down or pointer.button != .primary) return .none;
             self.active_menu = null;
-            if (menuPopupItem(menu, pointer.x, pointer.y)) |item| self.invokeMenuItem(menu, item);
+            if (menuPopupItem(self.canvas.width, menu, pointer.x, pointer.y)) |item| self.invokeMenuItem(menu, item);
             return .{ .menu = menu };
         }
         const comic_mode = self.shell.content_mode == .comic;
@@ -989,12 +989,19 @@ fn menuItemLabel(menu: u8, item: u8) []const u8 {
     };
 }
 
-fn menuPopupRect(menu: u8) Rect {
-    return .{ .x = menuStart(menu), .y = geometry.menu_height, .w = 210, .h = @as(i32, menuItemCount(menu)) * 29 + 10 };
+fn menuPopupRect(canvas_width: u32, menu: u8) Rect {
+    const width: i32 = 210;
+    const right_limit = @max(6, @as(i32, @intCast(canvas_width)) - width - 6);
+    return .{
+        .x = std.math.clamp(menuStart(menu), 6, right_limit),
+        .y = geometry.menu_height,
+        .w = width,
+        .h = @as(i32, menuItemCount(menu)) * 29 + 10,
+    };
 }
 
-fn menuPopupItem(menu: u8, x: i32, y: i32) ?u8 {
-    const rect = menuPopupRect(menu);
+fn menuPopupItem(canvas_width: u32, menu: u8, x: i32, y: i32) ?u8 {
+    const rect = menuPopupRect(canvas_width, menu);
     if (x < rect.x or x >= rect.right() or y < rect.y + 4 or y >= rect.bottom() - 4) return null;
     const item = @divTrunc(y - rect.y - 5, 29);
     if (item < 0 or item >= menuItemCount(menu)) return null;
@@ -1018,7 +1025,7 @@ fn drawMenuBar(c: *Canvas, rect: Rect, active: ?u8, hovered: ?u8) void {
 }
 
 fn drawMenuPopup(c: *Canvas, menu: u8, hovered: ?u8, shell: shell_mod.State) void {
-    const rect = menuPopupRect(menu);
+    const rect = menuPopupRect(c.width, menu);
     ui.drawPopupSurface(c, rect);
     var item: u8 = 0;
     while (item < menuItemCount(menu)) : (item += 1) {
@@ -1384,6 +1391,12 @@ const TextWindow = struct {
     right_hidden: bool,
 };
 
+const focused_placeholder_gap: i32 = 8;
+
+fn placeholderGap(focused: bool) i32 {
+    return if (focused) focused_placeholder_gap else 0;
+}
+
 fn previousUtf8Boundary(text: []const u8, index: usize) usize {
     if (index == 0) return 0;
     var result = @min(index, text.len) - 1;
@@ -1473,7 +1486,8 @@ fn drawSayWindow(c: *Canvas, layout: geometry.Layout, input: []const u8, cursor:
         }
     }
     if (input.len == 0) {
-        drawTextEllipsized(c, "Write a message...", edit.x + 18, edit.y + 13, edit.w - 36, secondary);
+        const placeholder_x = edit.x + 18 + placeholderGap(focused);
+        drawTextEllipsized(c, "Write a message...", placeholder_x, edit.y + 13, edit.right() - placeholder_x - 18, secondary);
     } else {
         drawTextEllipsized(c, visible, content_rect.x, edit.y + 13, content_rect.w, ink);
         drawInputOverflowMarks(c, edit, window);
@@ -1935,7 +1949,8 @@ fn drawDialog(c: *Canvas, spec: dialogs.Spec, editors: *const [3]input_mod.Edito
         }
         const custom_preview = field.kind == .preview and (spec.id == .character or spec.id == .background);
         if (editors[index].text().len == 0 and !custom_preview) {
-            const hint_x = field_rect.x + if (field.kind == .list or field.kind == .readonly) @as(i32, 28) else if (field.kind == .preview) @as(i32, 72) else @as(i32, 10);
+            const base_hint_x = field_rect.x + if (field.kind == .list or field.kind == .readonly) @as(i32, 28) else if (field.kind == .preview) @as(i32, 72) else @as(i32, 10);
+            const hint_x = base_hint_x + placeholderGap(field_active and dialogs.fieldAcceptsText(spec.id, index));
             const hint_right = field_rect.right() - if (field.kind == .choice) @as(i32, 42) else @as(i32, 10);
             drawTextEllipsized(c, field.hint, hint_x, field_y + 4, hint_right - hint_x, secondary);
         }
@@ -2046,6 +2061,29 @@ test "menu clicks select navigation without opening a modal dialog" {
     try std.testing.expectEqual(shell_mod.Focus.navigation, view.shell.focus);
 }
 
+test "every menu popup and command row stays reachable at minimum width" {
+    const width: u32 = min_width;
+    var menu: u8 = 0;
+    while (menu < menu_labels.len) : (menu += 1) {
+        const popup = menuPopupRect(width, menu);
+        try std.testing.expect(popup.x >= 0);
+        try std.testing.expect(popup.right() <= width);
+        try std.testing.expect(popup.y >= geometry.menu_height);
+        var item: u8 = 0;
+        while (item < menuItemCount(menu)) : (item += 1) {
+            const item_y = popup.y + 8 + @as(i32, item) * 29;
+            try std.testing.expectEqual(item, menuPopupItem(width, menu, popup.x + 12, item_y).?);
+        }
+    }
+
+    var view = try View.init(std.testing.allocator, min_width, min_height);
+    defer view.deinit();
+    view.active_menu = 6;
+    const more = menuPopupRect(width, 6);
+    _ = view.handlePointer(.{ .kind = .down, .x = more.x + 12, .y = more.y + 8 + 4 * 29, .button = .primary }, 0, 0);
+    try std.testing.expectEqual(dialogs.Id.about, view.active_dialog.?);
+}
+
 test "comic density stepper changes the live four-across layout" {
     var view = try View.init(std.testing.allocator, 960, 720);
     defer view.deinit();
@@ -2099,6 +2137,8 @@ test "typed dialog choices cycle instead of accepting arbitrary text" {
 }
 
 test "single line inputs retain a visible caret window and place the cursor by pixel" {
+    try std.testing.expectEqual(@as(i32, 0), placeholderGap(false));
+    try std.testing.expectEqual(@as(i32, 8), placeholderGap(true));
     const text = "a long input value that is wider than the field";
     const window = visibleTextWindow(text, text.len, 96);
     try std.testing.expect(window.left_hidden);
@@ -2128,6 +2168,30 @@ test "dialog inputs support shift selection and mouse caret placement" {
     _ = view.handlePointer(.{ .kind = .down, .x = field.x + 11 + Canvas.uiTextWidth("comic"), .y = field.y + 10, .button = .primary }, 0, 0);
     try std.testing.expectEqual(@as(usize, 5), view.dialog_editors[0].cursor);
     try std.testing.expect(view.dialog_editors[0].selection() == null);
+}
+
+test "every dialog keeps fields and actions separated at supported window sizes" {
+    const sizes = [_]struct { w: u32, h: u32 }{
+        .{ .w = min_width, .h = min_height },
+        .{ .w = 800, .h = 600 },
+        .{ .w = 960, .h = 720 },
+    };
+    for (sizes) |size| for (dialogs.specs) |spec| {
+        const layout = dialogLayout(size.w, size.h, spec);
+        try std.testing.expect(layout.rect.x >= 0 and layout.rect.y >= 0);
+        try std.testing.expect(layout.rect.right() <= size.w and layout.rect.bottom() <= size.h);
+        try std.testing.expect(layout.primary.x >= layout.rect.x and layout.primary.right() <= layout.rect.right());
+        try std.testing.expect(layout.cancel.x >= layout.rect.x and layout.cancel.right() <= layout.rect.right());
+        try std.testing.expect(layout.primary.right() <= layout.cancel.x);
+        var index: usize = 0;
+        while (index < dialogs.fields(spec.id).len) : (index += 1) {
+            const field = layout.fieldRect(index);
+            try std.testing.expect(field.x >= layout.rect.x and field.right() <= layout.rect.right());
+            try std.testing.expect(field.y >= layout.body_y and field.bottom() <= layout.primary.y);
+            try std.testing.expectEqual(index, layout.fieldIndexAt(field.x + 2, field.y + 2).?);
+            if (index > 0) try std.testing.expect(layout.fieldRect(index - 1).bottom() <= layout.fieldLabelY(index));
+        }
+    };
 }
 
 test "alpha-aware avatar scaling does not pull black from transparent pixels" {

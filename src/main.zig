@@ -1958,7 +1958,7 @@ fn runToPng(gpa: std.mem.Allocator, io: std.Io, name: []const u8) !void {
 /// Win32 window. This is both a release-preview command and a deterministic
 /// visual regression surface for the modern UI library.
 fn runUiPreview(gpa: std.mem.Allocator, io: std.Io, surface: []const u8) !void {
-    const compact = std.mem.eql(u8, surface, "compact");
+    const compact = std.mem.eql(u8, surface, "compact") or std.mem.startsWith(u8, surface, "compact-");
     var view = try cc.client.view.View.init(gpa, if (compact) 640 else 960, if (compact) 480 else 720);
     defer view.deinit();
     var transcript = cc.comic.session.Transcript.init(gpa);
@@ -1972,6 +1972,7 @@ fn runUiPreview(gpa: std.mem.Allocator, io: std.Io, surface: []const u8) !void {
         try transcript.add("comicchat", "Great. The comic view feels much clearer now.");
     }
     if (std.mem.eql(u8, surface, "settings")) view.openDialog(.settings);
+    if (std.mem.eql(u8, surface, "compact-settings")) view.openDialog(.settings);
     if (std.mem.eql(u8, surface, "character")) view.openDialog(.character);
     if (std.mem.eql(u8, surface, "inputs")) {
         view.openDialog(.password);
@@ -1983,6 +1984,7 @@ fn runUiPreview(gpa: std.mem.Allocator, io: std.Io, surface: []const u8) !void {
         _ = view.handlePointerMove(.{ .kind = .move, .x = password_field.x + 20, .y = password_field.y + 12 }, transcript.roster.items.len);
     }
     if (std.mem.eql(u8, surface, "menu")) view.active_menu = 0;
+    if (std.mem.eql(u8, surface, "compact-menu")) view.active_menu = 6;
     if (std.mem.eql(u8, surface, "hover")) view.hovered_toolbar = 5;
     if (std.mem.eql(u8, surface, "say-hover")) view.hovered_say_action = 2;
     if (std.mem.eql(u8, surface, "member")) view.shell.selected_member = 1;

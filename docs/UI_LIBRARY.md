@@ -37,9 +37,10 @@ visual contract.
 - Dialog fields are typed: text, password, choice, list, preview, and read-only
   controls render and interact according to their actual purpose. The shared
   input surface includes hover and focus states, a focus halo and baseline,
-  secure-entry adornment, selection, mouse caret placement, horizontal caret
-  tracking for long values, and visible validation. Character and backdrop
-  choices cover every bundled asset and show live previews.
+  secure-entry adornment, an explicit caret-to-placeholder gap, selection,
+  mouse caret placement, horizontal caret tracking for long values, and
+  visible validation. Character and backdrop choices cover every bundled
+  asset and show live previews.
 - The condensed toolbar is intentionally modern; commands that do not belong
   in the primary strip remain reachable through menus and context actions.
 
@@ -80,6 +81,8 @@ zig build run -- render-ui hover > ui-hover-preview.png
 zig build run -- render-ui say-hover > ui-say-hover-preview.png
 zig build run -- render-ui member > ui-member-preview.png
 zig build run -- render-ui compact > ui-compact-preview.png
+zig build run -- render-ui compact-menu > ui-compact-menu-preview.png
+zig build run -- render-ui compact-settings > ui-compact-settings-preview.png
 ```
 
 These previews exercise the empty shell, real comic content, menu surface, and
@@ -87,6 +90,13 @@ modal surface, populated account/password controls, composer overflow, member
 selection, and narrow responsive geometry. Run `zig build test --summary all`
 with them; pixel checks cover the shell palette and dial while semantic tests
 cover control geometry.
+
+The UI acceptance gate also exercises all 43 registered dialogs at 640x480,
+800x600, and 960x720; every menu row at the 640px minimum; Debug and
+ReleaseSafe tests; native X11 menu/dialog/composer input under Xvfb; and the
+same live Win32 interaction path under headless Wine. Linux and Windows
+`render-ui` output must remain byte-identical for the main, compact menu,
+settings, password input, long composer, and conversation surfaces.
 
 ## Font regeneration
 

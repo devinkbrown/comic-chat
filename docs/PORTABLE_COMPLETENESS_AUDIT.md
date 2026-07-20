@@ -102,13 +102,17 @@ PASS  zig build -Dtarget=x86_64-openbsd -Doptimize=ReleaseSafe
 PASS  git diff --check
 PASS  portable-only tree contains no retired MFC/C++ source directory
 PASS  record-codec demo, 650x1655 strip PPM, and 315x315 backdrop PNG
-PASS  Xvfb X11 viewer smoke and offline/reconnect application-shell smoke
+PASS  all 43 dialogs at 640x480, 800x600, and 960x720 without field/action overlap
+PASS  every compact menu popup and command row remains on-screen and clickable
+PASS  Xvfb X11 menu, Settings input/Tab, Escape, and composer event smoke
+PASS  headless Wine Win32 window, menu, Settings input/Tab, Escape, and composer event smoke
+PASS  six Linux/Windows deterministic UI surfaces are byte-identical
 PASS  release archive checksums verified for all four binary packages and the
       source archive containing the pinned Onyx TLS source
 ```
 
 Not claimed by this audit: a live `eshmaki.me` SASL EXTERNAL login or a live
 same-nickname multi-client resume check with this transport revision, a
-VS2022/MFC build, native Win32 runtime smoke, or real-compositor Wayland
-clipboard/scale behavior. Those require their respective environment or the
-missing feature implementation rather than more unit tests.
+physical Windows desktop session, or real-compositor Wayland clipboard/scale
+behavior. Those require their respective environment or the missing feature
+implementation rather than more unit tests.
