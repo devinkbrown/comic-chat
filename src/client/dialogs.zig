@@ -159,14 +159,14 @@ pub fn fields(id: Id) []const Field {
         .channel, .channel_create => &.{ .{ .label = "Room name" }, .{ .label = "Topic", .hint = "Optional" } },
         .channel_properties => &.{ .{ .label = "Topic" }, .{ .label = "Modes" }, .{ .label = "Limit" } },
         .channel_password => &.{.{ .label = "Room password" }},
-        .room_list => &.{ .{ .label = "Rooms", .hint = "Select a discovered room", .kind = .list }, .{ .label = "Filter", .hint = "Optional room filter" } },
-        .user_list => &.{ .{ .label = "Members", .hint = "Select a member", .kind = .list }, .{ .label = "Filter", .hint = "Optional nickname filter" } },
+        .room_list => &.{ .{ .label = "Room name", .hint = "For example #root" }, .{ .label = "Filter", .hint = "Optional room filter" } },
+        .user_list => &.{ .{ .label = "Member nickname", .hint = "Choose a visible room member" }, .{ .label = "Filter", .hint = "Optional nickname filter" } },
         .kick, .ban, .invite, .whisper, .notification_users => &.{ .{ .label = "Member nickname" }, .{ .label = "Reason", .hint = "Optional" } },
         .away => &.{.{ .label = "Away message" }},
         .sound => &.{ .{ .label = "Sound name", .kind = .choice }, .{ .label = "Volume", .hint = "100%", .kind = .choice } },
         .set_text_font, .text_font => &.{ .{ .label = "Font name and size", .kind = .choice }, .{ .label = "Style", .hint = "Bold", .kind = .choice } },
         .choose_color => &.{ .{ .label = "Color value" }, .{ .label = "Preview", .hint = "Current theme color", .kind = .preview } },
-        .comics_view => &.{ .{ .label = "View mode", .hint = "Comic", .kind = .choice }, .{ .label = "Panel scale", .hint = "Fit window", .kind = .choice } },
+        .comics_view => &.{ .{ .label = "View mode", .hint = "Comic", .kind = .choice }, .{ .label = "Panels across", .hint = "4 panels", .kind = .choice } },
         .automation, .rules, .edit_rule, .rule_sets, .add_to_sets, .rename_loaded_set, .rename_set, .create_set, .advanced_event_params, .advanced_rule_settings => &.{ .{ .label = "Rule or set name" }, .{ .label = "Condition", .hint = "Event match" }, .{ .label = "Action", .hint = "Portable action" } },
         .notifications => &.{ .{ .label = "Notify on", .hint = "Join, part, mention", .kind = .choice }, .{ .label = "Delivery", .hint = "Desktop notification", .kind = .choice } },
         .file_transfer => &.{ .{ .label = "File path" }, .{ .label = "Destination", .hint = "Ask before receiving" } },
@@ -200,7 +200,7 @@ pub fn choiceOptions(id: Id, index: usize) []const []const u8 {
         .background => if (index == 0) &.{ "Field", "Volcano", "Den", "Room", "Pastoral" } else &.{},
         .sound => if (index == 0) &.{ "Chime", "Knock", "Laugh", "Applause" } else &.{ "100%", "75%", "50%", "25%" },
         .set_text_font, .text_font => if (index == 0) &.{ "Comic Neue 14", "Comic Neue 16", "Comic Neue 18" } else &.{ "Regular", "Bold", "Italic" },
-        .comics_view => if (index == 0) &.{ "Comic", "Text" } else &.{ "Fit window", "100%", "125%", "150%" },
+        .comics_view => if (index == 0) &.{ "Comic", "Text" } else &.{ "4 panels", "3 panels", "2 panels", "1 panel", "5 panels", "6 panels" },
         .notifications => if (index == 0) &.{ "Mentions", "Joins and parts", "All activity" } else &.{ "Desktop notification", "Sound only", "Disabled" },
         else => &.{},
     };
@@ -208,7 +208,7 @@ pub fn choiceOptions(id: Id, index: usize) []const []const u8 {
 
 pub fn requiresInput(id: Id) bool {
     return switch (id) {
-        .about, .room_list, .user_list, .motd, .comics_view, .automation, .rules, .rule_sets, .notifications, .servers, .settings, .setup => false,
+        .about, .motd, .comics_view, .automation, .rules, .rule_sets, .notifications, .servers, .settings, .setup => false,
         else => true,
     };
 }

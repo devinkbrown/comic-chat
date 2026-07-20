@@ -86,6 +86,10 @@ pub const State = struct {
         self.comic_columns = @min(6, self.comic_columns + 1);
     }
 
+    pub fn setComicColumns(self: *State, columns: u8) void {
+        self.comic_columns = std.math.clamp(columns, 1, 6);
+    }
+
     pub fn selectMember(self: *State, index: usize) void {
         self.selected_member = index;
         self.focus = .members;

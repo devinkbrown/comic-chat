@@ -35,6 +35,7 @@ pub const Action = union(enum) {
     composer_cursor: i32,
     send,
     connection,
+    endpoint_dialog: dialogs.Id,
     dialog_accept: dialogs.Id,
     dialog_cancel: dialogs.Id,
 };
@@ -209,7 +210,12 @@ pub const View = struct {
     }
 
     pub fn openConnectionDialog(self: *View, host: []const u8, port: u16, use_tls: bool) void {
-        self.openDialog(.setup);
+        self.openEndpointDialog(.setup, host, port, use_tls);
+    }
+
+    pub fn openEndpointDialog(self: *View, id: dialogs.Id, host: []const u8, port: u16, use_tls: bool) void {
+        std.debug.assert(id == .setup or id == .settings or id == .servers);
+        self.openDialog(id);
         var port_buffer: [5]u8 = undefined;
         const port_text = std.fmt.bufPrint(&port_buffer, "{d}", .{port}) catch "6697";
         const values = [_][]const u8{ host, port_text, if (use_tls) "Verified TLS" else "Plaintext (unsafe)" };
@@ -479,6 +485,7 @@ pub const View = struct {
             self.active_menu = null;
             if (menuPopupItem(self.canvas.width, menu, pointer.x, pointer.y)) |item| {
                 if (isConnectionMenuItem(menu, item)) return .connection;
+                if (endpointDialogMenuItem(menu, item)) |id| return .{ .endpoint_dialog = id };
                 self.invokeMenuItem(menu, item);
             }
             return .{ .menu = menu };
@@ -824,7 +831,11 @@ pub const View = struct {
             .departed = member.departed,
         };
 
-        var page = try strip.renderWithOptions(self.gpa, lines, .{ .title_roster = title_roster, .page_columns = self.shell.comic_columns });
+        var page = try strip.renderWithOptions(self.gpa, lines, .{
+            .title_roster = title_roster,
+            .page_columns = self.shell.comic_columns,
+            .reserve_page_columns = true,
+        });
         defer page.deinit(self.gpa);
         blitFit(&self.canvas, page.pixels, page.width, page.height, rect.x + 3, rect.y + 3, rect.w - 6, rect.h - 6);
 
@@ -1098,6 +1109,11 @@ fn menuItemLabel(menu: u8, item: u8) []const u8 {
 
 fn isConnectionMenuItem(menu: u8, item: u8) bool {
     return (menu == 0 and item == 3) or (menu == 6 and item == 5);
+}
+
+fn endpointDialogMenuItem(menu: u8, item: u8) ?dialogs.Id {
+    if ((menu == 1 and item == 0) or (menu == 6 and item == 3)) return .settings;
+    return null;
 }
 
 fn menuPopupRect(canvas_width: u32, menu: u8) Rect {
@@ -2233,6 +2249,26 @@ test "status and connect toolbar expose a prefilled connection workflow" {
     try std.testing.expectEqualStrings("eshmaki.me", view.dialogValueAt(0));
     try std.testing.expectEqualStrings("6697", view.dialogValueAt(1));
     try std.testing.expectEqualStrings("Verified TLS", view.dialogValueAt(2));
+}
+
+test "settings menu requests a prefilled live endpoint dialog" {
+    var view = try View.init(std.testing.allocator, 960, 720);
+    defer view.deinit();
+    view.active_menu = 1;
+    const popup = menuPopupRect(view.width(), 1);
+    const action = view.handlePointer(.{
+        .kind = .down,
+        .x = popup.x + 12,
+        .y = popup.y + 8,
+        .button = .primary,
+    }, 0, 0);
+    try std.testing.expectEqual(Action{ .endpoint_dialog = .settings }, action);
+    try std.testing.expect(view.active_dialog == null);
+
+    view.openEndpointDialog(.settings, "eshmaki.me", 6697, true);
+    try std.testing.expectEqual(dialogs.Id.settings, view.active_dialog.?);
+    try std.testing.expectEqualStrings("eshmaki.me", view.dialogValueAt(0));
+    try std.testing.expectEqualStrings("6697", view.dialogValueAt(1));
 }
 
 test "body camera and members expose working context menus" {

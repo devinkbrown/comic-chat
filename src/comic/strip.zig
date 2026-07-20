@@ -92,6 +92,11 @@ pub const RenderOptions = struct {
     /// remains two for compatibility; desktop clients may choose a denser,
     /// responsive presentation without changing panel internals.
     page_columns: u8 = columns,
+    /// Keep the requested number of desktop grid columns even when the last
+    /// row is only partly populated. The source/export API leaves this false;
+    /// the interactive desktop enables it so a sparse page cannot magnify one
+    /// panel to the size of the entire conversation buffer.
+    reserve_page_columns: bool = false,
 };
 
 pub const Error = bgb.Error || original_layout.Error || original_balloon.Error ||
@@ -737,7 +742,10 @@ fn composePage(
 ) Error!Image {
     const panel_count = scenes.len + 1;
     const configured_columns: usize = std.math.clamp(@as(usize, options.page_columns), 1, 8);
-    const page_columns: u32 = @intCast(@min(panel_count, configured_columns));
+    const page_columns: u32 = @intCast(if (options.reserve_page_columns)
+        configured_columns
+    else
+        @min(panel_count, configured_columns));
     const rows: u32 = @intCast((panel_count - 1) / configured_columns + 1);
     const width = page_columns * panel_width + (page_columns - 1) * device_interstice;
     const height = rows * panel_height + (rows - 1) * device_interstice;
@@ -1213,6 +1221,25 @@ test "desktop page density can place four panels across without changing panel g
     defer image.deinit(gpa);
     try std.testing.expectEqual(@as(u32, 4 * panel_width + 3 * device_interstice), image.width);
     try std.testing.expectEqual(panel_height, image.height);
+}
+
+test "desktop reserved grid keeps sparse and break-only pages at selected density" {
+    const gpa = std.testing.allocator;
+    var sparse = try renderWithOptions(gpa, &.{.{ .speaker = "anna", .text = "One." }}, .{
+        .page_columns = 4,
+        .reserve_page_columns = true,
+    });
+    defer sparse.deinit(gpa);
+    try std.testing.expectEqual(@as(u32, 4 * panel_width + 3 * device_interstice), sparse.width);
+    try std.testing.expectEqual(panel_height, sparse.height);
+
+    var break_only = try renderWithOptions(gpa, &.{.{ .speaker = "anna", .text = "<Brk>" }}, .{
+        .page_columns = 4,
+        .reserve_page_columns = true,
+    });
+    defer break_only.deinit(gpa);
+    try std.testing.expectEqual(sparse.width, break_only.width);
+    try std.testing.expectEqual(sparse.height, break_only.height);
 }
 
 test "render is deterministic and rejects an unknown avatar" {

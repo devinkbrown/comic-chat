@@ -31,7 +31,7 @@ This distinction is important:
 - The portable tree contains 92 files under `src/`. `src/root.zig:68-118`
   explicitly references every portable module and the four source-parity test
   modules so their inline tests are compiled and run.
-- The current release test gate reports 406 passed tests and one intentionally
+- The current release test gate reports 409 passed tests and one intentionally
   skipped platform-conditional test.
 - Native Linux plus x86_64 Windows, FreeBSD, and OpenBSD release builds pass.
 - The published source archive includes the source tree and the crypto,
@@ -47,10 +47,10 @@ This distinction is important:
 | Source comic rendering | Reachable | Original page, title, layout, balloon, figure and raster modules feed the shared strip path; CLI render commands and the app use them. Golden/source-parity tests cover the rendering pipeline. |
 | AVB/BGB content | Reachable | Authored character/backdrop decoding, icons, masks and figure composition are used by the renderer and UI. Program chrome uses modern glyphs; product art remains original. |
 | Shell geometry | Reachable | The modern seven-menu/condensed-toolbar chrome retains the 29px tabs, 80/20 main split, 30/70 comic side split, 23px composer and status panes through shared geometry. |
-| Comic/text buffers | Partial | Both modes, bounded history paging, visible scroll position, wheel input, per-room transcripts/drafts, modal atomic `.ccc` open/save, and modal PNG export are reachable. Selection/copy, page-break editing, native pickers, and printing remain. |
+| Comic/text buffers | Partial | Both modes, one-to-six-column desktop density, stable sparse/break-only grid geometry, bounded history paging, visible scroll position, wheel input, per-room transcripts/drafts, modal atomic `.ccc` open/save, and modal PNG export are reachable. Selection/copy, page-break editing, native pickers, and printing remain. |
 | Body camera | Partial | Redrawn high-resolution dial faces use the source wheel thresholds. Pointer drag and keyboard arrows/Home drive a visible intensity puck; the context menu exposes Freeze, Character, and Neutral. Double-click and an immediate Send Expression command remain. |
 | Member list | Reachable core | NAMES/JOIN/PART/QUIT/NICK update the live roster; active counts exclude departed history. Icon/list modes, bounded wheel scrolling, retained viewport position, keyboard reveal, selection, character preview, and right-click actions are reachable. Dynamic role-badge artwork remains incomplete. |
-| Menus/toolbars/buttons | Partial | The condensed modern toolbar is backed by complete popups for File, Edit, View, Format, Room, Member, and More. Checked view state, stable hit testing, context menus, and command-specific dialogs are live; command enablement remains incomplete. |
+| Menus/toolbars/buttons | Partial | The condensed modern toolbar is backed by complete popups for File, Edit, View, Format, Room, Member, and More. Checked view state, stable hit testing, context menus, and command-specific dialogs are live. Settings reconnects from the current endpoint, Room List joins, User List selects, and Comic View applies mode and density; command enablement remains incomplete. |
 | Composer | Partial | UTF-8 scalar insertion, codepoint-safe movement/delete, selection, mouse caret placement, horizontal caret tracking, per-room drafts, bounded copy/cut/paste, undo/redo, and the 400-byte wire bound are live. Native clipboard, multiline input, IME, and formatting controls remain. |
 | Live IRC/IRCX comic chat | Reachable core | Connect/register/reconnect, multi-room JOIN/PART, per-room roster/transcript routing, IRCX `DATA CCUDI1`, embedded UDI, avatar announcements and all five say modes are wired. |
 | TLS, proxies, CAP, SASL, STS | Reachable | The live client composes verified TLS, proxy connection, IRCv3 negotiation, SASL and persisted STS. Credential input is file-based and refused over plaintext. |
@@ -64,7 +64,7 @@ This distinction is important:
 | Notifications | Substrate | Mask construction and WHO snapshot folding exist in `src/comic/notify.zig`; there is no polling owner, notification UI or persistence. |
 | `.ccc` / `.ccr` | Partial | Bounded codecs exist; `.ccc` open/save and PNG export are live, atomic, and reachable from dedicated File dialogs. Locator application, recent files, and native pickers remain. |
 | Multiple rooms/windows | Reachable core | Up to 64 case-insensitive room tabs own independent transcript, roster, draft, joined, and unread state. `/join`, `/switch`, `/part`, and clickable tabs are live; favorites and separate child windows remain. |
-| Microsoft dialogs | Partial | All 40 templates plus three portable file dialogs have typed IDs, source dimensions, modal routing, hover/focus/validation states, selection, mouse caret placement, keyboard editing, and shared controls. Room, appearance, identity, away, moderation, invite, whisper, open/save, and export acceptance is wired; remaining template-specific models are incomplete. |
+| Microsoft dialogs | Partial | All 40 templates plus three portable file dialogs have typed IDs, source dimensions, modal routing, hover/focus/validation states, selection, mouse caret placement, keyboard editing, and shared controls. Endpoint Settings, Room List, User List, Comic View, room, appearance, identity, away, moderation, invite, whisper, open/save, and export acceptance are wired; remaining template-specific models are incomplete. |
 | Pointer/touch | Partial | X11, Wayland, and Win32 emit shared motion/button/wheel events and activate stable targets. Touch gestures are not implemented. |
 | Clipboard/IME/accessibility | Partial | The shared event contract carries modifiers; the app owns UTF-8-safe clipboard/selection state and a stable semantic UI snapshot. Native clipboard, compose/IME, AT-SPI, and UIA bridges remain. |
 | DPI scaling | Partial | Geometry resizes proportionally inside the framebuffer, but Wayland stays at scale 1 and Win32 is system-DPI aware rather than per-monitor-v2. |

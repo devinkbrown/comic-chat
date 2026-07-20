@@ -1509,6 +1509,10 @@ fn handleWindowEvent(
                     view.openConnectionDialog(network.host, network.reconnect.port, network.effectiveOptions().security == .tls);
                     break :connection true;
                 },
+                .endpoint_dialog => |id| endpoint: {
+                    view.openEndpointDialog(id, network.host, network.reconnect.port, network.effectiveOptions().security == .tls);
+                    break :endpoint true;
+                },
                 .toolbar => |index| toolbar: {
                     if (index == 1) break :toolbar false;
                     if (index == 3) {
@@ -1590,7 +1594,7 @@ fn applyDialogAction(
         else => return,
     };
     const value = std.mem.trim(u8, view.dialogValue(), " \t");
-    if (id == .setup) {
+    if (id == .setup or id == .settings or id == .servers) {
         const request = parseConnectionDialog(value, view.dialogValueAt(1), view.dialogValueAt(2)) catch |err| {
             view.setDialogNotice(switch (err) {
                 error.InvalidHost => "Enter a valid server name without spaces.",
@@ -1614,10 +1618,14 @@ fn applyDialogAction(
     const maybe_client = network.clientPtr();
     const room = workspace.activeRoom() orelse return;
     switch (id) {
-        .channel, .channel_create => {
+        .room_list, .channel, .channel_create => {
             const index = workspace.ensure(value) catch return;
             _ = workspace.activate(index);
             if (maybe_client) |client| try client.join(value);
+        },
+        .comics_view => {
+            view.setContentMode(if (std.ascii.eqlIgnoreCase(view.dialogValueAt(0), "Text")) .text else .comic);
+            view.shell.setComicColumns(comicColumnsFromDialog(view.dialogValueAt(1)));
         },
         .character => {
             const selected = cc.comic.session.bundledAvatarByName(value) orelse return;
@@ -1630,12 +1638,13 @@ fn applyDialogAction(
         .kick => if (maybe_client) |client| try client.kick(room.name, value),
         .ban => if (maybe_client) |client| try client.setBan(room.name, value),
         .invite => if (maybe_client) |client| try client.invite(value, room.name),
-        .whisper => {
-            for (room.transcript.roster.items, 0..) |member, index| if (std.ascii.eqlIgnoreCase(member.nick, value)) {
-                view.shell.selectMember(index);
-                view.shell.setSayMode(.whisper);
-                break;
+        .user_list, .whisper => {
+            const selected = selectRosterMember(&room.transcript, value) orelse {
+                view.setDialogNotice("That member is not in the current room.");
+                return;
             };
+            view.shell.selectMember(selected);
+            if (id == .whisper) view.shell.setSayMode(.whisper);
         },
         .open_conversation => {
             var loaded = cc.client.files.loadConversation(io, gpa, value) catch {
@@ -1666,6 +1675,19 @@ fn applyDialogAction(
         else => {},
     }
     _ = view.closeDialog();
+}
+
+fn selectRosterMember(transcript: *const cc.comic.session.Transcript, nick: []const u8) ?usize {
+    for (transcript.roster.items, 0..) |member, index| {
+        if (!member.departed and std.ascii.eqlIgnoreCase(member.nick, nick)) return index;
+    }
+    return null;
+}
+
+fn comicColumnsFromDialog(value: []const u8) u8 {
+    const trimmed = std.mem.trim(u8, value, " \t");
+    if (trimmed.len == 0 or trimmed[0] < '1' or trimmed[0] > '6') return 4;
+    return trimmed[0] - '0';
 }
 
 const ConnectionDialogRequest = struct {
@@ -1704,6 +1726,22 @@ test "connection failures remain actionable" {
     try std.testing.expect(!state.joined);
     try std.testing.expect(std.mem.indexOf(u8, state.status, "ConnectionRefused") != null);
     try std.testing.expect(std.mem.indexOf(u8, state.status, "click for settings") != null);
+}
+
+test "comic view choices remain bounded and roster selection ignores departed users" {
+    try std.testing.expectEqual(@as(u8, 4), comicColumnsFromDialog("4 panels"));
+    try std.testing.expectEqual(@as(u8, 6), comicColumnsFromDialog(" 6 panels"));
+    try std.testing.expectEqual(@as(u8, 4), comicColumnsFromDialog("Fit window"));
+
+    var transcript = cc.comic.session.Transcript.init(std.testing.allocator);
+    defer transcript.deinit();
+    try transcript.setSelf("Me");
+    var names = cc.net.message.parse(":server 353 Me = #root :Me Alice Bob");
+    try std.testing.expect(try transcript.observeIrc(&names, "#root", "Me"));
+    try std.testing.expect(selectRosterMember(&transcript, "alice") != null);
+    var part = cc.net.message.parse(":Alice!u@h PART #root :gone");
+    try std.testing.expect(try transcript.observeIrc(&part, "#root", "Me"));
+    try std.testing.expect(selectRosterMember(&transcript, "alice") == null);
 }
 
 fn handleWorkspaceInputKey(
@@ -2093,6 +2131,11 @@ fn runUiPreview(gpa: std.mem.Allocator, io: std.Io, surface: []const u8) !void {
         try transcript.add("alex", "Welcome to #root. The new studio is ready.");
         try transcript.add("comicchat", "Great. The comic view feels much clearer now.");
     }
+    if (std.mem.eql(u8, surface, "sparse")) {
+        try transcript.setAvatar("alex", "armando");
+        try transcript.add("alex", "A partially filled row keeps the selected panel density.");
+    }
+    if (std.mem.eql(u8, surface, "break-only")) try transcript.add("comicchat", "<Brk>");
     if (std.mem.eql(u8, surface, "settings")) view.openDialog(.settings);
     if (std.mem.eql(u8, surface, "compact-settings")) view.openDialog(.settings);
     if (std.mem.eql(u8, surface, "character")) view.openDialog(.character);
