@@ -149,6 +149,23 @@ pub const Editor = struct {
         self.cursor += contents.len;
     }
 
+    /// Insert one source ComicChat formatting control. When text is selected,
+    /// the same toggle is placed on both sides so the formatting is scoped to
+    /// that selection; without a selection it changes the state at the caret.
+    pub fn toggleControl(self: *Editor, control: u8) !void {
+        if (control < 0x01 or control > 0x1f or control == '\n' or control == '\r') return error.InvalidControl;
+        try self.recordUndo();
+        if (self.selection()) |range| {
+            try self.buf.insert(self.gpa, range.end, control);
+            try self.buf.insert(self.gpa, range.start, control);
+            self.cursor = range.end + 2;
+            self.selection_anchor = null;
+        } else {
+            try self.buf.insert(self.gpa, self.cursor, control);
+            self.cursor += 1;
+        }
+    }
+
     pub fn undo(self: *Editor) void {
         const snapshot = self.undo_stack.pop() orelse return;
         self.pushCurrent(&self.redo_stack) catch {
@@ -329,4 +346,15 @@ test "selection extension stays on UTF-8 boundaries" {
     const range = ed.selection().?;
     try std.testing.expectEqual(@as(usize, 1), range.start);
     try std.testing.expectEqual(@as(usize, 5), range.end);
+}
+
+test "format controls wrap a selection and remain undoable" {
+    var ed = Editor.init(std.testing.allocator);
+    defer ed.deinit();
+    try ed.paste("hello");
+    ed.selectAll();
+    try ed.toggleControl(0x02);
+    try std.testing.expectEqualStrings("\x02hello\x02", ed.text());
+    ed.undo();
+    try std.testing.expectEqualStrings("hello", ed.text());
 }

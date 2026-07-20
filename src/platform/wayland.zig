@@ -13,11 +13,9 @@
 //! (Wayland deliberately leaves this to the client, unlike X11's native
 //! auto-repeat) is implemented via `repeat_info` + `Window.checkRepeat`.
 //!
-//! Remaining keyboard limitation: AltGr/ISO Level3 and other multi-level
-//! layouts, compose/dead-key sequences, and IME input are not represented —
-//! see `xkb.zig`'s module doc for the precise parsing scope and why. A key
-//! whose keymap entry falls outside that scope, or any key before the first
-//! keymap event arrives, falls back to the hardcoded US evdev table below.
+//! Committed compose/dead-key/IME text is received through text-input-v3 when
+//! the compositor advertises it. The bounded XKB parser remains the fallback
+//! for compositors without that protocol.
 
 const std = @import("std");
 const linux = std.os.linux;
@@ -25,12 +23,14 @@ const posix = std.posix;
 const net = std.Io.net;
 const xkb = @import("xkb.zig");
 const shared_event = @import("event.zig");
+const services = @import("services.zig");
 
 const wl_display: u32 = 1;
 const max_message_size: usize = 1024 * 1024;
 const shm_argb8888: u32 = 0;
 const seat_pointer: u32 = 1 << 0;
 const seat_keyboard: u32 = 1 << 1;
+const seat_touch: u32 = 1 << 2;
 
 // Request opcodes from wayland.xml and stable/xdg-shell/xdg-shell.xml.
 const display_sync: u16 = 0;
@@ -45,9 +45,11 @@ const surface_destroy: u16 = 0;
 const surface_attach: u16 = 1;
 const surface_damage: u16 = 2;
 const surface_commit: u16 = 6;
+const surface_set_buffer_scale: u16 = 8;
 const surface_damage_buffer: u16 = 9;
 const seat_get_pointer: u16 = 0;
 const seat_get_keyboard: u16 = 1;
+const seat_get_touch: u16 = 2;
 const seat_release: u16 = 3;
 const keyboard_release: u16 = 0;
 const xdg_wm_base_destroy: u16 = 0;
@@ -73,6 +75,8 @@ const Globals = struct {
     shm: Global = .{},
     seat: Global = .{},
     xdg_wm_base: Global = .{},
+    output: Global = .{},
+    text_input_manager: Global = .{},
 
     fn record(self: *Globals, name: u32, interface: []const u8, version: u32) void {
         const value = Global{ .name = name, .version = version };
@@ -84,6 +88,10 @@ const Globals = struct {
             self.seat = value;
         } else if (std.mem.eql(u8, interface, "xdg_wm_base") and self.xdg_wm_base.name == 0) {
             self.xdg_wm_base = value;
+        } else if (std.mem.eql(u8, interface, "wl_output") and self.output.name == 0) {
+            self.output = value;
+        } else if (std.mem.eql(u8, interface, "zwp_text_input_manager_v3") and self.text_input_manager.name == 0) {
+            self.text_input_manager = value;
         }
     }
 };
@@ -292,12 +300,23 @@ pub const Window = struct {
     seat_version: u32 = 0,
     keyboard_id: u32 = 0,
     pointer_id: u32 = 0,
+    touch_id: u32 = 0,
+    touch_contact: ?i32 = null,
     pointer_x: i32 = 0,
     pointer_y: i32 = 0,
+    last_primary_click_ms: u32 = 0,
+    last_primary_x: i32 = 0,
+    last_primary_y: i32 = 0,
     surface_id: u32 = 0,
     xdg_wm_base_id: u32 = 0,
     xdg_surface_id: u32 = 0,
     xdg_toplevel_id: u32 = 0,
+    output_id: u32 = 0,
+    output_scale: u32 = 1,
+    text_input_manager_id: u32 = 0,
+    text_input_id: u32 = 0,
+    committed_text: std.ArrayList(u21) = .empty,
+    committed_text_offset: usize = 0,
 
     width: u32,
     height: u32,
@@ -355,12 +374,20 @@ pub const Window = struct {
         self.seat_version = 0;
         self.keyboard_id = 0;
         self.pointer_id = 0;
+        self.touch_id = 0;
+        self.touch_contact = null;
         self.pointer_x = 0;
         self.pointer_y = 0;
         self.surface_id = 0;
         self.xdg_wm_base_id = 0;
         self.xdg_surface_id = 0;
         self.xdg_toplevel_id = 0;
+        self.output_id = 0;
+        self.output_scale = 1;
+        self.text_input_manager_id = 0;
+        self.text_input_id = 0;
+        self.committed_text = .empty;
+        self.committed_text_offset = 0;
         self.width = w;
         self.height = h;
         self.pending_width = 0;
@@ -393,6 +420,17 @@ pub const Window = struct {
         self.xdg_wm_base_id = try self.conn.allocId();
         try sendBind(&self.conn, self.gpa, self.registry_id, globals.xdg_wm_base, "xdg_wm_base", 1, self.xdg_wm_base_id);
 
+        if (globals.output.name != 0) {
+            self.output_id = try self.conn.allocId();
+            try sendBind(&self.conn, self.gpa, self.registry_id, globals.output, "wl_output", @min(globals.output.version, 2), self.output_id);
+        }
+        if (globals.text_input_manager.name != 0) {
+            self.text_input_manager_id = try self.conn.allocId();
+            try sendBind(&self.conn, self.gpa, self.registry_id, globals.text_input_manager, "zwp_text_input_manager_v3", 1, self.text_input_manager_id);
+            self.text_input_id = try self.conn.allocId();
+            try sendTwoU32(&self.conn, self.text_input_manager_id, 1, self.text_input_id, self.seat_id);
+        }
+
         self.surface_id = try self.conn.allocId();
         try sendOneU32(&self.conn, self.compositor_id, compositor_create_surface, self.surface_id);
         self.xdg_surface_id = try self.conn.allocId();
@@ -414,12 +452,37 @@ pub const Window = struct {
         return self;
     }
 
+    pub fn writeClipboard(self: *Window, text: []const u8) !void {
+        return services.writeClipboard(self.conn.io, .wayland, text);
+    }
+
+    pub fn readClipboard(self: *Window, gpa: std.mem.Allocator) !?[]u8 {
+        return services.readClipboard(gpa, self.conn.io, .wayland);
+    }
+
+    pub fn chooseFile(self: *Window, gpa: std.mem.Allocator, save: bool, title: []const u8) !?[]u8 {
+        return services.chooseFile(gpa, self.conn.io, save, title);
+    }
+
+    pub fn openPath(self: *Window, gpa: std.mem.Allocator, path: []const u8) !void {
+        return services.openPath(gpa, self.conn.io, path);
+    }
+
+    pub fn printPath(self: *Window, gpa: std.mem.Allocator, path: []const u8) !void {
+        return services.printPath(gpa, self.conn.io, path);
+    }
+
+    pub fn notify(self: *Window, gpa: std.mem.Allocator, title: []const u8, body: []const u8) !void {
+        return services.notify(gpa, self.conn.io, title, body);
+    }
+
     pub fn deinit(self: *Window) void {
         self.destroyProtocolObjects() catch {};
         self.conn.stream.close(self.conn.io);
         if (self.xkb_keymap) |*keymap| keymap.deinit();
         for (self.buffers.items) |*buffer| buffer.deinit();
         self.buffers.deinit(self.gpa);
+        self.committed_text.deinit(self.gpa);
         self.threaded.deinit();
         self.gpa.destroy(self);
     }
@@ -438,26 +501,42 @@ pub const Window = struct {
         const count = try std.math.mul(usize, @as(usize, w), @as(usize, h));
         if (pixels.len != count) return error.BadFramebufferSize;
 
-        self.discardIdleBuffersExcept(w, h);
+        const pixel_w = try std.math.mul(u32, w, self.output_scale);
+        const pixel_h = try std.math.mul(u32, h, self.output_scale);
+        self.discardIdleBuffersExcept(pixel_w, pixel_h);
         var index: ?usize = null;
         for (self.buffers.items, 0..) |buffer, i| {
-            if (!buffer.busy and buffer.width == w and buffer.height == h) {
+            if (!buffer.busy and buffer.width == pixel_w and buffer.height == pixel_h) {
                 index = i;
                 break;
             }
         }
         if (index == null) {
-            try self.buffers.append(self.gpa, try self.createBuffer(w, h));
+            try self.buffers.append(self.gpa, try self.createBuffer(pixel_w, pixel_h));
             index = self.buffers.items.len - 1;
         }
         const buffer = &self.buffers.items[index.?];
-        const bytes = std.mem.sliceAsBytes(pixels);
-        @memcpy(buffer.memory[0..bytes.len], bytes);
+        const destination: []u32 = std.mem.bytesAsSlice(u32, buffer.memory);
+        var source_y: u32 = 0;
+        while (source_y < h) : (source_y += 1) {
+            var scale_y: u32 = 0;
+            while (scale_y < self.output_scale) : (scale_y += 1) {
+                var source_x: u32 = 0;
+                while (source_x < w) : (source_x += 1) {
+                    const pixel = pixels[@as(usize, source_y) * w + source_x];
+                    var scale_x: u32 = 0;
+                    while (scale_x < self.output_scale) : (scale_x += 1) {
+                        destination[@as(usize, source_y * self.output_scale + scale_y) * pixel_w + source_x * self.output_scale + scale_x] = pixel;
+                    }
+                }
+            }
+        }
         buffer.busy = true;
 
+        if (self.compositor_version >= 3) try sendOneU32(&self.conn, self.surface_id, surface_set_buffer_scale, self.output_scale);
         try sendAttach(&self.conn, self.surface_id, buffer.id);
         if (self.compositor_version >= 4) {
-            try sendDamage(&self.conn, self.surface_id, surface_damage_buffer, w, h);
+            try sendDamage(&self.conn, self.surface_id, surface_damage_buffer, pixel_w, pixel_h);
         } else {
             try sendDamage(&self.conn, self.surface_id, surface_damage, w, h);
         }
@@ -470,6 +549,7 @@ pub const Window = struct {
     /// callers: a release can be the only readable message, and waiting here
     /// for a later visible event would starve the IRC socket indefinitely.
     pub fn nextEvent(self: *Window) !Event {
+        if (self.takeCommittedKey()) |event| return event;
         const msg = try self.conn.readMessage(self.gpa);
         defer msg.deinit(self.gpa);
         return try self.dispatch(msg) orelse .other;
@@ -485,6 +565,7 @@ pub const Window = struct {
     /// than accumulating fixed steps, so a delayed poll loop does not fire
     /// a burst of catch-up repeats once it resumes.
     pub fn checkRepeat(self: *Window) ?Event {
+        if (self.takeCommittedKey()) |event| return event;
         const code = self.held_key_code orelse return null;
         if (self.repeat_rate_per_sec <= 0) return null;
         const now = nowMs(self.conn.io);
@@ -540,11 +621,25 @@ pub const Window = struct {
             }
             return null;
         }
+        if (self.output_id != 0 and msg.object == self.output_id) {
+            if (msg.opcode == 3) {
+                if (msg.body.len != 4) return error.InvalidWaylandMessage;
+                const announced = getI32(msg.body);
+                if (announced > 0 and announced <= 8) self.output_scale = @intCast(announced);
+            }
+            return null;
+        }
+        if (self.text_input_id != 0 and msg.object == self.text_input_id) {
+            return try self.textInputEvent(msg.opcode, msg.body);
+        }
         if (self.keyboard_id != 0 and msg.object == self.keyboard_id) {
             return try self.keyboardEvent(msg.opcode, msg.body);
         }
         if (self.pointer_id != 0 and msg.object == self.pointer_id) {
             return try self.pointerEvent(msg.opcode, msg.body);
+        }
+        if (self.touch_id != 0 and msg.object == self.touch_id) {
+            return try self.touchEvent(msg.opcode, msg.body);
         }
         if (msg.object == self.xdg_toplevel_id) {
             switch (msg.opcode) {
@@ -608,6 +703,91 @@ pub const Window = struct {
             self.shift_left = false;
             self.shift_right = false;
         }
+        if ((capabilities & seat_touch) != 0) {
+            if (self.touch_id == 0) {
+                self.touch_id = try self.conn.allocId();
+                try sendOneU32(&self.conn, self.seat_id, seat_get_touch, self.touch_id);
+            }
+        } else if (self.touch_id != 0) {
+            if (self.seat_version >= 3) try sendEmpty(&self.conn, self.touch_id, 0);
+            self.touch_id = 0;
+            self.touch_contact = null;
+        }
+    }
+
+    fn touchEvent(self: *Window, opcode: u16, body: []const u8) !?Event {
+        switch (opcode) {
+            0 => { // down(serial, time, surface, id, x, y)
+                if (body.len != 24) return error.InvalidWaylandMessage;
+                if (self.touch_contact != null) return null;
+                self.touch_contact = getI32(body[12..16]);
+                self.pointer_x = @divTrunc(getI32(body[16..20]), 256);
+                self.pointer_y = @divTrunc(getI32(body[20..24]), 256);
+                return .{ .pointer = .{ .kind = .down, .x = self.pointer_x, .y = self.pointer_y, .button = .primary } };
+            },
+            1 => { // up(serial, time, id)
+                if (body.len != 12) return error.InvalidWaylandMessage;
+                if (self.touch_contact == null or self.touch_contact.? != getI32(body[8..12])) return null;
+                self.touch_contact = null;
+                return .{ .pointer = .{ .kind = .up, .x = self.pointer_x, .y = self.pointer_y, .button = .primary } };
+            },
+            2 => { // motion(time, id, x, y)
+                if (body.len != 16) return error.InvalidWaylandMessage;
+                if (self.touch_contact == null or self.touch_contact.? != getI32(body[4..8])) return null;
+                self.pointer_x = @divTrunc(getI32(body[8..12]), 256);
+                self.pointer_y = @divTrunc(getI32(body[12..16]), 256);
+                return .{ .pointer = .{ .kind = .move, .x = self.pointer_x, .y = self.pointer_y, .button = .primary } };
+            },
+            4 => { // cancel
+                if (body.len != 0) return error.InvalidWaylandMessage;
+                if (self.touch_contact == null) return null;
+                self.touch_contact = null;
+                return .{ .pointer = .{ .kind = .up, .x = self.pointer_x, .y = self.pointer_y, .button = .primary } };
+            },
+            3, 5, 6 => return null,
+            else => return null,
+        }
+    }
+
+    fn textInputEvent(self: *Window, opcode: u16, body: []const u8) !?Event {
+        switch (opcode) {
+            0 => { // enter(surface)
+                if (body.len != 4 or get32(body) != self.surface_id) return error.InvalidWaylandMessage;
+                try sendEmpty(&self.conn, self.text_input_id, 1); // enable
+                try sendTwoU32(&self.conn, self.text_input_id, 5, 0, 0); // normal text
+                try sendEmpty(&self.conn, self.text_input_id, 7); // commit state
+            },
+            1 => { // leave(surface)
+                if (body.len != 4) return error.InvalidWaylandMessage;
+                try sendEmpty(&self.conn, self.text_input_id, 2); // disable
+                try sendEmpty(&self.conn, self.text_input_id, 7);
+            },
+            3 => { // commit_string(text)
+                const text = try parseWireString(body);
+                if (!std.unicode.utf8ValidateSlice(text)) return error.InvalidWaylandString;
+                var view = try std.unicode.Utf8View.init(text);
+                var iterator = view.iterator();
+                while (iterator.nextCodepoint()) |codepoint| {
+                    if (self.committed_text.items.len - self.committed_text_offset >= 4096) break;
+                    try self.committed_text.append(self.gpa, codepoint);
+                }
+                return self.takeCommittedKey();
+            },
+            2, 4, 5 => {}, // preedit/delete/done do not commit application text
+            else => {},
+        }
+        return null;
+    }
+
+    fn takeCommittedKey(self: *Window) ?Event {
+        if (self.committed_text_offset >= self.committed_text.items.len) {
+            self.committed_text.clearRetainingCapacity();
+            self.committed_text_offset = 0;
+            return null;
+        }
+        const codepoint = self.committed_text.items[self.committed_text_offset];
+        self.committed_text_offset += 1;
+        return .{ .key = .{ .key = .{ .char = codepoint }, .modifiers = .{} } };
     }
 
     fn pointerEvent(self: *Window, opcode: u16, body: []const u8) !?Event {
@@ -636,11 +816,22 @@ pub const Window = struct {
                     0x112 => .middle,
                     else => .none,
                 };
+                const pressed = get32(body[12..16]) != 0;
+                var clicks: u8 = 1;
+                if (pressed and button == .primary) {
+                    const now = get32(body[4..8]);
+                    const near = @abs(self.pointer_x - self.last_primary_x) <= 4 and @abs(self.pointer_y - self.last_primary_y) <= 4;
+                    if (near and now -% self.last_primary_click_ms <= 500) clicks = 2;
+                    self.last_primary_click_ms = now;
+                    self.last_primary_x = self.pointer_x;
+                    self.last_primary_y = self.pointer_y;
+                }
                 return .{ .pointer = .{
-                    .kind = if (get32(body[12..16]) != 0) .down else .up,
+                    .kind = if (pressed) .down else .up,
                     .x = self.pointer_x,
                     .y = self.pointer_y,
                     .button = button,
+                    .clicks = clicks,
                 } };
             },
             4 => { // axis(time, axis, value)
@@ -838,6 +1029,9 @@ pub const Window = struct {
         for (self.buffers.items) |buffer| try sendEmpty(&self.conn, buffer.id, buffer_destroy);
         if (self.keyboard_id != 0 and self.seat_version >= 3) try sendEmpty(&self.conn, self.keyboard_id, keyboard_release);
         if (self.pointer_id != 0 and self.seat_version >= 3) try sendEmpty(&self.conn, self.pointer_id, pointer_release);
+        if (self.touch_id != 0 and self.seat_version >= 3) try sendEmpty(&self.conn, self.touch_id, 0);
+        if (self.text_input_id != 0) try sendEmpty(&self.conn, self.text_input_id, 0);
+        if (self.text_input_manager_id != 0) try sendEmpty(&self.conn, self.text_input_manager_id, 0);
         if (self.xdg_toplevel_id != 0) try sendEmpty(&self.conn, self.xdg_toplevel_id, xdg_toplevel_destroy);
         if (self.xdg_surface_id != 0) try sendEmpty(&self.conn, self.xdg_surface_id, xdg_surface_destroy);
         if (self.surface_id != 0) try sendEmpty(&self.conn, self.surface_id, surface_destroy);
@@ -868,6 +1062,15 @@ fn parseRegistryGlobal(body: []const u8) !RegistryGlobal {
         .interface = body[8 .. string_end - 1],
         .version = get32(body[version_off .. version_off + 4]),
     };
+}
+
+fn parseWireString(body: []const u8) ![]const u8 {
+    if (body.len < 4) return error.InvalidWaylandMessage;
+    const length: usize = @intCast(get32(body[0..4]));
+    if (length == 0) return "";
+    if (length > body.len - 4 or body.len != 4 + pad4(length) or body[3 + length] != 0)
+        return error.InvalidWaylandMessage;
+    return body[4 .. 3 + length];
 }
 
 fn sendBind(

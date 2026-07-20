@@ -57,6 +57,9 @@ zig build run -- app eshmaki.me your-nick '#root' \
 On Windows, double-clicking `comicchat.exe` opens the desktop client directly
 with the configured `eshmaki.me`, `comicchat`, and `#root` defaults. Use
 `comicchat.exe app <nick>` or the full command form above to override them.
+Passing a `.ccc` conversation or `.ccr` locator as the only argument opens it
+directly. Optional per-user Windows and freedesktop file-association helpers
+are included under `packaging/`.
 
 The app opens before DNS/TCP/TLS setup and keeps the native event loop live
 while a bounded connector races IPv6/IPv4 candidates. `--connect-timeout-ms`
@@ -86,12 +89,23 @@ for view and source-dialog workflows. Conversation files and rendered UI
 captures use `/open path.ccc`, `/save path.ccc`, and `/export path.png`;
 writes are bounded and atomic.
 
+File, Edit, and Format also expose native Open/Save selection, recent
+conversations, transcript range selection/copy/delete, source page-break
+editing, printable PDF export/open/print, and bold/italic/underline composer
+controls. The multiline composer sends each entered line through the same
+bounded IRC path. Windows uses the Unicode clipboard and common file dialogs;
+Wayland/X11 use the installed desktop clipboard and picker services with the
+internal clipboard/path editor as a safe fallback.
+
 The status bar and the first toolbar button both open a prefilled live
 Connection Setup dialog. Applying it stops the current connection, validates
 the endpoint and security choice, and reconnects immediately. The room member
 pane consumes live NAMES/JOIN/PART/QUIT/NICK state, reports active rather than
 historical members, scrolls with the wheel, keeps keyboard selection visible,
 and maps selection and context actions to the correct scrolled member.
+NAMES prefixes and live MODE changes drive visible voice/half-op/operator/owner
+badges; room administration, Kick, and Ban controls disable when the local
+member lacks permission.
 Edit > Settings uses the same prefilled, validated reconnect path. Room List
 uses source-shaped LIST/LISTX queries and optionally joins a result, User List
 selects an active member, and Comic View applies both content mode and one-to-six panel density. Sparse conversations
@@ -106,6 +120,9 @@ call links; and consent-gated DCC transfers. Incoming files require an explicit
 save path, never replace an existing file, remain bounded to 16 MiB, report
 progress, and can be cancelled without retaining a partial file. The retired
 Windows NetMeeting control is answered with `NOHAVE`; it is never launched.
+Favorites, recent files, advanced rule sets/import/export, occurrence limits,
+desktop online/offline notifications, Connection Features, and an independent
+room-window command are reachable from the modern menus.
 
 The live comic wire path is checked against Microsoft's released
 `bInsertAnnotations`, `bChatSendToTarget`, `OnDataMsg`, and `ProcessSay`
@@ -179,7 +196,7 @@ env -u WAYLAND_DISPLAY zig build run -- window anna
 
 ## Release packages
 
-The current published release is `comicchat-portable-2026-07-20.4`.
+The current published release is `comicchat-portable-2026-07-20.5`.
 It contains x86_64 binary packages for Windows, Linux, FreeBSD, and OpenBSD,
 an explicit buildable source archive, and a single SHA-256 manifest covering
 all five artifacts. The source archive includes the narrow Onyx TLS dependency
@@ -189,13 +206,13 @@ without a separate submodule checkout.
 Verify downloaded artifacts before use:
 
 ```sh
-sha256sum -c comicchat-portable-2026-07-20.4-SHA256SUMS.txt
+sha256sum -c comicchat-portable-2026-07-20.5-SHA256SUMS.txt
 ```
 
 To build the binary archives from a clean checkout:
 
 ```sh
-./tools/package-release.sh portable-2026-07-20.4
+./tools/package-release.sh portable-2026-07-20.5
 ```
 
 Each archive contains the executable, this README, the AGPL license, and
@@ -206,15 +223,14 @@ backdrops, face expressions, and fonts are embedded in the binaries.
 `comicchat app <nick>` defaults to the `eshmaki.me` server and `#root` channel;
 pass a host and/or channel to override either default.
 
-The direct Wayland client currently uses scale 1. It parses the compositor's
-XKB keymap for base and Shift levels and implements compositor-configured
-client-side key repeat, with a US evdev fallback before a usable keymap is
-available. It does not yet support AltGr/ISO Level3, compose/dead-key sequences,
-IME, or output-scale negotiation. Win32 is system-DPI aware rather than
-per-monitor-v2 aware. Window creation, configure/resize, shared-memory
-presentation, keyboard input, IRC traffic, and clean close are implemented on
-both Wayland and Win32. Pointer input and the shared editing clipboard model
-are implemented; native OS clipboard and IME bridges remain future work.
+The direct Wayland client parses compositor XKB keymaps, implements configured
+key repeat, accepts committed compose/dead-key/IME text through text-input-v3,
+maps native touch contacts to the shared interaction contract, and allocates
+scaled buffers from `wl_output` scale. Win32 uses per-monitor-v2 DPI geometry,
+Unicode/IME input, the Unicode clipboard, and native common dialogs. Window
+creation, configure/resize, scaled presentation, keyboard/pointer input, IRC
+traffic, and clean close are implemented across Wayland, X11, Win32, FreeBSD,
+and OpenBSD.
 
 The portable lane has no SDL dependency. Native backends speak the Wayland/X11
 protocols or Win32 APIs directly, and all display the same software-rendered

@@ -8,6 +8,7 @@ const emotion_mod = @import("../comic/emotion.zig");
 pub const ContentMode = enum { comic, text };
 pub const SayMode = enum { say, think, whisper, action, sound };
 pub const MemberView = enum { icons, list };
+pub const TranscriptSelection = struct { start: usize, end: usize };
 
 pub const Focus = enum {
     navigation,
@@ -21,6 +22,8 @@ pub const State = struct {
     content_mode: ContentMode = .comic,
     focus: Focus = .composer,
     history_offset: usize = 0,
+    transcript_cursor: ?usize = null,
+    transcript_anchor: ?usize = null,
     show_navigation: bool = true,
     show_members: bool = true,
     comic_columns: u8 = 4,
@@ -213,6 +216,34 @@ pub const State = struct {
 
     pub fn jumpLatest(self: *State) void {
         self.history_offset = 0;
+    }
+
+    pub fn selectTranscriptLine(self: *State, total: usize, index: usize, extend: bool) void {
+        if (total == 0) {
+            self.transcript_cursor = null;
+            self.transcript_anchor = null;
+            return;
+        }
+        const bounded = @min(index, total - 1);
+        if (extend) {
+            if (self.transcript_anchor == null) self.transcript_anchor = self.transcript_cursor orelse bounded;
+        } else {
+            self.transcript_anchor = null;
+        }
+        self.transcript_cursor = bounded;
+        self.focus = .transcript;
+    }
+
+    pub fn moveTranscriptSelection(self: *State, total: usize, delta: i32, extend: bool) void {
+        if (total == 0) return self.selectTranscriptLine(0, 0, false);
+        const current: i32 = @intCast(@min(self.transcript_cursor orelse total - 1, total - 1));
+        self.selectTranscriptLine(total, @intCast(std.math.clamp(current + delta, 0, @as(i32, @intCast(total - 1)))), extend);
+    }
+
+    pub fn transcriptSelection(self: *const State) ?TranscriptSelection {
+        const cursor = self.transcript_cursor orelse return null;
+        const anchor = self.transcript_anchor orelse return .{ .start = cursor, .end = cursor + 1 };
+        return .{ .start = @min(anchor, cursor), .end = @max(anchor, cursor) + 1 };
     }
 
     pub fn visibleRange(self: *const State, total_lines: usize, page_size: usize) struct { start: usize, end: usize } {

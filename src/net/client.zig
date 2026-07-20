@@ -828,6 +828,22 @@ pub const Client = struct {
         return false;
     }
 
+    pub fn appendEnabledCapabilities(self: *const Client, out: *std.ArrayList(u8), gpa: std.mem.Allocator) !void {
+        const registration = if (self.registration) |*value| value else return;
+        for (registration.cap.enabled.entries.items, 0..) |capability, index| {
+            if (index != 0) try out.appendSlice(gpa, ", ");
+            try out.appendSlice(gpa, capability.name);
+        }
+    }
+
+    pub fn authenticated(self: *const Client) bool {
+        return if (self.registration) |registration| registration.authenticated else false;
+    }
+
+    pub fn usesTls(self: *const Client) bool {
+        return self.connect_options.security == .tls;
+    }
+
     pub fn refreshCapabilities(self: *Client) !void {
         const registration = if (self.registration) |*value| value else return error.RegistrationNotStarted;
         try registration.cap.requestList(&self.out);

@@ -254,6 +254,28 @@ pub const AddOptions = struct {
 
 /// Live channel-member state used by the source `AddStarsAux` title pass.
 /// The transcript owns `nick`; avatar names refer to the canonical static list.
+pub const MemberRole = enum(u8) {
+    member,
+    voice,
+    halfop,
+    operator,
+    owner,
+
+    pub fn canModerate(self: MemberRole) bool {
+        return @intFromEnum(self) >= @intFromEnum(MemberRole.halfop);
+    }
+
+    pub fn badge(self: MemberRole) []const u8 {
+        return switch (self) {
+            .member => "",
+            .voice => "+",
+            .halfop => "%",
+            .operator => "@",
+            .owner => "~",
+        };
+    }
+};
+
 pub const RosterEntry = struct {
     nick: []u8,
     avatar: []const u8,
@@ -261,6 +283,8 @@ pub const RosterEntry = struct {
     sends: u32 = 0,
     departed: bool = false,
     away: bool = false,
+    role: MemberRole = .member,
+    status_modes: u8 = 0,
 };
 
 /// Accumulates conversation lines, owning copies of the text (wire buffers are
@@ -334,7 +358,13 @@ pub const Transcript = struct {
             var names = std.mem.tokenizeScalar(u8, msg.params[msg.param_count - 1], ' ');
             while (names.next()) |decorated| {
                 var nick = decorated;
-                while (nick.len > 0 and isNickStatus(nick[0])) nick = nick[1..];
+                var role: MemberRole = .member;
+                var status_modes: u8 = 0;
+                while (nick.len > 0 and isNickStatus(nick[0])) {
+                    role = highestRole(role, roleForPrefix(nick[0]));
+                    status_modes |= modeBitForPrefix(nick[0]);
+                    nick = nick[1..];
+                }
                 const bang = std.mem.indexOfScalar(u8, nick, '!') orelse nick.len;
                 nick = nick[0..bang];
                 if (nick.len == 0) continue;
@@ -346,6 +376,9 @@ pub const Transcript = struct {
                 if (existing == null or self.roster.items[index].departed) changed = true;
                 self.roster.items[index].departed = false;
                 self.roster.items[index].away = false;
+                if (self.roster.items[index].role != role) changed = true;
+                self.roster.items[index].role = role;
+                self.roster.items[index].status_modes = status_modes;
             }
             return changed;
         }
@@ -364,6 +397,47 @@ pub const Transcript = struct {
             const changed = existing == null or self.roster.items[index].departed;
             self.roster.items[index].departed = false;
             self.roster.items[index].away = false;
+            self.roster.items[index].role = .member;
+            self.roster.items[index].status_modes = 0;
+            return changed;
+        }
+
+        if (std.ascii.eqlIgnoreCase(msg.command, "MODE")) {
+            if (msg.param_count < 2) return false;
+            if (!std.ascii.eqlIgnoreCase(msg.params[0], channel)) return false;
+            const modes = msg.params[1];
+            var adding = true;
+            var parameter_index: usize = 2;
+            var changed = false;
+            for (modes) |mode| switch (mode) {
+                '+' => adding = true,
+                '-' => adding = false,
+                'q', 'a', 'o', 'h', 'v' => {
+                    if (parameter_index >= msg.param_count) continue;
+                    const nick = msg.params[parameter_index];
+                    parameter_index += 1;
+                    const index = self.findRosterIndex(nick) orelse continue;
+                    const bit = modeBit(mode);
+                    const old_modes = self.roster.items[index].status_modes;
+                    if (adding)
+                        self.roster.items[index].status_modes |= bit
+                    else
+                        self.roster.items[index].status_modes &= ~bit;
+                    if (old_modes != self.roster.items[index].status_modes) changed = true;
+                    const replacement = highestRoleForModes(self.roster.items[index].status_modes);
+                    if (replacement != self.roster.items[index].role) {
+                        self.roster.items[index].role = replacement;
+                        changed = true;
+                    }
+                },
+                'b', 'e', 'I', 'k' => {
+                    if (parameter_index < msg.param_count) parameter_index += 1;
+                },
+                'l' => {
+                    if (adding and parameter_index < msg.param_count) parameter_index += 1;
+                },
+                else => {},
+            };
             return changed;
         }
 
@@ -394,6 +468,8 @@ pub const Transcript = struct {
                     target.avatar = old.avatar;
                     target.is_self = target.is_self or old.is_self;
                     target.departed = old.departed;
+                    target.role = highestRole(target.role, old.role);
+                    target.status_modes |= old.status_modes;
                     target.sends = saturatingAdd(target.sends, old.sends);
                     self.gpa.free(owned_new);
                     const removed = self.roster.orderedRemove(old_index);
@@ -435,6 +511,26 @@ pub const Transcript = struct {
 
     pub fn add(self: *Transcript, nick: []const u8, text: []const u8) !void {
         return self.addWithOptions(nick, text, .{});
+    }
+
+    pub fn insertPageBreak(self: *Transcript, nick: []const u8, index: usize) !void {
+        const bounded = @min(index, self.lines.items.len);
+        try self.addWithOptions(nick, "<Brk>", .{});
+        const line = self.lines.pop().?;
+        self.lines.insert(self.gpa, bounded, line) catch |err| {
+            self.lines.append(self.gpa, line) catch deinitLine(self.gpa, line);
+            return err;
+        };
+    }
+
+    pub fn removeLine(self: *Transcript, index: usize) bool {
+        if (index >= self.lines.items.len) return false;
+        const line = self.lines.orderedRemove(index);
+        if (!std.mem.eql(u8, line.text, "<Brk>")) if (self.findRosterIndex(line.nick)) |roster_index| {
+            self.roster.items[roster_index].sends -|= 1;
+        };
+        deinitLine(self.gpa, line);
+        return true;
     }
 
     pub fn addWithOptions(
@@ -647,6 +743,60 @@ fn isNickStatus(ch: u8) bool {
     return ch == '~' or ch == '&' or ch == '@' or ch == '%' or ch == '+';
 }
 
+fn roleForPrefix(ch: u8) MemberRole {
+    return switch (ch) {
+        '~', '&' => .owner,
+        '@' => .operator,
+        '%' => .halfop,
+        '+' => .voice,
+        else => .member,
+    };
+}
+
+fn modeBitForPrefix(ch: u8) u8 {
+    return switch (ch) {
+        '~' => modeBit('q'),
+        '&' => modeBit('a'),
+        '@' => modeBit('o'),
+        '%' => modeBit('h'),
+        '+' => modeBit('v'),
+        else => 0,
+    };
+}
+
+fn roleForMode(mode: u8) MemberRole {
+    return switch (mode) {
+        'q', 'a' => .owner,
+        'o' => .operator,
+        'h' => .halfop,
+        'v' => .voice,
+        else => .member,
+    };
+}
+
+fn highestRole(a: MemberRole, b: MemberRole) MemberRole {
+    return if (@intFromEnum(a) >= @intFromEnum(b)) a else b;
+}
+
+fn modeBit(mode: u8) u8 {
+    return switch (mode) {
+        'q' => 1 << 5,
+        'a' => 1 << 4,
+        'o' => 1 << 3,
+        'h' => 1 << 2,
+        'v' => 1 << 1,
+        else => 0,
+    };
+}
+
+fn highestRoleForModes(modes: u8) MemberRole {
+    if (modes & (modeBit('q') | modeBit('a')) != 0) return .owner;
+    if (modes & modeBit('o') != 0) return .operator;
+    if (modes & modeBit('h') != 0) return .halfop;
+    if (modes & modeBit('v') != 0) return .voice;
+    return .member;
+}
+
 fn saturatingAdd(a: u32, b: u32) u32 {
     return if (std.math.maxInt(u32) - a < b) std.math.maxInt(u32) else a + b;
 }
@@ -781,8 +931,29 @@ test "live roster follows NAMES membership speech and current avatars" {
     try std.testing.expectEqual(@as(usize, 3), transcript.roster.items.len);
     try std.testing.expectEqual(@as(usize, 3), transcript.activeMemberCount());
     try std.testing.expect(transcript.roster.items[transcript.findRosterIndex("me").?].is_self);
+    try std.testing.expectEqual(MemberRole.operator, transcript.roster.items[transcript.findRosterIndex("me").?].role);
+    try std.testing.expectEqual(MemberRole.voice, transcript.roster.items[transcript.findRosterIndex("Alice").?].role);
+    try std.testing.expectEqual(MemberRole.halfop, transcript.roster.items[transcript.findRosterIndex("Bob").?].role);
     try std.testing.expect(transcript.findRosterIndex("@Me") == null);
     try std.testing.expect(transcript.findRosterIndex("+Alice") == null);
+
+    var promote = irc_message.parse(":server MODE #room +ov Alice Bob");
+    try std.testing.expect(try transcript.observeIrc(&promote, "#room", "Me"));
+    try std.testing.expectEqual(MemberRole.operator, transcript.roster.items[transcript.findRosterIndex("Alice").?].role);
+    try std.testing.expectEqual(MemberRole.halfop, transcript.roster.items[transcript.findRosterIndex("Bob").?].role);
+    var demote = irc_message.parse(":server MODE #room -o Alice");
+    try std.testing.expect(try transcript.observeIrc(&demote, "#room", "Me"));
+    try std.testing.expectEqual(MemberRole.voice, transcript.roster.items[transcript.findRosterIndex("Alice").?].role);
+
+    var elevated = irc_message.parse(":server MODE #room +qa Alice Alice");
+    try std.testing.expect(try transcript.observeIrc(&elevated, "#room", "Me"));
+    try std.testing.expectEqual(MemberRole.owner, transcript.roster.items[transcript.findRosterIndex("Alice").?].role);
+    var remove_founder = irc_message.parse(":server MODE #room -q Alice");
+    try std.testing.expect(try transcript.observeIrc(&remove_founder, "#room", "Me"));
+    try std.testing.expectEqual(MemberRole.owner, transcript.roster.items[transcript.findRosterIndex("Alice").?].role);
+    var remove_admin = irc_message.parse(":server MODE #room -a Alice");
+    try std.testing.expect(try transcript.observeIrc(&remove_admin, "#room", "Me"));
+    try std.testing.expectEqual(MemberRole.voice, transcript.roster.items[transcript.findRosterIndex("Alice").?].role);
 
     const first_avatar = transcript.resolvedAvatar("Alice");
     try transcript.add("Alice", "before");
@@ -821,6 +992,20 @@ test "live roster follows NAMES membership speech and current avatars" {
     try std.testing.expect(try transcript.observeIrc(&join, "#room", "Me"));
     try std.testing.expect(!transcript.roster.items[transcript.findRosterIndex("Alicia").?].departed);
     try std.testing.expectEqual(@as(usize, 2), transcript.activeMemberCount());
+}
+
+test "page break insertion and selected line removal preserve ownership and tallies" {
+    var transcript = Transcript.init(std.testing.allocator);
+    defer transcript.deinit();
+    try transcript.add("Alice", "one");
+    try transcript.add("Bob", "two");
+    try transcript.insertPageBreak("Me", 1);
+    try std.testing.expectEqual(@as(usize, 3), transcript.lines.items.len);
+    try std.testing.expectEqualStrings("<Brk>", transcript.lines.items[1].text);
+    try std.testing.expectEqual(@as(u32, 0), transcript.roster.items[transcript.findRosterIndex("Me").?].sends);
+    try std.testing.expect(transcript.removeLine(0));
+    try std.testing.expectEqual(@as(u32, 0), transcript.roster.items[transcript.findRosterIndex("Alice").?].sends);
+    try std.testing.expect(!transcript.removeLine(99));
 }
 
 test "transcript owns its copies" {

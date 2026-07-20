@@ -33,11 +33,17 @@ pub const Action = union(enum) {
     toolbar: u8,
     room_tab: usize,
     composer_cursor: i32,
+    composer_format: u8,
+    transcript_command: u8,
+    send_expression,
+    child_window,
     send,
+    quit,
     connection,
     endpoint_dialog: dialogs.Id,
     dialog_accept: dialogs.Id,
     dialog_cancel: dialogs.Id,
+    dialog_browse: dialogs.Id,
 };
 
 // Modern desktop color roles applied to the established workspace geometry.
@@ -92,6 +98,7 @@ pub const View = struct {
     dialog_editors: [5]input_mod.Editor,
     dialog_field: usize = 0,
     room_tab_count: usize = 1,
+    can_moderate: bool = false,
 
     pub fn init(gpa: std.mem.Allocator, initial_width: u32, initial_height: u32) !View {
         return .{
@@ -171,6 +178,18 @@ pub const View = struct {
             const viewport = memberViewport(layout.members, self.shell.member_view == .icons);
             self.shell.revealMember(member_count, viewport.visible, selected);
         };
+        return true;
+    }
+
+    pub fn handleTranscriptKey(self: *View, key: platform_event.Key, total_lines: usize, extend: bool) bool {
+        if (self.shell.focus != .transcript) return false;
+        switch (key) {
+            .up => self.shell.moveTranscriptSelection(total_lines, -1, extend),
+            .down => self.shell.moveTranscriptSelection(total_lines, 1, extend),
+            .home => self.shell.selectTranscriptLine(total_lines, 0, extend),
+            .end => if (total_lines > 0) self.shell.selectTranscriptLine(total_lines, total_lines - 1, extend),
+            else => return false,
+        }
         return true;
     }
 
@@ -468,6 +487,8 @@ pub const View = struct {
             }
             if (dialog_layout.fieldIndexAt(pointer.x, pointer.y)) |index| {
                 if (index < self.dialog_editors.len) {
+                    if (dialogBrowseField(id) == index and ui.contains(dialogBrowseRect(dialog_layout.fieldRect(index)), pointer.x, pointer.y))
+                        return .{ .dialog_browse = id };
                     self.dialog_field = index;
                     const field = dialogs.fields(id)[index];
                     if (field.kind == .choice) {
@@ -489,14 +510,23 @@ pub const View = struct {
             const item = contextPopupItem(self.canvas.width, self.canvas.height, kind, self.context_x, self.context_y, pointer.x, pointer.y);
             self.context_menu = null;
             self.hovered_context_item = null;
-            if (item) |selected| self.invokeContextItem(kind, selected);
+            if (item) |selected| {
+                if (!contextItemEnabled(kind, selected, self.can_moderate)) return .none;
+                if (kind == .body_camera and selected == 3) return .send_expression;
+                self.invokeContextItem(kind, selected);
+            }
             return .none;
         }
         if (self.active_menu) |menu| {
             if (pointer.kind != .down or pointer.button != .primary) return .none;
             self.active_menu = null;
             if (menuPopupItem(self.canvas.width, menu, pointer.x, pointer.y)) |item| {
+                if (!menuItemEnabled(menu, item, self.can_moderate)) return .none;
                 if (isConnectionMenuItem(menu, item)) return .connection;
+                if (isQuitMenuItem(menu, item)) return .quit;
+                if (menu == 1 and item < 3) return .{ .transcript_command = item };
+                if (menu == 3 and item >= 5) return .{ .composer_format = item - 5 };
+                if (menu == 4 and item == 10) return .child_window;
                 if (endpointDialogMenuItem(menu, item)) |id| return .{ .endpoint_dialog = id };
                 self.invokeMenuItem(menu, item);
             }
@@ -561,7 +591,7 @@ pub const View = struct {
                     16 => self.openDialog(.personal),
                     17 => self.openDialog(.set_text_font),
                     18 => self.openDialog(.choose_color),
-                    19, 20, 21, 22 => self.openDialog(.set_text_font),
+                    19, 20, 21, 22 => {},
                     23 => self.openDialog(.choose_color),
                     else => {},
                 }
@@ -587,6 +617,7 @@ pub const View = struct {
             },
             .transcript => focus: {
                 self.shell.focus = .transcript;
+                self.selectTranscriptAt(layout.transcript, pointer.x, pointer.y, total_lines);
                 break :focus .none;
             },
             .composer => focus: {
@@ -606,6 +637,10 @@ pub const View = struct {
                 break :selected .none;
             },
             .emotion => emotion: {
+                if (pointer.clicks >= 2 and !ui.contains(emotionDialRect(emotionWheelRect(layout)), pointer.x, pointer.y)) {
+                    self.openDialog(.character);
+                    break :emotion .none;
+                }
                 self.emotion_dragging = self.setEmotionFromPoint(layout, pointer.x, pointer.y);
                 if (!self.emotion_dragging) self.shell.focus = .emotion;
                 break :emotion .none;
@@ -622,6 +657,20 @@ pub const View = struct {
             },
             else => target,
         };
+    }
+
+    fn selectTranscriptAt(self: *View, rect: Rect, x: i32, y: i32, total_lines: usize) void {
+        _ = x;
+        if (total_lines == 0 or rect.h <= 0) return;
+        const capacity: usize = if (self.shell.content_mode == .text)
+            @intCast(@max(1, @divTrunc(rect.h - 12, 31)))
+        else
+            9;
+        const range = self.shell.visibleRange(total_lines, capacity);
+        if (range.end <= range.start) return;
+        const relative = std.math.clamp(y - rect.y, 0, rect.h - 1);
+        const visible_index: usize = @intCast(@min(range.end - range.start - 1, @as(usize, @intCast(@divTrunc(relative * @as(i32, @intCast(range.end - range.start)), @max(1, rect.h))))));
+        self.shell.selectTranscriptLine(total_lines, range.start + visible_index, false);
     }
 
     pub fn placeComposerCursor(self: *View, editor: *input_mod.Editor, pointer_x: i32) void {
@@ -645,10 +694,11 @@ pub const View = struct {
             .body_camera => switch (item) {
                 0 => self.shell.toggleEmotionFreeze(),
                 1 => self.openDialog(.character),
-                else => {
+                2 => {
                     self.shell.emotion_frozen = false;
                     self.shell.neutralEmotion();
                 },
+                else => {},
             },
             .member => switch (item) {
                 0 => {
@@ -715,6 +765,11 @@ pub const View = struct {
         tabs: []const Tab,
         active_tab: usize,
     ) !void {
+        self.can_moderate = false;
+        for (transcript.roster.items) |member| if (member.is_self and !member.departed) {
+            self.can_moderate = member.role.canModerate();
+            break;
+        };
         self.room_tab_count = tabs.len;
         const comic_mode = self.shell.content_mode == .comic;
         const layout = geometry.Layout.compute(self.canvas.width, self.canvas.height, comic_mode, self.shell.show_members);
@@ -743,8 +798,8 @@ pub const View = struct {
         if (self.shell.focus == .emotion) drawFocus(&self.canvas, layout.body_camera);
         if (self.hovered_toolbar) |index| drawToolbarTooltip(&self.canvas, layout, index);
         if (self.hovered_say_action) |index| drawSayActionTooltip(&self.canvas, layout, index);
-        if (self.active_menu) |menu| drawMenuPopup(&self.canvas, menu, self.hovered_menu_item, self.shell);
-        if (self.context_menu) |kind| drawContextPopup(&self.canvas, kind, self.context_x, self.context_y, self.hovered_context_item, self.shell.emotion_frozen);
+        if (self.active_menu) |menu| drawMenuPopup(&self.canvas, menu, self.hovered_menu_item, self.shell, self.can_moderate);
+        if (self.context_menu) |kind| drawContextPopup(&self.canvas, kind, self.context_x, self.context_y, self.hovered_context_item, self.shell.emotion_frozen, self.can_moderate);
         if (self.active_dialog) |id| drawDialog(&self.canvas, dialogs.get(id), &self.dialog_editors, self.dialog_field, self.hovered_dialog_field, self.dialog_notice, self.hovered_dialog_button);
     }
 
@@ -786,9 +841,34 @@ pub const View = struct {
             .selected = @as(i32, @intFromEnum(self.shell.say_mode)) == action_index,
         });
         snapshot.append(.{ .id = "status", .role = .button, .bounds = layout.status, .label = status, .focused = self.hovered_status });
+        if (self.active_menu) |menu| {
+            const popup = menuPopupRect(self.canvas.width, menu);
+            snapshot.append(.{ .id = "active-menu", .role = .menu, .bounds = popup, .label = menu_labels[menu], .focused = true });
+            var item: u8 = 0;
+            while (item < menuItemCount(menu)) : (item += 1) snapshot.append(.{
+                .id = "menu-item",
+                .role = .menu_item,
+                .bounds = .{ .x = popup.x + 5, .y = popup.y + 5 + @as(i32, item) * 29, .w = popup.w - 10, .h = 27 },
+                .label = menuItemLabel(menu, item),
+                .selected = self.hovered_menu_item == item,
+                .enabled = menuItemEnabled(menu, item, self.can_moderate),
+            });
+        }
         if (self.active_dialog) |id| {
             const dialog_layout = dialogLayout(self.canvas.width, self.canvas.height, dialogs.get(id));
             snapshot.append(.{ .id = "dialog", .role = .dialog, .bounds = dialog_layout.rect, .label = dialogs.get(id).title, .focused = true });
+            for (dialogs.fields(id), 0..) |field, index| snapshot.append(.{
+                .id = "dialog-field",
+                .role = switch (field.kind) {
+                    .choice => .combo_box,
+                    .list => .list_item,
+                    else => .input,
+                },
+                .bounds = dialog_layout.fieldRect(index),
+                .label = field.label,
+                .focused = self.dialog_field == index,
+                .enabled = field.kind != .readonly and field.kind != .preview,
+            });
             snapshot.append(.{ .id = "dialog-accept", .role = .button, .bounds = dialog_layout.primary, .label = dialogs.primaryLabel(id) });
             snapshot.append(.{ .id = "dialog-cancel", .role = .button, .bounds = dialog_layout.cancel, .label = "Cancel" });
         }
@@ -875,7 +955,10 @@ pub const View = struct {
         const range = self.shell.visibleRange(transcript.lines.items.len, capacity);
         var y = rect.y + 6;
         for (transcript.lines.items[range.start..range.end], 0..) |line, index| {
-            ui.drawMessageRow(&self.canvas, .{ .x = rect.x, .y = y, .w = rect.w, .h = row_h }, line.nick, line.text, index % 2 == 0);
+            const absolute_index = range.start + index;
+            const selection = self.shell.transcriptSelection();
+            const selected = if (selection) |selected_range| absolute_index >= selected_range.start and absolute_index < selected_range.end else false;
+            ui.drawMessageRow(&self.canvas, .{ .x = rect.x, .y = y, .w = rect.w, .h = row_h }, line.nick, line.text, index % 2 == 0, selected);
             y += row_h;
             if (y + row_h > rect.bottom()) break;
         }
@@ -900,7 +983,7 @@ pub const View = struct {
         for (transcript.roster.items[start..], start..) |member, index| {
             if (y + 24 > content.bottom()) break;
             const selected = if (self.shell.selected_member) |selected_index| selected_index == index else member.is_self;
-            ui.drawMemberRow(&self.canvas, .{ .x = content.x, .y = y, .w = content.w, .h = 24 }, member.nick, selected, member.departed, member.away, self.hovered_member == index);
+            ui.drawMemberRow(&self.canvas, .{ .x = content.x, .y = y, .w = content.w, .h = 24 }, member.nick, member.role.badge(), selected, member.departed, member.away, self.hovered_member == index);
             y += 24;
         }
         ui.drawVerticalScrollbar(&self.canvas, content, transcript.roster.items.len, visible_rows, start);
@@ -930,6 +1013,7 @@ pub const View = struct {
             var icon = bgb.decodeIcon(self.gpa, avatar) catch continue;
             defer icon.deinit(self.gpa);
             blitHeightBottomAlphaSmooth(&self.canvas, icon.pixels, icon.width, icon.height, cell.x + @divTrunc(cell.w - 52, 2), cell.y + 6, 52, 52);
+            if (member.role.badge().len != 0) ui.drawPill(&self.canvas, .{ .x = cell.right() - 25, .y = cell.y + 5, .w = 20, .h = 18 }, member.role.badge(), true);
             const name_w = Canvas.uiTextWidth(member.nick);
             drawTextEllipsized(
                 &self.canvas,
@@ -1009,11 +1093,14 @@ pub const View = struct {
         switch (menu) {
             0 => switch (item) {
                 0 => self.openDialog(.open_conversation),
-                1 => self.openDialog(.save_conversation),
-                2 => self.openDialog(.export_image),
+                1 => self.openDialog(.open_locator),
+                2 => self.openDialog(.recent_files),
+                3 => self.openDialog(.save_conversation),
+                4 => self.openDialog(.export_image),
+                5 => self.openDialog(.print_preview),
                 else => self.openDialog(.setup),
             },
-            1 => if (item == 0) self.openDialog(.settings),
+            1 => if (item == 3) self.openDialog(.settings),
             2 => switch (item) {
                 0 => self.setContentMode(.comic),
                 1 => self.setContentMode(.text),
@@ -1027,7 +1114,8 @@ pub const View = struct {
                 1 => self.openDialog(.choose_color),
                 2 => self.openDialog(.background),
                 3 => self.openDialog(.character),
-                else => self.openDialog(.personal),
+                4 => self.openDialog(.personal),
+                else => {},
             },
             4 => switch (item) {
                 0 => self.openDialog(.room_list),
@@ -1038,7 +1126,9 @@ pub const View = struct {
                 5 => self.openDialog(.motd),
                 6 => self.openDialog(.ircx_properties),
                 7 => self.openDialog(.room_access),
-                else => self.openDialog(.ircx_events),
+                8 => self.openDialog(.ircx_events),
+                9 => self.openDialog(.favorite_rooms),
+                else => {},
             },
             5 => switch (item) {
                 0 => self.openDialog(.user_list),
@@ -1053,11 +1143,13 @@ pub const View = struct {
             6 => switch (item) {
                 0 => self.openDialog(.automation),
                 1 => self.openDialog(.rules),
-                2 => self.openDialog(.notifications),
-                3 => self.openDialog(.notification_users),
-                4 => self.openDialog(.file_transfer),
-                5 => self.openDialog(.settings),
-                6 => self.openDialog(.about),
+                2 => self.openDialog(.rule_sets),
+                3 => self.openDialog(.notifications),
+                4 => self.openDialog(.notification_users),
+                5 => self.openDialog(.file_transfer),
+                6 => self.openDialog(.connection_features),
+                7 => self.openDialog(.settings),
+                8 => self.openDialog(.about),
                 else => self.openDialog(.setup),
             },
             else => {},
@@ -1076,11 +1168,13 @@ fn menuStart(menu: u8) i32 {
 
 fn menuItemCount(menu: u8) u8 {
     return switch (menu) {
-        0 => 4,
-        3 => 5,
+        0 => 8,
+        3 => 8,
         2 => 6,
-        4 => 9,
-        5, 6 => 8,
+        4 => 11,
+        5 => 8,
+        6 => 10,
+        1 => 4,
         else => 1,
     };
 }
@@ -1089,11 +1183,20 @@ fn menuItemLabel(menu: u8, item: u8) []const u8 {
     return switch (menu) {
         0 => switch (item) {
             0 => "Open conversation",
-            1 => "Save conversation",
-            2 => "Export comic image",
-            else => "Connection setup",
+            1 => "Open chat locator",
+            2 => "Recent conversations",
+            3 => "Save conversation",
+            4 => "Export comic image",
+            5 => "Print and PDF preview",
+            6 => "Connection setup",
+            else => "Exit",
         },
-        1 => "Settings",
+        1 => switch (item) {
+            0 => "Copy selected messages",
+            1 => "Insert page break",
+            2 => "Delete selected messages",
+            else => "Settings",
+        },
         2 => switch (item) {
             0 => "Comic view",
             1 => "Text view",
@@ -1107,7 +1210,10 @@ fn menuItemLabel(menu: u8, item: u8) []const u8 {
             1 => "Text color",
             2 => "Background",
             3 => "Character",
-            else => "Personal profile",
+            4 => "Personal profile",
+            5 => "Bold selection",
+            6 => "Italic selection",
+            else => "Underline selection",
         },
         4 => switch (item) {
             0 => "Room list",
@@ -1118,7 +1224,9 @@ fn menuItemLabel(menu: u8, item: u8) []const u8 {
             5 => "Message of the day",
             6 => "IRCX properties",
             7 => "Room access",
-            else => "IRCX operator events",
+            8 => "IRCX operator events",
+            9 => "Favorite rooms",
+            else => "Open room in new window",
         },
         5 => switch (item) {
             0 => "User list",
@@ -1133,11 +1241,13 @@ fn menuItemLabel(menu: u8, item: u8) []const u8 {
         6 => switch (item) {
             0 => "Automation",
             1 => "Rules",
-            2 => "Logon notifications",
-            3 => "Online notification users",
-            4 => "File transfers",
-            5 => "Settings",
-            6 => "About Comic Chat",
+            2 => "Rule sets",
+            3 => "Logon notifications",
+            4 => "Online notification users",
+            5 => "File transfers",
+            6 => "Connection features",
+            7 => "Settings",
+            8 => "About Comic Chat",
             else => "Connection setup",
         },
         else => "Settings",
@@ -1145,11 +1255,15 @@ fn menuItemLabel(menu: u8, item: u8) []const u8 {
 }
 
 fn isConnectionMenuItem(menu: u8, item: u8) bool {
-    return (menu == 0 and item == 3) or (menu == 6 and item == 7);
+    return (menu == 0 and item == 6) or (menu == 6 and item == 9);
+}
+
+fn isQuitMenuItem(menu: u8, item: u8) bool {
+    return menu == 0 and item == 7;
 }
 
 fn endpointDialogMenuItem(menu: u8, item: u8) ?dialogs.Id {
-    if ((menu == 1 and item == 0) or (menu == 6 and item == 5)) return .settings;
+    if ((menu == 1 and item == 3) or (menu == 6 and item == 7)) return .settings;
     return null;
 }
 
@@ -1188,14 +1302,21 @@ fn drawMenuBar(c: *Canvas, rect: Rect, active: ?u8, hovered: ?u8) void {
     }
 }
 
-fn drawMenuPopup(c: *Canvas, menu: u8, hovered: ?u8, shell: shell_mod.State) void {
+fn drawMenuPopup(c: *Canvas, menu: u8, hovered: ?u8, shell: shell_mod.State, can_moderate: bool) void {
     const rect = menuPopupRect(c.width, menu);
     ui.drawPopupSurface(c, rect);
     var item: u8 = 0;
     while (item < menuItemCount(menu)) : (item += 1) {
         const y = rect.y + 5 + @as(i32, item) * 29;
-        ui.drawMenuItem(c, rect.x + 5, y, rect.w - 10, menuItemLabel(menu, item), hovered == item, menuItemChecked(menu, item, shell));
+        const enabled = menuItemEnabled(menu, item, can_moderate);
+        ui.drawMenuItem(c, rect.x + 5, y, rect.w - 10, menuItemLabel(menu, item), hovered == item, menuItemChecked(menu, item, shell), enabled);
     }
+}
+
+fn menuItemEnabled(menu: u8, item: u8, can_moderate: bool) bool {
+    if (can_moderate) return true;
+    return !((menu == 4 and (item == 3 or item == 7 or item == 8)) or
+        (menu == 5 and (item == 4 or item == 5)));
 }
 
 fn menuItemChecked(menu: u8, item: u8, shell: shell_mod.State) bool {
@@ -1214,7 +1335,7 @@ fn menuItemChecked(menu: u8, item: u8, shell: shell_mod.State) bool {
 }
 
 fn contextItemCount(kind: ContextKind) u8 {
-    return if (kind == .member) 5 else 3;
+    return if (kind == .member) 5 else 4;
 }
 
 fn contextItemLabel(kind: ContextKind, item: u8, frozen: bool) []const u8 {
@@ -1229,7 +1350,8 @@ fn contextItemLabel(kind: ContextKind, item: u8, frozen: bool) []const u8 {
         .body_camera => switch (item) {
             0 => if (frozen) "Unfreeze expression" else "Freeze expression",
             1 => "Change character",
-            else => "Return to neutral",
+            2 => "Return to neutral",
+            else => "Send expression",
         },
     };
 }
@@ -1255,14 +1377,19 @@ fn contextPopupItem(width: u32, height: u32, kind: ContextKind, anchor_x: i32, a
     return @intCast(item);
 }
 
-fn drawContextPopup(c: *Canvas, kind: ContextKind, anchor_x: i32, anchor_y: i32, hovered: ?u8, frozen: bool) void {
+fn drawContextPopup(c: *Canvas, kind: ContextKind, anchor_x: i32, anchor_y: i32, hovered: ?u8, frozen: bool, can_moderate: bool) void {
     const rect = contextPopupRect(c.width, c.height, kind, anchor_x, anchor_y);
     ui.drawPopupSurface(c, rect);
     var item: u8 = 0;
     while (item < contextItemCount(kind)) : (item += 1) {
         const y = rect.y + 5 + @as(i32, item) * 29;
-        ui.drawMenuItem(c, rect.x + 5, y, rect.w - 10, contextItemLabel(kind, item, frozen), hovered == item, kind == .body_camera and item == 0 and frozen);
+        const enabled = contextItemEnabled(kind, item, can_moderate);
+        ui.drawMenuItem(c, rect.x + 5, y, rect.w - 10, contextItemLabel(kind, item, frozen), hovered == item, kind == .body_camera and item == 0 and frozen, enabled);
     }
+}
+
+fn contextItemEnabled(kind: ContextKind, item: u8, can_moderate: bool) bool {
+    return kind != .member or item < 3 or can_moderate;
 }
 
 fn drawToolBar(c: *Canvas, rect: Rect, comic_mode: bool, hovered: ?u8) void {
@@ -1638,7 +1765,16 @@ fn drawSayWindow(c: *Canvas, layout: geometry.Layout, input: []const u8, cursor:
     ui.drawComposerSurface(c, layout.say);
     ui.drawComposerField(c, edit, focused, hovered, input.len > 0);
     const content_rect = Rect{ .x = edit.x + 18, .y = edit.y + 10, .w = @max(0, edit.w - 36), .h = @max(0, edit.h - 20) };
-    const window = visibleTextWindow(input, cursor, content_rect.w);
+    const safe_cursor = @min(cursor, input.len);
+    const line_start = if (std.mem.lastIndexOfScalar(u8, input[0..safe_cursor], '\n')) |newline| newline + 1 else 0;
+    const line_end = if (std.mem.indexOfScalar(u8, input[safe_cursor..], '\n')) |relative| safe_cursor + relative else input.len;
+    const line_window = visibleTextWindow(input[line_start..line_end], safe_cursor - line_start, content_rect.w);
+    const window = TextWindow{
+        .start = line_start + line_window.start,
+        .end = line_start + line_window.end,
+        .left_hidden = line_start != 0 or line_window.left_hidden,
+        .right_hidden = line_end != input.len or line_window.right_hidden,
+    };
     const visible = input[window.start..window.end];
     if (selection) |range| {
         const start = @max(window.start, @min(range.start, window.end));
@@ -1656,7 +1792,6 @@ fn drawSayWindow(c: *Canvas, layout: geometry.Layout, input: []const u8, cursor:
         drawTextEllipsized(c, visible, content_rect.x, edit.y + 13, content_rect.w, ink);
         drawInputOverflowMarks(c, edit, window);
     }
-    const safe_cursor = @min(cursor, input.len);
     const visible_cursor = std.math.clamp(safe_cursor, window.start, window.end);
     const caret_x = @min(edit.right() - 12, content_rect.x + Canvas.uiTextWidth(input[window.start..visible_cursor]));
     if (focused) c.fillRect(caret_x, edit.y + 12, 2, @max(1, edit.h - 24), accent);
@@ -2083,9 +2218,15 @@ fn drawDialog(c: *Canvas, spec: dialogs.Spec, editors: *const [5]input_mod.Edito
             },
             .readonly => ui.drawInputControl(c, field_rect, .readonly, state),
         }
+        if (dialogBrowseField(spec.id) == index) {
+            const browse = dialogBrowseRect(field_rect);
+            ui.fillRoundedRect(c, browse.x, browse.y, browse.w, browse.h, 7, if (field_hovered) accent_soft else ui.Theme.chrome);
+            _ = c.drawUiText("Browse", browse.x + 10, browse.y + 5, accent);
+        }
         if (index < editors.len) {
             const editor = &editors[index];
-            const text_width = field_rect.w - if (field.kind == .password or field.kind == .choice) @as(i32, 46) else if (field.kind == .list or field.kind == .readonly) @as(i32, 40) else @as(i32, 20);
+            const browse_width: i32 = if (dialogBrowseField(spec.id) == index) 78 else 0;
+            const text_width = field_rect.w - browse_width - if (field.kind == .password or field.kind == .choice) @as(i32, 46) else if (field.kind == .list or field.kind == .readonly) @as(i32, 40) else @as(i32, 20);
             const window = visibleTextWindow(value, editor.cursor, text_width);
             const visible = value[window.start..window.end];
             const value_x = field_rect.x + if (field.kind == .list or field.kind == .readonly) @as(i32, 32) else @as(i32, 11);
@@ -2125,6 +2266,18 @@ fn drawDialog(c: *Canvas, spec: dialogs.Spec, editors: *const [5]input_mod.Edito
     if (notice.len != 0) ui.drawNotice(c, rect.x + 14, dialog_layout.primary.y - 22, rect.w - 28, notice, .warning);
     drawDialogButton(c, dialog_layout.primary.x, dialog_layout.primary.y, dialog_layout.primary.w, dialogs.primaryLabel(spec.id), .primary, hovered_button == .primary);
     drawDialogButton(c, dialog_layout.cancel.x, dialog_layout.cancel.y, dialog_layout.cancel.w, "Cancel", .secondary, hovered_button == .cancel);
+}
+
+fn dialogBrowseField(id: dialogs.Id) ?usize {
+    return switch (id) {
+        .open_conversation, .save_conversation, .export_image, .open_locator, .print_preview => 0,
+        .file_transfer, .rule_sets => 2,
+        else => null,
+    };
+}
+
+fn dialogBrowseRect(field: Rect) Rect {
+    return .{ .x = field.right() - 74, .y = field.y + 2, .w = 72, .h = field.h - 4 };
 }
 
 fn dialogBackgroundByName(name: []const u8) ?[]const u8 {
@@ -2246,7 +2399,7 @@ test "every menu popup and command row stays reachable at minimum width" {
     defer view.deinit();
     view.active_menu = 6;
     const more = menuPopupRect(width, 6);
-    _ = view.handlePointer(.{ .kind = .down, .x = more.x + 12, .y = more.y + 8 + 6 * 29, .button = .primary }, 0, 0);
+    _ = view.handlePointer(.{ .kind = .down, .x = more.x + 12, .y = more.y + 8 + 8 * 29, .button = .primary }, 0, 0);
     try std.testing.expectEqual(dialogs.Id.about, view.active_dialog.?);
 }
 
@@ -2314,7 +2467,7 @@ test "settings menu requests a prefilled live endpoint dialog" {
     const action = view.handlePointer(.{
         .kind = .down,
         .x = popup.x + 12,
-        .y = popup.y + 8,
+        .y = popup.y + 8 + 3 * 29,
         .button = .primary,
     }, 0, 0);
     try std.testing.expectEqual(Action{ .endpoint_dialog = .settings }, action);
@@ -2526,4 +2679,32 @@ test "every registered dialog can be opened and rendered" {
         try view.render("Comic Chat", "connected", &transcript, "", 0);
         try std.testing.expectEqual(spec.id, view.active_dialog.?);
     }
+}
+
+test "file workflow dialogs expose a clickable native browse action" {
+    var view = try View.init(std.testing.allocator, 960, 720);
+    defer view.deinit();
+    view.openDialog(.open_conversation);
+    const layout = dialogLayout(view.width(), view.height(), dialogs.get(.open_conversation));
+    const browse = dialogBrowseRect(layout.fieldRect(0));
+    try std.testing.expectEqual(Action{ .dialog_browse = .open_conversation }, view.handlePointer(.{
+        .kind = .down,
+        .x = browse.x + 4,
+        .y = browse.y + 4,
+        .button = .primary,
+    }, 0, 0));
+}
+
+test "moderation menu actions are disabled until the local role permits them" {
+    var view = try View.init(std.testing.allocator, 960, 720);
+    defer view.deinit();
+    const popup = menuPopupRect(view.width(), 5);
+    view.active_menu = 5;
+    _ = view.handlePointer(.{ .kind = .down, .x = popup.x + 10, .y = popup.y + 8 + 4 * 29, .button = .primary }, 0, 1);
+    try std.testing.expect(view.active_dialog == null);
+
+    view.can_moderate = true;
+    view.active_menu = 5;
+    _ = view.handlePointer(.{ .kind = .down, .x = popup.x + 10, .y = popup.y + 8 + 4 * 29, .button = .primary }, 0, 1);
+    try std.testing.expectEqual(dialogs.Id.kick, view.active_dialog.?);
 }

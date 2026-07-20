@@ -19,6 +19,11 @@ pub const Role = enum {
     status,
     dialog,
     button,
+    menu,
+    menu_item,
+    input,
+    combo_box,
+    list_item,
 };
 
 pub const Node = struct {
@@ -28,10 +33,11 @@ pub const Node = struct {
     label: []const u8,
     selected: bool = false,
     focused: bool = false,
+    enabled: bool = true,
 };
 
 pub const Snapshot = struct {
-    nodes: [64]Node = undefined,
+    nodes: [128]Node = undefined,
     len: usize = 0,
     status: []const u8 = "",
 
