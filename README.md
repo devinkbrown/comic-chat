@@ -31,7 +31,7 @@ italic face.
 | Protocol notes | `docs/PROTOCOL.md` | Comic Chat wire-format and interoperability notes |
 | Completeness audit | `docs/PORTABLE_COMPLETENESS_AUDIT.md` | Reachable, substrate-only, partial, and missing portable product surfaces |
 | Repository map | `docs/PROJECT_STRUCTURE.md` | Portable-first repository ownership and layout |
-| Historical reference | `legacy/docs/` | Microsoft-source audit, source-parity plan, and asset provenance record; not packaged in binary releases |
+| Historical reference | `legacy/docs/` | Repository-only Microsoft-source audits and migration records; excluded from release packages |
 
 ## Portable Zig client
 
@@ -138,8 +138,9 @@ env -u WAYLAND_DISPLAY zig build run -- window anna
 The current published release is `comicchat-portable-2026-07-20.1`.
 It contains x86_64 binary packages for Windows, Linux, FreeBSD, and OpenBSD,
 an explicit buildable source archive, and a single SHA-256 manifest covering
-all five artifacts. The source archive includes the pinned Onyx TLS submodule,
-so it can be built after extraction without a separate submodule checkout.
+all five artifacts. The source archive includes the narrow Onyx TLS dependency
+snapshot exported from its pinned revision, so it builds after extraction
+without a separate submodule checkout.
 
 Verify downloaded artifacts before use:
 
@@ -154,8 +155,9 @@ To build the binary archives from a clean checkout:
 ```
 
 Each archive contains the executable, this README, the AGPL license, and
-third-party notices. The explicit source archive expands the exact pinned Onyx
-TLS submodule and builds without a second checkout. Comic characters,
+third-party notices. The explicit source archive contains only the Onyx crypto,
+protocol, and certificate-loader sources used by ComicChat and builds without
+a second checkout. Legacy audit material is not included. Comic characters,
 backdrops, face expressions, and fonts are embedded in the binaries.
 `comicchat app <nick>` defaults to the `eshmaki.me` server and `#root` channel;
 pass a host and/or channel to override either default.
@@ -211,10 +213,11 @@ historical Comic Chat source is MIT-licensed and remains an external reference
 at <https://github.com/microsoft/comic-chat>; its MFC/C++ tree is not vendored
 here. Microsoft names, logos, and artwork may be trademarks, and
 builds from this repository are unofficial and unsupported. The portable asset
-set's historical source and transformation record is kept in
-[`legacy/docs/PORTABLE_ASSET_PROVENANCE.md`](legacy/docs/PORTABLE_ASSET_PROVENANCE.md).
+set's historical source and transformation record is repository-only legacy
+material and is intentionally excluded from release packages.
 The generated portable font atlases are derived from Comic Neue Bold and Bold
 Italic under the SIL Open Font License; see
 [`src/render/COMIC_NEUE_LICENSE.txt`](src/render/COMIC_NEUE_LICENSE.txt).
 The pinned Onyx Server TLS implementation is included as an AGPL-3.0-or-later
-submodule under `third_party/onyx-server`.
+submodule under `third_party/onyx-server`; release sources export only the
+dependency subset used by the client.

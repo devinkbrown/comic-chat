@@ -82,7 +82,8 @@ hash.
   replace it with an unpinned system library or weaken certificate checks.
 - A source checkout must initialize that submodule with
   `git submodule update --init --recursive`. The published source archive
-  already contains its pinned contents.
+  already contains the pinned crypto, protocol, and certificate-loader subset
+  used by ComicChat.
 - Add focused inline tests and aggregate a new test-only module from
   `src/root.zig` when necessary.
 - Do not add or redistribute AVB/BGB files without an exact source path,

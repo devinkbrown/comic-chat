@@ -24,6 +24,41 @@ normalize_tree() {
     find "$1" -exec touch -h -d "@$source_epoch" {} +
 }
 
+assert_release_clean() {
+    local tree=$1
+    local matches
+
+    matches=$(grep -IRniE --exclude='*.avb' --exclude='*.bgb' --exclude='*.bin' \
+        --exclude='*.bmp' --exclude='*.png' \
+        'SPDX-FileCopyrightText:.*<[^>]+>|/home/[[:alnum:]_.-]+' \
+        "$tree" || true)
+    if [[ -n "$matches" ]]; then
+        printf 'Personal identifier found in release tree:\n%s\n' "$matches" >&2
+        exit 3
+    fi
+
+    matches=$(find "$tree" -type f \( \
+        -iname '*.pem' -o -iname '*.key' -o -iname '*.crt' -o \
+        -iname '*.cer' -o -iname '*.p12' -o -iname '*.pfx' -o \
+        -iname '*.keystore' -o -iname 'id_rsa*' -o -iname 'id_ed25519*' \
+        \) -print)
+    if [[ -n "$matches" ]]; then
+        printf 'Certificate or private-key file found in release tree:\n%s\n' "$matches" >&2
+        exit 3
+    fi
+}
+
+sanitize_release_text() {
+    local tree=$1 file
+    while IFS= read -r -d '' file; do
+        grep -Iq . "$file" || continue
+        sed -i -E \
+            -e 's#^// SPDX-FileCopyrightText:.*$#// SPDX-FileCopyrightText: 2026 Onyx contributors#' \
+            -e 's#/home/[[:alnum:]_.-]+#/path/to#g' \
+            "$file"
+    done < <(find "$tree" -type f -print0)
+}
+
 write_tar_gz() {
     local parent=$1 basename=$2 destination=$3
     tar --sort=name --mtime="@$source_epoch" --owner=0 --group=0 --numeric-owner \
@@ -42,6 +77,7 @@ package_target() {
     cp "$repo_root/LICENSES/MIT.txt" "$repo_root/src/render/COMIC_NEUE_LICENSE.txt" "$package_dir/"
     cp "$repo_root/src/render/LIBERATION_SANS_LICENSE.txt" "$package_dir/"
     cp -R "$repo_root/docs" "$package_dir/docs"
+    assert_release_clean "$package_dir"
     normalize_tree "$package_dir"
 
     if [[ "$format" == zip ]]; then
@@ -56,13 +92,21 @@ package_source() {
     local source_basename="comicchat-$version-source"
     local source_dir="$stage_dir/source/$source_basename"
     local pinned_onyx
+    local -a onyx_files
     pinned_onyx=$(git -C "$repo_root" rev-parse HEAD:third_party/onyx-server)
+    mapfile -t onyx_files < "$repo_root/tools/onyx-tls-sources.txt"
 
     mkdir -p "$source_dir"
     git -C "$repo_root" archive HEAD | tar -x -C "$source_dir"
+    rm -f "$source_dir/.gitmodules"
+    rm -rf "$source_dir/legacy"
     mkdir -p "$source_dir/third_party/onyx-server"
-    git -C "$repo_root/third_party/onyx-server" archive "$pinned_onyx" | \
+    git -C "$repo_root/third_party/onyx-server" archive "$pinned_onyx" \
+        LICENSE "${onyx_files[@]}" | \
         tar -x -C "$source_dir/third_party/onyx-server"
+    printf '%s\n' "$pinned_onyx" > "$source_dir/third_party/onyx-server/REVISION"
+    sanitize_release_text "$source_dir"
+    assert_release_clean "$source_dir"
     normalize_tree "$source_dir"
     write_tar_gz "$stage_dir/source" "$source_basename" \
         "$output_dir/comicchat-$version-source.tar.gz"

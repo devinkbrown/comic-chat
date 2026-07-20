@@ -34,9 +34,10 @@ This distinction is important:
 - The current release test gate reports 395 passed tests and one intentionally
   skipped platform-conditional test.
 - Native Linux plus x86_64 Windows, FreeBSD, and OpenBSD release builds pass.
-- The published source archive includes the source tree and the exact pinned
-  Onyx TLS submodule revision, while the binary archives contain the executable,
-  README, license, and third-party notices.
+- The published source archive includes the source tree and the crypto,
+  protocol, and certificate-loader subset exported from the exact pinned Onyx
+  revision. Binary archives contain only the executable, current documentation,
+  licenses, and third-party notices.
 
 ## Product completeness matrix
 
@@ -108,7 +109,7 @@ PASS  Xvfb X11 menu, Settings input/Tab, Escape, and composer event smoke
 PASS  headless Wine Win32 window, menu, Settings input/Tab, Escape, and composer event smoke
 PASS  six Linux/Windows deterministic UI surfaces are byte-identical
 PASS  release archive checksums verified for all four binary packages and the
-      source archive containing the pinned Onyx TLS source
+      source archive containing the required pinned Onyx TLS source subset
 ```
 
 Not claimed by this audit: a live `eshmaki.me` SASL EXTERNAL login or a live

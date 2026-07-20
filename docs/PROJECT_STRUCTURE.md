@@ -15,13 +15,13 @@ not vendored here.
 | `docs/UI_LIBRARY.md` | Shared desktop design tokens, components, interaction states, and visual checks |
 | `legacy/docs/` | Historical Microsoft-reference audits and migration records; excluded from binary packages |
 | `tools/` | Reproducible asset and font tooling |
-| `third_party/onyx-server/` | Pinned Onyx TLS source submodule used by the transport |
+| `third_party/onyx-server/` | Pinned Onyx source submodule; ComicChat imports it through the narrow `onyx_tls_root.zig` boundary |
 
 ## Releases
 
 The published `comicchat-portable-2026-07-20.1` release provides x86_64 Windows,
-Linux, FreeBSD, and OpenBSD binary packages, a source archive with the pinned
-Onyx TLS submodule expanded, and a SHA-256 manifest.
+Linux, FreeBSD, and OpenBSD binary packages, a source archive with the required
+subset of the pinned Onyx TLS source expanded, and a SHA-256 manifest.
 The source archive is the self-contained distribution artifact; a repository
 checkout instead requires `git submodule update --init --recursive` before
 building.

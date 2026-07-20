@@ -9,7 +9,7 @@ pub fn build(b: *std.Build) void {
     onyx_build_info.addOption([]const u8, "git_commit", "8bc3b9a");
     onyx_build_info.addOption([]const u8, "version", "0.5.6");
     const onyx_tls = b.addModule("onyx_tls", .{
-        .root_source_file = b.path("third_party/onyx-server/src/root.zig"),
+        .root_source_file = b.path("onyx_tls_root.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{.{ .name = "build_info", .module = onyx_build_info.createModule() }},
