@@ -51,6 +51,7 @@ pub const client = struct {
     pub const dialogs = @import("client/dialogs.zig");
     pub const workspace = @import("client/workspace.zig");
     pub const files = @import("client/files.zig");
+    pub const preferences = @import("client/preferences.zig");
     pub const accessibility = @import("client/accessibility.zig");
     pub const input = @import("client/input.zig");
     pub const shell = @import("client/shell.zig");
@@ -113,6 +114,7 @@ test {
     _ = @import("client/dialogs.zig");
     _ = @import("client/workspace.zig");
     _ = @import("client/files.zig");
+    _ = @import("client/preferences.zig");
     _ = @import("client/input.zig");
     _ = @import("client/shell.zig");
     _ = @import("client/ui.zig");

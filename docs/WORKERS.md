@@ -127,11 +127,16 @@ Keep `src/net/` ownership-oriented and transport-independent above the socket:
 - `proto/dcc.zig` owns the live comic-tag side protocols carried outside
   `.ccc` archives: the CTCP `DCC SEND` avatar/file offer (with its CTCP
   low-level quoting) and the stop-and-wait, ACK'd chunked transfer socket
-  state machine (`sendFile`/`receiveFile`). `client.zig`'s `offerFile` only
-  composes and sends the offer; callers drive the transfer directly.
+  state machine (`sendFileControlled`/`receiveFileControlled`). `main.zig`
+  owns the consent, progress, cancellation, listener readiness, exclusive
+  destination, and worker lifetime; `client.zig` only serializes the offer.
 - `proto/keystring.zig` owns IRCX semicolon-delimited client-data key strings,
   bounded pure property mutation, enumeration, and two-pass property diffing;
-  live PROP query/send plumbing remains a caller concern.
+  `client.zig` owns typed PROP/ACCESS/LISTX/EVENT command serialization and the
+  app owns their dialogs and visible replies.
+- `client/preferences.zig` owns bounded, percent-escaped profile, backdrop,
+  automation-rule, flood, and notification persistence. It replaces the old
+  Windows Registry boundary and must never store credentials or certificates.
 
 The native app opens its window before connection setup. `AsyncNetwork` polls
 the connector, performs first-contact STS TLS upgrades, and schedules jittered

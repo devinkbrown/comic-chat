@@ -49,6 +49,11 @@ pub const Id = enum {
     open_conversation,
     save_conversation,
     export_image,
+    ircx_properties,
+    room_access,
+    ircx_events,
+    call_link,
+    member_profile,
 };
 
 pub const Group = enum { connection, rooms, automation, files };
@@ -91,7 +96,7 @@ pub const specs = [_]Spec{
     .{ .id = .edit_rule, .resource = "IDD_EDITRULE", .title = "Edit Rule", .group = .automation, .source_w = 265, .source_h = 260 },
     .{ .id = .channel_create, .resource = "IDD_CHANNELCREATE", .title = "Create Room", .group = .rooms, .source_w = 186, .source_h = 194 },
     .{ .id = .channel_password, .resource = "IDD_CHANPASSWORD", .title = "Room Password", .group = .rooms, .source_w = 173, .source_h = 86 },
-    .{ .id = .file_transfer, .resource = "IDD_FILE_TRANSFER", .title = "File Transfer", .group = .files, .source_w = 186, .source_h = 93 },
+    .{ .id = .file_transfer, .resource = "IDD_FILE_TRANSFER", .title = "File Transfer", .group = .files, .source_w = 300, .source_h = 236 },
     .{ .id = .motd, .resource = "IDD_MOTD", .title = "Message of the Day", .group = .rooms, .source_w = 298, .source_h = 146 },
     .{ .id = .setup, .resource = "IDD_SETUPDIALOG", .title = "Connection Setup", .group = .connection, .source_w = 252, .source_h = 218 },
     .{ .id = .away, .resource = "IDD_AWAYDLG", .title = "Away", .group = .rooms, .source_w = 186, .source_h = 87 },
@@ -112,6 +117,11 @@ pub const specs = [_]Spec{
     .{ .id = .open_conversation, .resource = "PORTABLE_OPEN_CONVERSATION", .title = "Open Conversation", .group = .files, .source_w = 300, .source_h = 108 },
     .{ .id = .save_conversation, .resource = "PORTABLE_SAVE_CONVERSATION", .title = "Save Conversation", .group = .files, .source_w = 300, .source_h = 108 },
     .{ .id = .export_image, .resource = "PORTABLE_EXPORT_IMAGE", .title = "Export Comic Image", .group = .files, .source_w = 300, .source_h = 108 },
+    .{ .id = .ircx_properties, .resource = "PORTABLE_IRCX_PROPERTIES", .title = "IRCX Properties", .group = .rooms, .source_w = 300, .source_h = 210 },
+    .{ .id = .room_access, .resource = "PORTABLE_ROOM_ACCESS", .title = "Room Access", .group = .rooms, .source_w = 300, .source_h = 236 },
+    .{ .id = .ircx_events, .resource = "PORTABLE_IRCX_EVENTS", .title = "IRCX Operator Events", .group = .rooms, .source_w = 300, .source_h = 184 },
+    .{ .id = .call_link, .resource = "PORTABLE_CALL_LINK", .title = "Call Link", .group = .connection, .source_w = 300, .source_h = 184 },
+    .{ .id = .member_profile, .resource = "PORTABLE_MEMBER_PROFILE", .title = "Member Profile", .group = .connection, .source_w = 300, .source_h = 132 },
 };
 
 pub const microsoft_dialog_count: usize = 40;
@@ -129,7 +139,7 @@ pub fn prompt(id: Id) ?[]const u8 {
     return switch (id) {
         .channel, .channel_create => "Room name",
         .nickname => "Nickname",
-        .kick, .ban, .invite, .whisper, .notification_users => "Member nickname",
+        .kick, .ban, .invite, .whisper, .call_link, .member_profile => "Member nickname",
         .away => "Away message",
         .password, .channel_password => "Password",
         .choose_color => "Color value",
@@ -151,7 +161,7 @@ pub fn prompt(id: Id) ?[]const u8 {
 pub fn fields(id: Id) []const Field {
     return switch (id) {
         .setup, .settings, .servers => &.{ .{ .label = "Server", .hint = "Secure IRC endpoint" }, .{ .label = "Port", .hint = "6697" }, .{ .label = "Security", .hint = "Verified TLS", .kind = .choice } },
-        .personal => &.{ .{ .label = "Profile text" }, .{ .label = "Display name" }, .{ .label = "Homepage" } },
+        .personal => &.{ .{ .label = "Profile text" }, .{ .label = "Display name" }, .{ .label = "Homepage", .hint = "Optional" }, .{ .label = "Email", .hint = "Optional" } },
         .character => &.{ .{ .label = "Character name", .kind = .choice }, .{ .label = "Preview", .hint = "Bundled Comic Chat character", .kind = .preview } },
         .background => &.{ .{ .label = "Backdrop name", .kind = .choice }, .{ .label = "Preview", .hint = "Bundled background", .kind = .preview } },
         .nickname => &.{.{ .label = "Nickname" }},
@@ -164,27 +174,35 @@ pub fn fields(id: Id) []const Field {
             .{ .label = "Maximum users", .hint = "Optional" },
             .{ .label = "Optional password", .kind = .password },
         },
-        .channel_properties => &.{ .{ .label = "Topic" }, .{ .label = "Modes" }, .{ .label = "Limit" } },
+        .channel_properties => &.{ .{ .label = "Topic" }, .{ .label = "Room modes", .hint = "+nt" }, .{ .label = "Maximum users", .hint = "Optional" }, .{ .label = "Optional password", .kind = .password }, .{ .label = "Apply", .hint = "Topic, modes and limits", .kind = .readonly } },
         .channel_password => &.{.{ .label = "Room password" }},
-        .room_list => &.{ .{ .label = "Room name", .hint = "For example #root" }, .{ .label = "Filter", .hint = "Optional room filter" } },
+        .room_list => &.{ .{ .label = "LISTX query", .hint = "For example N=#root,>10" }, .{ .label = "Room to join", .hint = "Optional, for example #root" }, .{ .label = "Result limit", .hint = "Optional; blank means unlimited" } },
         .user_list => &.{ .{ .label = "Member nickname", .hint = "Choose a visible room member" }, .{ .label = "Filter", .hint = "Optional nickname filter" } },
         .kick => &.{ .{ .label = "Member nickname" }, .{ .label = "Reason", .hint = "Optional" }, .{ .label = "Also ban mask", .hint = "Optional" } },
         .ban => &.{.{ .label = "Ban mask", .hint = "nick!*@*" }},
-        .invite, .whisper, .notification_users => &.{.{ .label = "Member nickname" }},
+        .invite, .whisper => &.{.{ .label = "Member nickname" }},
+        .notification_users => &.{ .{ .label = "Online now", .hint = "Refresh to query saved notifications", .kind = .readonly }, .{ .label = "Member", .hint = "Select an online nickname" }, .{ .label = "Action", .kind = .choice }, .{ .label = "Room", .hint = "For Join room, for example #root" } },
         .away => &.{.{ .label = "Away message" }},
         .sound => &.{ .{ .label = "Sound file", .kind = .choice }, .{ .label = "Accompanying message", .hint = "Optional" } },
         .set_text_font, .text_font => &.{ .{ .label = "Font name and size", .kind = .choice }, .{ .label = "Style", .hint = "Bold", .kind = .choice } },
         .choose_color => &.{ .{ .label = "Color value" }, .{ .label = "Preview", .hint = "Current theme color", .kind = .preview } },
         .comics_view => &.{ .{ .label = "View mode", .hint = "Comic", .kind = .choice }, .{ .label = "Panels across", .hint = "4 panels", .kind = .choice } },
-        .automation, .rules, .edit_rule, .rule_sets, .add_to_sets, .rename_loaded_set, .rename_set, .create_set, .advanced_event_params, .advanced_rule_settings => &.{ .{ .label = "Rule or set name" }, .{ .label = "Condition", .hint = "Event match" }, .{ .label = "Action", .hint = "Portable action" } },
-        .notifications => &.{ .{ .label = "Notify on", .hint = "Join, part, mention", .kind = .choice }, .{ .label = "Delivery", .hint = "Desktop notification", .kind = .choice } },
-        .file_transfer => &.{ .{ .label = "File path" }, .{ .label = "Destination", .hint = "Ask before receiving" } },
+        .automation => &.{ .{ .label = "Greeting mode", .kind = .choice }, .{ .label = "Greeting", .hint = "Use %nick% for the arriving member" }, .{ .label = "Flood message count", .hint = "8" }, .{ .label = "Flood interval seconds", .hint = "10" } },
+        .rules, .edit_rule => &.{ .{ .label = "Rule name" }, .{ .label = "Event", .kind = .choice }, .{ .label = "Filter", .hint = "Optional text or nickname mask" }, .{ .label = "Action", .kind = .choice }, .{ .label = "Action value", .hint = "Message, room or sound" } },
+        .rule_sets, .add_to_sets, .rename_loaded_set, .rename_set, .create_set, .advanced_event_params, .advanced_rule_settings => &.{ .{ .label = "Rule or set name" }, .{ .label = "Condition", .hint = "Event match" }, .{ .label = "Action", .hint = "Portable action" } },
+        .notifications => &.{ .{ .label = "Nickname", .hint = "Nickname or * pattern" }, .{ .label = "User mask", .hint = "*" }, .{ .label = "Host mask", .hint = "*" }, .{ .label = "Network", .hint = "Optional server" }, .{ .label = "Delivery", .kind = .choice } },
+        .file_transfer => &.{ .{ .label = "Direction", .kind = .choice }, .{ .label = "Member" }, .{ .label = "File or save path" }, .{ .label = "Address / size", .hint = "IPv4 when sending" }, .{ .label = "Port / status", .hint = "Port when sending" } },
         .open_conversation => &.{.{ .label = "Conversation file", .hint = "Path to a .ccc file" }},
         .save_conversation => &.{.{ .label = "Conversation file", .hint = "Save as .ccc" }},
         .export_image => &.{.{ .label = "Image file", .hint = "Export as .png" }},
         .motd => &.{.{ .label = "Message of the day", .hint = "Server supplied", .kind = .readonly }},
         .invitation => &.{ .{ .label = "Room" }, .{ .label = "Invitation note" } },
         .about => &.{ .{ .label = "ComicChat", .hint = "Portable Zig client", .kind = .readonly }, .{ .label = "License", .hint = "AGPL-3.0-or-later", .kind = .readonly } },
+        .ircx_properties => &.{ .{ .label = "Channel", .hint = "Current room by default" }, .{ .label = "Property list", .hint = "For example TOPIC,ONJOIN" }, .{ .label = "Value", .hint = "Empty deletes when setting" }, .{ .label = "Action", .kind = .choice } },
+        .room_access => &.{ .{ .label = "Action", .kind = .choice }, .{ .label = "Level", .kind = .choice }, .{ .label = "Nickname mask", .hint = "*!*@*" }, .{ .label = "Timeout minutes", .hint = "Optional; 0 means unlimited" }, .{ .label = "Reason", .hint = "Optional" } },
+        .ircx_events => &.{ .{ .label = "Action", .kind = .choice }, .{ .label = "Event", .hint = "CHANNEL, MEMBER, SERVER, CONNECTION, SOCKET or USER" }, .{ .label = "Mask", .hint = "Optional" } },
+        .call_link => &.{ .{ .label = "Member" }, .{ .label = "Meeting link", .hint = "https://..." }, .{ .label = "Compatibility", .hint = "Portable secure-link invitation", .kind = .readonly } },
+        .member_profile => &.{ .{ .label = "Member" }, .{ .label = "Result", .hint = "Profile is shown in the conversation", .kind = .readonly } },
     };
 }
 
@@ -210,14 +228,31 @@ pub fn choiceOptions(id: Id, index: usize) []const []const u8 {
         .sound => if (index == 0) &.{ "Chime.wav", "Knock.wav", "Laugh.wav", "Applause.wav" } else &.{},
         .set_text_font, .text_font => if (index == 0) &.{ "Comic Neue 14", "Comic Neue 16", "Comic Neue 18" } else &.{ "Regular", "Bold", "Italic" },
         .comics_view => if (index == 0) &.{ "Comic", "Text" } else &.{ "4 panels", "3 panels", "2 panels", "1 panel", "5 panels", "6 panels" },
-        .notifications => if (index == 0) &.{ "Mentions", "Joins and parts", "All activity" } else &.{ "Desktop notification", "Sound only", "Disabled" },
+        .automation => if (index == 0) &.{ "None", "Whisper", "Say" } else &.{},
+        .rules, .edit_rule => if (index == 1)
+            &.{ "Message", "Whisper", "Join", "Leave", "Kick", "Invitation" }
+        else if (index == 3)
+            &.{ "Notify", "Reply", "Action", "Sound", "Join room", "Ignore" }
+        else
+            &.{},
+        .notifications => if (index == 4) &.{ "In-app banner", "Sound and banner", "Disabled" } else &.{},
+        .file_transfer => if (index == 0) &.{ "Send file", "Receive offer" } else &.{},
+        .notification_users => if (index == 2) &.{ "Refresh", "Whisper", "Invite to current room", "Join room", "Clear list" } else &.{},
+        .ircx_properties => if (index == 3) &.{ "Get", "Get common", "Set", "Delete" } else &.{},
+        .room_access => if (index == 0)
+            &.{ "List", "Add", "Delete", "Clear" }
+        else if (index == 1)
+            &.{ "VOICE", "HOST", "OWNER", "GRANT", "DENY" }
+        else
+            &.{},
+        .ircx_events => if (index == 0) &.{ "List", "Add", "Delete" } else &.{},
         else => &.{},
     };
 }
 
 pub fn requiresInput(id: Id) bool {
     return switch (id) {
-        .about, .motd, .comics_view, .automation, .rules, .rule_sets, .notifications, .servers, .settings, .setup => false,
+        .about, .motd, .comics_view, .automation, .rules, .rule_sets, .notifications, .notification_users, .servers, .settings, .setup, .room_list, .ircx_properties, .room_access, .ircx_events => false,
         else => true,
     };
 }
@@ -235,20 +270,25 @@ pub fn primaryLabel(id: Id) []const u8 {
         .ban => "Apply",
         .invite => "Invite",
         .whisper => "Open",
-        .file_transfer => "Send",
+        .file_transfer => "Start transfer",
         .open_conversation => "Open",
         .save_conversation => "Save",
         .export_image => "Export",
         .away => "Set Away",
         .automation, .rules, .edit_rule, .rule_sets, .add_to_sets, .rename_loaded_set, .rename_set, .create_set, .advanced_event_params, .advanced_rule_settings => "Save rule",
         .notifications, .notification_users => "Save notifications",
+        .ircx_properties => "Run property action",
+        .room_access => "Apply access action",
+        .ircx_events => "Apply event action",
+        .call_link => "Send call link",
+        .member_profile => "Request profile",
         .about, .motd => "Close",
         else => "OK",
     };
 }
 
-test "registry covers all forty Microsoft dialog templates plus portable file dialogs" {
-    try std.testing.expectEqual(@as(usize, 43), specs.len);
+test "registry covers all forty Microsoft dialog templates plus portable dialogs" {
+    try std.testing.expectEqual(@as(usize, 48), specs.len);
     try std.testing.expectEqual(@as(usize, 40), microsoft_dialog_count);
     var seen: [specs.len]bool = @splat(false);
     for (specs) |spec| {

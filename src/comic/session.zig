@@ -269,6 +269,7 @@ pub const Transcript = struct {
     gpa: std.mem.Allocator,
     lines: std.ArrayList(Line) = .empty,
     roster: std.ArrayList(RosterEntry) = .empty,
+    backdrop_storage: ?[]u8 = null,
 
     pub fn init(gpa: std.mem.Allocator) Transcript {
         return .{ .gpa = gpa };
@@ -279,6 +280,18 @@ pub const Transcript = struct {
         self.lines.deinit(self.gpa);
         for (self.roster.items) |entry| self.gpa.free(entry.nick);
         self.roster.deinit(self.gpa);
+        if (self.backdrop_storage) |name| self.gpa.free(name);
+    }
+
+    pub fn setBackdrop(self: *Transcript, name: []const u8) !void {
+        const bundled = bundledBackdropByName(name) orelse return error.UnknownBackdrop;
+        const replacement = try self.gpa.dupe(u8, bundled);
+        if (self.backdrop_storage) |old| self.gpa.free(old);
+        self.backdrop_storage = replacement;
+    }
+
+    pub fn resolvedBackdrop(self: *const Transcript) []const u8 {
+        return self.backdrop_storage orelse "field";
     }
 
     /// Resolve a participant through their most recent source announcement,
@@ -610,6 +623,25 @@ pub const Transcript = struct {
         return true;
     }
 };
+
+pub fn bundledBackdropByName(name: []const u8) ?[]const u8 {
+    const dot = std.mem.indexOfScalar(u8, name, '.');
+    const base = if (dot) |index| name[0..index] else name;
+    for ([_][]const u8{ "field", "volcano", "den", "room", "pastoral" }) |candidate| {
+        if (std.ascii.eqlIgnoreCase(base, candidate)) return candidate;
+    }
+    return null;
+}
+
+test "transcript applies only bundled backdrop names" {
+    var transcript = Transcript.init(std.testing.allocator);
+    defer transcript.deinit();
+    try std.testing.expectEqualStrings("field", transcript.resolvedBackdrop());
+    try transcript.setBackdrop("Volcano.bgb");
+    try std.testing.expectEqualStrings("volcano", transcript.resolvedBackdrop());
+    try std.testing.expectError(error.UnknownBackdrop, transcript.setBackdrop("https://example.test/remote.bgb"));
+    try std.testing.expectEqualStrings("volcano", transcript.resolvedBackdrop());
+}
 
 fn isNickStatus(ch: u8) bool {
     return ch == '~' or ch == '&' or ch == '@' or ch == '%' or ch == '+';

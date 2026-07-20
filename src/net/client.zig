@@ -492,6 +492,99 @@ pub const Client = struct {
         try self.queueOut(.interactive, true, false);
     }
 
+    pub fn setMode(self: *Client, target: []const u8, modes: []const u8, argument: []const u8) !void {
+        if (argument.len == 0)
+            try self.appendCommand("MODE", &.{ target, modes })
+        else
+            try self.appendCommand("MODE", &.{ target, modes, argument });
+        try self.queueOut(.interactive, true, false);
+    }
+
+    /// Microsoft uses LISTX for the extended room browser when IRCX is live.
+    pub fn listRooms(self: *Client, filter: []const u8, limit: []const u8, ircx_data: bool) !void {
+        const command = if (ircx_data) "LISTX" else "LIST";
+        if (!ircx_data) {
+            if (filter.len == 0) try self.appendCommand(command, &.{}) else try self.appendCommand(command, &.{filter});
+        } else if (filter.len == 0 and limit.len == 0) {
+            try self.appendCommand(command, &.{});
+        } else if (limit.len == 0) {
+            try self.appendCommand(command, &.{filter});
+        } else {
+            try self.appendCommand(command, &.{ filter, limit });
+        }
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn queryProperty(self: *Client, entity: []const u8, property: []const u8) !void {
+        if (property.len == 0) return error.InvalidIrcParameter;
+        try self.appendCommand("PROP", &.{ entity, property });
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn setProperty(self: *Client, entity: []const u8, property: []const u8, value: []const u8) !void {
+        try self.appendCommandTrailing("PROP", &.{ entity, property, value });
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn accessList(self: *Client, channel: []const u8) !void {
+        try self.appendCommand("ACCESS", &.{ channel, "LIST" });
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn accessDelete(self: *Client, channel: []const u8, level: []const u8, mask: []const u8) !void {
+        try self.appendCommand("ACCESS", &.{ channel, "DEL", level, mask });
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn accessClear(self: *Client, channel: []const u8, level: []const u8) !void {
+        var params: [3][]const u8 = .{ channel, "CLEAR", "" };
+        var count: usize = 2;
+        if (level.len != 0) {
+            params[count] = level;
+            count += 1;
+        }
+        try self.appendCommand("ACCESS", params[0..count]);
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn accessAdd(self: *Client, channel: []const u8, level: []const u8, mask: []const u8, duration: []const u8, reason: []const u8) !void {
+        var params: [7][]const u8 = .{ channel, "ADD", level, mask, "", "", "" };
+        var count: usize = 4;
+        if (duration.len != 0) {
+            params[count] = duration;
+            count += 1;
+        }
+        if (reason.len != 0) {
+            if (duration.len == 0) {
+                params[count] = "0";
+                count += 1;
+            }
+            params[count] = reason;
+            count += 1;
+            try self.appendCommandTrailing("ACCESS", params[0..count]);
+        } else {
+            try self.appendCommand("ACCESS", params[0..count]);
+        }
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn who(self: *Client, mask: []const u8) !void {
+        if (mask.len == 0) try self.appendCommand("WHO", &.{}) else try self.appendCommand("WHO", &.{mask});
+        try self.queueOut(.bulk, true, false);
+    }
+
+    pub fn eventList(self: *Client, event: []const u8) !void {
+        if (event.len == 0) try self.appendCommand("EVENT", &.{"LIST"}) else try self.appendCommand("EVENT", &.{ "LIST", event });
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn eventChange(self: *Client, add: bool, event: []const u8, mask: []const u8) !void {
+        if (event.len == 0) return error.InvalidIrcParameter;
+        const operation = if (add) "ADD" else "DELETE";
+        if (mask.len == 0) try self.appendCommand("EVENT", &.{ operation, event }) else try self.appendCommand("EVENT", &.{ operation, event, mask });
+        try self.queueOut(.interactive, true, false);
+    }
+
     /// In addition to standard `AWAY`, Microsoft broadcasts this CTCP control
     /// to every joined room so peers can update their local member state.
     pub fn sendAwayControl(self: *Client, target: []const u8, message_text: []const u8) !void {
@@ -538,6 +631,21 @@ pub const Client = struct {
         }
         try wire.append(self.gpa, 0x01);
         return self.notice(target, wire.items);
+    }
+
+    pub fn sendCallLink(self: *Client, target: []const u8, link: []const u8) !void {
+        if (link.len == 0 or link.len > 400 or std.mem.indexOfAny(u8, link, " \r\n\x00\x01") != null)
+            return error.InvalidIrcParameter;
+        var wire: std.ArrayList(u8) = .empty;
+        defer wire.deinit(self.gpa);
+        try wire.appendSlice(self.gpa, "\x01X-COMICCHAT-CALL ");
+        try wire.appendSlice(self.gpa, link);
+        try wire.append(self.gpa, 0x01);
+        try self.privmsg(target, wire.items);
+    }
+
+    pub fn refuseLegacyNetMeeting(self: *Client, target: []const u8) !void {
+        return self.ctcpReply(target, "NETMEET", "NOHAVE");
     }
 
     pub fn reply(self: *Client, target: []const u8, msgid: []const u8, text: []const u8) !void {
@@ -1244,4 +1352,51 @@ test "Microsoft comment controls select DATA only after IRCX negotiation" {
         "NOTICE alice :\x01EMAIL \x01\r\n",
         client.tx.items.items[14].bytes,
     );
+}
+
+test "IRCX workflow commands follow the draft wire grammar" {
+    const gpa = std.testing.allocator;
+    const owned_host = try gpa.dupe(u8, "irc.example");
+    var client = Client{
+        .gpa = gpa,
+        .transport = undefined,
+        .host = owned_host,
+        .port = 6697,
+        .connect_options = .{},
+        .framer = irc.LineFramer.init(gpa),
+        .tx = policy.TxQueue.init(gpa, .{}, 0, 1, 0),
+        .deadlines = policy.Deadlines.init(0, .{}),
+        .aggregator = features_mod.Aggregator.init(gpa, .{}),
+    };
+    defer {
+        client.aggregator.deinit();
+        client.tx.deinit();
+        client.framer.deinit();
+        client.out.deinit(gpa);
+        gpa.free(owned_host);
+    }
+
+    try client.listRooms("N=#root,>10", "25", true);
+    try client.queryProperty("#root", "TOPIC,ONJOIN");
+    try client.setProperty("#root", "TOPIC", "New topic");
+    try client.accessList("#root");
+    try client.accessAdd("#root", "HOST", "anna!*@*", "", "trusted helper");
+    try client.accessDelete("#root", "HOST", "anna!*@*");
+    try client.accessClear("#root", "DENY");
+    try client.eventList("CHANNEL");
+    try client.eventChange(true, "MEMBER", "*!*@*");
+
+    const expected = [_][]const u8{
+        "LISTX N=#root,>10 25\r\n",
+        "PROP #root TOPIC,ONJOIN\r\n",
+        "PROP #root TOPIC :New topic\r\n",
+        "ACCESS #root LIST\r\n",
+        "ACCESS #root ADD HOST anna!*@* 0 :trusted helper\r\n",
+        "ACCESS #root DEL HOST anna!*@*\r\n",
+        "ACCESS #root CLEAR DENY\r\n",
+        "EVENT LIST CHANNEL\r\n",
+        "EVENT ADD MEMBER *!*@*\r\n",
+    };
+    try std.testing.expectEqual(expected.len, client.tx.items.items.len);
+    for (expected, client.tx.items.items) |wire, item| try std.testing.expectEqualStrings(wire, item.bytes);
 }

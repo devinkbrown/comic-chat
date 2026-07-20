@@ -93,10 +93,19 @@ pane consumes live NAMES/JOIN/PART/QUIT/NICK state, reports active rather than
 historical members, scrolls with the wheel, keeps keyboard selection visible,
 and maps selection and context actions to the correct scrolled member.
 Edit > Settings uses the same prefilled, validated reconnect path. Room List
-accepts and joins a room, User List selects an active member, and Comic View
-applies both content mode and one-to-six panel density. Sparse conversations
+uses source-shaped LIST/LISTX queries and optionally joins a result, User List
+selects an active member, and Comic View applies both content mode and one-to-six panel density. Sparse conversations
 reserve that selected desktop grid, so a single message or break control can
 never expand into a full-buffer panel.
+
+Room and Member menus now expose the remaining live workflows: IRCX PROP,
+ACCESS, LISTX, and operator EVENT commands; persistent personal-profile and
+member-profile requests; bundled backdrop synchronization; greeting/flood
+automation; persistent rules; WHO-backed logon notifications; portable HTTPS
+call links; and consent-gated DCC transfers. Incoming files require an explicit
+save path, never replace an existing file, remain bounded to 16 MiB, report
+progress, and can be cancelled without retaining a partial file. The retired
+Windows NetMeeting control is answered with `NOHAVE`; it is never launched.
 
 The live comic wire path is checked against Microsoft's released
 `bInsertAnnotations`, `bChatSendToTarget`, `OnDataMsg`, and `ProcessSay`
@@ -108,14 +117,17 @@ in the UDI `T` list.
 The complete source-to-wire ledger is
 [`docs/MICROSOFT_WIRE_AUDIT.md`](docs/MICROSOFT_WIRE_AUDIT.md). It also covers
 the two-stage IRCX probe, exact trailing parameters, password JOIN, CREATE,
-reasoned KICK, CTCP SOUND/AWAY/information controls, and the Onyx same-account
-same-nick session extension.
+reasoned KICK, exact IRCX ACCESS/PROP/LISTX/EVENT grammar, DCC consent and ACK
+flow, CTCP SOUND/AWAY/information controls, and the Onyx same-account same-nick
+session extension.
 
 The portable desktop UI has a shared Fluent-style component library and a
 separate neutral application font; Comic Neue remains confined to comic
 content. See `docs/UI_LIBRARY.md`. Exact headless previews are available with
 `zig build run -- render-ui`, plus the `conversation`, `menu`, and `settings`
-variants.
+variants. Any registered dialog has a deterministic preview through
+`zig build run -- render-ui dialog-<enum_name>`, for example
+`dialog-file_transfer` or `dialog-room_access`.
 
 `--tls-cert <cert-and-key.pem>` presents a PEM client certificate and private
 key for SASL EXTERNAL. Onyx TLS presents the certificate during a verified TLS
@@ -167,7 +179,7 @@ env -u WAYLAND_DISPLAY zig build run -- window anna
 
 ## Release packages
 
-The current published release is `comicchat-portable-2026-07-20.3`.
+The current published release is `comicchat-portable-2026-07-20.4`.
 It contains x86_64 binary packages for Windows, Linux, FreeBSD, and OpenBSD,
 an explicit buildable source archive, and a single SHA-256 manifest covering
 all five artifacts. The source archive includes the narrow Onyx TLS dependency
@@ -177,13 +189,13 @@ without a separate submodule checkout.
 Verify downloaded artifacts before use:
 
 ```sh
-sha256sum -c comicchat-portable-2026-07-20.3-SHA256SUMS.txt
+sha256sum -c comicchat-portable-2026-07-20.4-SHA256SUMS.txt
 ```
 
 To build the binary archives from a clean checkout:
 
 ```sh
-./tools/package-release.sh portable-2026-07-20.3
+./tools/package-release.sh portable-2026-07-20.4
 ```
 
 Each archive contains the executable, this README, the AGPL license, and

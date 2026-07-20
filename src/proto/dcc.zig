@@ -232,15 +232,28 @@ fn streamReadExact(io: std.Io, stream: *const net.Stream, dst: []u8, timeout_ms:
 /// not stream incrementally from disk the way the source reads its file
 /// handle chunk-by-chunk.
 pub fn sendFile(io: std.Io, port: u16, data: []const u8) !void {
+    var control: NullTransferControl = .{};
+    return sendFileControlled(io, port, data, &control);
+}
+
+pub fn sendFileControlled(io: std.Io, port: u16, data: []const u8, control: anytype) !void {
+    if (control.cancelled()) return error.DccCancelled;
     var address: net.IpAddress = .{ .ip4 = .unspecified(port) };
     var server = try address.listen(io, .{ .reuse_address = true });
     defer server.deinit(io);
+    control.socketOpened(server.socket.handle);
+    defer control.socketClosed();
 
-    var stream = try server.accept(io);
+    var stream = server.accept(io) catch |err| {
+        if (control.cancelled()) return error.DccCancelled;
+        return err;
+    };
     defer stream.close(io);
+    control.socketOpened(stream.socket.handle);
 
     var total_sent: usize = 0;
     while (total_sent < data.len) {
+        if (control.cancelled()) return error.DccCancelled;
         const chunk_len = @min(send_chunk_size, data.len - total_sent);
         try streamWriteAll(io, &stream, data[total_sent .. total_sent + chunk_len]);
         total_sent += chunk_len;
@@ -251,6 +264,7 @@ pub fn sendFile(io: std.Io, port: u16, data: []const u8) !void {
             try streamReadExact(io, &stream, &ack_bytes, recv_timeout_ms);
             acked = std.mem.readInt(u32, &ack_bytes, .big);
         }
+        control.progress(total_sent, data.len);
     }
 }
 
@@ -270,24 +284,56 @@ pub fn sendFile(io: std.Io, port: u16, data: []const u8) !void {
 /// `sendFile`/`encodeSendOffer` always supply a real size, so a peer of
 /// this port never triggers it.
 pub fn receiveFile(gpa: std.mem.Allocator, io: std.Io, host_ip: u32, port: u16, expected_size: ?u64) ![]u8 {
+    var control: NullTransferControl = .{};
+    return receiveFileControlled(gpa, io, host_ip, port, expected_size, &control);
+}
+
+pub const NullTransferControl = struct {
+    pub fn cancelled(_: *const NullTransferControl) bool {
+        return false;
+    }
+    pub fn progress(_: *NullTransferControl, _: u64, _: ?u64) void {}
+    pub fn socketOpened(_: *NullTransferControl, _: net.Socket.Handle) void {}
+    pub fn socketClosed(_: *NullTransferControl) void {}
+};
+
+/// Receive with application-owned progress and cancellation. Reads use short
+/// timeout slices so Cancel is observed promptly while preserving the source's
+/// overall 60-second receive timeout.
+pub fn receiveFileControlled(gpa: std.mem.Allocator, io: std.Io, host_ip: u32, port: u16, expected_size: ?u64, control: anytype) ![]u8 {
+    if (control.cancelled()) return error.DccCancelled;
+    if (expected_size == 0) return gpa.alloc(u8, 0);
     var addr_bytes: [4]u8 = undefined;
     std.mem.writeInt(u32, &addr_bytes, host_ip, .big);
     var address: net.IpAddress = .{ .ip4 = .{ .bytes = addr_bytes, .port = port } };
     var stream = try address.connect(io, .{ .mode = .stream });
     defer stream.close(io);
+    control.socketOpened(stream.socket.handle);
+    defer control.socketClosed();
 
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
 
     var buf: [recv_chunk_size]u8 = undefined;
+    var idle_ms: u32 = 0;
     while (true) {
-        const n = try streamReadTimeout(io, &stream, &buf, recv_timeout_ms);
+        if (control.cancelled()) return error.DccCancelled;
+        const n = streamReadTimeout(io, &stream, &buf, 250) catch |err| switch (err) {
+            error.DccTimeout => {
+                idle_ms +|= 250;
+                if (idle_ms >= recv_timeout_ms) return error.DccTimeout;
+                continue;
+            },
+            else => return err,
+        };
+        idle_ms = 0;
         var take = n;
         if (expected_size) |size| {
             const remaining = size -| out.items.len;
             take = @min(take, remaining);
         }
         try out.appendSlice(gpa, buf[0..take]);
+        control.progress(out.items.len, expected_size);
 
         var ack_bytes: [4]u8 = undefined;
         std.mem.writeInt(u32, &ack_bytes, @as(u32, @intCast(out.items.len)), .big);
@@ -384,4 +430,22 @@ test "sendFile and receiveFile round-trip real bytes over a loopback TCP connect
     sender.join();
     try std.testing.expect(ctx.err == null);
     try std.testing.expectEqualSlices(u8, &payload, received);
+}
+
+test "controlled DCC receive observes cancellation before connecting" {
+    const Cancelled = struct {
+        pub fn cancelled(_: *@This()) bool {
+            return true;
+        }
+        pub fn progress(_: *@This(), _: u64, _: ?u64) void {}
+        pub fn socketOpened(_: *@This(), _: net.Socket.Handle) void {}
+        pub fn socketClosed(_: *@This()) void {}
+    };
+    var cancelled: Cancelled = .{};
+    var threaded: std.Io.Threaded = .init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    try std.testing.expectError(
+        error.DccCancelled,
+        receiveFileControlled(std.testing.allocator, threaded.io(), 0x7f000001, 27012, 1, &cancelled),
+    );
 }
