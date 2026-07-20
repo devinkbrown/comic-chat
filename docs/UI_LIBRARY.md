@@ -15,6 +15,9 @@ visual contract.
   sized for a modern desktop.
 - The radial mood dial remains the signature interaction. It supports direct
   click and captured drag selection, including a neutral center.
+- An empty conversation renders as a responsive blank comic page with real
+  panel gutters. At minimum window sizes it collapses to a compact instruction
+  instead of overflowing the available buffer.
 - Draw geometry, pointer targets, focus, and accessibility bounds must derive
   from the same layout values.
 
@@ -43,6 +46,7 @@ zig build run -- render-ui > ui-preview.png
 zig build run -- render-ui conversation > ui-conversation-preview.png
 zig build run -- render-ui menu > ui-menu-preview.png
 zig build run -- render-ui settings > ui-dialog-preview.png
+zig build run -- render-ui hover > ui-hover-preview.png
 ```
 
 These previews exercise the empty shell, real comic content, menu surface, and

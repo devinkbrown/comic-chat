@@ -412,6 +412,7 @@ pub const View = struct {
         if (self.shell.focus == .transcript) drawFocus(&self.canvas, layout.transcript);
         if (self.shell.focus == .members) drawFocus(&self.canvas, layout.members);
         if (self.shell.focus == .emotion) drawFocus(&self.canvas, layout.body_camera);
+        if (self.hovered_toolbar) |index| drawToolbarTooltip(&self.canvas, layout, index);
         if (self.active_menu) |menu| drawMenuPopup(&self.canvas, menu, self.hovered_menu_item);
         if (self.active_dialog) |id| drawDialog(&self.canvas, dialogs.get(id), &self.dialog_editors, self.dialog_field, self.dialog_notice, self.hovered_dialog_button);
     }
@@ -822,6 +823,21 @@ fn toolbarLabel(index: u8) []const u8 {
         23 => "Insert symbol",
         else => "Comic Chat tool",
     };
+}
+
+fn toolbarButtonX(index: u8) ?i32 {
+    const ids = [_]u8{ 0, 2, 4, 5, 6, 7, 8, 10, 11, 13, 17, 18 };
+    const starts = [_]i32{ 12, 50, 88, 138, 176, 226, 264, 314, 352, 390, 440, 478 };
+    for (ids, starts) |id, start| if (id == index) return start;
+    return null;
+}
+
+fn drawToolbarTooltip(c: *Canvas, layout: geometry.Layout, index: u8) void {
+    const button_x = toolbarButtonX(index) orelse return;
+    const label = toolbarLabel(index);
+    const width = @min(230, Canvas.uiTextWidth(label) + 20);
+    const x = std.math.clamp(button_x - 4, 6, @max(6, layout.toolbar.right() - width - 6));
+    ui.drawTooltip(c, .{ .x = x, .y = layout.tabs.bottom() + 7, .w = width, .h = 28 }, label);
 }
 
 fn drawModernToolButton(c: *Canvas, glyph: ToolGlyph, x: i32, y: i32, selected: bool, hovered: bool) i32 {

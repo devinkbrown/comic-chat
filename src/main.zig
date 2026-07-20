@@ -1922,6 +1922,7 @@ fn runUiPreview(gpa: std.mem.Allocator, io: std.Io, surface: []const u8) !void {
     }
     if (std.mem.eql(u8, surface, "settings")) view.openDialog(.settings);
     if (std.mem.eql(u8, surface, "menu")) view.active_menu = 0;
+    if (std.mem.eql(u8, surface, "hover")) view.hovered_toolbar = 5;
     try view.render("#root", "reconnecting", &transcript, "", 0);
     const png = try cc.render.png.encode(gpa, view.pixels(), view.width(), view.height());
     defer gpa.free(png);

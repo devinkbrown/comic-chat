@@ -48,6 +48,7 @@ pub fn resolveControlColors(state: ControlState) ControlColors {
     if (state.disabled) return .{ .fill = Theme.chrome, .border = Theme.divider, .content = Theme.divider };
     if (state.pressed) return .{ .fill = Theme.accent, .border = Theme.focus, .content = Theme.layer };
     if (state.selected) return .{ .fill = Theme.accent_soft, .border = Theme.accent_soft, .content = Theme.accent };
+    if (state.focused) return .{ .fill = Theme.layer, .border = Theme.accent, .content = Theme.focus };
     if (state.hovered) return .{ .fill = Theme.layer, .border = Theme.divider, .content = Theme.focus };
     return .{ .fill = Theme.chrome, .border = Theme.chrome, .content = Theme.ink };
 }
@@ -332,7 +333,7 @@ pub fn drawTab(c: *Canvas, x: i32, y: i32, width: i32, height: i32, selected: bo
 }
 
 pub fn drawActionTile(c: *Canvas, x: i32, y: i32, width: i32, height: i32, selected: bool) u32 {
-    drawRoundedBorder(c, x + 3, y + 7, width - 6, height - 14, 5, if (selected) Theme.accent_soft else Theme.layer, if (selected) Theme.accent_soft else Theme.divider);
+    drawRoundedBorder(c, x + 3, y + 4, width - 6, height - 8, 5, if (selected) Theme.accent_soft else Theme.layer, if (selected) Theme.accent_soft else Theme.divider);
     if (selected) c.fillRect(x + 1, y + height - 3, @max(1, width - 1), 3, Theme.accent);
     return if (selected) Theme.accent else Theme.ink;
 }
@@ -403,21 +404,50 @@ pub fn statusTone(status: []const u8) NoticeTone {
 
 pub fn drawEmptyState(c: *Canvas, x: i32, y: i32, width: i32, height: i32, detail: []const u8) void {
     c.fillRect(x, y, width, height, Theme.workspace);
-    const card_w = @min(380, @max(240, width - 64));
-    const card_h = 144;
-    const card_x = x + @divTrunc(width - card_w, 2);
-    const card_y = y + @divTrunc(height - card_h, 2);
-    drawSurface(c, .{ .x = card_x, .y = card_y, .w = card_w, .h = card_h }, .raised);
-    c.fillRect(card_x, card_y, card_w, 34, Theme.subtle);
-    c.fillRect(card_x, card_y, 4, 34, Theme.accent);
-    c.fillRect(card_x, card_y + 33, card_w, 1, Theme.divider);
-    c.fillRect(card_x + 18, card_y + 13, 6, 6, Theme.accent);
-    _ = c.drawUiText("Ready to talk", card_x + 34, card_y + 9, Theme.ink);
-    _ = c.drawUiText("Your conversation starts here", card_x + 20, card_y + 51, Theme.ink);
-    drawEllipsized(c, detail, card_x + 20, card_y + 74, card_w - 40, Theme.secondary);
-    c.fillRect(card_x + 20, card_y + 108, card_w - 40, 23, Theme.accent_soft);
-    c.fillRect(card_x + 20, card_y + 108, 3, 23, Theme.accent);
-    _ = c.drawUiText("Type a message below to begin", card_x + 32, card_y + 111, Theme.focus);
+    if (width < 320 or height < 220) {
+        const label = "Type a message to start the scene";
+        drawEllipsized(c, label, x + 16, y + @max(8, @divTrunc(height - 17, 2)), width - 32, Theme.secondary);
+        return;
+    }
+    const page_w = @min(620, @max(280, width - 56));
+    const page_h = @min(420, @max(210, height - 48));
+    const page_x = x + @divTrunc(width - page_w, 2);
+    const page_y = y + @divTrunc(height - page_h, 2);
+    drawSurface(c, .{ .x = page_x, .y = page_y, .w = page_w, .h = page_h }, .raised);
+
+    c.fillRect(page_x + 1, page_y + 1, page_w - 2, 34, Theme.subtle);
+    c.fillRect(page_x + 1, page_y + 34, page_w - 2, 1, Theme.divider);
+    c.fillRect(page_x + 16, page_y + 14, 6, 6, Theme.accent);
+    _ = c.drawUiText("Blank comic page", page_x + 32, page_y + 9, Theme.ink);
+    const room_label = "#root";
+    const room_w = Canvas.uiTextWidth(room_label) + 20;
+    drawPill(c, .{ .x = page_x + page_w - room_w - 12, .y = page_y + 7, .w = room_w, .h = 21 }, room_label, true);
+
+    const gutter: i32 = 10;
+    const inner_x = page_x + 16;
+    const inner_y = page_y + 49;
+    const inner_w = page_w - 32;
+    const inner_h = page_h - 65;
+    const top_h: i32 = @intCast(@divTrunc(@as(i64, inner_h) * 57, 100));
+    const bottom_h = inner_h - top_h - gutter;
+    const bottom_w = @divTrunc(inner_w - gutter, 2);
+    drawRoundedBorder(c, inner_x, inner_y, inner_w, top_h, 4, Theme.layer, Theme.divider);
+    drawRoundedBorder(c, inner_x, inner_y + top_h + gutter, bottom_w, bottom_h, 4, Theme.chrome, Theme.divider);
+    drawRoundedBorder(c, inner_x + bottom_w + gutter, inner_y + top_h + gutter, inner_w - bottom_w - gutter, bottom_h, 4, Theme.chrome, Theme.divider);
+
+    const prompt_w = @min(390, inner_w - 36);
+    const prompt_h: i32 = 96;
+    const prompt_x = inner_x + @divTrunc(inner_w - prompt_w, 2);
+    const prompt_y = inner_y + @divTrunc(top_h - prompt_h, 2);
+    fillRoundedRect(c, prompt_x + 4, prompt_y + 5, prompt_w, prompt_h, 8, 0xffc3ceda);
+    drawRoundedBorder(c, prompt_x, prompt_y, prompt_w, prompt_h, 8, Theme.layer, Theme.accent_soft);
+    c.fillRect(prompt_x, prompt_y + 12, 4, prompt_h - 24, Theme.accent);
+    _ = c.drawUiText("Start the scene", prompt_x + 20, prompt_y + 14, Theme.ink);
+    drawEllipsized(c, detail, prompt_x + 20, prompt_y + 38, prompt_w - 40, Theme.secondary);
+    _ = c.drawUiText("Type below, choose a mood, then send.", prompt_x + 20, prompt_y + 63, Theme.accent);
+
+    _ = c.drawUiText("Your next panel", inner_x + 14, inner_y + top_h + gutter + 12, Theme.secondary);
+    _ = c.drawUiText("The conversation grows here", inner_x + bottom_w + gutter + 14, inner_y + top_h + gutter + 12, Theme.secondary);
 }
 
 fn drawEllipsized(c: *Canvas, text: []const u8, x: i32, y: i32, max_width: i32, color: u32) void {
@@ -466,5 +496,6 @@ test "semantic feedback primitives classify status and button targets" {
 test "control states resolve selected pressed and disabled colors consistently" {
     try std.testing.expectEqual(Theme.accent, resolveControlColors(.{ .selected = true }).content);
     try std.testing.expectEqual(Theme.layer, resolveControlColors(.{ .pressed = true }).content);
+    try std.testing.expectEqual(Theme.accent, resolveControlColors(.{ .focused = true }).border);
     try std.testing.expectEqual(Theme.divider, resolveControlColors(.{ .disabled = true }).content);
 }
