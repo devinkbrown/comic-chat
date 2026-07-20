@@ -24,7 +24,10 @@ visual contract.
   instead of overflowing the available buffer.
 - Comic pages default to four panels across. The room strip exposes an
   accessible minus/plus stepper for live one-to-six-column density changes;
-  rendered pages remain top-aligned as conversation history grows.
+  rendered pages remain top-aligned as conversation history grows. Desktop
+  pages reserve the selected column count even when a row contains only one
+  message or a break control, preventing sparse panels from being scaled to
+  the full buffer.
 - Draw geometry, pointer targets, focus, and accessibility bounds must derive
   from the same layout values.
 - The desktop surface enforces a 640x480 minimum. Below 760 pixels wide the
@@ -73,6 +76,8 @@ The renderer can produce exact previews without a display server:
 ```sh
 zig build run -- render-ui > ui-preview.png
 zig build run -- render-ui conversation > ui-conversation-preview.png
+zig build run -- render-ui sparse > ui-sparse-preview.png
+zig build run -- render-ui break-only > ui-break-preview.png
 zig build run -- render-ui menu > ui-menu-preview.png
 zig build run -- render-ui settings > ui-dialog-preview.png
 zig build run -- render-ui inputs > ui-input-preview.png
@@ -98,7 +103,8 @@ The UI acceptance gate also exercises all 43 registered dialogs at 640x480,
 ReleaseSafe tests; native X11 menu/dialog/composer input under Xvfb; and the
 same live Win32 interaction path under headless Wine. The Wine path also
 exercises status-bar connection setup, invalid-port recovery, verified-TLS
-reconnect, live member scrolling/selection/context actions, and composer input.
+reconnect, live member scrolling/selection/context actions, Settings, Room
+List, User List, Comic View density, sparse-page geometry, and composer input.
 Linux and Windows
 `render-ui` output must remain byte-identical for the main, compact menu,
 settings, password input, long composer, and conversation surfaces.

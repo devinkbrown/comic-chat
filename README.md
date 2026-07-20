@@ -29,6 +29,7 @@ italic face.
 | Portable client | `src/` | Zig IRC client, AVB/BGB decoding, original rendering behavior, software rasterizer, and native X11/Wayland/Win32 presentation |
 | Runtime assets | `assets/` and `src/assets/testdata/` | Attributed character, backdrop, and emotion content required by the portable renderer |
 | Protocol notes | `docs/PROTOCOL.md` | Comic Chat wire-format and interoperability notes |
+| Microsoft wire audit | `docs/MICROSOFT_WIRE_AUDIT.md` | Source-by-source IRC/IRCX/UDI/CTCP compatibility ledger |
 | Completeness audit | `docs/PORTABLE_COMPLETENESS_AUDIT.md` | Reachable, substrate-only, partial, and missing portable product surfaces |
 | Repository map | `docs/PROJECT_STRUCTURE.md` | Portable-first repository ownership and layout |
 | Historical reference | `legacy/docs/` | Repository-only Microsoft-source audits and migration records; excluded from release packages |
@@ -91,6 +92,24 @@ the endpoint and security choice, and reconnects immediately. The room member
 pane consumes live NAMES/JOIN/PART/QUIT/NICK state, reports active rather than
 historical members, scrolls with the wheel, keeps keyboard selection visible,
 and maps selection and context actions to the correct scrolled member.
+Edit > Settings uses the same prefilled, validated reconnect path. Room List
+accepts and joins a room, User List selects an active member, and Comic View
+applies both content mode and one-to-six panel density. Sparse conversations
+reserve that selected desktop grid, so a single message or break control can
+never expand into a full-buffer panel.
+
+The live comic wire path is checked against Microsoft's released
+`bInsertAnnotations`, `bChatSendToTarget`, `OnDataMsg`, and `ProcessSay`
+implementations. IRCX uses `DATA ... CCUDI1` for both UDI and comment controls;
+plain IRC embeds UDI or sends comment controls with `PRIVMSG`. Comic actions
+stay as readable text with mode `M5`, and selected/whisper members are included
+in the UDI `T` list.
+
+The complete source-to-wire ledger is
+[`docs/MICROSOFT_WIRE_AUDIT.md`](docs/MICROSOFT_WIRE_AUDIT.md). It also covers
+the two-stage IRCX probe, exact trailing parameters, password JOIN, CREATE,
+reasoned KICK, CTCP SOUND/AWAY/information controls, and the Onyx same-account
+same-nick session extension.
 
 The portable desktop UI has a shared Fluent-style component library and a
 separate neutral application font; Comic Neue remains confined to comic
@@ -148,7 +167,7 @@ env -u WAYLAND_DISPLAY zig build run -- window anna
 
 ## Release packages
 
-The current published release is `comicchat-portable-2026-07-20.2`.
+The current published release is `comicchat-portable-2026-07-20.3`.
 It contains x86_64 binary packages for Windows, Linux, FreeBSD, and OpenBSD,
 an explicit buildable source archive, and a single SHA-256 manifest covering
 all five artifacts. The source archive includes the narrow Onyx TLS dependency
@@ -158,13 +177,13 @@ without a separate submodule checkout.
 Verify downloaded artifacts before use:
 
 ```sh
-sha256sum -c comicchat-portable-2026-07-20.2-SHA256SUMS.txt
+sha256sum -c comicchat-portable-2026-07-20.3-SHA256SUMS.txt
 ```
 
 To build the binary archives from a clean checkout:
 
 ```sh
-./tools/package-release.sh portable-2026-07-20.2
+./tools/package-release.sh portable-2026-07-20.3
 ```
 
 Each archive contains the executable, this README, the AGPL license, and

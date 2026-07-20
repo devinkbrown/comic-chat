@@ -113,7 +113,7 @@ pub fn writePrivmsg(
     target: []const u8,
     text: []const u8,
 ) !void {
-    var m = Message{ .command = "PRIVMSG" };
+    var m = Message{ .command = "PRIVMSG", .force_trailing = true };
     m.params[0] = target;
     m.params[1] = text;
     m.param_count = 2;
@@ -167,15 +167,20 @@ pub fn writePong(out: *std.ArrayList(u8), gpa: std.mem.Allocator, token: []const
     try message.write(out, gpa, m);
 }
 
-/// Negotiate Microsoft IRCX extensions. The original Comic Chat sent
-/// "MODE ISIRCX", but modern IRCX servers (e.g. ophion) use the standalone
-/// `IRCX` command and reply with numeric 800 (IRCX state). Verified against
-/// ophion, which advertises the IRCX and COMICCHAT=DATA tokens in 005.
+/// Probe for Microsoft IRCX exactly as Comic Chat does before opting in.
+pub fn writeIrcxProbe(out: *std.ArrayList(u8), gpa: std.mem.Allocator) !void {
+    var msg = Message{ .command = "MODE" };
+    msg.params[0] = "ISIRCX";
+    msg.param_count = 1;
+    try message.write(out, gpa, msg);
+}
+
+/// Enable Microsoft IRCX after `MODE ISIRCX` returns numeric state zero.
 pub fn writeIrcx(out: *std.ArrayList(u8), gpa: std.mem.Allocator) !void {
     try message.write(out, gpa, .{ .command = "IRCX" });
 }
 
-/// Full registration handshake: NICK + USER (+ optional IRCX probe).
+/// Source-ordered registration handshake: optional IRCX probe, then NICK + USER.
 pub fn writeRegister(
     out: *std.ArrayList(u8),
     gpa: std.mem.Allocator,
@@ -184,9 +189,9 @@ pub fn writeRegister(
     realname: []const u8,
     want_ircx: bool,
 ) !void {
+    if (want_ircx) try writeIrcxProbe(out, gpa);
     try writeNick(out, gpa, nick);
     try writeUser(out, gpa, user, realname);
-    if (want_ircx) try writeIrcx(out, gpa);
 }
 
 // --- Tests ----------------------------------------------------------------
@@ -210,16 +215,16 @@ test "LineFramer reassembles split and batched lines" {
     try std.testing.expect((try fr.next()) == null);
 }
 
-test "register handshake emits NICK, USER and IRCX" {
+test "register handshake emits the Microsoft IRCX discovery probe" {
     const gpa = std.testing.allocator;
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(gpa);
 
     try writeRegister(&out, gpa, "anna", "anna", "Anna Example", true);
     try std.testing.expectEqualStrings(
-        "NICK anna\r\n" ++
-            "USER anna 0 * :Anna Example\r\n" ++
-            "IRCX\r\n",
+        "MODE ISIRCX\r\n" ++
+            "NICK anna\r\n" ++
+            "USER anna 0 * :Anna Example\r\n",
         out.items,
     );
 }
@@ -361,13 +366,13 @@ test "command builders emit individual CRLF-terminated commands" {
     );
 }
 
-test "writePrivmsg keeps a single-word message as a middle param" {
+test "writePrivmsg preserves Microsoft's trailing form for one-word text" {
     const gpa = std.testing.allocator;
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(gpa);
     try writePrivmsg(&out, gpa, "#c", "hi");
-    // "hi" has no space, but it is the final param -> writer leaves it bare.
-    try std.testing.expectEqualStrings("PRIVMSG #c hi\r\n", out.items);
+    // Source always uses the explicit trailing parameter form.
+    try std.testing.expectEqualStrings("PRIVMSG #c :hi\r\n", out.items);
 }
 
 test "round-trip: framed line parses back into a Message" {

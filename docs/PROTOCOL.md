@@ -14,6 +14,13 @@ commands including `NICK`, `USER`, `JOIN`, `PRIVMSG`, `NOTICE`, `PING`, and
 `PONG`. The old client can negotiate Microsoft's IRCX extensions, but it also
 has a non-IRCX representation.
 
+Microsoft probes IRCX before login with `MODE ISIRCX`. A numeric 800 state `0`
+means the server supports IRCX but it is not enabled, so the client sends
+`IRCX`; only the following numeric 800 state `1` enables `DATA ... CCUDI1`.
+An ISUPPORT advertisement does not substitute for that state transition. The
+portable client preserves this ordering, with modern CAP/SASL negotiation
+between the probe and NICK/USER registration commands.
+
 The portable client secures that stream with the pinned Onyx TLS implementation
 at commit `06bb3500b4fd62e2f307cb4004340c58062c0f59`. TLS is the default and
 the omitted port defaults to 6697. The client sends SNI and verifies both the
@@ -42,17 +49,27 @@ and 5 = action; other serial values are read as say by the released client.
 - With IRCX, it first sends `DATA target CCUDI1 :#G...E...M...`, followed by a
   separate `PRIVMSG` or `NOTICE` containing the readable text.
 
+In comic mode, action text remains ordinary readable text; serial mode `M5`
+selects the box balloon. The CTCP `ACTION` wrapper is only Microsoft's
+non-comic fallback. The optional `T` suffix carries the selected member (and
+always carries the whisper recipient), matching `bInsertAnnotations` rather
+than relying on the IRC target alone.
+
 This distinction matters: a saved conversation record is not copied wholesale
 into an IRC `PRIVMSG`. Separate live control comments begin with `#` and use
 source-defined phrases such as ` Appears as `, ` GetInfo`, ` HeresInfo: `,
-` BDrop: `, ` BDrop2: `, and ` GetCharInfo`.
+` BDrop: `, ` BDrop2: `, and ` GetCharInfo`. Microsoft passes these comment
+controls through the annotation argument: negotiated IRCX therefore sends
+them as `DATA target CCUDI1 :# ...`; plain IRC sends the same bytes in
+`PRIVMSG`. The portable sender and receiver preserve that distinction.
 
 The portable live client implements `# Appears as <name>[.<url>]` for bundled
-avatars, consumes the control without creating a speech balloon, and retains
-the selected avatar for later messages and talk-to bodies. It intentionally
-does not download the optional URL. The remaining profile, character-download,
-and backdrop control comments are documented compatibility surface, not yet a
-portable-client feature.
+avatars in either outer transport, consumes the control without creating a
+speech balloon, and retains the selected avatar for later messages and talk-to
+bodies. It intentionally does not download the optional URL. Profile requests
+receive the source default profile and character-info requests trigger a fresh
+avatar announcement. Backdrop comments are encoded and recognized but the
+received backdrop is not yet applied to the room renderer.
 
 The portable IRC framing and command path lives under [`src/net/`](../src/net/).
 The compact live codec is [`src/proto/udi.zig`](../src/proto/udi.zig), and the
@@ -86,10 +103,30 @@ Fixed-pitch and symbol selection are likewise preserved in state; the portable
 build currently falls back to the bundled Comic Neue atlases because it does
 not ship equivalent fixed-pitch or symbol faces.
 
-IRC CTCP actions use `\x01ACTION text\x01`. Incoming actions are unwrapped
-after UDI parsing and render with `BM_ACTION` (plus `BM_WHISPER` for a private
-message); `/me text` emits that interoperable form while carrying action mode
-in embedded or IRCX UDI metadata.
+IRC CTCP actions use `\x01ACTION text\x01` in Microsoft's text-mode fallback.
+Incoming actions are unwrapped and render with `BM_ACTION` (plus `BM_WHISPER`
+for a private message). In comic mode, `/me text` follows
+`PrepareComicsAction`: the readable message remains raw text and UDI serial
+mode `M5` selects the action box.
+
+Sounds are separate from UDI. `bChatSendSound` sends one source CTCP payload,
+`\x01SOUND <file> <accompanying-message>\x01`, in a `PRIVMSG`. The portable
+sound dialog mirrors that contract with a sound-file choice and editable
+accompanying message; receiving clients display the sender and message as an
+action box followed by the sound filename in parentheses.
+
+Enter Room sends `JOIN <room> [password]`. Create Room sends Microsoft IRCX's
+`CREATE <room> [creation-modes] [limit] [password]` and queues its optional
+topic after creation. Kick always sends the source trailing form
+`KICK <room> <nick> :<reason>`, including an empty reason; its optional ban is
+sent first as `MODE <room> +b <mask>`.
+
+Away has two synchronized layers: standard `AWAY :message` (or bare `AWAY` to
+clear it), followed by `\x01AWAY [message]\x01` in every joined room. Incoming
+controls update the roster indicator and are not inserted as comic speech.
+VERSION, PING, TIME, EMAIL, URL, and CLIENTINFO probes receive source-shaped
+NOTICE replies. The portable EMAIL and URL replies are intentionally empty so
+a remote user cannot elicit personal information.
 
 ### IRCv3 CAP and SASL compatibility
 
