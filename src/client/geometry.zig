@@ -20,13 +20,13 @@ pub const Rect = struct {
     }
 };
 
-pub const menu_height: i32 = 24;
-pub const toolbar_height: i32 = 26; // 16px source glyphs plus toolbar chrome.
-pub const tab_bar_height: i32 = 29; // CTabBar::CalcDynamicLayout.
-pub const status_height: i32 = 22;
-pub const splitter: i32 = 4;
-pub const say_min_height: i32 = 23; // NPIXELSSAYMIN.
-pub const say_button_size: i32 = 24; // BUTTONSIZE.
+pub const menu_height: i32 = 34;
+pub const toolbar_height: i32 = 46;
+pub const tab_bar_height: i32 = 38;
+pub const status_height: i32 = 26;
+pub const splitter: i32 = 8;
+pub const say_min_height: i32 = 54;
+pub const say_button_size: i32 = 46;
 pub const say_button_count: i32 = 5; // say, think, whisper, action, sound.
 pub const client_percent: i32 = 80; // CSplitChatV::m_nPctLeft.
 pub const member_percent: i32 = 30; // inverse of CSplitChat::m_nPctBottom=70.
@@ -81,9 +81,9 @@ pub const Layout = struct {
 test "comic buffer preserves source 80/20 and 30/70 split geometry" {
     const layout = Layout.compute(1000, 700, true, true);
     try std.testing.expectEqual(@as(i32, 800), layout.transcript.w);
-    try std.testing.expectEqual(@as(i32, 196), layout.right.w);
-    try std.testing.expectEqual(@as(i32, 23), layout.say.h);
-    try std.testing.expectEqual(@as(i32, 120), layout.say_actions.w);
+    try std.testing.expectEqual(@as(i32, 192), layout.right.w);
+    try std.testing.expectEqual(@as(i32, 54), layout.say.h);
+    try std.testing.expectEqual(@as(i32, 230), layout.say_actions.w);
     try std.testing.expectEqual(@divTrunc(layout.buffer.h * 30, 100), layout.members.h);
     try std.testing.expectEqual(layout.buffer.h - layout.members.h - splitter, layout.body_camera.h);
 }

@@ -4,6 +4,7 @@
 //!   (none) / app                         open the desktop client
 //!   render-bg | render-panel | render-figure | render-strip | topng
 //!                                        source art/render diagnostics
+//!   render-ui                            desktop UI preview PNG
 //!   window <avatar>                      native backend smoke
 //!   connect | chat-comic | app           IRC and interactive comic clients
 //!
@@ -61,6 +62,11 @@ pub fn main(init: std.process.Init) !void {
 
     if (argc >= 1 and std.mem.eql(u8, argv[0], "topng")) {
         try runToPng(gpa, init.io, if (argc >= 2) argv[1] else "field");
+        return;
+    }
+
+    if (argc >= 1 and std.mem.eql(u8, argv[0], "render-ui")) {
+        try runUiPreview(gpa, init.io, if (argc >= 2) argv[1] else "main");
         return;
     }
 
@@ -1895,6 +1901,23 @@ fn runToPng(gpa: std.mem.Allocator, io: std.Io, name: []const u8) !void {
     var img = try cc.assets.bgb.decodeBackground(gpa, data);
     defer img.deinit(gpa);
     const png = try cc.render.png.encode(gpa, img.pixels, img.width, img.height);
+    defer gpa.free(png);
+    try writeStdout(io, png);
+}
+
+/// Render the shared desktop shell without requiring an X11, Wayland, or
+/// Win32 window. This is both a release-preview command and a deterministic
+/// visual regression surface for the modern UI library.
+fn runUiPreview(gpa: std.mem.Allocator, io: std.Io, surface: []const u8) !void {
+    var view = try cc.client.view.View.init(gpa, 960, 720);
+    defer view.deinit();
+    var transcript = cc.comic.session.Transcript.init(gpa);
+    defer transcript.deinit();
+    try transcript.setSelf("comicchat");
+    if (std.mem.eql(u8, surface, "settings")) view.openDialog(.settings);
+    if (std.mem.eql(u8, surface, "menu")) view.active_menu = 0;
+    try view.render("#root", "reconnecting", &transcript, "", 0);
+    const png = try cc.render.png.encode(gpa, view.pixels(), view.width(), view.height());
     defer gpa.free(png);
     try writeStdout(io, png);
 }
