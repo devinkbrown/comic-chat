@@ -28,10 +28,10 @@ This distinction is important:
 
 - The historical upstream checkout was previously verified against its pinned
   revision before this repository was migrated to the portable-only layout.
-- The portable tree contains 82 files under `src/`. `src/root.zig:68-118`
+- The portable tree contains 92 files under `src/`. `src/root.zig:68-118`
   explicitly references every portable module and the four source-parity test
   modules so their inline tests are compiled and run.
-- The current release test gate reports 395 passed tests and one intentionally
+- The current release test gate reports 406 passed tests and one intentionally
   skipped platform-conditional test.
 - Native Linux plus x86_64 Windows, FreeBSD, and OpenBSD release builds pass.
 - The published source archive includes the source tree and the crypto,
@@ -49,11 +49,12 @@ This distinction is important:
 | Shell geometry | Reachable | The modern seven-menu/condensed-toolbar chrome retains the 29px tabs, 80/20 main split, 30/70 comic side split, 23px composer and status panes through shared geometry. |
 | Comic/text buffers | Partial | Both modes, bounded history paging, visible scroll position, wheel input, per-room transcripts/drafts, modal atomic `.ccc` open/save, and modal PNG export are reachable. Selection/copy, page-break editing, native pickers, and printing remain. |
 | Body camera | Partial | Redrawn high-resolution dial faces use the source wheel thresholds. Pointer drag and keyboard arrows/Home drive a visible intensity puck; the context menu exposes Freeze, Character, and Neutral. Double-click and an immediate Send Expression command remain. |
-| Member list | Partial | User-selectable icon/list modes, pointer selection, keyboard roving, visible overflow state, and right-click moderation/whisper actions are reachable. Dynamic role badges and retained scroll offset remain incomplete. |
+| Member list | Reachable core | NAMES/JOIN/PART/QUIT/NICK update the live roster; active counts exclude departed history. Icon/list modes, bounded wheel scrolling, retained viewport position, keyboard reveal, selection, character preview, and right-click actions are reachable. Dynamic role-badge artwork remains incomplete. |
 | Menus/toolbars/buttons | Partial | The condensed modern toolbar is backed by complete popups for File, Edit, View, Format, Room, Member, and More. Checked view state, stable hit testing, context menus, and command-specific dialogs are live; command enablement remains incomplete. |
 | Composer | Partial | UTF-8 scalar insertion, codepoint-safe movement/delete, selection, mouse caret placement, horizontal caret tracking, per-room drafts, bounded copy/cut/paste, undo/redo, and the 400-byte wire bound are live. Native clipboard, multiline input, IME, and formatting controls remain. |
 | Live IRC/IRCX comic chat | Reachable core | Connect/register/reconnect, multi-room JOIN/PART, per-room roster/transcript routing, IRCX `DATA CCUDI1`, embedded UDI, avatar announcements and all five say modes are wired. |
 | TLS, proxies, CAP, SASL, STS | Reachable | The live client composes verified TLS, proxy connection, IRCv3 negotiation, SASL and persisted STS. Credential input is file-based and refused over plaintext. |
+| Resolver and sockets | Reachable | The Onyx DNS wire codec and resolv.conf policy drive hostname lookup. Pure-Zig native socket adapters cover Unix and direct Winsock; Wine falls back to the Windows DNS service only when direct UDP resolution is unavailable. No C transport or resolver source is shipped. |
 | Onyx reusable sessions | Reachable | TOKEN/MTOKEN parsing, host/account-scoped persistence, expiry and resume preference are implemented in `src/net/session_store.zig:19-187` and connected through `ConnectionRuntime`. This supports separate same-account/same-nick clients when the server honors `SESSION RESUME`. |
 | Modern IRC feature state | Reachable internally, limited UI | `net/client.zig` owns `ircv3.Session` and `features.State`; CAP and negotiated state are live. Most identity, metadata, batch, read-marker, standard-reply and moderation state has no visible UI. |
 | Profiles/backdrops | Partial | Character and backdrop dialogs enumerate every bundled asset, render live previews, and invoke the live avatar/backdrop helpers. The complete persistent profile browser remains. |
@@ -106,7 +107,8 @@ PASS  record-codec demo, 650x1655 strip PPM, and 315x315 backdrop PNG
 PASS  all 43 dialogs at 640x480, 800x600, and 960x720 without field/action overlap
 PASS  every compact menu popup and command row remains on-screen and clickable
 PASS  Xvfb X11 menu, Settings input/Tab, Escape, and composer event smoke
-PASS  headless Wine Win32 window, menu, Settings input/Tab, Escape, and composer event smoke
+PASS  headless Wine live TLS connect, status dialog, invalid-port recovery,
+      reconnect, member scroll/select/context menu, top menu, and composer input
 PASS  six Linux/Windows deterministic UI surfaces are byte-identical
 PASS  release archive checksums verified for all four binary packages and the
       source archive containing the required pinned Onyx TLS source subset

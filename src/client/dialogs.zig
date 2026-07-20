@@ -192,7 +192,7 @@ pub fn fieldAcceptsText(id: Id, index: usize) bool {
 
 pub fn choiceOptions(id: Id, index: usize) []const []const u8 {
     return switch (id) {
-        .setup, .settings, .servers => if (index == 2) &.{ "Verified TLS", "Strict TLS" } else &.{},
+        .setup, .settings, .servers => if (index == 2) &.{ "Verified TLS", "Plaintext (unsafe)" } else &.{},
         .character => if (index == 0) &.{
             "Anna",   "Armando",  "Bolo",    "Cro",  "Dan",     "Denise", "Hugh",   "Jordan", "Kevin", "Kwensa",   "Lance",
             "Lynnea", "Margaret", "Maynard", "Mike", "Rebecca", "Sage",   "Scotty", "Susan",  "Tiki",  "Tongtyed", "Xeno",
@@ -215,7 +215,8 @@ pub fn requiresInput(id: Id) bool {
 
 pub fn primaryLabel(id: Id) []const u8 {
     return switch (id) {
-        .setup, .settings, .servers => "Save changes",
+        .setup => "Connect",
+        .settings, .servers => "Save changes",
         .personal, .character, .background, .text_font, .set_text_font, .choose_color, .comics_view => "Apply",
         .room_list => "Join room",
         .user_list => "Select",

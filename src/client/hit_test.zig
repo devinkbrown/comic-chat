@@ -18,6 +18,7 @@ pub const Target = union(enum) {
     say_action: u8,
     member: usize,
     emotion,
+    status,
 };
 
 pub fn contains(rect: Rect, x: i32, y: i32) bool {
@@ -25,6 +26,7 @@ pub fn contains(rect: Rect, x: i32, y: i32) bool {
 }
 
 pub fn shell(layout: geometry.Layout, comic_mode: bool, member_icons: bool, x: i32, y: i32, member_count: usize) Target {
+    if (contains(layout.status, x, y)) return .status;
     if (contains(layout.menu, x, y)) return .{ .menu = menuIndex(x) orelse return .none };
     if (contains(layout.toolbar, x, y)) return .{ .toolbar = toolbarIndex(layout.toolbar, x) orelse return .none };
     if (comic_mode and layout.transcript.w >= 430 and contains(geometry.comicColumnDecrease(layout), x, y)) return .comic_columns_decrease;
@@ -79,6 +81,7 @@ test "source shell hit targets distinguish controls and content" {
     try std.testing.expectEqual(Target{ .say_action = 0 }, shell(layout, true, true, layout.say_actions.x + 2, layout.say.y + 2, 3));
     try std.testing.expectEqual(Target{ .member = 0 }, shell(layout, true, true, layout.members.x + 3, layout.members.y + 3, 3));
     try std.testing.expectEqual(Target.emotion, shell(layout, true, true, layout.body_camera.x + 3, layout.body_camera.y + 3, 3));
+    try std.testing.expectEqual(Target.status, shell(layout, true, true, layout.status.x + 20, layout.status.y + 10, 3));
     const decrease = geometry.comicColumnDecrease(layout);
     const increase = geometry.comicColumnIncrease(layout);
     try std.testing.expectEqual(Target.comic_columns_decrease, shell(layout, true, true, decrease.x + 2, decrease.y + 2, 3));

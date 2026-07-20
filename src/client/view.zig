@@ -34,6 +34,7 @@ pub const Action = union(enum) {
     room_tab: usize,
     composer_cursor: i32,
     send,
+    connection,
     dialog_accept: dialogs.Id,
     dialog_cancel: dialogs.Id,
 };
@@ -50,6 +51,20 @@ const accent_soft = ui.Theme.accent_soft;
 const focus_color = ui.Theme.focus;
 const ColumnControlHover = enum { decrease, increase };
 const ContextKind = enum { member, body_camera };
+const MemberViewport = struct { visible: usize, step: usize };
+
+fn memberViewport(rect: Rect, icon_mode: bool) MemberViewport {
+    const content_h = @max(0, rect.h - 30);
+    if (icon_mode) {
+        const columns: usize = @intCast(@max(1, @divTrunc(rect.w, 88)));
+        const rows: usize = @intCast(@max(1, @divTrunc(content_h, 82)));
+        return .{ .visible = columns * rows, .step = columns };
+    }
+    return .{
+        .visible = @intCast(@max(1, @divTrunc(content_h - 7, 24))),
+        .step = 1,
+    };
+}
 
 pub const View = struct {
     gpa: std.mem.Allocator,
@@ -65,6 +80,7 @@ pub const View = struct {
     hovered_toolbar: ?u8 = null,
     hovered_say_action: ?u8 = null,
     hovered_composer: bool = false,
+    hovered_status: bool = false,
     hovered_column_control: ?ColumnControlHover = null,
     hovered_member: ?usize = null,
     context_menu: ?ContextKind = null,
@@ -143,6 +159,11 @@ pub const View = struct {
             },
             else => return false,
         }
+        if (self.shell.focus == .members) if (self.shell.selected_member) |selected| {
+            const layout = geometry.Layout.compute(self.canvas.width, self.canvas.height, self.shell.content_mode == .comic, self.shell.show_members);
+            const viewport = memberViewport(layout.members, self.shell.member_view == .icons);
+            self.shell.revealMember(member_count, viewport.visible, selected);
+        };
         return true;
     }
 
@@ -179,11 +200,23 @@ pub const View = struct {
         self.hovered_dialog_button = null;
         self.hovered_dialog_field = null;
         self.hovered_say_action = null;
+        self.hovered_status = false;
         self.hovered_column_control = null;
         self.hovered_member = null;
         self.context_menu = null;
         self.hovered_context_item = null;
         self.active_dialog = id;
+    }
+
+    pub fn openConnectionDialog(self: *View, host: []const u8, port: u16, use_tls: bool) void {
+        self.openDialog(.setup);
+        var port_buffer: [5]u8 = undefined;
+        const port_text = std.fmt.bufPrint(&port_buffer, "{d}", .{port}) catch "6697";
+        const values = [_][]const u8{ host, port_text, if (use_tls) "Verified TLS" else "Plaintext (unsafe)" };
+        for (values, 0..) |value, index| {
+            self.dialog_editors[index].clear();
+            self.dialog_editors[index].paste(value) catch {};
+        }
     }
 
     pub fn openDialogByResource(self: *View, resource: []const u8) bool {
@@ -209,7 +242,7 @@ pub const View = struct {
             const dialog_layout = dialogLayout(self.canvas.width, self.canvas.height, dialogs.get(id));
             const next = ui.dialogButtonAt(dialog_layout, pointer.x, pointer.y);
             const next_field = dialog_layout.fieldIndexAt(pointer.x, pointer.y);
-            const changed = self.hovered_dialog_button != next or self.hovered_dialog_field != next_field or self.hovered_menu != null or self.hovered_toolbar != null or self.hovered_say_action != null or self.hovered_composer or self.hovered_column_control != null or self.hovered_member != null;
+            const changed = self.hovered_dialog_button != next or self.hovered_dialog_field != next_field or self.hovered_menu != null or self.hovered_toolbar != null or self.hovered_say_action != null or self.hovered_composer or self.hovered_status or self.hovered_column_control != null or self.hovered_member != null;
             self.hovered_dialog_button = next;
             self.hovered_dialog_field = next_field;
             self.hovered_menu = null;
@@ -217,6 +250,7 @@ pub const View = struct {
             self.hovered_toolbar = null;
             self.hovered_say_action = null;
             self.hovered_composer = false;
+            self.hovered_status = false;
             self.hovered_column_control = null;
             self.hovered_member = null;
             return changed;
@@ -232,22 +266,24 @@ pub const View = struct {
             const target = hit_test.shell(layout, self.shell.content_mode == .comic, self.shell.member_view == .icons, pointer.x, pointer.y, member_count);
             if (target == .menu) {
                 const next_menu = target.menu;
-                const changed = self.active_menu != next_menu or self.hovered_menu != next_menu or self.hovered_menu_item != null or self.hovered_say_action != null or self.hovered_column_control != null or self.hovered_member != null;
+                const changed = self.active_menu != next_menu or self.hovered_menu != next_menu or self.hovered_menu_item != null or self.hovered_say_action != null or self.hovered_status or self.hovered_column_control != null or self.hovered_member != null;
                 self.active_menu = next_menu;
                 self.hovered_menu = next_menu;
                 self.hovered_menu_item = null;
                 self.hovered_toolbar = null;
                 self.hovered_say_action = null;
+                self.hovered_status = false;
                 self.hovered_column_control = null;
                 self.hovered_member = null;
                 return changed;
             }
             const item = menuPopupItem(self.canvas.width, menu, pointer.x, pointer.y);
-            const changed = self.hovered_menu_item != item or self.hovered_menu != null or self.hovered_toolbar != null or self.hovered_say_action != null or self.hovered_column_control != null or self.hovered_member != null;
+            const changed = self.hovered_menu_item != item or self.hovered_menu != null or self.hovered_toolbar != null or self.hovered_say_action != null or self.hovered_status or self.hovered_column_control != null or self.hovered_member != null;
             self.hovered_menu_item = item;
             self.hovered_menu = null;
             self.hovered_toolbar = null;
             self.hovered_say_action = null;
+            self.hovered_status = false;
             self.hovered_column_control = null;
             self.hovered_member = null;
             return changed;
@@ -258,12 +294,16 @@ pub const View = struct {
             if (comic_mode and self.setEmotionFromPoint(layout, pointer.x, pointer.y)) return true;
             return false;
         }
-        const target = hit_test.shell(layout, comic_mode, self.shell.member_view == .icons, pointer.x, pointer.y, member_count);
+        const target = self.mapMemberTarget(
+            hit_test.shell(layout, comic_mode, self.shell.member_view == .icons, pointer.x, pointer.y, member_count),
+            member_count,
+        );
         return switch (target) {
             .menu => |index| self.setHover(index, null),
             .toolbar => |index| self.setHover(null, index),
             .say_action => |index| self.setContentHover(index, null, null),
             .composer => self.setComposerHover(),
+            .status => self.setStatusHover(),
             .comic_columns_decrease => self.setContentHover(null, .decrease, null),
             .comic_columns_increase => self.setContentHover(null, .increase, null),
             .member => |index| self.setContentHover(null, null, index),
@@ -272,36 +312,52 @@ pub const View = struct {
     }
 
     fn setHover(self: *View, menu: ?u8, toolbar: ?u8) bool {
-        const changed = self.hovered_menu != menu or self.hovered_menu_item != null or self.hovered_toolbar != toolbar or self.hovered_say_action != null or self.hovered_composer or self.hovered_column_control != null or self.hovered_member != null;
+        const changed = self.hovered_menu != menu or self.hovered_menu_item != null or self.hovered_toolbar != toolbar or self.hovered_say_action != null or self.hovered_composer or self.hovered_status or self.hovered_column_control != null or self.hovered_member != null;
         self.hovered_menu = menu;
         self.hovered_menu_item = null;
         self.hovered_toolbar = toolbar;
         self.hovered_say_action = null;
         self.hovered_composer = false;
+        self.hovered_status = false;
         self.hovered_column_control = null;
         self.hovered_member = null;
         return changed;
     }
 
     fn setContentHover(self: *View, say_action: ?u8, column_control: ?ColumnControlHover, member: ?usize) bool {
-        const changed = self.hovered_menu != null or self.hovered_menu_item != null or self.hovered_toolbar != null or self.hovered_say_action != say_action or self.hovered_composer or self.hovered_column_control != column_control or self.hovered_member != member;
+        const changed = self.hovered_menu != null or self.hovered_menu_item != null or self.hovered_toolbar != null or self.hovered_say_action != say_action or self.hovered_composer or self.hovered_status or self.hovered_column_control != column_control or self.hovered_member != member;
         self.hovered_menu = null;
         self.hovered_menu_item = null;
         self.hovered_toolbar = null;
         self.hovered_say_action = say_action;
         self.hovered_composer = false;
+        self.hovered_status = false;
         self.hovered_column_control = column_control;
         self.hovered_member = member;
         return changed;
     }
 
     fn setComposerHover(self: *View) bool {
-        const changed = self.hovered_menu != null or self.hovered_menu_item != null or self.hovered_toolbar != null or self.hovered_say_action != null or !self.hovered_composer or self.hovered_column_control != null or self.hovered_member != null;
+        const changed = self.hovered_menu != null or self.hovered_menu_item != null or self.hovered_toolbar != null or self.hovered_say_action != null or !self.hovered_composer or self.hovered_status or self.hovered_column_control != null or self.hovered_member != null;
         self.hovered_menu = null;
         self.hovered_menu_item = null;
         self.hovered_toolbar = null;
         self.hovered_say_action = null;
         self.hovered_composer = true;
+        self.hovered_status = false;
+        self.hovered_column_control = null;
+        self.hovered_member = null;
+        return changed;
+    }
+
+    fn setStatusHover(self: *View) bool {
+        const changed = self.hovered_menu != null or self.hovered_menu_item != null or self.hovered_toolbar != null or self.hovered_say_action != null or self.hovered_composer or !self.hovered_status or self.hovered_column_control != null or self.hovered_member != null;
+        self.hovered_menu = null;
+        self.hovered_menu_item = null;
+        self.hovered_toolbar = null;
+        self.hovered_say_action = null;
+        self.hovered_composer = false;
+        self.hovered_status = true;
         self.hovered_column_control = null;
         self.hovered_member = null;
         return changed;
@@ -351,10 +407,19 @@ pub const View = struct {
                         'y' => editor.redo(),
                         else => {},
                     }
-                } else if (dialogs.fieldAcceptsText(id, self.dialog_field) and editor.text().len < 512) try editor.insert(ch);
+                } else if (dialogs.fieldAcceptsText(id, self.dialog_field) and editor.text().len < 512) {
+                    try editor.insert(ch);
+                    self.dialog_notice = "";
+                }
             },
-            .backspace => editor.backspace(),
-            .delete => editor.delete(),
+            .backspace => {
+                editor.backspace();
+                self.dialog_notice = "";
+            },
+            .delete => {
+                editor.delete();
+                self.dialog_notice = "";
+            },
             .left => if (modifiers.shift) editor.extendLeft() else editor.left(),
             .right => if (modifiers.shift) editor.extendRight() else editor.right(),
             .home => if (modifiers.shift) editor.extendHome() else editor.home(),
@@ -389,6 +454,7 @@ pub const View = struct {
                     const field = dialogs.fields(id)[index];
                     if (field.kind == .choice) {
                         self.cycleDialogChoice(id, index);
+                        self.dialog_notice = "";
                     } else if (dialogs.fieldAcceptsText(id, index)) {
                         const field_rect = dialog_layout.fieldRect(index);
                         const editor = &self.dialog_editors[index];
@@ -411,13 +477,24 @@ pub const View = struct {
         if (self.active_menu) |menu| {
             if (pointer.kind != .down or pointer.button != .primary) return .none;
             self.active_menu = null;
-            if (menuPopupItem(self.canvas.width, menu, pointer.x, pointer.y)) |item| self.invokeMenuItem(menu, item);
+            if (menuPopupItem(self.canvas.width, menu, pointer.x, pointer.y)) |item| {
+                if (isConnectionMenuItem(menu, item)) return .connection;
+                self.invokeMenuItem(menu, item);
+            }
             return .{ .menu = menu };
         }
         const comic_mode = self.shell.content_mode == .comic;
         const layout = geometry.Layout.compute(self.canvas.width, self.canvas.height, comic_mode, self.shell.show_members);
-        const target = hit_test.shell(layout, comic_mode, self.shell.member_view == .icons, pointer.x, pointer.y, member_count);
+        const target = self.mapMemberTarget(
+            hit_test.shell(layout, comic_mode, self.shell.member_view == .icons, pointer.x, pointer.y, member_count),
+            member_count,
+        );
         if (pointer.kind == .wheel) {
+            if (hit_test.contains(layout.members, pointer.x, pointer.y)) {
+                const viewport = memberViewport(layout.members, self.shell.member_view == .icons);
+                self.shell.scrollMembers(member_count, viewport.visible, viewport.step, pointer.wheel_y < 0);
+                return .none;
+            }
             switch (target) {
                 .transcript => if (pointer.wheel_y > 0) self.pageEarlier(total_lines) else if (pointer.wheel_y < 0) self.pageLater(),
                 else => {},
@@ -444,8 +521,9 @@ pub const View = struct {
                 break :menu .{ .menu = index };
             },
             .toolbar => |index| toolbar: {
+                if (index == 0) break :toolbar .connection;
                 switch (index) {
-                    0 => self.openDialog(.setup),
+                    0 => unreachable,
                     1 => {},
                     2 => self.openDialog(.channel),
                     3 => {},
@@ -509,6 +587,17 @@ pub const View = struct {
                 if (!self.emotion_dragging) self.shell.focus = .emotion;
                 break :emotion .none;
             },
+            .status => .connection,
+        };
+    }
+
+    fn mapMemberTarget(self: *const View, target: hit_test.Target, member_count: usize) hit_test.Target {
+        return switch (target) {
+            .member => |visible_index| mapped: {
+                const index = self.shell.member_offset + visible_index;
+                break :mapped if (index < member_count) .{ .member = index } else .none;
+            },
+            else => target,
         };
     }
 
@@ -624,7 +713,7 @@ pub const View = struct {
             if (comic_mode) try self.drawBodyCamera(layout.body_camera, transcript);
         }
         drawSayWindow(&self.canvas, layout, input, cursor, selection, self.shell.focus == .composer, self.hovered_composer, self.shell.say_mode, self.hovered_say_action);
-        drawStatusBar(&self.canvas, layout.status, self.hoveredToolbarLabel() orelse status, transcript.roster.items.len);
+        drawStatusBar(&self.canvas, layout.status, self.hoveredToolbarLabel() orelse status, transcript.activeMemberCount(), self.hovered_status);
 
         if (self.shell.focus == .transcript) drawFocus(&self.canvas, layout.transcript);
         if (self.shell.focus == .members) drawFocus(&self.canvas, layout.members);
@@ -673,7 +762,7 @@ pub const View = struct {
             .label = sayActionLabel(@intCast(action_index)),
             .selected = @as(i32, @intFromEnum(self.shell.say_mode)) == action_index,
         });
-        snapshot.append(.{ .id = "status", .role = .status, .bounds = layout.status, .label = status });
+        snapshot.append(.{ .id = "status", .role = .button, .bounds = layout.status, .label = status, .focused = self.hovered_status });
         if (self.active_dialog) |id| {
             const dialog_layout = dialogLayout(self.canvas.width, self.canvas.height, dialogs.get(id));
             snapshot.append(.{ .id = "dialog", .role = .dialog, .bounds = dialog_layout.rect, .label = dialogs.get(id).title, .focused = true });
@@ -769,20 +858,23 @@ pub const View = struct {
         if (rect.h <= 0) return;
         ui.drawPaneHeader(&self.canvas, rect, "In this room");
         var count_buf: [16]u8 = undefined;
-        const count = std.fmt.bufPrint(&count_buf, "{d}", .{transcript.roster.items.len}) catch "0";
+        const count = std.fmt.bufPrint(&count_buf, "{d}", .{transcript.activeMemberCount()}) catch "0";
         const count_w = @max(32, Canvas.uiTextWidth(count) + 20);
         ui.drawPill(&self.canvas, .{ .x = rect.right() - count_w - 12, .y = rect.y + 5, .w = count_w, .h = 20 }, count, false);
         const content = Rect{ .x = rect.x, .y = rect.y + 30, .w = rect.w, .h = @max(0, rect.h - 30) };
+        const viewport = memberViewport(rect, icon_mode);
+        self.normalizeMemberViewport(transcript.roster.items.len, viewport.visible);
         if (icon_mode) return self.drawMemberIcons(content, transcript);
         var y = content.y + 7;
         const visible_rows: usize = @intCast(@max(1, @divTrunc(content.h - 7, 24)));
-        for (transcript.roster.items, 0..) |member, index| {
+        const start = @min(self.shell.member_offset, transcript.roster.items.len);
+        for (transcript.roster.items[start..], start..) |member, index| {
             if (y + 24 > content.bottom()) break;
             const selected = if (self.shell.selected_member) |selected_index| selected_index == index else member.is_self;
             ui.drawMemberRow(&self.canvas, .{ .x = content.x, .y = y, .w = content.w, .h = 24 }, member.nick, selected, member.departed, self.hovered_member == index);
             y += 24;
         }
-        ui.drawVerticalScrollbar(&self.canvas, content, transcript.roster.items.len, visible_rows, 0);
+        ui.drawVerticalScrollbar(&self.canvas, content, transcript.roster.items.len, visible_rows, start);
     }
 
     fn drawMemberIcons(self: *View, rect: Rect, transcript: *const session.Transcript) !void {
@@ -791,9 +883,11 @@ pub const View = struct {
         const cell_h: i32 = 82;
         const visible_rows = @max(1, @divTrunc(rect.h, cell_h));
         const visible_items: usize = @intCast(visible_rows * columns);
-        for (transcript.roster.items, 0..) |member, index| {
-            const column: i32 = @intCast(index % @as(usize, @intCast(columns)));
-            const row: i32 = @intCast(index / @as(usize, @intCast(columns)));
+        const start = @min(self.shell.member_offset, transcript.roster.items.len);
+        for (transcript.roster.items[start..], 0..) |member, visible_index| {
+            const index = start + visible_index;
+            const column: i32 = @intCast(visible_index % @as(usize, @intCast(columns)));
+            const row: i32 = @intCast(visible_index / @as(usize, @intCast(columns)));
             const cell = Rect{
                 .x = rect.x + column * cell_w,
                 .y = rect.y + row * cell_h,
@@ -817,7 +911,20 @@ pub const View = struct {
                 if (member.departed) secondary else ink,
             );
         }
-        ui.drawVerticalScrollbar(&self.canvas, rect, transcript.roster.items.len, visible_items, 0);
+        ui.drawVerticalScrollbar(&self.canvas, rect, transcript.roster.items.len, visible_items, start);
+    }
+
+    fn normalizeMemberViewport(self: *View, member_count: usize, visible: usize) void {
+        if (member_count == 0) {
+            self.shell.member_offset = 0;
+            self.shell.selected_member = null;
+            return;
+        }
+        self.shell.member_offset = @min(self.shell.member_offset, member_count - 1);
+        _ = visible;
+        if (self.shell.selected_member) |selected| {
+            if (selected >= member_count) self.shell.selected_member = member_count - 1;
+        }
     }
 
     fn drawBodyCamera(self: *View, rect: Rect, transcript: *const session.Transcript) !void {
@@ -987,6 +1094,10 @@ fn menuItemLabel(menu: u8, item: u8) []const u8 {
         },
         else => "Settings",
     };
+}
+
+fn isConnectionMenuItem(menu: u8, item: u8) bool {
+    return (menu == 0 and item == 3) or (menu == 6 and item == 5);
 }
 
 fn menuPopupRect(canvas_width: u32, menu: u8) Rect {
@@ -1545,8 +1656,8 @@ fn drawSayGlyph(c: *Canvas, glyph: SayGlyph, x: i32, y: i32, color: u32) void {
     }
 }
 
-fn drawStatusBar(c: *Canvas, rect: Rect, status: []const u8, member_count: usize) void {
-    ui.drawStatusBar(c, rect.x, rect.y, rect.w, rect.h, status, member_count);
+fn drawStatusBar(c: *Canvas, rect: Rect, status: []const u8, member_count: usize, hovered: bool) void {
+    ui.drawStatusBar(c, rect.x, rect.y, rect.w, rect.h, status, member_count, hovered);
 }
 
 fn drawEmptyBuffer(c: *Canvas, rect: Rect, text: []const u8, columns: u8) void {
@@ -2107,6 +2218,23 @@ test "composer and member controls expose hover state" {
     try std.testing.expectEqual(@as(?usize, 0), view.hovered_member);
 }
 
+test "status and connect toolbar expose a prefilled connection workflow" {
+    var view = try View.init(std.testing.allocator, 960, 720);
+    defer view.deinit();
+    const layout = geometry.Layout.compute(960, 720, true, true);
+
+    try std.testing.expect(view.handlePointerMove(.{ .kind = .move, .x = layout.status.x + 24, .y = layout.status.y + 10 }, 0));
+    try std.testing.expect(view.hovered_status);
+    try std.testing.expectEqual(Action.connection, view.handlePointer(.{ .kind = .down, .x = layout.status.x + 24, .y = layout.status.y + 10, .button = .primary }, 0, 0));
+
+    try std.testing.expectEqual(Action.connection, view.handlePointer(.{ .kind = .down, .x = layout.toolbar.x + 16, .y = layout.toolbar.y + 12, .button = .primary }, 0, 0));
+    view.openConnectionDialog("eshmaki.me", 6697, true);
+    try std.testing.expectEqual(dialogs.Id.setup, view.active_dialog.?);
+    try std.testing.expectEqualStrings("eshmaki.me", view.dialogValueAt(0));
+    try std.testing.expectEqualStrings("6697", view.dialogValueAt(1));
+    try std.testing.expectEqualStrings("Verified TLS", view.dialogValueAt(2));
+}
+
 test "body camera and members expose working context menus" {
     var view = try View.init(std.testing.allocator, 960, 720);
     defer view.deinit();
@@ -2131,9 +2259,35 @@ test "typed dialog choices cycle instead of accepting arbitrary text" {
     const security = layout.fieldRect(2);
     try std.testing.expectEqualStrings("Verified TLS", view.dialogValueAt(2));
     _ = view.handlePointer(.{ .kind = .down, .x = security.x + 4, .y = security.y + 4, .button = .primary }, 0, 0);
-    try std.testing.expectEqualStrings("Strict TLS", view.dialogValueAt(2));
+    try std.testing.expectEqualStrings("Plaintext (unsafe)", view.dialogValueAt(2));
     _ = view.handlePointer(.{ .kind = .down, .x = security.x + 4, .y = security.y + 4, .button = .primary }, 0, 0);
     try std.testing.expectEqualStrings("Verified TLS", view.dialogValueAt(2));
+}
+
+test "correcting a dialog field clears stale validation feedback" {
+    var view = try View.init(std.testing.allocator, 960, 720);
+    defer view.deinit();
+    view.openConnectionDialog("eshmaki.me", 6697, true);
+    view.setDialogNotice("Port must be between 1 and 65535.");
+    view.dialog_field = 1;
+    _ = try view.handleDialogKey(.backspace, .{});
+    try std.testing.expectEqualStrings("", view.dialog_notice);
+
+    view.setDialogNotice("Old error");
+    const layout = dialogLayout(view.width(), view.height(), dialogs.get(.setup));
+    const security = layout.fieldRect(2);
+    _ = view.handlePointer(.{ .kind = .down, .x = security.x + 4, .y = security.y + 4, .button = .primary }, 0, 0);
+    try std.testing.expectEqualStrings("", view.dialog_notice);
+}
+
+test "member wheel scroll maps visible cards to their roster index" {
+    var view = try View.init(std.testing.allocator, 960, 720);
+    defer view.deinit();
+    const layout = geometry.Layout.compute(960, 720, true, true);
+    _ = view.handlePointer(.{ .kind = .wheel, .x = layout.members.x + 20, .y = layout.members.y + 50, .wheel_y = -1 }, 0, 7);
+    try std.testing.expectEqual(@as(usize, 2), view.shell.member_offset);
+    _ = view.handlePointer(.{ .kind = .down, .x = layout.members.x + 20, .y = layout.members.y + 40, .button = .primary }, 0, 7);
+    try std.testing.expectEqual(@as(?usize, 2), view.shell.selected_member);
 }
 
 test "single line inputs retain a visible caret window and place the cursor by pixel" {
