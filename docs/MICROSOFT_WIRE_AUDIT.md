@@ -24,6 +24,10 @@ captured sessions rather than normative protocol definitions.
   saved records and the authored rendering state that UDI selects.
 - `profile.txt`, `readme.txt`, `rtwsupport.txt`, and the source README:
   defaults, documented user behavior, and platform-only integrations.
+- [IRCX Internet-Draft 04](https://datatracker.ietf.org/doc/html/draft-pfenning-irc-extensions-04.txt):
+  normative ACCESS, LISTX, PROP, EVENT, and numeric-reply grammar used to
+  resolve syntax that the application source reaches through its raw-command
+  dispatcher.
 
 ## Wire compatibility matrix
 
@@ -36,16 +40,16 @@ captured sessions rather than normative protocol definitions.
 | Say/think/action/whisper | Comic action is selected by UDI; text fallback wraps CTCP ACTION. Private messages force whisper state. | Exact for the five portable say modes, including private target routing and sender-prefix action display. |
 | Sound | `PRIVMSG target :\x01SOUND <quoted-file> <message>\x01`; no UDI (`bChatSendSound`). | Exact. CTCP filename quoting/unquoting, public/private targeting, dialog fields, and action-box display are tested. |
 | Avatar comments | `# Appears as <character>[.<url>]`; IRCX uses DATA, IRC uses PRIVMSG. `# GetCharInfo` requests a refresh. | Exact for bundled characters. Remote avatar download is deliberately disabled; no retired Microsoft art-server dependency is restored. |
-| Profile comments | `# GetInfo` / `# HeresInfo: ...`; empty profile uses `profile.txt`. | Exact control bytes and exact source default. The portable build does not publish email, a homepage, or a personal name automatically. |
-| Backdrop comments | `# BDrop2: name,url` followed by legacy `# BDrop:  base`. | Exact send/parser compatibility. Applying a received remote backdrop to the room renderer remains partial. |
+| Profile comments | `# GetInfo` / `# HeresInfo: ...`; empty profile uses `profile.txt`. | Exact control bytes and source default. A persistent personal editor is live; saved email/homepage remain empty by default and are returned only after explicit user entry. Member profile requests and replies are visible in the room. |
+| Backdrop comments | `# BDrop2: name,url` followed by legacy `# BDrop:  base`. | Exact send/parser compatibility. Received bundled names immediately update the room renderer; remote downloads remain disabled so an untrusted peer cannot fetch or execute external content. |
 | Enter Room | `JOIN <room>` or `JOIN <room> <password>` (`ircproto.cpp:806-820`, `chat.rc:830-842`). | Exact. The dialog now exposes its source password field and passes it to JOIN. |
 | Create Room | `CREATE <room> [creation-modes] [limit] [password]`, then source completion applies topic/modes (`ircproto.cpp:822-848`, `protsupp.cpp:4142-4201`). | Live. The dialog exposes room, topic, modes, limit, and password; CREATE uses source parameter order and TOPIC follows in queue order. Boolean mode checkboxes are represented by one modern mode token. |
 | Kick/ban/invite | Optional ban first, then `KICK room nick :reason`; ban uses `MODE room +b mask`; invite uses `INVITE nick room`. | Exact command order and bytes. Kick exposes reason and optional ban mask. |
 | Away | Send `AWAY :message` (or bare `AWAY`), then `\x01AWAY [message]\x01` to every joined room (`ircproto.cpp:912-939`, `protsupp.cpp:3744-3769`). | Exact. Peer controls are consumed, update roster away state, and never become comic bubbles. |
-| CTCP information | VERSION, PING, TIME, EMAIL, URL, and CLIENTINFO requests receive private NOTICE replies; X-VCHAT is ignored. | Live. VERSION/PING/TIME/CLIENTINFO reply without personal data; EMAIL/URL are deliberately empty to preserve the release privacy boundary. |
+| CTCP information | VERSION, PING, TIME, EMAIL, URL, and CLIENTINFO requests receive private NOTICE replies; X-VCHAT is ignored. | Live. VERSION/PING/TIME/CLIENTINFO are source-shaped. EMAIL/URL default to empty and expose only values the user explicitly saved. |
 | Same account + same nick | This is an Onyx session extension, not a Microsoft IRCX behavior. | Supported through SASL plus exact `SESSION RESUME` credential attachment. Separate client processes share one logical nick/roster identity after resume; the server retains all attached transports. |
-| IRCX PROP/ACCESS/LISTX/admin | Source has room-property and search workflows beyond comic payload transport. | Protocol substrate is present but not all application workflows are reachable. This remains explicitly partial in the completeness audit. |
-| DCC / NetMeeting | Source hands these to Windows file-transfer and NetMeeting consent/platform code. | DCC codec/send substrate exists, but inbound ownership/consent UI is incomplete. NetMeeting is intentionally retired. Neither is advertised as a finished portable feature. |
+| IRCX PROP/ACCESS/LISTX/admin | `PROP channel property[,property]`, `ACCESS object LIST`, `ADD/DELETE level mask [timeout [:reason]]`, `CLEAR [level]`, LISTX query/limit, and operator EVENT list/add/delete. | Live through typed dialogs with visible 801-819 and relevant 913-925 replies. ACCESS timeout is minutes, reason-without-timeout emits `0`, LIST never accepts invented filters, CLEAR never emits a mask, and PROP always carries an explicit property list. Byte tests pin each form to the IRCX draft and Microsoft source. |
+| DCC / NetMeeting | Source hands these to Windows file-transfer and NetMeeting consent/platform code. | DCC SEND/receive is live with explicit consent, bounded files, exclusive destinations, progress, cancellation, and no retained partial output. The retired `NETMEET` CTCP receives `NOHAVE`; the portable UI uses an explicit HTTPS `X-COMICCHAT-CALL` invitation that never auto-launches a browser. |
 
 ## Interoperability invariants
 
@@ -60,12 +64,13 @@ captured sessions rather than normative protocol definitions.
 5. CTCP SOUND and AWAY are controls, not speech. They are rendered or consumed
    according to the source before ordinary comic-line insertion.
 6. No certificate, private key, personal name, email address, or homepage is
-   placed on the wire by a peer probe or included as a release default.
+   included as a release default. EMAIL/URL/profile controls expose only text
+   the user deliberately saved in the local preferences file.
 
 ## Known non-wire gaps
 
 The remaining gaps do not change the correctness of the live comic messages:
-native file-pickers and inbound DCC consent, full IRCX property/search/admin
-workflows, persistent automation/notifications/profile editing, received
-backdrop application, and retired NetMeeting. They stay visible in
-`PORTABLE_COMPLETENESS_AUDIT.md`; this document does not relabel them complete.
+native file pickers/clipboard/IME/accessibility, locator application, printing,
+and a few secondary legacy dialog models remain. Remote art download and
+NetMeeting activation are deliberate security retirements, not incomplete wire
+paths. They stay classified in `PORTABLE_COMPLETENESS_AUDIT.md`.

@@ -72,7 +72,7 @@ package_target() {
     local prefix="$stage_dir/$platform"
     local package_dir="$prefix/comicchat-$version-$platform"
 
-    (cd "$repo_root" && zig build -Dtarget="$target" -Doptimize=ReleaseSafe -p "$prefix")
+    (cd "$repo_root" && zig build -Dtarget="$target" -Doptimize=ReleaseSafe --prefix "$prefix")
     mkdir -p "$package_dir"
     cp "$prefix/bin/$executable" "$package_dir/"
     cp "$repo_root/README.md" "$repo_root/LICENSE" "$repo_root/NOTICE" "$package_dir/"

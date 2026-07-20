@@ -82,7 +82,10 @@ pub const DialogLayout = struct {
         const canvas_h: i32 = @intCast(canvas_height);
         const desired_w = @divTrunc(@as(i32, source_width) * 3, 2);
         const source_h = @divTrunc(@as(i32, source_height) * 3, 2);
-        const controls_h = 80 + @as(i32, @intCast(field_count)) * 52 + 54;
+        // Reserve a dedicated notice row above the button rail. Validation,
+        // transfer progress, and consent copy must never paint over the last
+        // field or the primary action.
+        const controls_h = 80 + @as(i32, @intCast(field_count)) * 52 + 78;
         const desired_h = @max(source_h, controls_h);
         const rect = Rect{
             .x = @divTrunc(canvas_w - @min(@max(300, desired_w), @max(240, canvas_w - 32)), 2),
@@ -91,7 +94,7 @@ pub const DialogLayout = struct {
             .h = @min(@max(170, desired_h), @max(140, canvas_h - 32)),
         };
         const body_y = rect.y + 80;
-        const available_h = @max(43, rect.bottom() - 48 - body_y);
+        const available_h = @max(43, rect.bottom() - 72 - body_y);
         const row_h = @min(54, @max(43, @divTrunc(available_h, @max(1, @as(i32, @intCast(field_count))))));
         return .{
             .rect = rect,
@@ -112,7 +115,7 @@ pub const DialogLayout = struct {
     }
 
     pub fn fieldIndexAt(self: DialogLayout, x: i32, y: i32) ?usize {
-        if (y < self.body_y or y >= self.rect.bottom() - 43) return null;
+        if (y < self.body_y or y >= self.rect.bottom() - 67) return null;
         const raw = @divTrunc(y - self.body_y, self.row_h);
         if (raw < 0 or raw >= self.field_count) return null;
         const index: usize = @intCast(raw);

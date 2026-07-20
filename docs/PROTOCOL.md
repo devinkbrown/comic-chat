@@ -67,9 +67,11 @@ The portable live client implements `# Appears as <name>[.<url>]` for bundled
 avatars in either outer transport, consumes the control without creating a
 speech balloon, and retains the selected avatar for later messages and talk-to
 bodies. It intentionally does not download the optional URL. Profile requests
-receive the source default profile and character-info requests trigger a fresh
-avatar announcement. Backdrop comments are encoded and recognized but the
-received backdrop is not yet applied to the room renderer.
+receive the saved one-line profile or the source default, member-profile
+replies become visible action rows, and character-info requests trigger a fresh
+avatar announcement. Backdrop comments select the matching bundled BGB in the
+room renderer; unknown names and remote URLs are consumed without downloading
+untrusted content.
 
 The portable IRC framing and command path lives under [`src/net/`](../src/net/).
 The compact live codec is [`src/proto/udi.zig`](../src/proto/udi.zig), and the
@@ -125,8 +127,43 @@ Away has two synchronized layers: standard `AWAY :message` (or bare `AWAY` to
 clear it), followed by `\x01AWAY [message]\x01` in every joined room. Incoming
 controls update the roster indicator and are not inserted as comic speech.
 VERSION, PING, TIME, EMAIL, URL, and CLIENTINFO probes receive source-shaped
-NOTICE replies. The portable EMAIL and URL replies are intentionally empty so
-a remote user cannot elicit personal information.
+NOTICE replies. EMAIL and URL are empty by default and return only values the
+user explicitly saved in the local preferences editor.
+
+### IRCX application workflows
+
+The Room menu exposes the IRCX draft's typed management paths after numeric
+800 state 1 enables IRCX:
+
+- `LISTX <query-list> [limit]`, with comma-separated query terms and a numeric
+  result bound. Non-IRCX servers receive ordinary `LIST`.
+- `PROP <channel> <property>[,<property>]` for queries and
+  `PROP <channel> <property> :<value>` for set/delete. The empty trailing value
+  is preserved for deletion.
+- `ACCESS <object> LIST`, `ADD|DELETE <level> <mask> [timeout [:reason]]`, and
+  `CLEAR [level]`. Timeouts are minutes; a reason without an entered timeout
+  emits the draft's unlimited `0` value.
+- `EVENT LIST [event]` and `EVENT ADD|DELETE <event> [mask]` for authorized
+  operators.
+
+Replies 801-819 and relevant IRCX errors 913-925 are shown in the active room
+as server action rows. The exact command bytes are pinned by unit tests against
+the [IRCX Internet-Draft](https://datatracker.ietf.org/doc/html/draft-pfenning-irc-extensions-04.txt)
+and the Microsoft client source.
+
+### DCC and call invitations
+
+Microsoft's DCC SEND payload and four-byte big-endian cumulative ACK loop are
+preserved. Incoming offers are not accepted automatically: the user reviews
+the sender, bounded size, and destination first. Received data is held until
+complete, then written with exclusive creation; an existing destination is
+never replaced, and failed/cancelled transfers retain no partial output.
+Outgoing transfers bind the chosen port before advertising the offer and can
+interrupt a blocked listener through socket shutdown.
+
+The retired `NETMEET` control is answered with `NETMEET NOHAVE`. Portable call
+invitations use `\x01X-COMICCHAT-CALL https://...\x01`; receipt opens a consent
+dialog, validates a one-line HTTPS URL, and never launches it automatically.
 
 ### IRCv3 CAP and SASL compatibility
 

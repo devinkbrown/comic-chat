@@ -654,7 +654,7 @@ pub const View = struct {
                 0 => {
                     self.shell.setSayMode(.whisper);
                 },
-                1 => self.openDialog(.personal),
+                1 => self.openDialog(.member_profile),
                 2 => self.openDialog(.invite),
                 3 => self.openDialog(.kick),
                 else => self.openDialog(.ban),
@@ -847,8 +847,10 @@ pub const View = struct {
             .departed = member.departed,
         };
 
+        const backdrop = dialogBackgroundByName(transcript.resolvedBackdrop()) orelse dialogBackgroundByName("field").?;
         var page = try strip.renderWithOptions(self.gpa, lines, .{
             .title_roster = title_roster,
+            .backdrop = backdrop,
             .page_columns = self.shell.comic_columns,
             .reserve_page_columns = true,
         });
@@ -1024,7 +1026,8 @@ pub const View = struct {
                 0 => self.openDialog(.set_text_font),
                 1 => self.openDialog(.choose_color),
                 2 => self.openDialog(.background),
-                else => self.openDialog(.character),
+                3 => self.openDialog(.character),
+                else => self.openDialog(.personal),
             },
             4 => switch (item) {
                 0 => self.openDialog(.room_list),
@@ -1032,22 +1035,29 @@ pub const View = struct {
                 2 => self.openDialog(.channel_create),
                 3 => self.openDialog(.channel_properties),
                 4 => self.openDialog(.away),
-                else => self.openDialog(.motd),
+                5 => self.openDialog(.motd),
+                6 => self.openDialog(.ircx_properties),
+                7 => self.openDialog(.room_access),
+                else => self.openDialog(.ircx_events),
             },
             5 => switch (item) {
                 0 => self.openDialog(.user_list),
-                1 => self.openDialog(.personal),
+                1 => self.openDialog(.member_profile),
                 2 => self.openDialog(.whisper),
                 3 => self.openDialog(.invite),
                 4 => self.openDialog(.kick),
-                else => self.openDialog(.ban),
+                5 => self.openDialog(.ban),
+                6 => self.openDialog(.file_transfer),
+                else => self.openDialog(.call_link),
             },
             6 => switch (item) {
-                0 => self.openDialog(.room_list),
-                1 => self.openDialog(.notifications),
-                2 => self.toggleMembers(),
-                3 => self.openDialog(.settings),
-                4 => self.openDialog(.about),
+                0 => self.openDialog(.automation),
+                1 => self.openDialog(.rules),
+                2 => self.openDialog(.notifications),
+                3 => self.openDialog(.notification_users),
+                4 => self.openDialog(.file_transfer),
+                5 => self.openDialog(.settings),
+                6 => self.openDialog(.about),
                 else => self.openDialog(.setup),
             },
             else => {},
@@ -1066,8 +1076,11 @@ fn menuStart(menu: u8) i32 {
 
 fn menuItemCount(menu: u8) u8 {
     return switch (menu) {
-        0, 3 => 4,
-        2, 4, 5, 6 => 6,
+        0 => 4,
+        3 => 5,
+        2 => 6,
+        4 => 9,
+        5, 6 => 8,
         else => 1,
     };
 }
@@ -1093,7 +1106,8 @@ fn menuItemLabel(menu: u8, item: u8) []const u8 {
             0 => "Text font",
             1 => "Text color",
             2 => "Background",
-            else => "Character",
+            3 => "Character",
+            else => "Personal profile",
         },
         4 => switch (item) {
             0 => "Room list",
@@ -1101,7 +1115,10 @@ fn menuItemLabel(menu: u8, item: u8) []const u8 {
             2 => "Create room",
             3 => "Room properties",
             4 => "Set away message",
-            else => "Message of the day",
+            5 => "Message of the day",
+            6 => "IRCX properties",
+            7 => "Room access",
+            else => "IRCX operator events",
         },
         5 => switch (item) {
             0 => "User list",
@@ -1109,14 +1126,18 @@ fn menuItemLabel(menu: u8, item: u8) []const u8 {
             2 => "Whisper",
             3 => "Invite member",
             4 => "Kick member",
-            else => "Ban or unban",
+            5 => "Ban or unban",
+            6 => "Send or receive file",
+            else => "Send call link",
         },
         6 => switch (item) {
-            0 => "Favorite rooms",
-            1 => "Logon notifications",
-            2 => "Show members",
-            3 => "Settings",
-            4 => "About Comic Chat",
+            0 => "Automation",
+            1 => "Rules",
+            2 => "Logon notifications",
+            3 => "Online notification users",
+            4 => "File transfers",
+            5 => "Settings",
+            6 => "About Comic Chat",
             else => "Connection setup",
         },
         else => "Settings",
@@ -1124,11 +1145,11 @@ fn menuItemLabel(menu: u8, item: u8) []const u8 {
 }
 
 fn isConnectionMenuItem(menu: u8, item: u8) bool {
-    return (menu == 0 and item == 3) or (menu == 6 and item == 5);
+    return (menu == 0 and item == 3) or (menu == 6 and item == 7);
 }
 
 fn endpointDialogMenuItem(menu: u8, item: u8) ?dialogs.Id {
-    if ((menu == 1 and item == 0) or (menu == 6 and item == 3)) return .settings;
+    if ((menu == 1 and item == 0) or (menu == 6 and item == 5)) return .settings;
     return null;
 }
 
@@ -1187,7 +1208,7 @@ fn menuItemChecked(menu: u8, item: u8, shell: shell_mod.State) bool {
             4 => shell.member_view == .list,
             else => false,
         },
-        6 => item == 2 and shell.show_members,
+        6 => false,
         else => false,
     };
 }
@@ -2225,7 +2246,7 @@ test "every menu popup and command row stays reachable at minimum width" {
     defer view.deinit();
     view.active_menu = 6;
     const more = menuPopupRect(width, 6);
-    _ = view.handlePointer(.{ .kind = .down, .x = more.x + 12, .y = more.y + 8 + 4 * 29, .button = .primary }, 0, 0);
+    _ = view.handlePointer(.{ .kind = .down, .x = more.x + 12, .y = more.y + 8 + 6 * 29, .button = .primary }, 0, 0);
     try std.testing.expectEqual(dialogs.Id.about, view.active_dialog.?);
 }
 

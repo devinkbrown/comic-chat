@@ -6,7 +6,7 @@ not vendored here.
 | Path | Purpose |
 | --- | --- |
 | `src/` | Zig application, renderer, protocol, native platform backends, and tests |
-| `src/client/` | Portable shell, dialogs, workspace, accessibility semantics, and file workflows |
+| `src/client/` | Portable shell, dialogs, workspace, accessibility semantics, safe file workflows, and bounded persistent preferences |
 | `src/comic/` | Comic layout, panel, figure, balloon, notification, and rules logic |
 | `src/net/` and `src/proto/` | Zig-only IRC/IRCX, Onyx resolver, socket/TLS, session, and Comic Chat wire protocols |
 | `src/assets/testdata/` | Runtime AVB/BGB characters and backdrops used by the application |
@@ -19,7 +19,7 @@ not vendored here.
 
 ## Releases
 
-The published `comicchat-portable-2026-07-20.3` release provides x86_64 Windows,
+The published `comicchat-portable-2026-07-20.4` release provides x86_64 Windows,
 Linux, FreeBSD, and OpenBSD binary packages, a source archive with the required
 subset of the pinned Onyx TLS source expanded, and a SHA-256 manifest.
 The source archive is the self-contained distribution artifact; a repository

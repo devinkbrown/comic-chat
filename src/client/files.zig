@@ -29,6 +29,23 @@ pub fn saveBytesAtomic(io: std.Io, gpa: std.mem.Allocator, path: []const u8, byt
     try cwd.rename(temporary, cwd, path, io);
 }
 
+/// Save a newly received file without ever replacing an existing path. The
+/// exclusive create closes the check/write race and failed writes remove only
+/// the file this call created, so no partial transfer is left behind.
+pub fn saveBytesNew(io: std.Io, path: []const u8, bytes: []const u8) !void {
+    if (bytes.len > max_document_bytes) return error.DocumentTooLarge;
+    if (path.len == 0 or std.mem.indexOfScalar(u8, path, 0) != null) return error.InvalidPath;
+    const cwd = std.Io.Dir.cwd();
+    var file = try cwd.createFile(io, path, .{ .exclusive = true });
+    var keep = false;
+    defer {
+        file.close(io);
+        if (!keep) cwd.deleteFile(io, path) catch {};
+    }
+    try file.writeStreamingAll(io, bytes);
+    keep = true;
+}
+
 pub fn encodeConversation(gpa: std.mem.Allocator, transcript: *const session.Transcript) ![]u8 {
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
