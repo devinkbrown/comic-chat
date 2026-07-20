@@ -32,6 +32,7 @@ pub const Action = union(enum) {
     menu: u8,
     toolbar: u8,
     room_tab: usize,
+    composer_cursor: i32,
     send,
     dialog_accept: dialogs.Id,
     dialog_cancel: dialogs.Id,
@@ -48,6 +49,7 @@ const accent = ui.Theme.accent;
 const accent_soft = ui.Theme.accent_soft;
 const focus_color = ui.Theme.focus;
 const ColumnControlHover = enum { decrease, increase };
+const ContextKind = enum { member, body_camera };
 
 pub const View = struct {
     gpa: std.mem.Allocator,
@@ -56,13 +58,19 @@ pub const View = struct {
     active_dialog: ?dialogs.Id = null,
     dialog_notice: []const u8 = "",
     hovered_dialog_button: ?ui.DialogButton = null,
+    hovered_dialog_field: ?usize = null,
     active_menu: ?u8 = null,
     hovered_menu: ?u8 = null,
     hovered_menu_item: ?u8 = null,
     hovered_toolbar: ?u8 = null,
     hovered_say_action: ?u8 = null,
+    hovered_composer: bool = false,
     hovered_column_control: ?ColumnControlHover = null,
     hovered_member: ?usize = null,
+    context_menu: ?ContextKind = null,
+    context_x: i32 = 0,
+    context_y: i32 = 0,
+    hovered_context_item: ?u8 = null,
     emotion_dragging: bool = false,
     dialog_editors: [3]input_mod.Editor,
     dialog_field: usize = 0,
@@ -114,6 +122,30 @@ pub const View = struct {
         self.shell.focusComposer();
     }
 
+    /// Keyboard ownership for composite controls. Lists use roving selection;
+    /// the body camera keeps the source arrow-key and Home behavior.
+    pub fn handleFocusedKey(self: *View, key: platform_event.Key, member_count: usize) bool {
+        switch (self.shell.focus) {
+            .members => switch (key) {
+                .up => self.shell.moveMemberSelection(member_count, -1),
+                .down => self.shell.moveMemberSelection(member_count, 1),
+                .home => if (member_count > 0) self.shell.selectMember(0),
+                .end => if (member_count > 0) self.shell.selectMember(member_count - 1),
+                else => return false,
+            },
+            .emotion => switch (key) {
+                .left => self.shell.moveEmotion(-1, 0),
+                .right => self.shell.moveEmotion(1, 0),
+                .up => self.shell.moveEmotion(0, -1),
+                .down => self.shell.moveEmotion(0, 1),
+                .home => self.shell.neutralEmotion(),
+                else => return false,
+            },
+            else => return false,
+        }
+        return true;
+    }
+
     pub fn pageEarlier(self: *View, total_lines: usize) void {
         self.shell.pageEarlier(total_lines, 9);
     }
@@ -137,12 +169,20 @@ pub const View = struct {
     pub fn openDialog(self: *View, id: dialogs.Id) void {
         self.active_menu = null;
         for (&self.dialog_editors) |*editor| editor.clear();
+        for (dialogs.fields(id), 0..) |field, index| {
+            if (index >= self.dialog_editors.len or field.kind != .choice) continue;
+            const options = dialogs.choiceOptions(id, index);
+            if (options.len > 0) self.dialog_editors[index].paste(options[0]) catch {};
+        }
         self.dialog_field = 0;
         self.dialog_notice = "";
         self.hovered_dialog_button = null;
+        self.hovered_dialog_field = null;
         self.hovered_say_action = null;
         self.hovered_column_control = null;
         self.hovered_member = null;
+        self.context_menu = null;
+        self.hovered_context_item = null;
         self.active_dialog = id;
     }
 
@@ -156,6 +196,7 @@ pub const View = struct {
         if (self.active_dialog == null) return false;
         self.active_dialog = null;
         self.hovered_dialog_button = null;
+        self.hovered_dialog_field = null;
         return true;
     }
 
@@ -167,19 +208,28 @@ pub const View = struct {
         if (self.active_dialog) |id| {
             const dialog_layout = dialogLayout(self.canvas.width, self.canvas.height, dialogs.get(id));
             const next = ui.dialogButtonAt(dialog_layout, pointer.x, pointer.y);
-            const changed = self.hovered_dialog_button != next or self.hovered_menu != null or self.hovered_toolbar != null or self.hovered_say_action != null or self.hovered_column_control != null or self.hovered_member != null;
+            const next_field = dialog_layout.fieldIndexAt(pointer.x, pointer.y);
+            const changed = self.hovered_dialog_button != next or self.hovered_dialog_field != next_field or self.hovered_menu != null or self.hovered_toolbar != null or self.hovered_say_action != null or self.hovered_composer or self.hovered_column_control != null or self.hovered_member != null;
             self.hovered_dialog_button = next;
+            self.hovered_dialog_field = next_field;
             self.hovered_menu = null;
             self.hovered_menu_item = null;
             self.hovered_toolbar = null;
             self.hovered_say_action = null;
+            self.hovered_composer = false;
             self.hovered_column_control = null;
             self.hovered_member = null;
             return changed;
         }
+        if (self.context_menu) |kind| {
+            const next = contextPopupItem(self.canvas.width, self.canvas.height, kind, self.context_x, self.context_y, pointer.x, pointer.y);
+            const changed = self.hovered_context_item != next;
+            self.hovered_context_item = next;
+            return changed;
+        }
         if (self.active_menu) |menu| {
             const layout = geometry.Layout.compute(self.canvas.width, self.canvas.height, self.shell.content_mode == .comic, self.shell.show_members);
-            const target = hit_test.shell(layout, self.shell.content_mode == .comic, pointer.x, pointer.y, member_count);
+            const target = hit_test.shell(layout, self.shell.content_mode == .comic, self.shell.member_view == .icons, pointer.x, pointer.y, member_count);
             if (target == .menu) {
                 const next_menu = target.menu;
                 const changed = self.active_menu != next_menu or self.hovered_menu != next_menu or self.hovered_menu_item != null or self.hovered_say_action != null or self.hovered_column_control != null or self.hovered_member != null;
@@ -208,11 +258,12 @@ pub const View = struct {
             if (comic_mode and self.setEmotionFromPoint(layout, pointer.x, pointer.y)) return true;
             return false;
         }
-        const target = hit_test.shell(layout, comic_mode, pointer.x, pointer.y, member_count);
+        const target = hit_test.shell(layout, comic_mode, self.shell.member_view == .icons, pointer.x, pointer.y, member_count);
         return switch (target) {
             .menu => |index| self.setHover(index, null),
             .toolbar => |index| self.setHover(null, index),
             .say_action => |index| self.setContentHover(index, null, null),
+            .composer => self.setComposerHover(),
             .comic_columns_decrease => self.setContentHover(null, .decrease, null),
             .comic_columns_increase => self.setContentHover(null, .increase, null),
             .member => |index| self.setContentHover(null, null, index),
@@ -221,24 +272,38 @@ pub const View = struct {
     }
 
     fn setHover(self: *View, menu: ?u8, toolbar: ?u8) bool {
-        const changed = self.hovered_menu != menu or self.hovered_menu_item != null or self.hovered_toolbar != toolbar or self.hovered_say_action != null or self.hovered_column_control != null or self.hovered_member != null;
+        const changed = self.hovered_menu != menu or self.hovered_menu_item != null or self.hovered_toolbar != toolbar or self.hovered_say_action != null or self.hovered_composer or self.hovered_column_control != null or self.hovered_member != null;
         self.hovered_menu = menu;
         self.hovered_menu_item = null;
         self.hovered_toolbar = toolbar;
         self.hovered_say_action = null;
+        self.hovered_composer = false;
         self.hovered_column_control = null;
         self.hovered_member = null;
         return changed;
     }
 
     fn setContentHover(self: *View, say_action: ?u8, column_control: ?ColumnControlHover, member: ?usize) bool {
-        const changed = self.hovered_menu != null or self.hovered_menu_item != null or self.hovered_toolbar != null or self.hovered_say_action != say_action or self.hovered_column_control != column_control or self.hovered_member != member;
+        const changed = self.hovered_menu != null or self.hovered_menu_item != null or self.hovered_toolbar != null or self.hovered_say_action != say_action or self.hovered_composer or self.hovered_column_control != column_control or self.hovered_member != member;
         self.hovered_menu = null;
         self.hovered_menu_item = null;
         self.hovered_toolbar = null;
         self.hovered_say_action = say_action;
+        self.hovered_composer = false;
         self.hovered_column_control = column_control;
         self.hovered_member = member;
+        return changed;
+    }
+
+    fn setComposerHover(self: *View) bool {
+        const changed = self.hovered_menu != null or self.hovered_menu_item != null or self.hovered_toolbar != null or self.hovered_say_action != null or !self.hovered_composer or self.hovered_column_control != null or self.hovered_member != null;
+        self.hovered_menu = null;
+        self.hovered_menu_item = null;
+        self.hovered_toolbar = null;
+        self.hovered_say_action = null;
+        self.hovered_composer = true;
+        self.hovered_column_control = null;
+        self.hovered_member = null;
         return changed;
     }
 
@@ -250,11 +315,18 @@ pub const View = struct {
         return self.dialog_editors[@min(index, self.dialog_editors.len - 1)].text();
     }
 
+    pub fn activeDialogEditor(self: *View) ?*input_mod.Editor {
+        const id = self.active_dialog orelse return null;
+        if (!dialogs.fieldAcceptsText(id, self.dialog_field)) return null;
+        if (self.dialog_field >= self.dialog_editors.len) return null;
+        return &self.dialog_editors[self.dialog_field];
+    }
+
     pub fn setDialogNotice(self: *View, notice: []const u8) void {
         self.dialog_notice = notice;
     }
 
-    pub fn handleDialogKey(self: *View, key: platform_event.Key) !?Action {
+    pub fn handleDialogKey(self: *View, key: platform_event.Key, modifiers: platform_event.Modifiers) !?Action {
         const id = self.active_dialog orelse return null;
         const field_count = @min(dialogs.fields(id).len, self.dialog_editors.len);
         const editor = &self.dialog_editors[self.dialog_field];
@@ -270,13 +342,23 @@ pub const View = struct {
             .tab => {
                 if (field_count > 0) self.dialog_field = (self.dialog_field + 1) % field_count;
             },
-            .char => |ch| if (dialogs.fieldAcceptsText(id, self.dialog_field) and editor.text().len < 512) try editor.insert(ch),
+            .char => |ch| {
+                if (modifiers.control) {
+                    const shortcut = if (ch <= 0x7f) std.ascii.toLower(@intCast(ch)) else 0;
+                    switch (shortcut) {
+                        'a' => editor.selectAll(),
+                        'z' => editor.undo(),
+                        'y' => editor.redo(),
+                        else => {},
+                    }
+                } else if (dialogs.fieldAcceptsText(id, self.dialog_field) and editor.text().len < 512) try editor.insert(ch);
+            },
             .backspace => editor.backspace(),
             .delete => editor.delete(),
-            .left => editor.left(),
-            .right => editor.right(),
-            .home => editor.home(),
-            .end => editor.end(),
+            .left => if (modifiers.shift) editor.extendLeft() else editor.left(),
+            .right => if (modifiers.shift) editor.extendRight() else editor.right(),
+            .home => if (modifiers.shift) editor.extendHome() else editor.home(),
+            .end => if (modifiers.shift) editor.extendEnd() else editor.end(),
             else => {},
         }
         return .none;
@@ -305,9 +387,25 @@ pub const View = struct {
                 if (index < self.dialog_editors.len) {
                     self.dialog_field = index;
                     const field = dialogs.fields(id)[index];
-                    if (field.kind == .choice) self.cycleDialogChoice(id, index);
+                    if (field.kind == .choice) {
+                        self.cycleDialogChoice(id, index);
+                    } else if (dialogs.fieldAcceptsText(id, index)) {
+                        const field_rect = dialog_layout.fieldRect(index);
+                        const editor = &self.dialog_editors[index];
+                        const content_width = field_rect.w - if (field.kind == .password) @as(i32, 46) else @as(i32, 20);
+                        const window = visibleTextWindow(editor.text(), editor.cursor, content_width);
+                        placeEditorCursor(editor, window, pointer.x - field_rect.x - 11);
+                    }
                 }
             }
+            return .none;
+        }
+        if (self.context_menu) |kind| {
+            if (pointer.kind != .down or pointer.button != .primary) return .none;
+            const item = contextPopupItem(self.canvas.width, self.canvas.height, kind, self.context_x, self.context_y, pointer.x, pointer.y);
+            self.context_menu = null;
+            self.hovered_context_item = null;
+            if (item) |selected| self.invokeContextItem(kind, selected);
             return .none;
         }
         if (self.active_menu) |menu| {
@@ -318,10 +416,21 @@ pub const View = struct {
         }
         const comic_mode = self.shell.content_mode == .comic;
         const layout = geometry.Layout.compute(self.canvas.width, self.canvas.height, comic_mode, self.shell.show_members);
-        const target = hit_test.shell(layout, comic_mode, pointer.x, pointer.y, member_count);
+        const target = hit_test.shell(layout, comic_mode, self.shell.member_view == .icons, pointer.x, pointer.y, member_count);
         if (pointer.kind == .wheel) {
             switch (target) {
                 .transcript => if (pointer.wheel_y > 0) self.pageEarlier(total_lines) else if (pointer.wheel_y < 0) self.pageLater(),
+                else => {},
+            }
+            return .none;
+        }
+        if (pointer.kind == .down and pointer.button == .secondary) {
+            switch (target) {
+                .member => |index| {
+                    self.shell.selectMember(index);
+                    self.openContextMenu(.member, pointer.x, pointer.y);
+                },
+                .emotion => self.openContextMenu(.body_camera, pointer.x, pointer.y),
                 else => {},
             }
             return .none;
@@ -337,7 +446,9 @@ pub const View = struct {
             .toolbar => |index| toolbar: {
                 switch (index) {
                     0 => self.openDialog(.setup),
+                    1 => {},
                     2 => self.openDialog(.channel),
+                    3 => {},
                     4 => self.openDialog(.channel_create),
                     5 => self.setContentMode(.comic),
                     6 => self.setContentMode(.text),
@@ -346,9 +457,15 @@ pub const View = struct {
                     9 => self.openDialog(.room_list),
                     10 => self.openDialog(.away),
                     11 => self.openDialog(.personal),
+                    12 => self.openDialog(.notifications),
                     13 => self.openDialog(.whisper),
+                    14 => self.openDialog(.personal),
+                    15 => self.openDialog(.personal),
+                    16 => self.openDialog(.personal),
                     17 => self.openDialog(.set_text_font),
                     18 => self.openDialog(.choose_color),
+                    19, 20, 21, 22 => self.openDialog(.set_text_font),
+                    23 => self.openDialog(.choose_color),
                     else => {},
                 }
                 break :toolbar .{ .toolbar = index };
@@ -377,7 +494,7 @@ pub const View = struct {
             },
             .composer => focus: {
                 self.shell.focus = .composer;
-                break :focus .none;
+                break :focus .{ .composer_cursor = pointer.x };
             },
             .say_action => |index| say: {
                 self.shell.setSayMode(@enumFromInt(index));
@@ -393,6 +510,44 @@ pub const View = struct {
                 break :emotion .none;
             },
         };
+    }
+
+    pub fn placeComposerCursor(self: *View, editor: *input_mod.Editor, pointer_x: i32) void {
+        const layout = geometry.Layout.compute(self.canvas.width, self.canvas.height, self.shell.content_mode == .comic, self.shell.show_members);
+        const content_x = layout.say_editor.x + 18;
+        const content_width = @max(0, layout.say_editor.w - 36);
+        const window = visibleTextWindow(editor.text(), editor.cursor, content_width);
+        placeEditorCursor(editor, window, pointer_x - content_x);
+    }
+
+    fn openContextMenu(self: *View, kind: ContextKind, x: i32, y: i32) void {
+        self.active_menu = null;
+        self.context_menu = kind;
+        self.context_x = x;
+        self.context_y = y;
+        self.hovered_context_item = null;
+    }
+
+    fn invokeContextItem(self: *View, kind: ContextKind, item: u8) void {
+        switch (kind) {
+            .body_camera => switch (item) {
+                0 => self.shell.toggleEmotionFreeze(),
+                1 => self.openDialog(.character),
+                else => {
+                    self.shell.emotion_frozen = false;
+                    self.shell.neutralEmotion();
+                },
+            },
+            .member => switch (item) {
+                0 => {
+                    self.shell.setSayMode(.whisper);
+                },
+                1 => self.openDialog(.personal),
+                2 => self.openDialog(.invite),
+                3 => self.openDialog(.kick),
+                else => self.openDialog(.ban),
+            },
+        }
     }
 
     fn cycleDialogChoice(self: *View, id: dialogs.Id, index: usize) void {
@@ -464,10 +619,11 @@ pub const View = struct {
             self.drawTextBuffer(layout.transcript, transcript);
         }
         if (layout.right.w > 0) {
-            try self.drawMemberList(layout.members, transcript, comic_mode);
+            ui.drawInspectorRail(&self.canvas, layout.right);
+            try self.drawMemberList(layout.members, transcript, self.shell.member_view == .icons);
             if (comic_mode) try self.drawBodyCamera(layout.body_camera, transcript);
         }
-        drawSayWindow(&self.canvas, layout, input, cursor, selection, self.shell.focus == .composer, self.shell.say_mode, self.hovered_say_action);
+        drawSayWindow(&self.canvas, layout, input, cursor, selection, self.shell.focus == .composer, self.hovered_composer, self.shell.say_mode, self.hovered_say_action);
         drawStatusBar(&self.canvas, layout.status, self.hoveredToolbarLabel() orelse status, transcript.roster.items.len);
 
         if (self.shell.focus == .transcript) drawFocus(&self.canvas, layout.transcript);
@@ -475,8 +631,9 @@ pub const View = struct {
         if (self.shell.focus == .emotion) drawFocus(&self.canvas, layout.body_camera);
         if (self.hovered_toolbar) |index| drawToolbarTooltip(&self.canvas, layout, index);
         if (self.hovered_say_action) |index| drawSayActionTooltip(&self.canvas, layout, index);
-        if (self.active_menu) |menu| drawMenuPopup(&self.canvas, menu, self.hovered_menu_item);
-        if (self.active_dialog) |id| drawDialog(&self.canvas, dialogs.get(id), &self.dialog_editors, self.dialog_field, self.dialog_notice, self.hovered_dialog_button);
+        if (self.active_menu) |menu| drawMenuPopup(&self.canvas, menu, self.hovered_menu_item, self.shell);
+        if (self.context_menu) |kind| drawContextPopup(&self.canvas, kind, self.context_x, self.context_y, self.hovered_context_item, self.shell.emotion_frozen);
+        if (self.active_dialog) |id| drawDialog(&self.canvas, dialogs.get(id), &self.dialog_editors, self.dialog_field, self.hovered_dialog_field, self.dialog_notice, self.hovered_dialog_button);
     }
 
     fn hoveredToolbarLabel(self: *const View) ?[]const u8 {
@@ -586,6 +743,7 @@ pub const View = struct {
             const label = "Earlier messages - Page Down returns toward latest";
             ui.drawHistoryBanner(&self.canvas, rect, label);
         }
+        ui.drawVerticalScrollbar(&self.canvas, rect, all.len, 9, range.start);
     }
 
     fn drawTextBuffer(self: *View, rect: Rect, transcript: *const session.Transcript) void {
@@ -603,27 +761,36 @@ pub const View = struct {
             y += row_h;
             if (y + row_h > rect.bottom()) break;
         }
+        ui.drawVerticalScrollbar(&self.canvas, rect, transcript.lines.items.len, capacity, range.start);
     }
 
     fn drawMemberList(self: *View, rect: Rect, transcript: *const session.Transcript, icon_mode: bool) !void {
-        ui.drawContentSurface(&self.canvas, rect, false);
+        self.canvas.fillRect(rect.x, rect.y, rect.w, rect.h, ui.Theme.rail);
         if (rect.h <= 0) return;
         ui.drawPaneHeader(&self.canvas, rect, "In this room");
+        var count_buf: [16]u8 = undefined;
+        const count = std.fmt.bufPrint(&count_buf, "{d}", .{transcript.roster.items.len}) catch "0";
+        const count_w = @max(32, Canvas.uiTextWidth(count) + 20);
+        ui.drawPill(&self.canvas, .{ .x = rect.right() - count_w - 12, .y = rect.y + 5, .w = count_w, .h = 20 }, count, false);
         const content = Rect{ .x = rect.x, .y = rect.y + 30, .w = rect.w, .h = @max(0, rect.h - 30) };
         if (icon_mode) return self.drawMemberIcons(content, transcript);
         var y = content.y + 7;
+        const visible_rows: usize = @intCast(@max(1, @divTrunc(content.h - 7, 24)));
         for (transcript.roster.items, 0..) |member, index| {
             if (y + 24 > content.bottom()) break;
             const selected = if (self.shell.selected_member) |selected_index| selected_index == index else member.is_self;
             ui.drawMemberRow(&self.canvas, .{ .x = content.x, .y = y, .w = content.w, .h = 24 }, member.nick, selected, member.departed, self.hovered_member == index);
             y += 24;
         }
+        ui.drawVerticalScrollbar(&self.canvas, content, transcript.roster.items.len, visible_rows, 0);
     }
 
     fn drawMemberIcons(self: *View, rect: Rect, transcript: *const session.Transcript) !void {
         const columns = @max(1, @divTrunc(rect.w, 88));
         const cell_w = @divTrunc(rect.w, columns);
         const cell_h: i32 = 82;
+        const visible_rows = @max(1, @divTrunc(rect.h, cell_h));
+        const visible_items: usize = @intCast(visible_rows * columns);
         for (transcript.roster.items, 0..) |member, index| {
             const column: i32 = @intCast(index % @as(usize, @intCast(columns)));
             const row: i32 = @intCast(index / @as(usize, @intCast(columns)));
@@ -650,6 +817,7 @@ pub const View = struct {
                 if (member.departed) secondary else ink,
             );
         }
+        ui.drawVerticalScrollbar(&self.canvas, rect, transcript.roster.items.len, visible_items, 0);
     }
 
     fn drawBodyCamera(self: *View, rect: Rect, transcript: *const session.Transcript) !void {
@@ -688,12 +856,12 @@ pub const View = struct {
             rendered.pixels,
             rendered.width,
             rendered.height,
-            rect.x,
+            rect.x + 12,
             rect.y + 30,
-            rect.w,
+            @max(0, rect.w - 24),
             @max(0, body_h - 30),
         );
-        if (wheel_side > 0) drawEmotionWheel(&self.canvas, emotionWheelRectFromPane(rect), self.shell.emotion_x, self.shell.emotion_y);
+        if (wheel_side > 0) drawEmotionWheel(&self.canvas, emotionWheelRectFromPane(rect), self.shell.emotion_x, self.shell.emotion_y, self.shell.emotion_radius);
         // Avatar pixels can be opaque even around the figure. Draw the card
         // header last so it remains legible on every source avatar.
         var header_buf: [96]u8 = undefined;
@@ -703,34 +871,50 @@ pub const View = struct {
 
     fn invokeMenuItem(self: *View, menu: u8, item: u8) void {
         switch (menu) {
-            0 => if (item == 2) self.openDialog(.about),
+            0 => switch (item) {
+                0 => self.openDialog(.open_conversation),
+                1 => self.openDialog(.save_conversation),
+                2 => self.openDialog(.export_image),
+                else => self.openDialog(.setup),
+            },
             1 => if (item == 0) self.openDialog(.settings),
             2 => switch (item) {
                 0 => self.setContentMode(.comic),
                 1 => self.setContentMode(.text),
                 2 => self.toggleMembers(),
-                else => {},
+                3 => self.shell.setMemberView(.icons),
+                4 => self.shell.setMemberView(.list),
+                else => self.openDialog(.comics_view),
             },
             3 => switch (item) {
                 0 => self.openDialog(.set_text_font),
                 1 => self.openDialog(.choose_color),
-                else => {},
+                2 => self.openDialog(.background),
+                else => self.openDialog(.character),
             },
             4 => switch (item) {
                 0 => self.openDialog(.room_list),
                 1 => self.openDialog(.channel),
                 2 => self.openDialog(.channel_create),
-                else => {},
+                3 => self.openDialog(.channel_properties),
+                4 => self.openDialog(.away),
+                else => self.openDialog(.motd),
             },
             5 => switch (item) {
                 0 => self.openDialog(.user_list),
                 1 => self.openDialog(.personal),
-                else => {},
+                2 => self.openDialog(.whisper),
+                3 => self.openDialog(.invite),
+                4 => self.openDialog(.kick),
+                else => self.openDialog(.ban),
             },
             6 => switch (item) {
-                1 => self.openDialog(.settings),
-                2 => self.openDialog(.about),
-                else => {},
+                0 => self.openDialog(.room_list),
+                1 => self.openDialog(.notifications),
+                2 => self.toggleMembers(),
+                3 => self.openDialog(.settings),
+                4 => self.openDialog(.about),
+                else => self.openDialog(.setup),
             },
             else => {},
         }
@@ -748,8 +932,8 @@ fn menuStart(menu: u8) i32 {
 
 fn menuItemCount(menu: u8) u8 {
     return switch (menu) {
-        0, 2, 4, 6 => 3,
-        3, 5 => 2,
+        0, 3 => 4,
+        2, 4, 5, 6 => 6,
         else => 1,
     };
 }
@@ -759,27 +943,49 @@ fn menuItemLabel(menu: u8, item: u8) []const u8 {
         0 => switch (item) {
             0 => "Open conversation",
             1 => "Save conversation",
-            else => "About Comic Chat",
+            2 => "Export comic image",
+            else => "Connection setup",
         },
         1 => "Settings",
         2 => switch (item) {
             0 => "Comic view",
             1 => "Text view",
-            else => "Show members",
+            2 => "Show members",
+            3 => "Member icons",
+            4 => "Member list",
+            else => "Comic view options",
         },
-        3 => if (item == 0) "Text font" else "Colors",
+        3 => switch (item) {
+            0 => "Text font",
+            1 => "Text color",
+            2 => "Background",
+            else => "Character",
+        },
         4 => switch (item) {
             0 => "Room list",
             1 => "Enter room",
-            else => "Create room",
+            2 => "Create room",
+            3 => "Room properties",
+            4 => "Set away message",
+            else => "Message of the day",
         },
-        5 => if (item == 0) "User list" else "Personal profile",
+        5 => switch (item) {
+            0 => "User list",
+            1 => "Personal profile",
+            2 => "Whisper",
+            3 => "Invite member",
+            4 => "Kick member",
+            else => "Ban or unban",
+        },
         6 => switch (item) {
-            0 => "Favorites",
-            1 => "Settings",
-            else => "About Comic Chat",
+            0 => "Favorite rooms",
+            1 => "Logon notifications",
+            2 => "Show members",
+            3 => "Settings",
+            4 => "About Comic Chat",
+            else => "Connection setup",
         },
-        else => "About Comic Chat",
+        else => "Settings",
     };
 }
 
@@ -811,13 +1017,80 @@ fn drawMenuBar(c: *Canvas, rect: Rect, active: ?u8, hovered: ?u8) void {
     }
 }
 
-fn drawMenuPopup(c: *Canvas, menu: u8, hovered: ?u8) void {
+fn drawMenuPopup(c: *Canvas, menu: u8, hovered: ?u8, shell: shell_mod.State) void {
     const rect = menuPopupRect(menu);
     ui.drawPopupSurface(c, rect);
     var item: u8 = 0;
     while (item < menuItemCount(menu)) : (item += 1) {
         const y = rect.y + 5 + @as(i32, item) * 29;
-        ui.drawMenuItem(c, rect.x + 5, y, rect.w - 10, menuItemLabel(menu, item), hovered == item);
+        ui.drawMenuItem(c, rect.x + 5, y, rect.w - 10, menuItemLabel(menu, item), hovered == item, menuItemChecked(menu, item, shell));
+    }
+}
+
+fn menuItemChecked(menu: u8, item: u8, shell: shell_mod.State) bool {
+    return switch (menu) {
+        2 => switch (item) {
+            0 => shell.content_mode == .comic,
+            1 => shell.content_mode == .text,
+            2 => shell.show_members,
+            3 => shell.member_view == .icons,
+            4 => shell.member_view == .list,
+            else => false,
+        },
+        6 => item == 2 and shell.show_members,
+        else => false,
+    };
+}
+
+fn contextItemCount(kind: ContextKind) u8 {
+    return if (kind == .member) 5 else 3;
+}
+
+fn contextItemLabel(kind: ContextKind, item: u8, frozen: bool) []const u8 {
+    return switch (kind) {
+        .member => switch (item) {
+            0 => "Whisper",
+            1 => "Personal profile",
+            2 => "Invite to room",
+            3 => "Kick from room",
+            else => "Ban or unban",
+        },
+        .body_camera => switch (item) {
+            0 => if (frozen) "Unfreeze expression" else "Freeze expression",
+            1 => "Change character",
+            else => "Return to neutral",
+        },
+    };
+}
+
+fn contextPopupRect(width: u32, height: u32, kind: ContextKind, anchor_x: i32, anchor_y: i32) Rect {
+    const w: i32 = 196;
+    const h: i32 = @as(i32, contextItemCount(kind)) * 29 + 10;
+    const canvas_w: i32 = @intCast(width);
+    const canvas_h: i32 = @intCast(height);
+    return .{
+        .x = std.math.clamp(anchor_x, 6, @max(6, canvas_w - w - 6)),
+        .y = std.math.clamp(anchor_y, 6, @max(6, canvas_h - h - 6)),
+        .w = w,
+        .h = h,
+    };
+}
+
+fn contextPopupItem(width: u32, height: u32, kind: ContextKind, anchor_x: i32, anchor_y: i32, x: i32, y: i32) ?u8 {
+    const rect = contextPopupRect(width, height, kind, anchor_x, anchor_y);
+    if (x < rect.x or x >= rect.right() or y < rect.y + 5 or y >= rect.bottom() - 5) return null;
+    const item = @divTrunc(y - rect.y - 5, 29);
+    if (item < 0 or item >= contextItemCount(kind)) return null;
+    return @intCast(item);
+}
+
+fn drawContextPopup(c: *Canvas, kind: ContextKind, anchor_x: i32, anchor_y: i32, hovered: ?u8, frozen: bool) void {
+    const rect = contextPopupRect(c.width, c.height, kind, anchor_x, anchor_y);
+    ui.drawPopupSurface(c, rect);
+    var item: u8 = 0;
+    while (item < contextItemCount(kind)) : (item += 1) {
+        const y = rect.y + 5 + @as(i32, item) * 29;
+        ui.drawMenuItem(c, rect.x + 5, y, rect.w - 10, contextItemLabel(kind, item, frozen), hovered == item, kind == .body_camera and item == 0 and frozen);
     }
 }
 
@@ -1017,7 +1290,11 @@ fn drawToolGlyph(c: *Canvas, glyph: ToolGlyph, x: i32, y: i32, color: u32) void 
 }
 
 fn drawRectOutline(c: *Canvas, x: i32, y: i32, w: i32, h: i32, color: u32) void {
-    ui.drawOutline(c, x, y, w, h, color);
+    if (w <= 0 or h <= 0) return;
+    ui.drawAaLine(c, x, y, x + w - 1, y, 1.35, color);
+    ui.drawAaLine(c, x, y + h - 1, x + w - 1, y + h - 1, 1.35, color);
+    ui.drawAaLine(c, x, y, x, y + h - 1, 1.35, color);
+    ui.drawAaLine(c, x + w - 1, y, x + w - 1, y + h - 1, 1.35, color);
 }
 
 fn drawBubbleGlyph(c: *Canvas, x: i32, y: i32, color: u32, dotted: bool) void {
@@ -1100,24 +1377,110 @@ fn drawSplitters(c: *Canvas, layout: geometry.Layout, comic_mode: bool) void {
     if (comic_mode) ui.drawSplitter(c, .{ .x = layout.right.x, .y = layout.members.bottom(), .w = layout.right.w, .h = geometry.splitter });
 }
 
-fn drawSayWindow(c: *Canvas, layout: geometry.Layout, input: []const u8, cursor: usize, selection: ?TextSelection, focused: bool, say_mode: shell_mod.SayMode, hovered_action: ?u8) void {
+const TextWindow = struct {
+    start: usize,
+    end: usize,
+    left_hidden: bool,
+    right_hidden: bool,
+};
+
+fn previousUtf8Boundary(text: []const u8, index: usize) usize {
+    if (index == 0) return 0;
+    var result = @min(index, text.len) - 1;
+    while (result > 0 and text[result] & 0xc0 == 0x80) result -= 1;
+    return result;
+}
+
+fn nextUtf8Boundary(text: []const u8, index: usize) usize {
+    if (index >= text.len) return text.len;
+    var result = index + 1;
+    while (result < text.len and text[result] & 0xc0 == 0x80) result += 1;
+    return result;
+}
+
+/// Keep the caret visible in a single-line field while retaining as much
+/// surrounding context as the control can show.
+fn visibleTextWindow(text: []const u8, cursor: usize, max_width: i32) TextWindow {
+    if (Canvas.uiTextWidth(text) <= max_width) return .{ .start = 0, .end = text.len, .left_hidden = false, .right_hidden = false };
+    const safe_cursor = @min(cursor, text.len);
+    const reserved = @max(8, max_width - 12);
+    var start = safe_cursor;
+    while (start > 0) {
+        const previous = previousUtf8Boundary(text, start);
+        if (Canvas.uiTextWidth(text[previous..safe_cursor]) > reserved) break;
+        start = previous;
+    }
+    var end = safe_cursor;
+    while (end < text.len) {
+        const next = nextUtf8Boundary(text, end);
+        if (Canvas.uiTextWidth(text[start..next]) > reserved) break;
+        end = next;
+    }
+    while (end < text.len and start < safe_cursor) {
+        const next = nextUtf8Boundary(text, end);
+        const previous = nextUtf8Boundary(text, start);
+        if (Canvas.uiTextWidth(text[previous..next]) > reserved) break;
+        start = previous;
+        end = next;
+    }
+    return .{ .start = start, .end = end, .left_hidden = start > 0, .right_hidden = end < text.len };
+}
+
+fn placeEditorCursor(editor: *input_mod.Editor, window: TextWindow, local_x: i32) void {
+    const text = editor.text();
+    if (local_x <= 0) {
+        editor.cursor = window.start;
+        editor.selection_anchor = null;
+        return;
+    }
+    var index = window.start;
+    while (index < window.end) {
+        const next = nextUtf8Boundary(text, index);
+        const left = Canvas.uiTextWidth(text[window.start..index]);
+        const right = Canvas.uiTextWidth(text[window.start..next]);
+        if (local_x < left + @divTrunc(right - left, 2)) break;
+        index = next;
+    }
+    editor.cursor = index;
+    editor.selection_anchor = null;
+}
+
+fn drawInputOverflowMarks(c: *Canvas, rect: Rect, window: TextWindow) void {
+    if (window.left_hidden) {
+        ui.fillRoundedRect(c, rect.x + 9, rect.y + 9, 3, @max(4, rect.h - 18), 2, accent_soft);
+        c.fillRect(rect.x + 10, rect.y + 12, 1, @max(2, rect.h - 24), accent);
+    }
+    if (window.right_hidden) {
+        ui.fillRoundedRect(c, rect.right() - 12, rect.y + 9, 3, @max(4, rect.h - 18), 2, accent_soft);
+        c.fillRect(rect.right() - 11, rect.y + 12, 1, @max(2, rect.h - 24), accent);
+    }
+}
+
+fn drawSayWindow(c: *Canvas, layout: geometry.Layout, input: []const u8, cursor: usize, selection: ?TextSelection, focused: bool, hovered: bool, say_mode: shell_mod.SayMode, hovered_action: ?u8) void {
     const edit = layout.say_editor;
     ui.drawComposerSurface(c, layout.say);
-    ui.drawComposerField(c, edit, focused);
+    ui.drawComposerField(c, edit, focused, hovered, input.len > 0);
+    const content_rect = Rect{ .x = edit.x + 18, .y = edit.y + 10, .w = @max(0, edit.w - 36), .h = @max(0, edit.h - 20) };
+    const window = visibleTextWindow(input, cursor, content_rect.w);
+    const visible = input[window.start..window.end];
     if (selection) |range| {
-        const start = @min(range.start, input.len);
-        const end = @min(@max(range.end, start), input.len);
-        const x = edit.x + 16 + Canvas.uiTextWidth(input[0..start]);
-        const w = Canvas.uiTextWidth(input[start..end]);
-        c.fillRect(x, edit.y + 11, @max(1, w), @max(1, edit.h - 22), accent_soft);
+        const start = @max(window.start, @min(range.start, window.end));
+        const end = @max(start, @min(range.end, window.end));
+        if (end > start) {
+            const x = content_rect.x + Canvas.uiTextWidth(input[window.start..start]);
+            const w = Canvas.uiTextWidth(input[start..end]);
+            ui.fillRoundedRect(c, x, edit.y + 11, @max(1, w), @max(1, edit.h - 22), 3, accent_soft);
+        }
     }
     if (input.len == 0) {
         drawTextEllipsized(c, "Write a message...", edit.x + 18, edit.y + 13, edit.w - 36, secondary);
     } else {
-        drawTextEllipsized(c, input, edit.x + 18, edit.y + 13, edit.w - 36, ink);
+        drawTextEllipsized(c, visible, content_rect.x, edit.y + 13, content_rect.w, ink);
+        drawInputOverflowMarks(c, edit, window);
     }
     const safe_cursor = @min(cursor, input.len);
-    const caret_x = @min(edit.right() - 12, edit.x + 16 + Canvas.uiTextWidth(input[0..safe_cursor]));
+    const visible_cursor = std.math.clamp(safe_cursor, window.start, window.end);
+    const caret_x = @min(edit.right() - 12, content_rect.x + Canvas.uiTextWidth(input[window.start..visible_cursor]));
     if (focused) c.fillRect(caret_x, edit.y + 12, 2, @max(1, edit.h - 24), accent);
 
     const glyphs = [_]SayGlyph{ .say, .think, .whisper, .action, .sound };
@@ -1267,14 +1630,15 @@ fn bilinearAlphaSample(src: []const u32, sw: u32, sh: u32, sx_fp: u64, sy_fp: u6
     return .{ .rgb = rgb, .alpha = alpha };
 }
 
-fn drawEmotionWheel(c: *Canvas, rect: Rect, selector_x: i16, selector_y: i16) void {
+fn drawEmotionWheel(c: *Canvas, rect: Rect, selector_x: i16, selector_y: i16, selector_radius: i16) void {
     ui.drawExpressionPanel(c, rect, emotionLabel(selector_x, selector_y));
     const dial = emotionDialRect(rect);
     const cx = dial.x + @divTrunc(dial.w, 2);
     const cy = dial.y + @divTrunc(dial.h, 2);
     const radius = @max(1, @min(@divTrunc(dial.w, 2), @divTrunc(dial.h, 2)) - 9);
-    fillOutlinedCircle(c, cx, cy, radius, ui.Theme.layer, ui.Theme.divider);
-    fillOutlinedCircle(c, cx, cy, @max(1, radius - 6), ui.Theme.chrome, ui.Theme.accent_soft);
+    ui.drawAaDisc(c, cx + 2, cy + 3, @floatFromInt(radius), ui.Theme.shadow);
+    ui.drawAaRing(c, cx, cy, @floatFromInt(radius), 1.4, ui.Theme.paper, ui.Theme.divider);
+    ui.drawAaRing(c, cx, cy, @floatFromInt(@max(1, radius - 7)), 1.0, ui.Theme.paper, ui.Theme.accent_soft);
 
     const directions = [_][2]i32{
         .{ -707, -707 }, .{ 0, -1000 }, .{ 707, -707 },
@@ -1294,6 +1658,16 @@ fn drawEmotionWheel(c: *Canvas, rect: Rect, selector_x: i16, selector_y: i16) vo
 
     const neutral = selected_col == 1 and selected_row == 1;
     drawMoodGlyph(c, cx, cy, 1, 1, neutral);
+
+    const source_radius = @max(1, @as(i32, selector_radius));
+    const travel = @max(1, radius - 18);
+    const selector_dx = @divTrunc(@as(i32, selector_x) * travel, source_radius);
+    const selector_dy = @divTrunc(@as(i32, selector_y) * travel, source_radius);
+    const puck_x = cx + selector_dx;
+    const puck_y = cy + selector_dy;
+    ui.drawAaDisc(c, puck_x + 1, puck_y + 2, 5.5, ui.Theme.shadow);
+    ui.drawAaDisc(c, puck_x, puck_y, 5.5, ui.Theme.layer);
+    ui.drawAaDisc(c, puck_x, puck_y, 3.5, ui.Theme.accent);
 }
 
 fn emotionWheelRect(layout: geometry.Layout) Rect {
@@ -1409,30 +1783,8 @@ fn drawMoodEye(c: *Canvas, x: i32, y: i32, color: u32) void {
     ui.drawAaDisc(c, x, y, 1.45, color);
 }
 
-fn fillOutlinedCircle(c: *Canvas, cx: i32, cy: i32, radius: i32, fill: u32, outline: u32) void {
-    const outer = radius * radius;
-    const inner = @max(0, radius - 1) * @max(0, radius - 1);
-    var y: i32 = -radius;
-    while (y <= radius) : (y += 1) {
-        var x: i32 = -radius;
-        while (x <= radius) : (x += 1) {
-            const distance = x * x + y * y;
-            if (distance <= outer) c.set(cx + x, cy + y, if (distance >= inner) outline else fill);
-        }
-    }
-}
-
 fn drawCircleOutline(c: *Canvas, cx: i32, cy: i32, radius: i32, color: u32) void {
-    const outer = radius * radius;
-    const inner = @max(0, radius - 1) * @max(0, radius - 1);
-    var y: i32 = -radius;
-    while (y <= radius) : (y += 1) {
-        var x: i32 = -radius;
-        while (x <= radius) : (x += 1) {
-            const distance = x * x + y * y;
-            if (distance <= outer and distance >= inner) c.set(cx + x, cy + y, color);
-        }
-    }
+    ui.drawAaCircleOutline(c, cx, cy, @floatFromInt(radius), 1.35, color);
 }
 
 fn bmpU16(bytes: []const u8, offset: usize) u16 {
@@ -1513,7 +1865,7 @@ fn dialogLayout(width: u32, height: u32, spec: dialogs.Spec) ui.DialogLayout {
     return ui.DialogLayout.init(width, height, spec.source_w, spec.source_h, dialogs.fields(spec.id).len, dialogPrimaryButtonWidth(spec.id));
 }
 
-fn drawDialog(c: *Canvas, spec: dialogs.Spec, editors: *const [3]input_mod.Editor, active_field: usize, notice: []const u8, hovered_button: ?ui.DialogButton) void {
+fn drawDialog(c: *Canvas, spec: dialogs.Spec, editors: *const [3]input_mod.Editor, active_field: usize, hovered_field: ?usize, notice: []const u8, hovered_button: ?ui.DialogButton) void {
     ui.drawModalBackdrop(c);
     const dialog_layout = dialogLayout(c.width, c.height, spec);
     const rect = dialog_layout.rect;
@@ -1528,36 +1880,61 @@ fn drawDialog(c: *Canvas, spec: dialogs.Spec, editors: *const [3]input_mod.Edito
     for (fields, 0..) |field, index| {
         const row_y = dialog_layout.fieldLabelY(index);
         if (row_y + 40 > rect.bottom() - 43) break;
-        drawTextEllipsized(c, field.label, rect.x + 20, row_y, rect.w - 40, secondary);
+        drawTextEllipsized(c, field.label, rect.x + 20, row_y, rect.w - 40, if (index == active_field) accent else secondary);
         const field_rect = dialog_layout.fieldRect(index);
         const field_y = field_rect.y;
         const field_active = index == active_field;
+        const field_hovered = hovered_field == index;
+        const value = if (index < editors.len) editors[index].text() else "";
+        const state: ui.InputState = .{
+            .focused = field_active,
+            .hovered = field_hovered,
+            .populated = value.len != 0,
+            .invalid = notice.len != 0 and field_active and dialogs.fieldAcceptsText(spec.id, index),
+        };
         switch (field.kind) {
-            .text, .password => ui.drawField(c, field_rect.x, field_y, field_rect.w, field_active),
-            .choice => ui.drawChoiceField(c, field_rect.x, field_y, field_rect.w, field_active),
-            .list => ui.drawListField(c, field_rect.x, field_y, field_rect.w, field_active),
-            .preview => ui.drawPreviewField(c, field_rect.x, field_y, field_rect.w),
-            .readonly => ui.drawReadonlyField(c, field_rect.x, field_y, field_rect.w),
+            .text => ui.drawInputControl(c, field_rect, .text, state),
+            .password => ui.drawInputControl(c, field_rect, .password, state),
+            .choice => ui.drawInputControl(c, field_rect, .choice, state),
+            .list => ui.drawInputControl(c, field_rect, .list, state),
+            .preview => {
+                ui.drawInputControl(c, field_rect, .preview, state);
+                drawDialogPreview(c, spec.id, editors, field_rect);
+            },
+            .readonly => ui.drawInputControl(c, field_rect, .readonly, state),
         }
         if (index < editors.len) {
             const editor = &editors[index];
-            const value = editor.text();
+            const text_width = field_rect.w - if (field.kind == .password or field.kind == .choice) @as(i32, 46) else if (field.kind == .list or field.kind == .readonly) @as(i32, 40) else @as(i32, 20);
+            const window = visibleTextWindow(value, editor.cursor, text_width);
+            const visible = value[window.start..window.end];
+            const value_x = field_rect.x + if (field.kind == .list or field.kind == .readonly) @as(i32, 32) else @as(i32, 11);
+            if (field_active and dialogs.fieldAcceptsText(spec.id, index)) if (editor.selection()) |range| {
+                const start = @max(window.start, @min(range.start, window.end));
+                const end = @max(start, @min(range.end, window.end));
+                if (end > start) {
+                    const selection_x = value_x + Canvas.uiTextWidth(value[window.start..start]);
+                    ui.fillRoundedRect(c, selection_x, field_y + 5, @max(1, Canvas.uiTextWidth(value[start..end])), 20, 3, accent_soft);
+                }
+            };
             if (value.len != 0 and field.kind == .password) {
                 var mask: [64]u8 = undefined;
-                const mask_len = @min(value.len, mask.len);
+                const mask_len = @min(visible.len, mask.len);
                 @memset(mask[0..mask_len], '*');
-                drawTextEllipsized(c, mask[0..mask_len], field_rect.x + 10, field_y + 4, field_rect.w - 20, ink);
+                drawTextEllipsized(c, mask[0..mask_len], value_x, field_y + 4, text_width, ink);
             } else if (value.len != 0) {
-                const value_x = field_rect.x + if (field.kind == .list or field.kind == .readonly) @as(i32, 28) else @as(i32, 10);
-                drawTextEllipsized(c, value, value_x, field_y + 4, field_rect.right() - value_x - 10, ink);
+                drawTextEllipsized(c, visible, value_x, field_y + 4, text_width, ink);
+                drawInputOverflowMarks(c, field_rect, window);
             }
             if (field_active and dialogs.fieldAcceptsText(spec.id, index)) {
                 const safe_cursor = @min(editor.cursor, value.len);
-                const caret_x = @min(field_rect.right() - 12, field_rect.x + 10 + Canvas.uiTextWidth(value[0..safe_cursor]));
+                const visible_cursor = std.math.clamp(safe_cursor, window.start, window.end);
+                const caret_x = @min(field_rect.right() - 40, value_x + Canvas.uiTextWidth(value[window.start..visible_cursor]));
                 c.fillRect(caret_x, field_y + 6, 2, 18, accent);
             }
         }
-        if (editors[index].text().len == 0) {
+        const custom_preview = field.kind == .preview and (spec.id == .character or spec.id == .background);
+        if (editors[index].text().len == 0 and !custom_preview) {
             const hint_x = field_rect.x + if (field.kind == .list or field.kind == .readonly) @as(i32, 28) else if (field.kind == .preview) @as(i32, 72) else @as(i32, 10);
             const hint_right = field_rect.right() - if (field.kind == .choice) @as(i32, 42) else @as(i32, 10);
             drawTextEllipsized(c, field.hint, hint_x, field_y + 4, hint_right - hint_x, secondary);
@@ -1567,6 +1944,37 @@ fn drawDialog(c: *Canvas, spec: dialogs.Spec, editors: *const [3]input_mod.Edito
     if (notice.len != 0) ui.drawNotice(c, rect.x + 14, dialog_layout.primary.y - 22, rect.w - 28, notice, .warning);
     drawDialogButton(c, dialog_layout.primary.x, dialog_layout.primary.y, dialog_layout.primary.w, dialogs.primaryLabel(spec.id), .primary, hovered_button == .primary);
     drawDialogButton(c, dialog_layout.cancel.x, dialog_layout.cancel.y, dialog_layout.cancel.w, "Cancel", .secondary, hovered_button == .cancel);
+}
+
+fn dialogBackgroundByName(name: []const u8) ?[]const u8 {
+    if (std.ascii.eqlIgnoreCase(name, "field")) return @embedFile("../assets/testdata/field.bgb");
+    if (std.ascii.eqlIgnoreCase(name, "volcano")) return @embedFile("../assets/testdata/volcano.bgb");
+    if (std.ascii.eqlIgnoreCase(name, "den")) return @embedFile("../assets/testdata/den.bgb");
+    if (std.ascii.eqlIgnoreCase(name, "room")) return @embedFile("../assets/testdata/room.bgb");
+    if (std.ascii.eqlIgnoreCase(name, "pastoral")) return @embedFile("../assets/testdata/pastoral.bgb");
+    return null;
+}
+
+fn drawDialogPreview(c: *Canvas, id: dialogs.Id, editors: *const [3]input_mod.Editor, rect: Rect) void {
+    const selected = editors[0].text();
+    switch (id) {
+        .character => {
+            const avatar = strip.avatarByName(if (selected.len == 0) "anna" else selected) orelse return;
+            var icon = bgb.decodeIcon(std.heap.page_allocator, avatar) catch return;
+            defer icon.deinit(std.heap.page_allocator);
+            blitHeightBottomAlphaSmooth(c, icon.pixels, icon.width, icon.height, rect.x + 8, rect.y + 3, 34, 24);
+            drawTextEllipsized(c, if (selected.len == 0) "Anna" else selected, rect.x + 52, rect.y + 4, rect.w - 62, ink);
+        },
+        .background => {
+            const name = if (selected.len == 0) "Field" else selected;
+            const data = dialogBackgroundByName(name) orelse return;
+            var image = bgb.decodeBackground(std.heap.page_allocator, data) catch return;
+            defer image.deinit(std.heap.page_allocator);
+            blitFit(c, image.pixels, image.width, image.height, rect.x + 8, rect.y + 4, 52, 22);
+            drawTextEllipsized(c, name, rect.x + 70, rect.y + 4, rect.w - 80, ink);
+        },
+        else => {},
+    }
 }
 
 fn dialogPrimaryButtonWidth(id: dialogs.Id) i32 {
@@ -1589,12 +1997,12 @@ test "view renders modern empty buffer and chrome" {
     const layout = geometry.Layout.compute(960, 720, true, true);
     try std.testing.expectEqual(ui.Theme.navigation, view.pixels()[0]);
     try std.testing.expectEqual(divider, view.pixels()[@as(usize, @intCast(layout.tabs.bottom() - 1)) * 960]);
-    try std.testing.expectEqual(ui.Theme.workspace, view.pixels()[@as(usize, @intCast(layout.say.y + 2)) * 960 + 2]);
+    try std.testing.expectEqual(ui.Theme.chrome, view.pixels()[@as(usize, @intCast(layout.say.y + 2)) * 960 + 2]);
 
     const wheel = emotionWheelRect(layout);
     const dial = emotionDialRect(wheel);
-    try std.testing.expectEqual(accent, view.pixels()[@as(usize, @intCast(wheel.y + 13)) * 960 + @as(usize, @intCast(layout.body_camera.x + 15))]);
-    try std.testing.expectEqual(ui.Theme.chrome, view.pixels()[@as(usize, @intCast(dial.y + @divTrunc(dial.h, 2))) * 960 + @as(usize, @intCast(dial.x + @divTrunc(dial.w, 2) + 20))]);
+    try std.testing.expectEqual(accent, view.pixels()[@as(usize, @intCast(wheel.y + 13)) * 960 + @as(usize, @intCast(layout.body_camera.x + 20))]);
+    try std.testing.expectEqual(ui.Theme.paper, view.pixels()[@as(usize, @intCast(dial.y + @divTrunc(dial.h, 2))) * 960 + @as(usize, @intCast(dial.x + @divTrunc(dial.w, 2) + 20))]);
 }
 
 test "emotion dial selects and drags only within its circular control" {
@@ -1661,16 +2069,65 @@ test "composer and member controls expose hover state" {
     try std.testing.expectEqual(@as(?usize, 0), view.hovered_member);
 }
 
+test "body camera and members expose working context menus" {
+    var view = try View.init(std.testing.allocator, 960, 720);
+    defer view.deinit();
+    const layout = geometry.Layout.compute(960, 720, true, true);
+    _ = view.handlePointer(.{ .kind = .down, .x = layout.body_camera.x + 30, .y = layout.body_camera.y + 60, .button = .secondary }, 0, 1);
+    try std.testing.expectEqual(ContextKind.body_camera, view.context_menu.?);
+    const popup = contextPopupRect(view.width(), view.height(), .body_camera, view.context_x, view.context_y);
+    _ = view.handlePointer(.{ .kind = .down, .x = popup.x + 12, .y = popup.y + 10, .button = .primary }, 0, 1);
+    try std.testing.expect(view.shell.emotion_frozen);
+    try std.testing.expect(view.context_menu == null);
+
+    _ = view.handlePointer(.{ .kind = .down, .x = layout.members.x + 12, .y = layout.members.y + 40, .button = .secondary }, 0, 1);
+    try std.testing.expectEqual(ContextKind.member, view.context_menu.?);
+    try std.testing.expectEqual(@as(?usize, 0), view.shell.selected_member);
+}
+
 test "typed dialog choices cycle instead of accepting arbitrary text" {
     var view = try View.init(std.testing.allocator, 960, 720);
     defer view.deinit();
     view.openDialog(.settings);
     const layout = dialogLayout(view.width(), view.height(), dialogs.get(.settings));
     const security = layout.fieldRect(2);
-    _ = view.handlePointer(.{ .kind = .down, .x = security.x + 4, .y = security.y + 4, .button = .primary }, 0, 0);
     try std.testing.expectEqualStrings("Verified TLS", view.dialogValueAt(2));
     _ = view.handlePointer(.{ .kind = .down, .x = security.x + 4, .y = security.y + 4, .button = .primary }, 0, 0);
     try std.testing.expectEqualStrings("Strict TLS", view.dialogValueAt(2));
+    _ = view.handlePointer(.{ .kind = .down, .x = security.x + 4, .y = security.y + 4, .button = .primary }, 0, 0);
+    try std.testing.expectEqualStrings("Verified TLS", view.dialogValueAt(2));
+}
+
+test "single line inputs retain a visible caret window and place the cursor by pixel" {
+    const text = "a long input value that is wider than the field";
+    const window = visibleTextWindow(text, text.len, 96);
+    try std.testing.expect(window.left_hidden);
+    try std.testing.expectEqual(text.len, window.end);
+    try std.testing.expect(Canvas.uiTextWidth(text[window.start..window.end]) <= 96);
+
+    var editor = input_mod.Editor.init(std.testing.allocator);
+    defer editor.deinit();
+    try editor.paste("hello world");
+    const full = visibleTextWindow(editor.text(), editor.cursor, 200);
+    placeEditorCursor(&editor, full, Canvas.uiTextWidth("hello"));
+    try std.testing.expectEqual(@as(usize, 5), editor.cursor);
+}
+
+test "dialog inputs support shift selection and mouse caret placement" {
+    var view = try View.init(std.testing.allocator, 960, 720);
+    defer view.deinit();
+    view.openDialog(.nickname);
+    for ("comicchat") |ch| _ = try view.handleDialogKey(.{ .char = ch }, .{});
+    _ = try view.handleDialogKey(.home, .{});
+    _ = try view.handleDialogKey(.right, .{ .shift = true });
+    _ = try view.handleDialogKey(.right, .{ .shift = true });
+    try std.testing.expectEqual(@as(usize, 2), view.dialog_editors[0].selection().?.end);
+
+    const layout = dialogLayout(view.width(), view.height(), dialogs.get(.nickname));
+    const field = layout.fieldRect(0);
+    _ = view.handlePointer(.{ .kind = .down, .x = field.x + 11 + Canvas.uiTextWidth("comic"), .y = field.y + 10, .button = .primary }, 0, 0);
+    try std.testing.expectEqual(@as(usize, 5), view.dialog_editors[0].cursor);
+    try std.testing.expect(view.dialog_editors[0].selection() == null);
 }
 
 test "alpha-aware avatar scaling does not pull black from transparent pixels" {

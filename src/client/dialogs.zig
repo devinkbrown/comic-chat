@@ -46,6 +46,9 @@ pub const Id = enum {
     servers,
     password,
     create_set,
+    open_conversation,
+    save_conversation,
+    export_image,
 };
 
 pub const Group = enum { connection, rooms, automation, files };
@@ -106,7 +109,12 @@ pub const specs = [_]Spec{
     .{ .id = .servers, .resource = "IDD_SERVERSPAGE", .title = "Servers", .group = .connection, .source_w = 252, .source_h = 218 },
     .{ .id = .password, .resource = "IDD_PASSWORD", .title = "Password", .group = .connection, .source_w = 198, .source_h = 127 },
     .{ .id = .create_set, .resource = "IDD_CREATESET", .title = "Create Rule Set", .group = .automation, .source_w = 226, .source_h = 79 },
+    .{ .id = .open_conversation, .resource = "PORTABLE_OPEN_CONVERSATION", .title = "Open Conversation", .group = .files, .source_w = 300, .source_h = 108 },
+    .{ .id = .save_conversation, .resource = "PORTABLE_SAVE_CONVERSATION", .title = "Save Conversation", .group = .files, .source_w = 300, .source_h = 108 },
+    .{ .id = .export_image, .resource = "PORTABLE_EXPORT_IMAGE", .title = "Export Comic Image", .group = .files, .source_w = 300, .source_h = 108 },
 };
+
+pub const microsoft_dialog_count: usize = 40;
 
 pub fn get(id: Id) Spec {
     return specs[@intFromEnum(id)];
@@ -130,6 +138,9 @@ pub fn prompt(id: Id) ?[]const u8 {
         .rename_loaded_set, .rename_set, .create_set => "Rule set name",
         .advanced_event_params => "Event parameters",
         .file_transfer => "File path",
+        .open_conversation => "Conversation file",
+        .save_conversation => "Conversation file",
+        .export_image => "PNG file",
         .background => "Backdrop name",
         .character => "Character name",
         .personal => "Profile text",
@@ -159,6 +170,9 @@ pub fn fields(id: Id) []const Field {
         .automation, .rules, .edit_rule, .rule_sets, .add_to_sets, .rename_loaded_set, .rename_set, .create_set, .advanced_event_params, .advanced_rule_settings => &.{ .{ .label = "Rule or set name" }, .{ .label = "Condition", .hint = "Event match" }, .{ .label = "Action", .hint = "Portable action" } },
         .notifications => &.{ .{ .label = "Notify on", .hint = "Join, part, mention", .kind = .choice }, .{ .label = "Delivery", .hint = "Desktop notification", .kind = .choice } },
         .file_transfer => &.{ .{ .label = "File path" }, .{ .label = "Destination", .hint = "Ask before receiving" } },
+        .open_conversation => &.{.{ .label = "Conversation file", .hint = "Path to a .ccc file" }},
+        .save_conversation => &.{.{ .label = "Conversation file", .hint = "Save as .ccc" }},
+        .export_image => &.{.{ .label = "Image file", .hint = "Export as .png" }},
         .motd => &.{.{ .label = "Message of the day", .hint = "Server supplied", .kind = .readonly }},
         .invitation => &.{ .{ .label = "Room" }, .{ .label = "Invitation note" } },
         .about => &.{ .{ .label = "ComicChat", .hint = "Portable Zig client", .kind = .readonly }, .{ .label = "License", .hint = "AGPL-3.0-or-later", .kind = .readonly } },
@@ -179,8 +193,11 @@ pub fn fieldAcceptsText(id: Id, index: usize) bool {
 pub fn choiceOptions(id: Id, index: usize) []const []const u8 {
     return switch (id) {
         .setup, .settings, .servers => if (index == 2) &.{ "Verified TLS", "Strict TLS" } else &.{},
-        .character => if (index == 0) &.{ "Anna", "Armando", "Kevin", "Rebecca", "Xeno" } else &.{},
-        .background => if (index == 0) &.{ "Field", "City", "Office", "Stage" } else &.{},
+        .character => if (index == 0) &.{
+            "Anna",   "Armando",  "Bolo",    "Cro",  "Dan",     "Denise", "Hugh",   "Jordan", "Kevin", "Kwensa",   "Lance",
+            "Lynnea", "Margaret", "Maynard", "Mike", "Rebecca", "Sage",   "Scotty", "Susan",  "Tiki",  "Tongtyed", "Xeno",
+        } else &.{},
+        .background => if (index == 0) &.{ "Field", "Volcano", "Den", "Room", "Pastoral" } else &.{},
         .sound => if (index == 0) &.{ "Chime", "Knock", "Laugh", "Applause" } else &.{ "100%", "75%", "50%", "25%" },
         .set_text_font, .text_font => if (index == 0) &.{ "Comic Neue 14", "Comic Neue 16", "Comic Neue 18" } else &.{ "Regular", "Bold", "Italic" },
         .comics_view => if (index == 0) &.{ "Comic", "Text" } else &.{ "Fit window", "100%", "125%", "150%" },
@@ -208,6 +225,9 @@ pub fn primaryLabel(id: Id) []const u8 {
         .invite => "Invite",
         .whisper => "Open",
         .file_transfer => "Send",
+        .open_conversation => "Open",
+        .save_conversation => "Save",
+        .export_image => "Export",
         .away => "Set Away",
         .automation, .rules, .edit_rule, .rule_sets, .add_to_sets, .rename_loaded_set, .rename_set, .create_set, .advanced_event_params, .advanced_rule_settings => "Save rule",
         .notifications, .notification_users => "Save notifications",
@@ -216,8 +236,9 @@ pub fn primaryLabel(id: Id) []const u8 {
     };
 }
 
-test "registry covers all forty Microsoft dialog templates exactly once" {
-    try std.testing.expectEqual(@as(usize, 40), specs.len);
+test "registry covers all forty Microsoft dialog templates plus portable file dialogs" {
+    try std.testing.expectEqual(@as(usize, 43), specs.len);
+    try std.testing.expectEqual(@as(usize, 40), microsoft_dialog_count);
     var seen: [specs.len]bool = @splat(false);
     for (specs) |spec| {
         const index = @intFromEnum(spec.id);

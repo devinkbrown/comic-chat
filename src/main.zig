@@ -1417,9 +1417,15 @@ fn handleWindowEvent(
         .key => |key_input| key_result: {
             const key = key_input.key;
             if (view.active_dialog != null) {
-                if (try view.handleDialogKey(key)) |action| try applyDialogAction(action, view, client, workspace, nick);
+                if (key_input.modifiers.control) if (view.activeDialogEditor()) |dialog_editor| {
+                    if (try handleEditorShortcut(dialog_editor, key, workspace))
+                        break :key_result .{ .redraw = true };
+                };
+                if (try view.handleDialogKey(key, key_input.modifiers)) |action| try applyDialogAction(gpa, io, action, view, client, workspace, nick);
                 break :key_result .{ .redraw = true };
             }
+            if (view.handleFocusedKey(key, transcript.roster.items.len))
+                break :key_result .{ .redraw = true };
             if (key_input.modifiers.control and try handleEditorShortcut(editor, key, workspace))
                 break :key_result .{ .redraw = true };
             if (key_input.modifiers.shift and key == .tab) {
@@ -1438,9 +1444,24 @@ fn handleWindowEvent(
             const action = view.handlePointer(pointer, transcript.count(), transcript.roster.items.len);
             const keep_running = switch (action) {
                 .send => try handleWorkspaceInputKey(gpa, io, cc.platform.event.Key{ .enter = {} }, view, editor, client, workspace, nick, joined, ircx_data),
+                .toolbar => |index| toolbar: {
+                    if (index == 1) break :toolbar false;
+                    if (index == 3) {
+                        if (workspace.active) |active_index| {
+                            const active_room = &workspace.rooms.items[active_index];
+                            if (client) |connected_client| try connected_client.part(active_room.name);
+                            if (workspace.rooms.items.len > 1) _ = workspace.remove(active_index);
+                        }
+                    }
+                    break :toolbar true;
+                },
                 .room_tab => |index| workspace.activate(index),
+                .composer_cursor => |pointer_x| cursor: {
+                    view.placeComposerCursor(editor, pointer_x);
+                    break :cursor true;
+                },
                 .dialog_accept, .dialog_cancel => apply: {
-                    try applyDialogAction(action, view, client, workspace, nick);
+                    try applyDialogAction(gpa, io, action, view, client, workspace, nick);
                     break :apply true;
                 },
                 else => true,
@@ -1490,6 +1511,8 @@ fn handleEditorShortcut(
 }
 
 fn applyDialogAction(
+    gpa: std.mem.Allocator,
+    io: std.Io,
     action: cc.client.view.Action,
     view: *cc.client.view.View,
     maybe_client: ?*cc.net.client.Client,
@@ -1528,6 +1551,32 @@ fn applyDialogAction(
                 view.shell.selectMember(index);
                 view.shell.setSayMode(.whisper);
                 break;
+            };
+        },
+        .open_conversation => {
+            var loaded = cc.client.files.loadConversation(io, gpa, value) catch {
+                view.setDialogNotice("Could not open that conversation file.");
+                return;
+            };
+            errdefer loaded.deinit();
+            try loaded.setSelf(nick);
+            room.transcript.deinit();
+            room.transcript = loaded;
+            view.jumpLatest();
+        },
+        .save_conversation => cc.client.files.saveConversation(io, gpa, value, &room.transcript) catch {
+            view.setDialogNotice("Could not save to that location.");
+            return;
+        },
+        .export_image => {
+            const png = cc.render.png.encode(gpa, view.pixels(), view.width(), view.height()) catch {
+                view.setDialogNotice("Could not render the current view.");
+                return;
+            };
+            defer gpa.free(png);
+            cc.client.files.saveBytesAtomic(io, gpa, value, png) catch {
+                view.setDialogNotice("Could not export to that location.");
+                return;
             };
         },
         else => {},
@@ -1923,11 +1972,26 @@ fn runUiPreview(gpa: std.mem.Allocator, io: std.Io, surface: []const u8) !void {
         try transcript.add("comicchat", "Great. The comic view feels much clearer now.");
     }
     if (std.mem.eql(u8, surface, "settings")) view.openDialog(.settings);
+    if (std.mem.eql(u8, surface, "character")) view.openDialog(.character);
+    if (std.mem.eql(u8, surface, "inputs")) {
+        view.openDialog(.password);
+        for ("comicchat") |ch| _ = try view.handleDialogKey(.{ .char = ch }, .{});
+        _ = try view.handleDialogKey(.tab, .{});
+        for ("private password") |ch| _ = try view.handleDialogKey(.{ .char = ch }, .{});
+        const password_layout = cc.client.ui.DialogLayout.init(view.width(), view.height(), cc.client.dialogs.get(.password).source_w, cc.client.dialogs.get(.password).source_h, cc.client.dialogs.fields(.password).len, 78);
+        const password_field = password_layout.fieldRect(1);
+        _ = view.handlePointerMove(.{ .kind = .move, .x = password_field.x + 20, .y = password_field.y + 12 }, transcript.roster.items.len);
+    }
     if (std.mem.eql(u8, surface, "menu")) view.active_menu = 0;
     if (std.mem.eql(u8, surface, "hover")) view.hovered_toolbar = 5;
     if (std.mem.eql(u8, surface, "say-hover")) view.hovered_say_action = 2;
     if (std.mem.eql(u8, surface, "member")) view.shell.selected_member = 1;
-    try view.render("#root", "reconnecting", &transcript, "", 0);
+    if (std.mem.eql(u8, surface, "context")) {
+        const layout = cc.client.geometry.Layout.compute(view.width(), view.height(), true, true);
+        _ = view.handlePointer(.{ .kind = .down, .x = layout.body_camera.x + 30, .y = layout.body_camera.y + 60, .button = .secondary }, transcript.count(), transcript.roster.items.len);
+    }
+    const preview_input = if (std.mem.eql(u8, surface, "composer")) "A polished input should keep the caret visible even when the message becomes wider than the available composer field." else "";
+    try view.render("#root", "reconnecting", &transcript, preview_input, preview_input.len);
     const png = try cc.render.png.encode(gpa, view.pixels(), view.width(), view.height());
     defer gpa.free(png);
     try writeStdout(io, png);

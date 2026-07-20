@@ -45,24 +45,24 @@ This distinction is important:
 | Repository shape | Portable-first | The live tree contains the Zig product, runtime assets, documentation, and tooling; the retired MFC/C++ source is external-only. |
 | Source comic rendering | Reachable | Original page, title, layout, balloon, figure and raster modules feed the shared strip path; CLI render commands and the app use them. Golden/source-parity tests cover the rendering pipeline. |
 | AVB/BGB content | Reachable | Authored character/backdrop decoding, icons, masks and figure composition are used by the renderer and UI. Program chrome uses modern glyphs; product art remains original. |
-| Shell geometry | Reachable | Source menu order, toolbar grouping, 29px tabs, 80/20 main split, 30/70 comic side split, 23px composer and status panes render through `src/client/geometry.zig` and `src/client/view.zig:100-133`. |
-| Comic/text buffers | Partial | Both modes, bounded history paging, wheel input, per-room transcripts/drafts, atomic `.ccc` open/save, and PNG export are reachable. Selection/copy, page-break editing, native pickers, and printing remain. |
-| Body camera | Partial | Original emotion art and source wheel thresholds render. Pointer selection previews and emits the explicitly authored pose; freeze, double-click, and context-menu behavior remain. |
-| Member list | Partial | Comic icon and text modes render; pointer selection drives whisper targeting. Role state, keyboard roving, and scrolling remain incomplete. |
-| Menus/toolbars/buttons | Partial | Shared hit testing activates source menu, toolbar, say, tab, member, and emotion surfaces on all native backends. Full menu popups and command enablement remain incomplete. |
-| Composer | Partial | UTF-8 scalar insertion, codepoint-safe movement/delete, selection, per-room drafts, bounded copy/cut/paste, undo/redo, and the 400-byte wire bound are live. Native clipboard, multiline input, IME, and formatting controls remain. |
+| Shell geometry | Reachable | The modern seven-menu/condensed-toolbar chrome retains the 29px tabs, 80/20 main split, 30/70 comic side split, 23px composer and status panes through shared geometry. |
+| Comic/text buffers | Partial | Both modes, bounded history paging, visible scroll position, wheel input, per-room transcripts/drafts, modal atomic `.ccc` open/save, and modal PNG export are reachable. Selection/copy, page-break editing, native pickers, and printing remain. |
+| Body camera | Partial | Redrawn high-resolution dial faces use the source wheel thresholds. Pointer drag and keyboard arrows/Home drive a visible intensity puck; the context menu exposes Freeze, Character, and Neutral. Double-click and an immediate Send Expression command remain. |
+| Member list | Partial | User-selectable icon/list modes, pointer selection, keyboard roving, visible overflow state, and right-click moderation/whisper actions are reachable. Dynamic role badges and retained scroll offset remain incomplete. |
+| Menus/toolbars/buttons | Partial | The condensed modern toolbar is backed by complete popups for File, Edit, View, Format, Room, Member, and More. Checked view state, stable hit testing, context menus, and command-specific dialogs are live; command enablement remains incomplete. |
+| Composer | Partial | UTF-8 scalar insertion, codepoint-safe movement/delete, selection, mouse caret placement, horizontal caret tracking, per-room drafts, bounded copy/cut/paste, undo/redo, and the 400-byte wire bound are live. Native clipboard, multiline input, IME, and formatting controls remain. |
 | Live IRC/IRCX comic chat | Reachable core | Connect/register/reconnect, multi-room JOIN/PART, per-room roster/transcript routing, IRCX `DATA CCUDI1`, embedded UDI, avatar announcements and all five say modes are wired. |
 | TLS, proxies, CAP, SASL, STS | Reachable | The live client composes verified TLS, proxy connection, IRCv3 negotiation, SASL and persisted STS. Credential input is file-based and refused over plaintext. |
 | Onyx reusable sessions | Reachable | TOKEN/MTOKEN parsing, host/account-scoped persistence, expiry and resume preference are implemented in `src/net/session_store.zig:19-187` and connected through `ConnectionRuntime`. This supports separate same-account/same-nick clients when the server honors `SESSION RESUME`. |
 | Modern IRC feature state | Reachable internally, limited UI | `net/client.zig` owns `ircv3.Session` and `features.State`; CAP and negotiated state are live. Most identity, metadata, batch, read-marker, standard-reply and moderation state has no visible UI. |
-| Profiles/backdrops | Partial | Character and backdrop dialogs invoke the live avatar/backdrop helpers; the complete profile editor and persistent browser remain. |
+| Profiles/backdrops | Partial | Character and backdrop dialogs enumerate every bundled asset, render live previews, and invoke the live avatar/backdrop helpers. The complete persistent profile browser remains. |
 | DCC transfer | Substrate | Offer codec and transfer loops exist; `Client.offerFile` sends an offer (`src/net/client.zig:493-501`). No receive dispatch, consent dialog, file picker, progress, cancellation or safe destination workflow exists. |
 | IRCX key strings | Substrate | Parsing, mutation and diffing are implemented in `src/proto/keystring.zig`; no live PROP query/send application path uses them. |
 | Automation rules | Substrate | Source event/action model, matching, substitution, flood control and snapshot diffing exist in `src/comic/rules.zig`; there is no live event dispatcher, action executor, editor or persistence. |
 | Notifications | Substrate | Mask construction and WHO snapshot folding exist in `src/comic/notify.zig`; there is no polling owner, notification UI or persistence. |
-| `.ccc` / `.ccr` | Partial | Bounded codecs exist; `.ccc` open/save and PNG export are live and atomic. Locator application, recent files, and native pickers remain. |
+| `.ccc` / `.ccr` | Partial | Bounded codecs exist; `.ccc` open/save and PNG export are live, atomic, and reachable from dedicated File dialogs. Locator application, recent files, and native pickers remain. |
 | Multiple rooms/windows | Reachable core | Up to 64 case-insensitive room tabs own independent transcript, roster, draft, joined, and unread state. `/join`, `/switch`, `/part`, and clickable tabs are live; favorites and separate child windows remain. |
-| Microsoft dialogs | Partial | All 40 templates have typed IDs, source dimensions, modal routing, keyboard editing, and shared controls. Room, appearance, identity, away, moderation, invite, and whisper acceptance is wired; remaining template-specific models are incomplete. |
+| Microsoft dialogs | Partial | All 40 templates plus three portable file dialogs have typed IDs, source dimensions, modal routing, hover/focus/validation states, selection, mouse caret placement, keyboard editing, and shared controls. Room, appearance, identity, away, moderation, invite, whisper, open/save, and export acceptance is wired; remaining template-specific models are incomplete. |
 | Pointer/touch | Partial | X11, Wayland, and Win32 emit shared motion/button/wheel events and activate stable targets. Touch gestures are not implemented. |
 | Clipboard/IME/accessibility | Partial | The shared event contract carries modifiers; the app owns UTF-8-safe clipboard/selection state and a stable semantic UI snapshot. Native clipboard, compose/IME, AT-SPI, and UIA bridges remain. |
 | DPI scaling | Partial | Geometry resizes proportionally inside the framebuffer, but Wayland stays at scale 1 and Win32 is system-DPI aware rather than per-monitor-v2. |
@@ -84,8 +84,8 @@ contracts is either reachable or deliberately classified obsolete:
 3. Retained ownership for transfers, favorites, automation, notifications, and
    persistent preferences.
 4. Complete typed behavior for all 40 dialog contracts, including connection,
-   moderation, personal profile, fonts/colors, notifications, rules and transfer.
-   backdrop, personal profile, fonts/colors, notifications, rules and transfer.
+   moderation, backdrop, personal profile, fonts/colors, notifications, rules,
+   and transfer.
 5. `.ccr` application, recent files, native file selection, and an explicit print decision.
 6. Clipboard, Unicode/IME, DPI, accessibility and safe native file selection.
 

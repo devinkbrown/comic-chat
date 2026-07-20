@@ -7,6 +7,7 @@ const emotion_mod = @import("../comic/emotion.zig");
 
 pub const ContentMode = enum { comic, text };
 pub const SayMode = enum { say, think, whisper, action, sound };
+pub const MemberView = enum { icons, list };
 
 pub const Focus = enum {
     navigation,
@@ -25,9 +26,11 @@ pub const State = struct {
     comic_columns: u8 = 4,
     say_mode: SayMode = .say,
     selected_member: ?usize = null,
+    member_view: MemberView = .icons,
     emotion_x: i16 = 0,
     emotion_y: i16 = 0,
     emotion_radius: i16 = 1,
+    emotion_frozen: bool = false,
 
     pub fn cycleFocus(self: *State) void {
         self.focus = switch (self.focus) {
@@ -87,12 +90,25 @@ pub const State = struct {
         self.focus = .members;
     }
 
+    pub fn moveMemberSelection(self: *State, count: usize, delta: i32) void {
+        if (count == 0) return;
+        const current: i32 = @intCast(@min(self.selected_member orelse 0, count - 1));
+        self.selected_member = @intCast(std.math.clamp(current + delta, 0, @as(i32, @intCast(count - 1))));
+        self.focus = .members;
+    }
+
+    pub fn setMemberView(self: *State, view: MemberView) void {
+        self.member_view = view;
+        self.show_members = true;
+    }
+
     pub fn setSayMode(self: *State, mode: SayMode) void {
         self.say_mode = mode;
         self.focus = .composer;
     }
 
     pub fn setEmotionPoint(self: *State, x: i32, y: i32, radius: i32) void {
+        if (self.emotion_frozen) return;
         if (radius <= 0) return;
         const distance_sq = @as(i64, x) * x + @as(i64, y) * y;
         const radius_sq = @as(i64, radius) * radius;
@@ -101,6 +117,36 @@ pub const State = struct {
             self.emotion_y = @intCast(std.math.clamp(y, std.math.minInt(i16), std.math.maxInt(i16)));
             self.emotion_radius = @intCast(@min(radius, std.math.maxInt(i16)));
         }
+        self.focus = .emotion;
+    }
+
+    pub fn moveEmotion(self: *State, dx: i32, dy: i32) void {
+        if (self.emotion_frozen) return;
+        const radius: i32 = @max(1, @as(i32, self.emotion_radius));
+        const step = @max(4, @divTrunc(radius, 4));
+        var next_x = @as(i32, self.emotion_x) + dx * step;
+        var next_y = @as(i32, self.emotion_y) + dy * step;
+        const distance_sq = @as(i64, next_x) * next_x + @as(i64, next_y) * next_y;
+        const radius_sq = @as(i64, radius) * radius;
+        if (distance_sq > radius_sq) {
+            next_x = std.math.clamp(next_x, -radius, radius);
+            next_y = std.math.clamp(next_y, -radius, radius);
+            if (@as(i64, next_x) * next_x + @as(i64, next_y) * next_y > radius_sq) {
+                if (@abs(next_x) >= @abs(next_y)) next_y = 0 else next_x = 0;
+            }
+        }
+        self.setEmotionPoint(next_x, next_y, radius);
+    }
+
+    pub fn neutralEmotion(self: *State) void {
+        if (self.emotion_frozen) return;
+        self.emotion_x = 0;
+        self.emotion_y = 0;
+        self.focus = .emotion;
+    }
+
+    pub fn toggleEmotionFreeze(self: *State) void {
+        self.emotion_frozen = !self.emotion_frozen;
         self.focus = .emotion;
     }
 
@@ -210,4 +256,22 @@ test "comic column density defaults to four and remains adjustable within bounds
     try std.testing.expectEqual(@as(u8, 6), state.comic_columns);
     state.decreaseComicColumns();
     try std.testing.expectEqual(@as(u8, 5), state.comic_columns);
+}
+
+test "member roving and body camera keyboard controls stay bounded" {
+    var state: State = .{ .focus = .members };
+    state.moveMemberSelection(3, 1);
+    try std.testing.expectEqual(@as(?usize, 1), state.selected_member);
+    state.moveMemberSelection(3, 20);
+    try std.testing.expectEqual(@as(?usize, 2), state.selected_member);
+    state.setMemberView(.list);
+    try std.testing.expectEqual(MemberView.list, state.member_view);
+
+    state.focus = .emotion;
+    state.emotion_radius = 48;
+    state.moveEmotion(1, 0);
+    try std.testing.expect(state.emotion_x > 0);
+    state.neutralEmotion();
+    try std.testing.expectEqual(@as(i16, 0), state.emotion_x);
+    try std.testing.expectEqual(@as(i16, 0), state.emotion_y);
 }

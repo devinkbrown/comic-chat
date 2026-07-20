@@ -9,12 +9,14 @@ visual contract.
 
 - Application chrome uses the embedded neutral sans-serif atlas in
   `src/render/font_ui.zig`. Comic Neue is reserved for authored comic content.
-- The shell uses layered Fluent-style neutrals with one Microsoft-blue accent.
+- The shell uses a restrained ink-and-drafting-blue system: paper-white work
+  surfaces, graphite chrome, and one cobalt interaction color.
 - The established 80/20 conversation/inspector and 30/70 member/character
   proportions remain recognizable, while control heights and spacing are
   sized for a modern desktop.
 - The radial mood dial remains the signature interaction. It supports direct
-  click and captured drag selection, including a neutral center.
+  click, captured drag, arrow-key adjustment, Home-to-neutral, a visible
+  intensity puck, and a right-click Freeze/Character/Neutral menu.
 - Mood expressions use a newly drawn, high-contrast face set with consistent
   geometry rather than the original tiny pixel marks.
 - An empty conversation renders as a responsive blank comic page with real
@@ -29,8 +31,17 @@ visual contract.
   inspector collapses so the composer and comic buffer remain usable.
 - Roster and character previews use alpha-aware smooth scaling and larger
   portrait targets. Authored art inside comic panels stays source-faithful.
+- The inspector is one continuous rail rather than nested gray cards. Members
+  support icon/list modes, keyboard roving, selection, hover, and context menus.
+- History and long rosters expose deterministic scroll position indicators.
 - Dialog fields are typed: text, password, choice, list, preview, and read-only
-  controls render and interact according to their actual purpose.
+  controls render and interact according to their actual purpose. The shared
+  input surface includes hover and focus states, a focus halo and baseline,
+  secure-entry adornment, selection, mouse caret placement, horizontal caret
+  tracking for long values, and visible validation. Character and backdrop
+  choices cover every bundled asset and show live previews.
+- The condensed toolbar is intentionally modern; commands that do not belong
+  in the primary strip remain reachable through menus and context actions.
 
 ## Reusable primitives
 
@@ -39,12 +50,15 @@ visual contract.
 and disabled behavior. New screens should compose the existing primitives:
 
 - `drawSurface`, `drawRoundedBorder`, and `fillRoundedRect`
-- `drawAaDisc` and `drawAaLine` for supersampled compact icon artwork
+- `drawAaDisc`, `drawAaLine`, `drawAaRing`, and `drawAaCircleOutline` for
+  supersampled compact icon artwork
 - `drawButton`, `drawCommandTile`, `drawActionTile`, and `drawFocusRing`
 - `drawPill`, `drawTooltip`, `drawNotice`, and `drawHistoryBanner`
-- `drawField`, `drawComposerField`, and `DialogLayout`
+- `drawInputControl`, `InputKind`, `InputState`, `drawComposerField`, and
+  `DialogLayout`
 - `drawMenuItem`, `drawTab`, `drawMemberCard`, and `drawMessageRow`
 - `drawPaneHeader`, `drawExpressionPanel`, and `drawStatusBar`
+- `drawInspectorRail` and `drawVerticalScrollbar`
 
 Do not add ad-hoc colors or use Comic Neue for application controls. Add a
 token or reusable primitive when a new state is genuinely required.
@@ -58,6 +72,10 @@ zig build run -- render-ui > ui-preview.png
 zig build run -- render-ui conversation > ui-conversation-preview.png
 zig build run -- render-ui menu > ui-menu-preview.png
 zig build run -- render-ui settings > ui-dialog-preview.png
+zig build run -- render-ui inputs > ui-input-preview.png
+zig build run -- render-ui composer > ui-composer-preview.png
+zig build run -- render-ui character > ui-character-preview.png
+zig build run -- render-ui context > ui-context-preview.png
 zig build run -- render-ui hover > ui-hover-preview.png
 zig build run -- render-ui say-hover > ui-say-hover-preview.png
 zig build run -- render-ui member > ui-member-preview.png
@@ -65,9 +83,10 @@ zig build run -- render-ui compact > ui-compact-preview.png
 ```
 
 These previews exercise the empty shell, real comic content, menu surface, and
-modal surface, plus composer hover, member selection, and narrow responsive
-geometry. Run `zig build test --summary all` with them; pixel checks cover the
-shell palette and dial while semantic tests cover control geometry.
+modal surface, populated account/password controls, composer overflow, member
+selection, and narrow responsive geometry. Run `zig build test --summary all`
+with them; pixel checks cover the shell palette and dial while semantic tests
+cover control geometry.
 
 ## Font regeneration
 
