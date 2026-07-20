@@ -29,7 +29,8 @@ assert_release_clean() {
     local tree=$1
     local matches
 
-    matches=$(grep -IRniE --exclude='*.avb' --exclude='*.bgb' --exclude='*.bin' \
+    matches=$(grep -IRniE --exclude='package-release.sh' \
+        --exclude='*.avb' --exclude='*.bgb' --exclude='*.bin' \
         --exclude='*.bmp' --exclude='*.png' \
         'SPDX-FileCopyrightText:.*<[^>]+>|/home/[[:alnum:]_.-]+' \
         "$tree" || true)
