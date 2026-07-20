@@ -11,6 +11,8 @@ pub const Target = union(enum) {
     menu: u8,
     toolbar: u8,
     room_tab,
+    comic_columns_decrease,
+    comic_columns_increase,
     transcript,
     composer,
     say_action: u8,
@@ -25,6 +27,8 @@ pub fn contains(rect: Rect, x: i32, y: i32) bool {
 pub fn shell(layout: geometry.Layout, comic_mode: bool, x: i32, y: i32, member_count: usize) Target {
     if (contains(layout.menu, x, y)) return .{ .menu = menuIndex(x) orelse return .none };
     if (contains(layout.toolbar, x, y)) return .{ .toolbar = toolbarIndex(layout.toolbar, x) orelse return .none };
+    if (comic_mode and layout.transcript.w >= 430 and contains(geometry.comicColumnDecrease(layout), x, y)) return .comic_columns_decrease;
+    if (comic_mode and layout.transcript.w >= 430 and contains(geometry.comicColumnIncrease(layout), x, y)) return .comic_columns_increase;
     if (contains(layout.tabs, x, y)) return .room_tab;
     if (contains(layout.say_editor, x, y)) return .composer;
     if (contains(layout.say_actions, x, y)) {
@@ -61,9 +65,10 @@ fn toolbarIndex(rect: Rect, x: i32) ?u8 {
 }
 
 fn iconIndex(rect: Rect, x: i32, y: i32) usize {
-    const columns: i32 = @max(1, @divTrunc(rect.w, 72));
-    const column = @max(0, @divTrunc(x - rect.x, 72));
-    const row = @max(0, @divTrunc(y - rect.y - 24, 68));
+    const columns: i32 = @max(1, @divTrunc(rect.w, 88));
+    const cell_w = @max(1, @divTrunc(rect.w, columns));
+    const column = std.math.clamp(@divTrunc(x - rect.x, cell_w), 0, columns - 1);
+    const row = @max(0, @divTrunc(y - rect.y - 30, 72));
     return @intCast(row * columns + column);
 }
 
@@ -74,4 +79,8 @@ test "source shell hit targets distinguish controls and content" {
     try std.testing.expectEqual(Target{ .say_action = 0 }, shell(layout, true, layout.say_actions.x + 2, layout.say.y + 2, 3));
     try std.testing.expectEqual(Target{ .member = 0 }, shell(layout, true, layout.members.x + 3, layout.members.y + 3, 3));
     try std.testing.expectEqual(Target.emotion, shell(layout, true, layout.body_camera.x + 3, layout.body_camera.y + 3, 3));
+    const decrease = geometry.comicColumnDecrease(layout);
+    const increase = geometry.comicColumnIncrease(layout);
+    try std.testing.expectEqual(Target.comic_columns_decrease, shell(layout, true, decrease.x + 2, decrease.y + 2, 3));
+    try std.testing.expectEqual(Target.comic_columns_increase, shell(layout, true, increase.x + 2, increase.y + 2, 3));
 }

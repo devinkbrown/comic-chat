@@ -22,6 +22,7 @@ pub const State = struct {
     history_offset: usize = 0,
     show_navigation: bool = true,
     show_members: bool = true,
+    comic_columns: u8 = 4,
     say_mode: SayMode = .say,
     selected_member: ?usize = null,
     emotion_x: i16 = 0,
@@ -71,6 +72,14 @@ pub const State = struct {
     pub fn toggleMembers(self: *State) void {
         self.show_members = !self.show_members;
         if (!self.show_members and (self.focus == .members or self.focus == .emotion)) self.focus = .composer;
+    }
+
+    pub fn decreaseComicColumns(self: *State) void {
+        self.comic_columns = @max(1, self.comic_columns -| 1);
+    }
+
+    pub fn increaseComicColumns(self: *State) void {
+        self.comic_columns = @min(6, self.comic_columns + 1);
     }
 
     pub fn selectMember(self: *State, index: usize) void {
@@ -190,4 +199,15 @@ test "history paging is bounded and returns to latest" {
     try std.testing.expectEqual(@as(usize, 12), state.history_offset);
     state.jumpLatest();
     try std.testing.expectEqual(@as(usize, 0), state.history_offset);
+}
+
+test "comic column density defaults to four and remains adjustable within bounds" {
+    var state: State = .{};
+    try std.testing.expectEqual(@as(u8, 4), state.comic_columns);
+    state.increaseComicColumns();
+    state.increaseComicColumns();
+    state.increaseComicColumns();
+    try std.testing.expectEqual(@as(u8, 6), state.comic_columns);
+    state.decreaseComicColumns();
+    try std.testing.expectEqual(@as(u8, 5), state.comic_columns);
 }

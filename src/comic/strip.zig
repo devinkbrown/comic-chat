@@ -88,6 +88,10 @@ pub const RenderOptions = struct {
     backdrop: []const u8 = field_background,
     /// `BF_NOZOOM` keeps the whole authored backdrop visible.
     backdrop_no_zoom: bool = false,
+    /// Number of panels placed across the rendered page. The source default
+    /// remains two for compatibility; desktop clients may choose a denser,
+    /// responsive presentation without changing panel internals.
+    page_columns: u8 = columns,
 };
 
 pub const Error = bgb.Error || original_layout.Error || original_balloon.Error ||
@@ -732,8 +736,9 @@ fn composePage(
     options: RenderOptions,
 ) Error!Image {
     const panel_count = scenes.len + 1;
-    const page_columns: u32 = @intCast(@min(panel_count, columns));
-    const rows: u32 = @intCast((panel_count - 1) / columns + 1);
+    const configured_columns: usize = std.math.clamp(@as(usize, options.page_columns), 1, 8);
+    const page_columns: u32 = @intCast(@min(panel_count, configured_columns));
+    const rows: u32 = @intCast((panel_count - 1) / configured_columns + 1);
     const width = page_columns * panel_width + (page_columns - 1) * device_interstice;
     const height = rows * panel_height + (rows - 1) * device_interstice;
     var page = try Canvas.init(gpa, width, height);
@@ -744,8 +749,8 @@ fn composePage(
     defer title.deinit(gpa);
     page.blit(title.pixels, title.width, title.height, 0, 0);
     for (scenes, 1..) |scene, panel_index| {
-        const column: u32 = @intCast(panel_index % columns);
-        const row: u32 = @intCast(panel_index / columns);
+        const column: u32 = @intCast(panel_index % configured_columns);
+        const row: u32 = @intCast(panel_index / configured_columns);
         const x: i32 = @intCast(column * (panel_width + device_interstice));
         const y: i32 = @intCast(row * (panel_height + device_interstice));
         page.blit(scene.image.pixels, scene.image.width, scene.image.height, x, y);
@@ -1195,6 +1200,19 @@ test "repeated speaker starts a fresh panel and wraps after two columns" {
     defer image.deinit(gpa);
     try std.testing.expectEqual(@as(u32, 2 * panel_width + device_interstice), image.width);
     try std.testing.expectEqual(@as(u32, 2 * panel_height + device_interstice), image.height);
+}
+
+test "desktop page density can place four panels across without changing panel geometry" {
+    const gpa = std.testing.allocator;
+    const lines = [_]Line{
+        .{ .speaker = "anna", .text = "One." },
+        .{ .speaker = "anna", .text = "Two." },
+        .{ .speaker = "anna", .text = "Three." },
+    };
+    var image = try renderWithOptions(gpa, &lines, .{ .page_columns = 4 });
+    defer image.deinit(gpa);
+    try std.testing.expectEqual(@as(u32, 4 * panel_width + 3 * device_interstice), image.width);
+    try std.testing.expectEqual(panel_height, image.height);
 }
 
 test "render is deterministic and rejects an unknown avatar" {

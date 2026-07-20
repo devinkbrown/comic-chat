@@ -325,6 +325,14 @@ pub const View = struct {
                 if (index >= self.room_tab_count) break :room .none;
                 break :room .{ .room_tab = index };
             },
+            .comic_columns_decrease => columns: {
+                self.shell.decreaseComicColumns();
+                break :columns .none;
+            },
+            .comic_columns_increase => columns: {
+                self.shell.increaseComicColumns();
+                break :columns .none;
+            },
             .transcript => focus: {
                 self.shell.focus = .transcript;
                 break :focus .none;
@@ -394,7 +402,7 @@ pub const View = struct {
 
         drawMenuBar(&self.canvas, layout.menu, self.active_menu, self.hovered_menu);
         drawToolBar(&self.canvas, layout.toolbar, comic_mode, self.hovered_toolbar);
-        drawTabBar(&self.canvas, layout.tabs, tabs, active_tab, self.shell.focus == .navigation);
+        drawTabBar(&self.canvas, layout, tabs, active_tab, self.shell.focus == .navigation, comic_mode, self.shell.comic_columns);
         drawSplitters(&self.canvas, layout, comic_mode);
 
         if (comic_mode) {
@@ -430,6 +438,10 @@ pub const View = struct {
         snapshot.append(.{ .id = "menu", .role = .menu_bar, .bounds = layout.menu, .label = "Application menu", .focused = self.shell.focus == .navigation });
         snapshot.append(.{ .id = "toolbar", .role = .toolbar, .bounds = layout.toolbar, .label = "Application tools" });
         snapshot.append(.{ .id = "rooms", .role = .tab_list, .bounds = layout.tabs, .label = "Rooms", .focused = self.shell.focus == .navigation });
+        if (comic_mode and layout.transcript.w >= 430) {
+            snapshot.append(.{ .id = "comic-columns-decrease", .role = .button, .bounds = geometry.comicColumnDecrease(layout), .label = "Fewer panels across" });
+            snapshot.append(.{ .id = "comic-columns-increase", .role = .button, .bounds = geometry.comicColumnIncrease(layout), .label = "More panels across" });
+        }
         const first_x = layout.tabs.x + 114;
         for (tabs, 0..) |tab, index| snapshot.append(.{
             .id = "room-tab",
@@ -464,7 +476,7 @@ pub const View = struct {
         ui.drawContentSurface(&self.canvas, rect, true);
         if (rect.w <= 0 or rect.h <= 0) return;
         if (transcript.lines.items.len == 0) {
-            drawEmptyBuffer(&self.canvas, rect, "No messages yet - type below and press Enter");
+            drawEmptyBuffer(&self.canvas, rect, "No messages yet - type below and press Enter", self.shell.comic_columns);
             return;
         }
 
@@ -512,7 +524,7 @@ pub const View = struct {
             .departed = member.departed,
         };
 
-        var page = try strip.renderWithOptions(self.gpa, lines, .{ .title_roster = title_roster });
+        var page = try strip.renderWithOptions(self.gpa, lines, .{ .title_roster = title_roster, .page_columns = self.shell.comic_columns });
         defer page.deinit(self.gpa);
         blitFit(&self.canvas, page.pixels, page.width, page.height, rect.x + 3, rect.y + 3, rect.w - 6, rect.h - 6);
 
@@ -525,7 +537,7 @@ pub const View = struct {
     fn drawTextBuffer(self: *View, rect: Rect, transcript: *const session.Transcript) void {
         ui.drawContentSurface(&self.canvas, rect, false);
         if (transcript.lines.items.len == 0) {
-            drawEmptyBuffer(&self.canvas, rect, "No messages yet - type below and press Enter");
+            drawEmptyBuffer(&self.canvas, rect, "No messages yet - type below and press Enter", 1);
             return;
         }
         const row_h: i32 = 31;
@@ -543,7 +555,7 @@ pub const View = struct {
         ui.drawContentSurface(&self.canvas, rect, false);
         if (rect.h <= 0) return;
         ui.drawPaneHeader(&self.canvas, rect, "In this room");
-        const content = Rect{ .x = rect.x, .y = rect.y + 24, .w = rect.w, .h = @max(0, rect.h - 24) };
+        const content = Rect{ .x = rect.x, .y = rect.y + 30, .w = rect.w, .h = @max(0, rect.h - 30) };
         if (icon_mode) return self.drawMemberIcons(content, transcript);
         var y = content.y + 7;
         for (transcript.roster.items, 0..) |member, index| {
@@ -613,9 +625,9 @@ pub const View = struct {
             rendered.width,
             rendered.height,
             rect.x,
-            rect.y + 24,
+            rect.y + 30,
             rect.w,
-            @max(0, body_h - 24),
+            @max(0, body_h - 30),
         );
         if (wheel_side > 0) drawEmotionWheel(&self.canvas, emotionWheelRectFromPane(rect), self.shell.emotion_x, self.shell.emotion_y);
         // Avatar pixels can be opaque even around the figure. Draw the card
@@ -719,9 +731,9 @@ fn menuPopupItem(menu: u8, x: i32, y: i32) ?u8 {
 
 fn drawMenuBar(c: *Canvas, rect: Rect, active: ?u8, hovered: ?u8) void {
     ui.drawMenuBarSurface(c, rect);
-    c.fillRect(rect.x + 12, rect.y + 8, 18, 18, accent);
+    ui.fillRoundedRect(c, rect.x + 10, rect.y + 6, 22, 22, 7, accent);
     _ = c.drawUiText("C", rect.x + 17, rect.y + 8, layer);
-    _ = c.drawUiText("COMIC CHAT", rect.x + 40, rect.y + 8, layer);
+    _ = c.drawUiText("Comic Chat", rect.x + 42, rect.y + 8, layer);
     var x = rect.x + 170;
     for (menu_labels, 0..) |item, raw_index| {
         const index: u8 = @intCast(raw_index);
@@ -745,6 +757,12 @@ fn drawMenuPopup(c: *Canvas, menu: u8, hovered: ?u8) void {
 
 fn drawToolBar(c: *Canvas, rect: Rect, comic_mode: bool, hovered: ?u8) void {
     ui.drawToolbarSurface(c, rect);
+    const group_y = rect.y + 5;
+    ui.drawToolbarGroup(c, .{ .x = rect.x + 8, .y = group_y, .w = 118, .h = 36 });
+    ui.drawToolbarGroup(c, .{ .x = rect.x + 134, .y = group_y, .w = 78, .h = 36 });
+    ui.drawToolbarGroup(c, .{ .x = rect.x + 222, .y = group_y, .w = 80, .h = 36 });
+    ui.drawToolbarGroup(c, .{ .x = rect.x + 310, .y = group_y, .w = 118, .h = 36 });
+    ui.drawToolbarGroup(c, .{ .x = rect.x + 436, .y = group_y, .w = 80, .h = 36 });
     const primary = [_]struct { glyph: ToolGlyph, index: u8, selected: bool }{
         .{ .glyph = .connect, .index = 0, .selected = false },
         .{ .glyph = .enter_room, .index = 2, .selected = false },
@@ -762,7 +780,7 @@ fn drawToolBar(c: *Canvas, rect: Rect, comic_mode: bool, hovered: ?u8) void {
     var x = rect.x + 12;
     const y = rect.y + @divTrunc(rect.h - 32, 2);
     for (primary, 0..) |item, position| {
-        if (position == 3 or position == 5 or position == 7 or position == 10) x = drawToolbarSeparator(c, x, rect);
+        if (position == 3 or position == 5 or position == 7 or position == 10) x += 12;
         _ = drawModernToolButton(c, item.glyph, x, y, item.selected, hovered == item.index);
         x += 38;
     }
@@ -959,7 +977,8 @@ fn drawToolbarSeparator(c: *Canvas, x: i32, rect: Rect) i32 {
     return ui.drawToolbarSeparator(c, x, rect);
 }
 
-fn drawTabBar(c: *Canvas, rect: Rect, tabs: []const View.Tab, active: usize, focused: bool) void {
+fn drawTabBar(c: *Canvas, layout: geometry.Layout, tabs: []const View.Tab, active: usize, focused: bool, comic_mode: bool, comic_columns: u8) void {
+    const rect = layout.tabs;
     ui.drawTabStrip(c, rect);
     const status_w: i32 = 108;
     ui.drawStatusTab(c, rect);
@@ -980,6 +999,21 @@ fn drawTabBar(c: *Canvas, rect: Rect, tabs: []const View.Tab, active: usize, foc
         }
         if (focused and index == active) drawFocus(c, .{ .x = x, .y = rect.y + 2, .w = width, .h = rect.h - 2 });
     }
+    if (comic_mode and layout.transcript.w >= 430) drawComicColumnControl(c, layout, comic_columns);
+}
+
+fn drawComicColumnControl(c: *Canvas, layout: geometry.Layout, columns: u8) void {
+    const control = geometry.comicColumnControl(layout);
+    ui.drawStepper(c, control);
+    const minus = geometry.comicColumnDecrease(layout);
+    const plus = geometry.comicColumnIncrease(layout);
+    c.drawLine(minus.x + 10, minus.y + 13, minus.x + 19, minus.y + 13, secondary);
+    c.drawLine(plus.x + 10, plus.y + 13, plus.x + 19, plus.y + 13, secondary);
+    c.drawLine(plus.x + 14, plus.y + 9, plus.x + 14, plus.y + 18, secondary);
+    var label_buf: [16]u8 = undefined;
+    const label = std.fmt.bufPrint(&label_buf, "{d} across", .{columns}) catch "4 across";
+    const center_x = control.x + @divTrunc(control.w - Canvas.uiTextWidth(label), 2);
+    _ = c.drawUiText(label, center_x, control.y + 3, ink);
 }
 
 fn sayActionLabel(index: u8) []const u8 {
@@ -1011,7 +1045,11 @@ fn drawSayWindow(c: *Canvas, layout: geometry.Layout, input: []const u8, cursor:
         const w = Canvas.uiTextWidth(input[start..end]);
         c.fillRect(x, edit.y + 11, @max(1, w), @max(1, edit.h - 22), accent_soft);
     }
-    drawTextEllipsized(c, input, edit.x + 16, edit.y + 13, edit.w - 32, ink);
+    if (input.len == 0) {
+        drawTextEllipsized(c, "Write a message...", edit.x + 18, edit.y + 13, edit.w - 36, secondary);
+    } else {
+        drawTextEllipsized(c, input, edit.x + 18, edit.y + 13, edit.w - 36, ink);
+    }
     const safe_cursor = @min(cursor, input.len);
     const caret_x = @min(edit.right() - 12, edit.x + 16 + Canvas.uiTextWidth(input[0..safe_cursor]));
     if (focused) c.fillRect(caret_x, edit.y + 12, 2, @max(1, edit.h - 24), accent);
@@ -1059,8 +1097,8 @@ fn drawStatusBar(c: *Canvas, rect: Rect, status: []const u8, member_count: usize
     ui.drawStatusBar(c, rect.x, rect.y, rect.w, rect.h, status, member_count);
 }
 
-fn drawEmptyBuffer(c: *Canvas, rect: Rect, text: []const u8) void {
-    ui.drawEmptyState(c, rect.x, rect.y, rect.w, rect.h, text);
+fn drawEmptyBuffer(c: *Canvas, rect: Rect, text: []const u8, columns: u8) void {
+    ui.drawEmptyState(c, rect.x, rect.y, rect.w, rect.h, text, columns);
 }
 
 fn drawFocus(c: *Canvas, rect: Rect) void {
@@ -1082,7 +1120,8 @@ fn drawTextEllipsized(c: *Canvas, text: []const u8, x: i32, y: i32, max_w: i32, 
 }
 
 fn blitFit(c: *Canvas, src: []const u32, sw: u32, sh: u32, x: i32, y: i32, max_w: i32, max_h: i32) void {
-    const fit = fitRect(sw, sh, x, y, max_w, max_h) orelse return;
+    var fit = fitRect(sw, sh, x, y, max_w, max_h) orelse return;
+    fit.y = y + @min(14, @max(0, max_h - fit.h));
     var oy: i32 = 0;
     while (oy < fit.h) : (oy += 1) {
         const sy: u32 = @intCast(@divTrunc(@as(i64, oy) * sh, fit.h));
@@ -1364,11 +1403,11 @@ test "view renders modern empty buffer and chrome" {
     const layout = geometry.Layout.compute(960, 720, true, true);
     try std.testing.expectEqual(ui.Theme.navigation, view.pixels()[0]);
     try std.testing.expectEqual(divider, view.pixels()[@as(usize, @intCast(layout.tabs.bottom() - 1)) * 960]);
-    try std.testing.expectEqual(subtle, view.pixels()[@as(usize, @intCast(layout.say.y + 2)) * 960 + 2]);
+    try std.testing.expectEqual(ui.Theme.workspace, view.pixels()[@as(usize, @intCast(layout.say.y + 2)) * 960 + 2]);
 
     const wheel = emotionWheelRect(layout);
     const dial = emotionDialRect(wheel);
-    try std.testing.expectEqual(accent, view.pixels()[@as(usize, @intCast(wheel.y + 1)) * 960 + @as(usize, @intCast(layout.body_camera.x + 2))]);
+    try std.testing.expectEqual(accent, view.pixels()[@as(usize, @intCast(wheel.y + 13)) * 960 + @as(usize, @intCast(layout.body_camera.x + 15))]);
     try std.testing.expectEqual(ui.Theme.chrome, view.pixels()[@as(usize, @intCast(dial.y + @divTrunc(dial.h, 2))) * 960 + @as(usize, @intCast(dial.x + @divTrunc(dial.w, 2) + 20))]);
 }
 
@@ -1397,8 +1436,11 @@ test "view exposes a semantic shell snapshot without inspecting pixels" {
     const snapshot = view.semanticSnapshot("connected", &tabs, 0);
     try std.testing.expect(snapshot.items().len >= 12);
     try std.testing.expectEqual(accessibility.Role.window, snapshot.items()[0].role);
-    try std.testing.expectEqual(accessibility.Role.tab, snapshot.items()[4].role);
-    try std.testing.expect(snapshot.items()[4].selected);
+    var found_selected_tab = false;
+    for (snapshot.items()) |item| {
+        if (item.role == .tab and item.selected) found_selected_tab = true;
+    }
+    try std.testing.expect(found_selected_tab);
 }
 
 test "menu clicks select navigation without opening a modal dialog" {
@@ -1408,6 +1450,18 @@ test "menu clicks select navigation without opening a modal dialog" {
     try std.testing.expectEqual(Action{ .menu = 0 }, action);
     try std.testing.expect(view.active_dialog == null);
     try std.testing.expectEqual(shell_mod.Focus.navigation, view.shell.focus);
+}
+
+test "comic density stepper changes the live four-across layout" {
+    var view = try View.init(std.testing.allocator, 960, 720);
+    defer view.deinit();
+    const layout = geometry.Layout.compute(960, 720, true, true);
+    const increase = geometry.comicColumnIncrease(layout);
+    _ = view.handlePointer(.{ .kind = .down, .x = increase.x + 3, .y = increase.y + 3, .button = .primary }, 0, 0);
+    try std.testing.expectEqual(@as(u8, 5), view.shell.comic_columns);
+    const decrease = geometry.comicColumnDecrease(layout);
+    _ = view.handlePointer(.{ .kind = .down, .x = decrease.x + 3, .y = decrease.y + 3, .button = .primary }, 0, 0);
+    try std.testing.expectEqual(@as(u8, 4), view.shell.comic_columns);
 }
 
 test "dialog dimmer preserves an opaque visible frame" {

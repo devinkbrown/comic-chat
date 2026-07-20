@@ -18,6 +18,9 @@ visual contract.
 - An empty conversation renders as a responsive blank comic page with real
   panel gutters. At minimum window sizes it collapses to a compact instruction
   instead of overflowing the available buffer.
+- Comic pages default to four panels across. The room strip exposes an
+  accessible minus/plus stepper for live one-to-six-column density changes;
+  rendered pages remain top-aligned as conversation history grows.
 - Draw geometry, pointer targets, focus, and accessibility bounds must derive
   from the same layout values.
 

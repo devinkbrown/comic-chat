@@ -78,6 +78,20 @@ pub const Layout = struct {
     }
 };
 
+pub fn comicColumnControl(layout: Layout) Rect {
+    return .{ .x = @max(layout.tabs.x + 300, layout.transcript.right() - 140), .y = layout.tabs.y + 6, .w = 128, .h = 26 };
+}
+
+pub fn comicColumnDecrease(layout: Layout) Rect {
+    const control = comicColumnControl(layout);
+    return .{ .x = control.x, .y = control.y, .w = 30, .h = control.h };
+}
+
+pub fn comicColumnIncrease(layout: Layout) Rect {
+    const control = comicColumnControl(layout);
+    return .{ .x = control.right() - 30, .y = control.y, .w = 30, .h = control.h };
+}
+
 test "comic buffer preserves source 80/20 and 30/70 split geometry" {
     const layout = Layout.compute(1000, 700, true, true);
     try std.testing.expectEqual(@as(i32, 800), layout.transcript.w);
