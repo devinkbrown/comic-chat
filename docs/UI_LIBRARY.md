@@ -50,6 +50,11 @@ visual contract.
   every bundled asset and show live previews.
 - The condensed toolbar is intentionally modern; commands that do not belong
   in the primary strip remain reachable through menus and context actions.
+- Popup rows expose disabled states for role-gated moderation commands. Member
+  rows and cards show live IRC role badges without modifying authored art.
+- File-path controls use the same input geometry with a distinct Browse action;
+  the action opens the native platform picker and never makes the full field
+  look hovered.
 
 ## Reusable primitives
 
@@ -105,7 +110,7 @@ call-link workflows. Run `zig build test --summary all`
 with them; pixel checks cover the shell palette and dial while semantic tests
 cover control geometry.
 
-The UI acceptance gate also exercises all 48 registered dialogs at 640x480,
+The UI acceptance gate also exercises all 53 registered dialogs at 640x480,
 800x600, and 960x720; every menu row at the 640px minimum; Debug and
 ReleaseSafe tests; native X11 menu/dialog/composer input under Xvfb; and the
 same live Win32 interaction path under headless Wine. The Wine path also

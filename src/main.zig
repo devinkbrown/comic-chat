@@ -37,7 +37,7 @@ pub fn main(init: std.process.Init) !void {
     // allocator-based iterator is the cross-platform form (Windows requires it).
     var it = try minimal.args.iterateAllocator(gpa);
     defer it.deinit();
-    _ = it.skip(); // program name
+    const executable = it.next() orelse "comicchat";
     var argv: [32][]const u8 = undefined;
     var argc: usize = 0;
     while (it.next()) |a| : (argc += 1) {
@@ -84,23 +84,26 @@ pub fn main(init: std.process.Init) !void {
             minimal.environ.containsUnemptyConstant("WAYLAND_DISPLAY")
         else
             false;
-        try runWindow(gpa, if (argc >= 2) argv[1] else "anna", prefer_wayland);
+        const display = if (comptime builtin.os.tag == .windows) null else minimal.environ.getPosix("DISPLAY");
+        try runWindow(gpa, if (argc >= 2) argv[1] else "anna", prefer_wayland, display);
         return;
     }
 
-    if (argc == 0 or (argc >= 1 and std.mem.eql(u8, argv[0], "app"))) {
-        const app_args: []const []const u8 = if (argc == 0) &.{} else argv[1..argc];
+    const startup_document: ?[]const u8 = if (argc == 1 and isStartupDocument(argv[0])) argv[0] else null;
+    if (argc == 0 or startup_document != null or (argc >= 1 and std.mem.eql(u8, argv[0], "app"))) {
+        const app_args: []const []const u8 = if (argc == 0 or startup_document != null) &.{} else argv[1..argc];
         const connection = parseConnectionArgs(app_args, false) orelse {
             printConnectionUsage("app", false);
             return;
         };
-        var runtime = try ConnectionRuntime.init(gpa, init.io, &connection);
+        var runtime = try ConnectionRuntime.init(gpa, init.io, &connection, executable);
         defer runtime.deinit();
         defer runtime.save() catch |err| elog("STS policy save failed: {s}\n", .{@errorName(err)});
         const prefer_wayland = if (comptime builtin.os.tag == .linux)
             minimal.environ.containsUnemptyConstant("WAYLAND_DISPLAY")
         else
             false;
+        const display = if (comptime builtin.os.tag == .windows) null else minimal.environ.getPosix("DISPLAY");
         try runInteractive(
             gpa,
             connection.host,
@@ -108,6 +111,8 @@ pub fn main(init: std.process.Init) !void {
             connection.nick,
             connection.channel,
             prefer_wayland,
+            display,
+            startup_document,
             &runtime,
             init.io,
         );
@@ -123,7 +128,7 @@ pub fn main(init: std.process.Init) !void {
             (std.fmt.parseInt(usize, value, 10) catch 6)
         else
             6;
-        var runtime = try ConnectionRuntime.init(gpa, init.io, &connection);
+        var runtime = try ConnectionRuntime.init(gpa, init.io, &connection, executable);
         defer runtime.deinit();
         defer runtime.save() catch |err| elog("STS policy save failed: {s}\n", .{@errorName(err)});
         try runChatComic(
@@ -145,7 +150,7 @@ pub fn main(init: std.process.Init) !void {
             printConnectionUsage("connect", false);
             return;
         };
-        var runtime = try ConnectionRuntime.init(gpa, init.io, &connection);
+        var runtime = try ConnectionRuntime.init(gpa, init.io, &connection, executable);
         defer runtime.deinit();
         defer runtime.save() catch |err| elog("STS policy save failed: {s}\n", .{@errorName(err)});
         try runConnect(
@@ -162,6 +167,11 @@ pub fn main(init: std.process.Init) !void {
     }
 
     try runCodecDemo(gpa);
+}
+
+fn isStartupDocument(path: []const u8) bool {
+    const extension = std.fs.path.extension(path);
+    return std.ascii.eqlIgnoreCase(extension, ".ccc") or std.ascii.eqlIgnoreCase(extension, ".ccr");
 }
 
 const default_tls_port: u16 = 6697;
@@ -450,6 +460,13 @@ test "explicit host retains the default channel" {
     try std.testing.expectEqualStrings("#root", connection.channel);
 }
 
+test "desktop startup recognizes conversation and locator documents only" {
+    try std.testing.expect(isStartupDocument("saved.CCC"));
+    try std.testing.expect(isStartupDocument("invite.ccr"));
+    try std.testing.expect(!isStartupDocument("rules.ccrules"));
+    try std.testing.expect(!isStartupDocument("comicchat.exe"));
+}
+
 const ConnectionRuntime = struct {
     gpa: std.mem.Allocator,
     io: std.Io,
@@ -469,8 +486,9 @@ const ConnectionRuntime = struct {
     credentials: ?cc.net.sasl.Credentials = null,
     preference: [1]cc.net.sasl.Mechanism = undefined,
     preference_len: usize = 0,
+    executable: []const u8,
 
-    fn init(gpa: std.mem.Allocator, io: std.Io, args: *const ConnectionArgs) !ConnectionRuntime {
+    fn init(gpa: std.mem.Allocator, io: std.Io, args: *const ConnectionArgs, executable: []const u8) !ConnectionRuntime {
         const wall_seconds = std.Io.Clock.real.now(io).toSeconds();
         const now_seconds: u64 = if (wall_seconds > 0) @intCast(wall_seconds) else 0;
         const stores = stores: {
@@ -500,6 +518,7 @@ const ConnectionRuntime = struct {
             .now_seconds = now_seconds,
             .auth = args.auth,
             .nick = args.nick,
+            .executable = executable,
         };
         errdefer runtime.deinit();
 
@@ -988,14 +1007,18 @@ fn runInteractive(
     nick: []const u8,
     channel: []const u8,
     prefer_wayland: bool,
+    display: ?[]const u8,
+    startup_document: ?[]const u8,
     runtime: *ConnectionRuntime,
     io: std.Io,
 ) !void {
     if (comptime builtin.os.tag == .linux) {
-        if (prefer_wayland) return runInteractiveWayland(gpa, host, port, nick, channel, runtime, io);
-        return runInteractiveX11(gpa, host, port, nick, channel, runtime, io);
+        if (prefer_wayland) return runInteractiveWayland(gpa, host, port, nick, channel, startup_document, runtime, io);
+        return runInteractiveX11(gpa, host, port, nick, channel, display, startup_document, runtime, io);
     } else if (comptime builtin.os.tag == .windows) {
-        return runInteractiveWin32(gpa, host, port, nick, channel, runtime, io);
+        return runInteractiveWin32(gpa, host, port, nick, channel, startup_document, runtime, io);
+    } else if (comptime builtin.os.tag == .freebsd or builtin.os.tag == .openbsd) {
+        return runInteractiveX11(gpa, host, port, nick, channel, display, startup_document, runtime, io);
     } else {
         std.debug.print("the interactive window backend is not implemented for {s} yet\n", .{@tagName(builtin.os.tag)});
     }
@@ -1164,6 +1187,7 @@ const ChatState = struct {
     notification_previous: std.ArrayList([]u8) = .empty,
     last_transfer_bytes: u64 = 0,
     flood_entries: std.ArrayList(FloodEntry) = .empty,
+    desktop_notification: ?[]u8 = null,
 
     fn deinit(self: *ChatState, gpa: std.mem.Allocator) void {
         for (self.pending_udi.items) |*entry| entry.deinit(gpa);
@@ -1174,6 +1198,7 @@ const ChatState = struct {
         freeStringList(gpa, &self.notification_previous);
         for (self.flood_entries.items) |entry| gpa.free(entry.nick);
         self.flood_entries.deinit(gpa);
+        if (self.desktop_notification) |message| gpa.free(message);
         self.* = undefined;
     }
 
@@ -1512,12 +1537,12 @@ fn tickBackgroundFeatures(
     return redraw;
 }
 
-fn runInteractiveX11(gpa: std.mem.Allocator, host: []const u8, port: u16, nick: []const u8, channel: []const u8, runtime: *ConnectionRuntime, io: std.Io) !void {
-    return runInteractivePollBackend(cc.platform.x11, gpa, host, port, nick, channel, runtime, io);
+fn runInteractiveX11(gpa: std.mem.Allocator, host: []const u8, port: u16, nick: []const u8, channel: []const u8, display: ?[]const u8, startup_document: ?[]const u8, runtime: *ConnectionRuntime, io: std.Io) !void {
+    return runInteractivePollBackend(cc.platform.x11, gpa, host, port, nick, channel, display, startup_document, runtime, io);
 }
 
-fn runInteractiveWayland(gpa: std.mem.Allocator, host: []const u8, port: u16, nick: []const u8, channel: []const u8, runtime: *ConnectionRuntime, io: std.Io) !void {
-    return runInteractivePollBackend(cc.platform.wayland, gpa, host, port, nick, channel, runtime, io);
+fn runInteractiveWayland(gpa: std.mem.Allocator, host: []const u8, port: u16, nick: []const u8, channel: []const u8, startup_document: ?[]const u8, runtime: *ConnectionRuntime, io: std.Io) !void {
+    return runInteractivePollBackend(cc.platform.wayland, gpa, host, port, nick, channel, null, startup_document, runtime, io);
 }
 
 fn runInteractivePollBackend(
@@ -1527,12 +1552,17 @@ fn runInteractivePollBackend(
     port: u16,
     nick: []const u8,
     channel: []const u8,
+    display: ?[]const u8,
+    startup_document: ?[]const u8,
     runtime: *ConnectionRuntime,
     io: std.Io,
 ) !void {
     const posix = std.posix;
 
-    const win = try Backend.Window.open(gpa, 960, 720, "Comic Chat");
+    const win = if (comptime @hasDecl(Backend.Window, "openWithDisplay"))
+        try Backend.Window.openWithDisplay(gpa, 960, 720, "Comic Chat", display orelse return error.DisplayUnset)
+    else
+        try Backend.Window.open(gpa, 960, 720, "Comic Chat");
     defer win.deinit();
     var view = try cc.client.view.View.init(gpa, win.width, win.height);
     defer view.deinit();
@@ -1543,6 +1573,7 @@ fn runInteractivePollBackend(
     defer state.deinit(gpa);
     var network = try AsyncNetwork.init(gpa, host, port, nick, runtime);
     defer network.deinit();
+    if (startup_document) |path| try loadStartupDocument(gpa, io, path, &network, &state, &workspace, nick);
 
     try presentWorkspace(win, &view, state.status, &workspace);
 
@@ -1576,6 +1607,7 @@ fn runInteractivePollBackend(
             const event_result = try handleWindowEvent(
                 gpa,
                 io,
+                win,
                 try win.nextEvent(),
                 &view,
                 &network,
@@ -1592,6 +1624,7 @@ fn runInteractivePollBackend(
                 const event_result = try handleWindowEvent(
                     gpa,
                     io,
+                    win,
                     repeat_event,
                     &view,
                     &network,
@@ -1622,6 +1655,7 @@ fn runInteractivePollBackend(
                         break :failed false;
                     };
                     redraw = redraw or processed;
+                    deliverDesktopNotification(win, gpa, &state);
                 }
             }
         };
@@ -1636,7 +1670,7 @@ fn runInteractivePollBackend(
     }
 }
 
-fn runInteractiveWin32(gpa: std.mem.Allocator, host: []const u8, port: u16, nick: []const u8, channel: []const u8, runtime: *ConnectionRuntime, io: std.Io) !void {
+fn runInteractiveWin32(gpa: std.mem.Allocator, host: []const u8, port: u16, nick: []const u8, channel: []const u8, startup_document: ?[]const u8, runtime: *ConnectionRuntime, io: std.Io) !void {
     const Win32 = cc.platform.win32;
 
     const win = try Win32.Window.open(gpa, 960, 720, "Comic Chat");
@@ -1650,6 +1684,7 @@ fn runInteractiveWin32(gpa: std.mem.Allocator, host: []const u8, port: u16, nick
     defer state.deinit(gpa);
     var network = try AsyncNetwork.init(gpa, host, port, nick, runtime);
     defer network.deinit();
+    if (startup_document) |path| try loadStartupDocument(gpa, io, path, &network, &state, &workspace, nick);
     try presentWorkspace(win, &view, state.status, &workspace);
 
     while (true) {
@@ -1661,6 +1696,7 @@ fn runInteractiveWin32(gpa: std.mem.Allocator, host: []const u8, port: u16, nick
             const event_result = try handleWindowEvent(
                 gpa,
                 io,
+                win,
                 event,
                 &view,
                 &network,
@@ -1687,6 +1723,7 @@ fn runInteractiveWin32(gpa: std.mem.Allocator, host: []const u8, port: u16, nick
                         break :failed false;
                     };
                     redraw = redraw or processed;
+                    deliverDesktopNotification(win, gpa, &state);
                 }
             }
         } else {
@@ -1700,6 +1737,7 @@ fn runInteractiveWin32(gpa: std.mem.Allocator, host: []const u8, port: u16, nick
 fn handleWindowEvent(
     gpa: std.mem.Allocator,
     io: std.Io,
+    window: anytype,
     event: anytype,
     view: *cc.client.view.View,
     network: *AsyncNetwork,
@@ -1724,15 +1762,23 @@ fn handleWindowEvent(
             const key = key_input.key;
             if (view.active_dialog != null) {
                 if (key_input.modifiers.control) if (view.activeDialogEditor()) |dialog_editor| {
-                    if (try handleEditorShortcut(dialog_editor, key, workspace))
+                    if (try handleEditorShortcut(window, dialog_editor, key, workspace))
                         break :key_result .{ .redraw = true };
                 };
-                if (try view.handleDialogKey(key, key_input.modifiers)) |action| try applyDialogAction(gpa, io, action, view, network, state, workspace, nick);
+                if (try view.handleDialogKey(key, key_input.modifiers)) |action| try applyDialogAction(gpa, io, window, action, view, network, state, workspace, nick);
+                break :key_result .{ .redraw = true };
+            }
+            if (view.handleTranscriptKey(key, transcript.lines.items.len, key_input.modifiers.shift))
+                break :key_result .{ .redraw = true };
+            if (key_input.modifiers.control and view.shell.focus == .transcript and try handleTranscriptShortcut(window, key, workspace, transcript, view))
+                break :key_result .{ .redraw = true };
+            if (key == .enter and key_input.modifiers.shift and view.shell.focus == .composer) {
+                if (editor.text().len < 400) try editor.insert('\n');
                 break :key_result .{ .redraw = true };
             }
             if (view.handleFocusedKey(key, transcript.roster.items.len))
                 break :key_result .{ .redraw = true };
-            if (key_input.modifiers.control and try handleEditorShortcut(editor, key, workspace))
+            if (key_input.modifiers.control and try handleEditorShortcut(window, editor, key, workspace))
                 break :key_result .{ .redraw = true };
             if (key_input.modifiers.shift and key == .tab) {
                 view.cycleFocusBackward();
@@ -1750,8 +1796,9 @@ fn handleWindowEvent(
             const previous_dialog = view.active_dialog;
             const action = view.handlePointer(pointer, transcript.count(), transcript.roster.items.len);
             if (previous_dialog != view.active_dialog)
-                try prefillOpenedDialog(view, transcript, editor.text(), &network.runtime.preferences, state);
+                try prefillOpenedDialog(view, transcript, editor.text(), &network.runtime.preferences, state, network.clientPtr());
             const keep_running = switch (action) {
+                .quit => false,
                 .send => try handleWorkspaceInputKey(gpa, io, cc.platform.event.Key{ .enter = {} }, view, editor, client, workspace, nick, state.joined, state.ircx_data),
                 .connection => connection: {
                     view.openConnectionDialog(network.host, network.reconnect.port, network.effectiveOptions().security == .tls);
@@ -1770,6 +1817,16 @@ fn handleWindowEvent(
                             if (workspace.rooms.items.len > 1) _ = workspace.remove(active_index);
                         }
                     }
+                    if (index >= 19 and index <= 22) {
+                        const control: u8 = switch (index) {
+                            19 => cc.comic.formatting.control.bold,
+                            20 => cc.comic.formatting.control.italic,
+                            21 => cc.comic.formatting.control.underline,
+                            else => cc.comic.formatting.control.fixed_pitch,
+                        };
+                        if (editor.text().len + (if (editor.selection() == null) @as(usize, 1) else @as(usize, 2)) <= 400)
+                            try editor.toggleControl(control);
+                    }
                     break :toolbar true;
                 },
                 .room_tab => |index| workspace.activate(index),
@@ -1777,8 +1834,50 @@ fn handleWindowEvent(
                     view.placeComposerCursor(editor, pointer_x);
                     break :cursor true;
                 },
+                .composer_format => |format_index| format: {
+                    const control: u8 = switch (format_index) {
+                        0 => cc.comic.formatting.control.bold,
+                        1 => cc.comic.formatting.control.italic,
+                        else => cc.comic.formatting.control.underline,
+                    };
+                    if (editor.text().len + (if (editor.selection() == null) @as(usize, 1) else @as(usize, 2)) <= 400)
+                        try editor.toggleControl(control);
+                    break :format true;
+                },
+                .transcript_command => |command| transcript_command: {
+                    switch (command) {
+                        0 => {
+                            try copyTranscriptSelection(workspace, transcript, view.shell.transcriptSelection());
+                            syncClipboardToNative(window, workspace);
+                        },
+                        1 => {
+                            const at = if (view.shell.transcriptSelection()) |selection| selection.end else transcript.lines.items.len;
+                            try transcript.insertPageBreak(nick, at);
+                            view.shell.selectTranscriptLine(transcript.lines.items.len, @min(at, transcript.lines.items.len - 1), false);
+                        },
+                        else => removeTranscriptSelection(transcript, &view.shell),
+                    }
+                    break :transcript_command true;
+                },
+                .send_expression => expression: {
+                    var expression_editor = cc.client.input.Editor.init(gpa);
+                    defer expression_editor.deinit();
+                    try expression_editor.paste("<Chr>");
+                    break :expression try handleInputKey(gpa, cc.platform.event.Key{ .enter = {} }, view, &expression_editor, client, transcript, nick, room.name, room.joined or state.joined, state.ircx_data);
+                },
+                .child_window => child: {
+                    spawnRoomWindow(gpa, io, network.runtime.executable, network.host, network.reconnect.port, nick, room.name) catch {
+                        view.openDialog(.channel);
+                        view.setDialogNotice("A separate room window could not be started.");
+                    };
+                    break :child true;
+                },
+                .dialog_browse => |id| browse: {
+                    try browseDialogFile(gpa, window, view, id);
+                    break :browse true;
+                },
                 .dialog_accept, .dialog_cancel => apply: {
-                    try applyDialogAction(gpa, io, action, view, network, state, workspace, nick);
+                    try applyDialogAction(gpa, io, window, action, view, network, state, workspace, nick);
                     break :apply true;
                 },
                 else => true,
@@ -1789,12 +1888,55 @@ fn handleWindowEvent(
     };
 }
 
+fn loadStartupDocument(
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    path: []const u8,
+    network: *AsyncNetwork,
+    state: *ChatState,
+    workspace: *cc.client.workspace.Workspace,
+    nick: []const u8,
+) !void {
+    if (std.ascii.eqlIgnoreCase(std.fs.path.extension(path), ".ccc")) {
+        var transcript = try cc.client.files.loadConversation(io, gpa, path);
+        errdefer transcript.deinit();
+        try transcript.setSelf(nick);
+        const room = workspace.activeRoom() orelse return error.NoActiveRoom;
+        room.transcript.deinit();
+        room.transcript = transcript;
+        try network.runtime.preferences.rememberFile(path);
+        try network.runtime.preferences.saveFile(io, network.runtime.preferences_path);
+        return;
+    }
+
+    const document = try std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(cc.client.files.max_document_bytes));
+    defer gpa.free(document);
+    const locator = try cc.client.files.parseLocator(document);
+    var room_index = workspace.active orelse return error.NoActiveRoom;
+    if (locator.channel) |channel| {
+        room_index = try workspace.ensure(channel);
+        _ = workspace.activate(room_index);
+    }
+    if (locator.character) |character| if (cc.comic.session.bundledAvatarByName(character)) |avatar|
+        try workspace.rooms.items[room_index].transcript.setAvatar(nick, avatar);
+    if (locator.backdrop) |backdrop| if (cc.comic.session.bundledBackdropByName(backdrop)) |bundled| {
+        try workspace.rooms.items[room_index].transcript.setBackdrop(bundled);
+        try network.runtime.preferences.setBackdrop(bundled);
+    };
+    if (locator.server) |server| if (!std.ascii.eqlIgnoreCase(server, network.host)) {
+        try network.reconfigure(server, network.reconnect.port, network.effectiveOptions().security, monotonicMilliseconds(io));
+        resetChatConnectionState(state);
+    };
+    try network.runtime.preferences.saveFile(io, network.runtime.preferences_path);
+}
+
 fn prefillOpenedDialog(
     view: *cc.client.view.View,
     transcript: *const cc.comic.session.Transcript,
     composer_text: []const u8,
     preferences: *const cc.client.preferences.Store,
     state: *const ChatState,
+    client: ?*const cc.net.client.Client,
 ) !void {
     const id = view.active_dialog orelse return;
     switch (id) {
@@ -1830,6 +1972,59 @@ fn prefillOpenedDialog(
         },
         .ircx_properties => try view.setDialogValueAt(0, ""),
         .ircx_events => try view.setDialogValueAt(0, "List"),
+        .set_text_font, .text_font => {
+            try view.setDialogValueAt(0, preferences.textFont());
+            try view.setDialogValueAt(1, preferences.textStyle());
+        },
+        .choose_color => try view.setDialogValueAt(0, preferences.textColor()),
+        .recent_files => {
+            if (preferences.recent_files.items.len != 0) try view.setDialogValueAt(0, preferences.recent_files.items[0]);
+            try view.setDialogValueAt(1, "Open");
+        },
+        .favorite_rooms => {
+            if (preferences.favorite_rooms.items.len != 0)
+                try view.setDialogValueAt(0, preferences.favorite_rooms.items[0]);
+            try view.setDialogValueAt(1, "Join");
+        },
+        .print_preview => {
+            try view.setDialogValueAt(0, "comicchat-print.pdf");
+            try view.setDialogValueAt(1, "Save PDF");
+        },
+        .connection_features => {
+            try view.setDialogValueAt(0, if (client) |connected| if (connected.usesTls()) "Verified TLS" else "Plaintext" else "Disconnected");
+            try view.setDialogValueAt(1, if (client) |connected| if (connected.authenticated()) "SASL authenticated" else "Not authenticated" else "Unavailable");
+            try view.setDialogValueAt(2, if (state.ircx_data) "Enabled" else "Not enabled");
+            if (client) |connected| {
+                var capabilities: std.ArrayList(u8) = .empty;
+                defer capabilities.deinit(view.gpa);
+                try connected.appendEnabledCapabilities(&capabilities, view.gpa);
+                try view.setDialogValueAt(3, if (capabilities.items.len == 0) "No capabilities enabled" else capabilities.items);
+            }
+        },
+        .rule_sets => {
+            try view.setDialogValueAt(0, "Create");
+            if (preferences.rule_sets.items.len != 0) try view.setDialogValueAt(1, preferences.rule_sets.items[0]);
+        },
+        .add_to_sets => {
+            if (preferences.rules.items.len != 0) try view.setDialogValueAt(0, preferences.rules.items[0].name);
+            if (preferences.rule_sets.items.len != 0) try view.setDialogValueAt(1, preferences.rule_sets.items[0]);
+        },
+        .rename_loaded_set, .rename_set => if (preferences.rule_sets.items.len != 0)
+            try view.setDialogValueAt(0, preferences.rule_sets.items[0]),
+        .advanced_event_params => if (preferences.rules.items.len != 0) {
+            const rule = preferences.rules.items[0];
+            try view.setDialogValueAt(0, rule.name);
+            var maximum: [16]u8 = undefined;
+            var interval: [16]u8 = undefined;
+            try view.setDialogValueAt(1, try std.fmt.bufPrint(&maximum, "{d}", .{rule.maximum_occurrences}));
+            try view.setDialogValueAt(2, try std.fmt.bufPrint(&interval, "{d}", .{rule.interval_s}));
+        },
+        .advanced_rule_settings => if (preferences.rules.items.len != 0) {
+            const rule = preferences.rules.items[0];
+            try view.setDialogValueAt(0, rule.name);
+            try view.setDialogValueAt(1, if (rule.enabled) "Yes" else "No");
+            try view.setDialogValueAt(2, if (rule.case_sensitive) "Yes" else "No");
+        },
         else => {},
     }
     if (id == .sound) {
@@ -1866,6 +2061,7 @@ fn handleEditorSelectionKey(editor: *cc.client.input.Editor, key: cc.platform.ev
 }
 
 fn handleEditorShortcut(
+    window: anytype,
     editor: *cc.client.input.Editor,
     key: cc.platform.event.Key,
     workspace: *cc.client.workspace.Workspace,
@@ -1879,12 +2075,17 @@ fn handleEditorShortcut(
         'c' => if (try editor.copySelection()) |text| {
             defer editor.gpa.free(text);
             try workspace.setClipboard(text);
+            syncClipboardToNative(window, workspace);
         },
         'x' => if (try editor.cutSelection()) |text| {
             defer editor.gpa.free(text);
             try workspace.setClipboard(text);
+            syncClipboardToNative(window, workspace);
         },
-        'v' => try editor.paste(workspace.clipboard.items),
+        'v' => {
+            try syncClipboardFromNative(window, workspace);
+            try editor.paste(workspace.clipboard.items);
+        },
         'z' => editor.undo(),
         'y' => editor.redo(),
         else => return false,
@@ -1892,9 +2093,91 @@ fn handleEditorShortcut(
     return true;
 }
 
+fn handleTranscriptShortcut(
+    window: anytype,
+    key: cc.platform.event.Key,
+    workspace: *cc.client.workspace.Workspace,
+    transcript: *cc.comic.session.Transcript,
+    view: *cc.client.view.View,
+) !bool {
+    const codepoint = switch (key) {
+        .char => |ch| if (ch <= 0x7f) std.ascii.toLower(@intCast(ch)) else return false,
+        else => return false,
+    };
+    switch (codepoint) {
+        'a' => {
+            if (transcript.lines.items.len != 0) {
+                view.shell.selectTranscriptLine(transcript.lines.items.len, 0, false);
+                view.shell.selectTranscriptLine(transcript.lines.items.len, transcript.lines.items.len - 1, true);
+            }
+        },
+        'c' => {
+            try copyTranscriptSelection(workspace, transcript, view.shell.transcriptSelection());
+            syncClipboardToNative(window, workspace);
+        },
+        else => return false,
+    }
+    return true;
+}
+
+fn syncClipboardToNative(window: anytype, workspace: *cc.client.workspace.Workspace) void {
+    if (comptime @hasDecl(@TypeOf(window.*), "writeClipboard"))
+        window.writeClipboard(workspace.clipboard.items) catch {};
+}
+
+fn syncClipboardFromNative(window: anytype, workspace: *cc.client.workspace.Workspace) !void {
+    if (comptime @hasDecl(@TypeOf(window.*), "readClipboard")) {
+        const native = window.readClipboard(workspace.gpa) catch return;
+        if (native) |text| {
+            defer workspace.gpa.free(text);
+            if (std.unicode.utf8ValidateSlice(text)) try workspace.setClipboard(text);
+        }
+    }
+}
+
+fn copyTranscriptSelection(
+    workspace: *cc.client.workspace.Workspace,
+    transcript: *const cc.comic.session.Transcript,
+    maybe_selection: ?cc.client.shell.TranscriptSelection,
+) !void {
+    const selection = maybe_selection orelse return;
+    const start = @min(selection.start, transcript.lines.items.len);
+    const end = @min(selection.end, transcript.lines.items.len);
+    var text: std.ArrayList(u8) = .empty;
+    defer text.deinit(workspace.gpa);
+    for (transcript.lines.items[start..end], 0..) |line, index| {
+        if (index != 0) try text.append(workspace.gpa, '\n');
+        if (!std.mem.eql(u8, line.text, "<Brk>")) {
+            if (line.nick.len != 0) {
+                try text.appendSlice(workspace.gpa, line.nick);
+                try text.appendSlice(workspace.gpa, ": ");
+            }
+            try text.appendSlice(workspace.gpa, line.text);
+        }
+    }
+    try workspace.setClipboard(text.items);
+}
+
+fn removeTranscriptSelection(transcript: *cc.comic.session.Transcript, shell: *cc.client.shell.State) void {
+    const selection = shell.transcriptSelection() orelse return;
+    const start = @min(selection.start, transcript.lines.items.len);
+    var end = @min(selection.end, transcript.lines.items.len);
+    while (end > start) {
+        end -= 1;
+        _ = transcript.removeLine(end);
+    }
+    if (transcript.lines.items.len == 0) {
+        shell.transcript_cursor = null;
+        shell.transcript_anchor = null;
+    } else {
+        shell.selectTranscriptLine(transcript.lines.items.len, @min(start, transcript.lines.items.len - 1), false);
+    }
+}
+
 fn applyDialogAction(
     gpa: std.mem.Allocator,
     io: std.Io,
+    window: anytype,
     action: cc.client.view.Action,
     view: *cc.client.view.View,
     network: *AsyncNetwork,
@@ -2027,6 +2310,17 @@ fn applyDialogAction(
                 return;
             }
             try preferences.setProfile(value, view.dialogValueAt(1), view.dialogValueAt(2), view.dialogValueAt(3));
+            try preferences.saveFile(io, network.runtime.preferences_path);
+        },
+        .set_text_font, .text_font => {
+            try preferences.setTextAppearance(value, view.dialogValueAt(1), preferences.textColor());
+            try preferences.saveFile(io, network.runtime.preferences_path);
+        },
+        .choose_color => {
+            preferences.setTextAppearance(preferences.textFont(), preferences.textStyle(), value) catch {
+                view.setDialogNotice("Enter a color as #RRGGBB.");
+                return;
+            };
             try preferences.saveFile(io, network.runtime.preferences_path);
         },
         .channel_properties => {
@@ -2175,6 +2469,94 @@ fn applyDialogAction(
                 .action = view.dialogValueAt(3),
                 .value = view.dialogValueAt(4),
             });
+            try preferences.saveFile(io, network.runtime.preferences_path);
+        },
+        .rule_sets => {
+            const operation = value;
+            if (std.ascii.eqlIgnoreCase(operation, "Rename")) {
+                view.openDialog(.rename_set);
+                try prefillOpenedDialog(view, &room.transcript, room.editor.text(), preferences, state, maybe_client);
+                return;
+            }
+            if (std.ascii.eqlIgnoreCase(operation, "Assign rule")) {
+                view.openDialog(.add_to_sets);
+                try prefillOpenedDialog(view, &room.transcript, room.editor.text(), preferences, state, maybe_client);
+                return;
+            }
+            if (std.ascii.eqlIgnoreCase(operation, "Advanced limits")) {
+                view.openDialog(.advanced_event_params);
+                try prefillOpenedDialog(view, &room.transcript, room.editor.text(), preferences, state, maybe_client);
+                return;
+            }
+            if (std.ascii.eqlIgnoreCase(operation, "Advanced matching")) {
+                view.openDialog(.advanced_rule_settings);
+                try prefillOpenedDialog(view, &room.transcript, room.editor.text(), preferences, state, maybe_client);
+                return;
+            }
+            const set_name = std.mem.trim(u8, view.dialogValueAt(1), " \t");
+            const path = std.mem.trim(u8, view.dialogValueAt(2), " \t");
+            if (std.ascii.eqlIgnoreCase(operation, "Create")) {
+                preferences.addRuleSet(set_name) catch {
+                    view.setDialogNotice("Enter a unique rule-set name.");
+                    return;
+                };
+            } else if (std.ascii.eqlIgnoreCase(operation, "Import")) {
+                preferences.importRulesFile(io, path) catch {
+                    view.setDialogNotice("Could not import that .ccrules file.");
+                    return;
+                };
+            } else if (std.ascii.eqlIgnoreCase(operation, "Export")) {
+                preferences.exportRulesFile(io, path, if (set_name.len == 0) null else set_name) catch {
+                    view.setDialogNotice("Could not export rules to that location.");
+                    return;
+                };
+            }
+            try preferences.saveFile(io, network.runtime.preferences_path);
+        },
+        .create_set => {
+            preferences.addRuleSet(value) catch {
+                view.setDialogNotice("Enter a unique rule-set name.");
+                return;
+            };
+            try preferences.saveFile(io, network.runtime.preferences_path);
+        },
+        .rename_loaded_set, .rename_set => {
+            preferences.renameRuleSet(value, view.dialogValueAt(1)) catch {
+                view.setDialogNotice("Choose an existing set and enter a new name.");
+                return;
+            };
+            try preferences.saveFile(io, network.runtime.preferences_path);
+        },
+        .add_to_sets => {
+            preferences.assignRuleSet(value, view.dialogValueAt(1)) catch {
+                view.setDialogNotice("Choose an existing rule and rule set.");
+                return;
+            };
+            try preferences.saveFile(io, network.runtime.preferences_path);
+        },
+        .advanced_event_params => {
+            const maximum = std.fmt.parseInt(u16, std.mem.trim(u8, view.dialogValueAt(1), " \t"), 10) catch {
+                view.setDialogNotice("Maximum occurrences must be a number.");
+                return;
+            };
+            const interval = std.fmt.parseInt(u16, std.mem.trim(u8, view.dialogValueAt(2), " \t"), 10) catch {
+                view.setDialogNotice("Interval seconds must be a number.");
+                return;
+            };
+            const rule = findRule(preferences, value) orelse {
+                view.setDialogNotice("Choose an existing rule.");
+                return;
+            };
+            try preferences.configureRule(value, rule.case_sensitive, maximum, interval);
+            try preferences.saveFile(io, network.runtime.preferences_path);
+        },
+        .advanced_rule_settings => {
+            const rule = findRule(preferences, value) orelse {
+                view.setDialogNotice("Choose an existing rule.");
+                return;
+            };
+            rule.enabled = std.ascii.eqlIgnoreCase(view.dialogValueAt(1), "Yes");
+            try preferences.configureRule(value, std.ascii.eqlIgnoreCase(view.dialogValueAt(2), "Yes"), rule.maximum_occurrences, rule.interval_s);
             try preferences.saveFile(io, network.runtime.preferences_path);
         },
         .notifications => {
@@ -2343,10 +2725,71 @@ fn applyDialogAction(
             room.transcript.deinit();
             room.transcript = loaded;
             view.jumpLatest();
+            try preferences.rememberFile(value);
+            try preferences.saveFile(io, network.runtime.preferences_path);
         },
-        .save_conversation => cc.client.files.saveConversation(io, gpa, value, &room.transcript) catch {
-            view.setDialogNotice("Could not save to that location.");
-            return;
+        .recent_files => {
+            if (std.ascii.eqlIgnoreCase(view.dialogValueAt(1), "Remove from list")) {
+                _ = preferences.removeRecentFile(value);
+                try preferences.saveFile(io, network.runtime.preferences_path);
+            } else {
+                var loaded = cc.client.files.loadConversation(io, gpa, value) catch {
+                    view.setDialogNotice("That recent conversation is no longer available.");
+                    return;
+                };
+                errdefer loaded.deinit();
+                try loaded.setSelf(nick);
+                room.transcript.deinit();
+                room.transcript = loaded;
+                view.jumpLatest();
+                try preferences.rememberFile(value);
+                try preferences.saveFile(io, network.runtime.preferences_path);
+            }
+        },
+        .save_conversation => {
+            cc.client.files.saveConversation(io, gpa, value, &room.transcript) catch {
+                view.setDialogNotice("Could not save to that location.");
+                return;
+            };
+            try preferences.rememberFile(value);
+            try preferences.saveFile(io, network.runtime.preferences_path);
+        },
+        .open_locator => {
+            const document = std.Io.Dir.cwd().readFileAlloc(io, value, gpa, .limited(cc.client.files.max_document_bytes)) catch {
+                view.setDialogNotice("Could not open that chat locator.");
+                return;
+            };
+            defer gpa.free(document);
+            const locator = cc.client.files.parseLocator(document) catch {
+                view.setDialogNotice("That file is not a valid ComicChat locator.");
+                return;
+            };
+            var locator_room_index = workspace.active.?;
+            const changes_server = if (locator.server) |server| !std.ascii.eqlIgnoreCase(server, network.host) else false;
+            if (locator.channel) |located_room| {
+                const index = workspace.ensure(located_room) catch {
+                    view.setDialogNotice("The locator contains an invalid room.");
+                    return;
+                };
+                _ = workspace.activate(index);
+                locator_room_index = index;
+                if (!changes_server) if (maybe_client) |client| try client.join(located_room);
+            }
+            if (locator.character) |character| if (cc.comic.session.bundledAvatarByName(character)) |avatar| {
+                try workspace.rooms.items[locator_room_index].transcript.setAvatar(nick, avatar);
+            };
+            if (locator.backdrop) |backdrop| if (cc.comic.session.bundledBackdropByName(backdrop)) |bundled| {
+                try workspace.rooms.items[locator_room_index].transcript.setBackdrop(bundled);
+                try preferences.setBackdrop(bundled);
+            };
+            if (locator.server) |server| if (changes_server) {
+                network.reconfigure(server, network.reconnect.port, network.effectiveOptions().security, monotonicMilliseconds(io)) catch {
+                    view.setDialogNotice("The locator server could not be opened.");
+                    return;
+                };
+                resetChatConnectionState(state);
+            };
+            try preferences.saveFile(io, network.runtime.preferences_path);
         },
         .export_image => {
             const png = cc.render.png.encode(gpa, view.pixels(), view.width(), view.height()) catch {
@@ -2359,9 +2802,107 @@ fn applyDialogAction(
                 return;
             };
         },
+        .print_preview => {
+            const pdf = cc.render.pdf.encode(gpa, view.pixels(), view.width(), view.height()) catch {
+                view.setDialogNotice("Could not create a printable preview.");
+                return;
+            };
+            defer gpa.free(pdf);
+            cc.client.files.saveBytesAtomic(io, gpa, value, pdf) catch {
+                view.setDialogNotice("Could not save the printable PDF.");
+                return;
+            };
+            const print_action = view.dialogValueAt(1);
+            if (std.ascii.eqlIgnoreCase(print_action, "Save PDF and open"))
+                openDesktopPath(window, gpa, value) catch {
+                    view.setDialogNotice("The PDF was saved, but no document viewer could be opened.");
+                    return;
+                };
+            if (std.ascii.eqlIgnoreCase(print_action, "Save PDF and print"))
+                printDesktopPath(window, gpa, value) catch {
+                    view.setDialogNotice("The PDF was saved, but no desktop print service was available.");
+                    return;
+                };
+        },
+        .favorite_rooms => {
+            const operation = view.dialogValueAt(1);
+            if (std.ascii.eqlIgnoreCase(operation, "Add current room")) {
+                try preferences.addFavoriteRoom(room.name);
+                try preferences.saveFile(io, network.runtime.preferences_path);
+            } else if (std.ascii.eqlIgnoreCase(operation, "Remove")) {
+                _ = preferences.removeFavoriteRoom(value);
+                try preferences.saveFile(io, network.runtime.preferences_path);
+            } else {
+                const index = workspace.ensure(value) catch {
+                    view.setDialogNotice("Enter a valid favorite room beginning with # or &.");
+                    return;
+                };
+                _ = workspace.activate(index);
+                if (maybe_client) |client| try client.join(value);
+            }
+        },
         else => {},
     }
     _ = view.closeDialog();
+}
+
+fn browseDialogFile(gpa: std.mem.Allocator, window: anytype, view: *cc.client.view.View, id: cc.client.dialogs.Id) !void {
+    if (comptime !@hasDecl(@TypeOf(window.*), "chooseFile")) {
+        view.setDialogNotice("Native file selection is unavailable on this platform; enter a path.");
+        return;
+    } else {
+        const save = switch (id) {
+            .save_conversation, .export_image, .print_preview => true,
+            .file_transfer => std.ascii.eqlIgnoreCase(view.dialogValueAt(0), "Receive offer"),
+            .rule_sets => std.ascii.eqlIgnoreCase(view.dialogValueAt(0), "Export"),
+            else => false,
+        };
+        const field: usize = switch (id) {
+            .file_transfer, .rule_sets => 2,
+            else => 0,
+        };
+        const selected = window.chooseFile(gpa, save, cc.client.dialogs.get(id).title) catch {
+            view.setDialogNotice("The desktop file picker could not be opened; enter a path.");
+            return;
+        };
+        if (selected) |path| {
+            defer gpa.free(path);
+            try view.setDialogValueAt(field, path);
+            view.setDialogNotice("");
+        }
+    }
+}
+
+fn openDesktopPath(window: anytype, gpa: std.mem.Allocator, path: []const u8) !void {
+    if (comptime @hasDecl(@TypeOf(window.*), "openPath")) return window.openPath(gpa, path);
+    return error.DesktopServiceUnavailable;
+}
+
+fn printDesktopPath(window: anytype, gpa: std.mem.Allocator, path: []const u8) !void {
+    if (comptime @hasDecl(@TypeOf(window.*), "printPath")) return window.printPath(gpa, path);
+    return error.DesktopServiceUnavailable;
+}
+
+fn spawnRoomWindow(gpa: std.mem.Allocator, io: std.Io, executable: []const u8, host: []const u8, port: u16, nick: []const u8, room: []const u8) !void {
+    var port_buffer: [5]u8 = undefined;
+    const port_text = try std.fmt.bufPrint(&port_buffer, "{d}", .{port});
+    const child = try gpa.create(std.process.Child);
+    errdefer gpa.destroy(child);
+    child.* = try std.process.spawn(io, .{
+        .argv = &.{ executable, "app", host, port_text, nick, room },
+        .stdin = .ignore,
+        .stdout = .ignore,
+        .stderr = .ignore,
+        .create_no_window = false,
+    });
+    errdefer child.kill(io);
+    const reaper = try std.Thread.spawn(.{}, reapRoomWindow, .{ gpa, io, child });
+    reaper.detach();
+}
+
+fn reapRoomWindow(gpa: std.mem.Allocator, io: std.Io, child: *std.process.Child) void {
+    _ = child.wait(io) catch {};
+    gpa.destroy(child);
 }
 
 fn applyFileTransferDialog(
@@ -2520,6 +3061,11 @@ fn selectRosterMember(transcript: *const cc.comic.session.Transcript, nick: []co
     return null;
 }
 
+fn findRule(preferences: *cc.client.preferences.Store, name: []const u8) ?*cc.client.preferences.Rule {
+    for (preferences.rules.items) |*rule| if (std.ascii.eqlIgnoreCase(rule.name, name)) return rule;
+    return null;
+}
+
 fn comicColumnsFromDialog(value: []const u8) u8 {
     const trimmed = std.mem.trim(u8, value, " \t");
     if (trimmed.len == 0 or trimmed[0] < '1' or trimmed[0] > '6') return 4;
@@ -2594,6 +3140,17 @@ fn handleWorkspaceInputKey(
 ) !bool {
     if (key == .enter and editor.text().len > 0) {
         const text = editor.text();
+        if (std.mem.indexOfScalar(u8, text, '\n') != null) {
+            const multiline = try editor.take();
+            defer gpa.free(multiline);
+            var lines = std.mem.splitScalar(u8, multiline, '\n');
+            while (lines.next()) |line| {
+                if (line.len == 0) continue;
+                try editor.paste(line);
+                if (!try handleWorkspaceInputKey(gpa, io, cc.platform.event.Key{ .enter = {} }, view, editor, maybe_client, workspace, nick, connected, ircx_data)) return false;
+            }
+            return true;
+        }
         if (std.mem.startsWith(u8, text, "/save ")) {
             const path = std.mem.trim(u8, text[6..], " \t");
             const room = workspace.activeRoom() orelse return true;
@@ -2703,7 +3260,12 @@ fn processWorkspaceMessages(
         if (ircxNumericEnabled(&msg)) {
             state.ircx_data = true;
         } else if (!state.join_requested and std.mem.eql(u8, msg.command, "001")) {
-            try client.join(channel);
+            if (workspace.rooms.items.len == 0) {
+                try client.join(channel);
+            } else for (workspace.rooms.items) |*room| {
+                room.joined = false;
+                try client.join(room.name);
+            }
             state.join_requested = true;
             state.status = "joining";
             redraw = true;
@@ -2842,6 +3404,8 @@ fn finishNotificationWho(gpa: std.mem.Allocator, state: *ChatState, workspace: *
         if (!containsIgnoreCase(state.notification_previous.items, current)) {
             var text: [256]u8 = undefined;
             try transcript.addWithOptions("Notification", std.fmt.bufPrint(&text, "{s} is online.", .{current}) catch "A watched member is online.", .{ .modes = cc.proto.udi.bm_action });
+            if (state.desktop_notification) |old| gpa.free(old);
+            state.desktop_notification = try gpa.dupe(u8, std.fmt.bufPrint(&text, "{s} is online.", .{current}) catch "A watched member is online.");
             changed = true;
         }
     }
@@ -2849,6 +3413,8 @@ fn finishNotificationWho(gpa: std.mem.Allocator, state: *ChatState, workspace: *
         if (!containsIgnoreCase(state.notification_current.items, previous)) {
             var text: [256]u8 = undefined;
             try transcript.addWithOptions("Notification", std.fmt.bufPrint(&text, "{s} went offline.", .{previous}) catch "A watched member went offline.", .{ .modes = cc.proto.udi.bm_action });
+            if (state.desktop_notification) |old| gpa.free(old);
+            state.desktop_notification = try gpa.dupe(u8, std.fmt.bufPrint(&text, "{s} went offline.", .{previous}) catch "A watched member went offline.");
             changed = true;
         }
     }
@@ -2856,6 +3422,13 @@ fn finishNotificationWho(gpa: std.mem.Allocator, state: *ChatState, workspace: *
     state.notification_previous.clearRetainingCapacity();
     for (state.notification_current.items) |entry| try state.notification_previous.append(gpa, try gpa.dupe(u8, entry));
     return changed;
+}
+
+fn deliverDesktopNotification(window: anytype, gpa: std.mem.Allocator, state: *ChatState) void {
+    const message = state.desktop_notification orelse return;
+    defer gpa.free(message);
+    state.desktop_notification = null;
+    if (comptime @hasDecl(@TypeOf(window.*), "notify")) window.notify(gpa, "Comic Chat", message) catch {};
 }
 
 fn containsIgnoreCase(items: []const []u8, needle: []const u8) bool {
@@ -3507,7 +4080,7 @@ fn runUiPreview(gpa: std.mem.Allocator, io: std.Io, surface: []const u8) !void {
     try writeStdout(io, png);
 }
 
-fn runWindow(gpa: std.mem.Allocator, name: []const u8, prefer_wayland: bool) !void {
+fn runWindow(gpa: std.mem.Allocator, name: []const u8, prefer_wayland: bool, display: ?[]const u8) !void {
     const avb = avatarByName(name) orelse {
         elog("unknown avatar '{s}'\n", .{name});
         return;
@@ -3531,13 +4104,29 @@ fn runWindow(gpa: std.mem.Allocator, name: []const u8, prefer_wayland: bool) !vo
                 return;
             };
         } else {
-            cc.platform.x11.show(gpa, c.px, W, H) catch |err| {
+            const win = cc.platform.x11.Window.openWithDisplay(gpa, W, H, "comicchat", display orelse return error.DisplayUnset) catch |err| {
                 elog("x11: {s}\n", .{@errorName(err)});
                 return;
+            };
+            defer win.deinit();
+            try win.present(c.px, W, H);
+            while (true) switch (try win.nextEvent()) {
+                .key, .close => break,
+                .expose => try win.present(c.px, W, H),
+                else => {},
             };
         }
     } else if (comptime builtin.os.tag == .windows) {
         try cc.platform.win32.show(gpa, c.px, W, H);
+    } else if (comptime builtin.os.tag == .freebsd or builtin.os.tag == .openbsd) {
+        const win = try cc.platform.x11.Window.openWithDisplay(gpa, W, H, "comicchat", display orelse return error.DisplayUnset);
+        defer win.deinit();
+        try win.present(c.px, W, H);
+        while (true) switch (try win.nextEvent()) {
+            .key, .close => break,
+            .expose => try win.present(c.px, W, H),
+            else => {},
+        };
     } else {
         return error.UnsupportedPlatform;
     }

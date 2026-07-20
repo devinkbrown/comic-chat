@@ -11,6 +11,9 @@ const files = @import("files.zig");
 pub const max_preferences_bytes: usize = 256 * 1024;
 pub const max_rules: usize = 64;
 pub const max_notifications: usize = 128;
+pub const max_recent_files: usize = 16;
+pub const max_favorite_rooms: usize = 32;
+pub const max_rule_sets: usize = 32;
 
 pub const Rule = struct {
     name: []u8,
@@ -18,7 +21,11 @@ pub const Rule = struct {
     filter: []u8,
     action: []u8,
     value: []u8,
+    set_name: []u8,
     enabled: bool,
+    case_sensitive: bool,
+    maximum_occurrences: u16,
+    interval_s: u16,
 
     fn deinit(self: *Rule, gpa: std.mem.Allocator) void {
         gpa.free(self.name);
@@ -26,6 +33,7 @@ pub const Rule = struct {
         gpa.free(self.filter);
         gpa.free(self.action);
         gpa.free(self.value);
+        gpa.free(self.set_name);
     }
 };
 
@@ -58,6 +66,12 @@ pub const Store = struct {
     rules: std.ArrayList(Rule) = .empty,
     notifications: std.ArrayList(Notification) = .empty,
     notification_delivery: std.ArrayList(u8) = .empty,
+    text_font: std.ArrayList(u8) = .empty,
+    text_style: std.ArrayList(u8) = .empty,
+    text_color: std.ArrayList(u8) = .empty,
+    recent_files: std.ArrayList([]u8) = .empty,
+    favorite_rooms: std.ArrayList([]u8) = .empty,
+    rule_sets: std.ArrayList([]u8) = .empty,
 
     pub fn init(gpa: std.mem.Allocator) Store {
         return .{ .gpa = gpa };
@@ -76,6 +90,12 @@ pub const Store = struct {
         for (self.notifications.items) |*notification| notification.deinit(self.gpa);
         self.notifications.deinit(self.gpa);
         self.notification_delivery.deinit(self.gpa);
+        self.text_font.deinit(self.gpa);
+        self.text_style.deinit(self.gpa);
+        self.text_color.deinit(self.gpa);
+        deinitStrings(self.gpa, &self.recent_files);
+        deinitStrings(self.gpa, &self.favorite_rooms);
+        deinitStrings(self.gpa, &self.rule_sets);
         self.* = undefined;
     }
 
@@ -113,6 +133,18 @@ pub const Store = struct {
         return if (self.notification_delivery.items.len == 0) "In-app banner" else self.notification_delivery.items;
     }
 
+    pub fn textFont(self: *const Store) []const u8 {
+        return if (self.text_font.items.len == 0) "Comic Neue 16" else self.text_font.items;
+    }
+
+    pub fn textStyle(self: *const Store) []const u8 {
+        return if (self.text_style.items.len == 0) "Regular" else self.text_style.items;
+    }
+
+    pub fn textColor(self: *const Store) []const u8 {
+        return if (self.text_color.items.len == 0) "#172033" else self.text_color.items;
+    }
+
     pub fn setProfile(self: *Store, profile: []const u8, display_name: []const u8, homepage: []const u8, email: []const u8) !void {
         try replace(&self.profile, self.gpa, profile);
         try replace(&self.display_name, self.gpa, display_name);
@@ -135,13 +167,59 @@ pub const Store = struct {
         try replace(&self.notification_delivery, self.gpa, value);
     }
 
+    pub fn setTextAppearance(self: *Store, font: []const u8, style: []const u8, color: []const u8) !void {
+        if (!validHexColor(color)) return error.InvalidColor;
+        try replace(&self.text_font, self.gpa, font);
+        try replace(&self.text_style, self.gpa, style);
+        try replace(&self.text_color, self.gpa, color);
+    }
+
+    pub fn rememberFile(self: *Store, path: []const u8) !void {
+        try rememberBounded(self.gpa, &self.recent_files, path, max_recent_files);
+    }
+
+    pub fn removeRecentFile(self: *Store, path: []const u8) bool {
+        return removeString(self.gpa, &self.recent_files, path);
+    }
+
+    pub fn addFavoriteRoom(self: *Store, room: []const u8) !void {
+        if (room.len < 2 or (room[0] != '#' and room[0] != '&') or std.mem.indexOfAny(u8, room, " ,\r\n\x00") != null)
+            return error.InvalidRoomName;
+        try rememberBounded(self.gpa, &self.favorite_rooms, room, max_favorite_rooms);
+    }
+
+    pub fn removeFavoriteRoom(self: *Store, room: []const u8) bool {
+        return removeString(self.gpa, &self.favorite_rooms, room);
+    }
+
+    pub fn addRuleSet(self: *Store, name: []const u8) !void {
+        if (std.mem.trim(u8, name, " \t").len == 0) return error.InvalidRuleSetName;
+        try rememberBounded(self.gpa, &self.rule_sets, name, max_rule_sets);
+    }
+
+    pub fn renameRuleSet(self: *Store, old_name: []const u8, new_name: []const u8) !void {
+        if (std.mem.trim(u8, new_name, " \t").len == 0) return error.InvalidRuleSetName;
+        for (self.rule_sets.items) |*entry| {
+            if (!std.ascii.eqlIgnoreCase(entry.*, old_name)) continue;
+            const replacement = try self.gpa.dupe(u8, new_name);
+            self.gpa.free(entry.*);
+            entry.* = replacement;
+            return;
+        }
+        return error.RuleSetNotFound;
+    }
+
     pub fn upsertRule(self: *Store, input: struct {
         name: []const u8,
         event: []const u8,
         filter: []const u8,
         action: []const u8,
         value: []const u8,
+        set_name: []const u8 = "",
         enabled: bool = true,
+        case_sensitive: bool = false,
+        maximum_occurrences: u16 = 0,
+        interval_s: u16 = 0,
     }) !void {
         for (self.rules.items) |*rule| if (std.ascii.eqlIgnoreCase(rule.name, input.name)) {
             const replacement = try cloneRule(self.gpa, input);
@@ -153,6 +231,94 @@ pub const Store = struct {
         var rule = try cloneRule(self.gpa, input);
         errdefer rule.deinit(self.gpa);
         try self.rules.append(self.gpa, rule);
+    }
+
+    pub fn assignRuleSet(self: *Store, rule_name: []const u8, set_name: []const u8) !void {
+        var found_set = set_name.len == 0;
+        for (self.rule_sets.items) |entry| if (std.ascii.eqlIgnoreCase(entry, set_name)) {
+            found_set = true;
+            break;
+        };
+        if (!found_set) return error.RuleSetNotFound;
+        for (self.rules.items) |*rule| {
+            if (!std.ascii.eqlIgnoreCase(rule.name, rule_name)) continue;
+            const replacement = try self.gpa.dupe(u8, set_name);
+            self.gpa.free(rule.set_name);
+            rule.set_name = replacement;
+            return;
+        }
+        return error.RuleNotFound;
+    }
+
+    pub fn configureRule(self: *Store, rule_name: []const u8, case_sensitive: bool, maximum_occurrences: u16, interval_s: u16) !void {
+        for (self.rules.items) |*rule| {
+            if (!std.ascii.eqlIgnoreCase(rule.name, rule_name)) continue;
+            rule.case_sensitive = case_sensitive;
+            rule.maximum_occurrences = maximum_occurrences;
+            rule.interval_s = interval_s;
+            return;
+        }
+        return error.RuleNotFound;
+    }
+
+    pub fn exportRulesFile(self: *const Store, io: std.Io, path: []const u8, selected_set: ?[]const u8) !void {
+        var out: std.ArrayList(u8) = .empty;
+        defer out.deinit(self.gpa);
+        try out.appendSlice(self.gpa, "COMICCHAT-RULES 1\n");
+        if (selected_set) |name| try appendRecord(&out, self.gpa, "rule_set", name);
+        for (self.rules.items) |rule| {
+            if (selected_set) |name| if (!std.ascii.eqlIgnoreCase(rule.set_name, name)) continue;
+            var maximum: [16]u8 = undefined;
+            var interval: [16]u8 = undefined;
+            try appendComposite(&out, self.gpa, "rule", &.{
+                rule.name,
+                rule.event,
+                rule.filter,
+                rule.action,
+                rule.value,
+                rule.set_name,
+                if (rule.enabled) "1" else "0",
+                if (rule.case_sensitive) "1" else "0",
+                try std.fmt.bufPrint(&maximum, "{d}", .{rule.maximum_occurrences}),
+                try std.fmt.bufPrint(&interval, "{d}", .{rule.interval_s}),
+            });
+        }
+        try files.saveBytesAtomic(io, self.gpa, path, out.items);
+    }
+
+    pub fn importRulesFile(self: *Store, io: std.Io, path: []const u8) !void {
+        const bytes = try std.Io.Dir.cwd().readFileAlloc(io, path, self.gpa, .limited(max_preferences_bytes));
+        defer self.gpa.free(bytes);
+        var lines = std.mem.splitScalar(u8, bytes, '\n');
+        if (!std.mem.eql(u8, std.mem.trimEnd(u8, lines.next() orelse "", "\r"), "COMICCHAT-RULES 1"))
+            return error.InvalidRulesHeader;
+        while (lines.next()) |raw| {
+            const line = std.mem.trimEnd(u8, raw, "\r");
+            const equals = std.mem.indexOfScalar(u8, line, '=') orelse continue;
+            const key = line[0..equals];
+            if (std.mem.eql(u8, key, "rule_set")) {
+                const name = try decode(self.gpa, line[equals + 1 ..]);
+                defer self.gpa.free(name);
+                try self.addRuleSet(name);
+            } else if (std.mem.eql(u8, key, "rule")) {
+                const parts = try decodeComposite(self.gpa, line[equals + 1 ..], 10);
+                defer freeParts(self.gpa, parts);
+                if (parts.len != 10) return error.InvalidRule;
+                if (parts[5].len != 0) try self.addRuleSet(parts[5]);
+                try self.upsertRule(.{
+                    .name = parts[0],
+                    .event = parts[1],
+                    .filter = parts[2],
+                    .action = parts[3],
+                    .value = parts[4],
+                    .set_name = parts[5],
+                    .enabled = std.mem.eql(u8, parts[6], "1"),
+                    .case_sensitive = std.mem.eql(u8, parts[7], "1"),
+                    .maximum_occurrences = std.fmt.parseInt(u16, parts[8], 10) catch return error.InvalidRule,
+                    .interval_s = std.fmt.parseInt(u16, parts[9], 10) catch return error.InvalidRule,
+                });
+            }
+        }
     }
 
     pub fn upsertNotification(self: *Store, input: struct {
@@ -189,7 +355,28 @@ pub const Store = struct {
         try appendRecord(&out, self.gpa, "auto_ignore_count", try std.fmt.bufPrint(&number, "{d}", .{self.auto_ignore_count}));
         try appendRecord(&out, self.gpa, "auto_ignore_interval", try std.fmt.bufPrint(&number, "{d}", .{self.auto_ignore_interval_s}));
         try appendRecord(&out, self.gpa, "notification_delivery", self.notificationDelivery());
-        for (self.rules.items) |rule| try appendComposite(&out, self.gpa, "rule", &.{ rule.name, rule.event, rule.filter, rule.action, rule.value, if (rule.enabled) "1" else "0" });
+        try appendRecord(&out, self.gpa, "text_font", self.textFont());
+        try appendRecord(&out, self.gpa, "text_style", self.textStyle());
+        try appendRecord(&out, self.gpa, "text_color", self.textColor());
+        for (self.recent_files.items) |path| try appendRecord(&out, self.gpa, "recent_file", path);
+        for (self.favorite_rooms.items) |room| try appendRecord(&out, self.gpa, "favorite_room", room);
+        for (self.rule_sets.items) |name| try appendRecord(&out, self.gpa, "rule_set", name);
+        for (self.rules.items) |rule| {
+            var maximum: [16]u8 = undefined;
+            var interval: [16]u8 = undefined;
+            try appendComposite(&out, self.gpa, "rule", &.{
+                rule.name,
+                rule.event,
+                rule.filter,
+                rule.action,
+                rule.value,
+                rule.set_name,
+                if (rule.enabled) "1" else "0",
+                if (rule.case_sensitive) "1" else "0",
+                try std.fmt.bufPrint(&maximum, "{d}", .{rule.maximum_occurrences}),
+                try std.fmt.bufPrint(&interval, "{d}", .{rule.interval_s}),
+            });
+        }
         for (self.notifications.items) |notification| try appendComposite(&out, self.gpa, "notification", &.{ notification.nickname, notification.user_mask, notification.host_mask, notification.network, if (notification.enabled) "1" else "0" });
         if (out.items.len > max_preferences_bytes) return error.PreferencesTooLarge;
         return out.toOwnedSlice(self.gpa);
@@ -210,9 +397,24 @@ pub fn parse(gpa: std.mem.Allocator, bytes: []const u8) !Store {
         const key = line[0..equals];
         const value = line[equals + 1 ..];
         if (std.mem.eql(u8, key, "rule")) {
-            const parts = try decodeComposite(gpa, value, 6);
+            const parts = try decodeComposite(gpa, value, 10);
             defer freeParts(gpa, parts);
-            if (parts.len == 6) try store.upsertRule(.{ .name = parts[0], .event = parts[1], .filter = parts[2], .action = parts[3], .value = parts[4], .enabled = std.mem.eql(u8, parts[5], "1") });
+            if (parts.len == 6) {
+                try store.upsertRule(.{ .name = parts[0], .event = parts[1], .filter = parts[2], .action = parts[3], .value = parts[4], .enabled = std.mem.eql(u8, parts[5], "1") });
+            } else if (parts.len == 10) {
+                try store.upsertRule(.{
+                    .name = parts[0],
+                    .event = parts[1],
+                    .filter = parts[2],
+                    .action = parts[3],
+                    .value = parts[4],
+                    .set_name = parts[5],
+                    .enabled = std.mem.eql(u8, parts[6], "1"),
+                    .case_sensitive = std.mem.eql(u8, parts[7], "1"),
+                    .maximum_occurrences = std.fmt.parseInt(u16, parts[8], 10) catch 0,
+                    .interval_s = std.fmt.parseInt(u16, parts[9], 10) catch 0,
+                });
+            }
             continue;
         }
         if (std.mem.eql(u8, key, "notification")) {
@@ -223,7 +425,9 @@ pub fn parse(gpa: std.mem.Allocator, bytes: []const u8) !Store {
         }
         const decoded = try decode(gpa, value);
         defer gpa.free(decoded);
-        if (std.mem.eql(u8, key, "profile")) try replace(&store.profile, gpa, decoded) else if (std.mem.eql(u8, key, "display_name")) try replace(&store.display_name, gpa, decoded) else if (std.mem.eql(u8, key, "homepage")) try replace(&store.homepage, gpa, decoded) else if (std.mem.eql(u8, key, "email")) try replace(&store.email, gpa, decoded) else if (std.mem.eql(u8, key, "backdrop")) try store.setBackdrop(decoded) else if (std.mem.eql(u8, key, "greeting_mode")) try replace(&store.greeting_mode, gpa, decoded) else if (std.mem.eql(u8, key, "greeting")) try replace(&store.greeting, gpa, decoded) else if (std.mem.eql(u8, key, "auto_ignore_count")) store.auto_ignore_count = std.fmt.parseInt(u16, decoded, 10) catch store.auto_ignore_count else if (std.mem.eql(u8, key, "auto_ignore_interval")) store.auto_ignore_interval_s = std.fmt.parseInt(u16, decoded, 10) catch store.auto_ignore_interval_s else if (std.mem.eql(u8, key, "notification_delivery")) try replace(&store.notification_delivery, gpa, decoded);
+        if (std.mem.eql(u8, key, "profile")) try replace(&store.profile, gpa, decoded) else if (std.mem.eql(u8, key, "display_name")) try replace(&store.display_name, gpa, decoded) else if (std.mem.eql(u8, key, "homepage")) try replace(&store.homepage, gpa, decoded) else if (std.mem.eql(u8, key, "email")) try replace(&store.email, gpa, decoded) else if (std.mem.eql(u8, key, "backdrop")) try store.setBackdrop(decoded) else if (std.mem.eql(u8, key, "greeting_mode")) try replace(&store.greeting_mode, gpa, decoded) else if (std.mem.eql(u8, key, "greeting")) try replace(&store.greeting, gpa, decoded) else if (std.mem.eql(u8, key, "auto_ignore_count")) store.auto_ignore_count = std.fmt.parseInt(u16, decoded, 10) catch store.auto_ignore_count else if (std.mem.eql(u8, key, "auto_ignore_interval")) store.auto_ignore_interval_s = std.fmt.parseInt(u16, decoded, 10) catch store.auto_ignore_interval_s else if (std.mem.eql(u8, key, "notification_delivery")) try replace(&store.notification_delivery, gpa, decoded) else if (std.mem.eql(u8, key, "text_font")) try replace(&store.text_font, gpa, decoded) else if (std.mem.eql(u8, key, "text_style")) try replace(&store.text_style, gpa, decoded) else if (std.mem.eql(u8, key, "text_color")) {
+            if (validHexColor(decoded)) try replace(&store.text_color, gpa, decoded);
+        } else if (std.mem.eql(u8, key, "recent_file")) try rememberBounded(gpa, &store.recent_files, decoded, max_recent_files) else if (std.mem.eql(u8, key, "favorite_room")) try store.addFavoriteRoom(decoded) else if (std.mem.eql(u8, key, "rule_set")) try store.addRuleSet(decoded);
     }
     return store;
 }
@@ -232,6 +436,45 @@ fn replace(list: *std.ArrayList(u8), gpa: std.mem.Allocator, value: []const u8) 
     if (value.len > 4096) return error.ValueTooLong;
     list.clearRetainingCapacity();
     try list.appendSlice(gpa, value);
+}
+
+fn validHexColor(value: []const u8) bool {
+    if (value.len != 7 or value[0] != '#') return false;
+    for (value[1..]) |byte| _ = std.fmt.charToDigit(byte, 16) catch return false;
+    return true;
+}
+
+fn rememberBounded(gpa: std.mem.Allocator, list: *std.ArrayList([]u8), value: []const u8, maximum: usize) !void {
+    if (value.len == 0 or value.len > 4096 or std.mem.indexOfAny(u8, value, "\r\n\x00") != null) return error.InvalidValue;
+    var existing: ?usize = null;
+    for (list.items, 0..) |entry, index| if (std.ascii.eqlIgnoreCase(entry, value)) {
+        existing = index;
+        break;
+    };
+    if (existing) |index| {
+        const owned = list.orderedRemove(index);
+        try list.insert(gpa, 0, owned);
+        return;
+    }
+    const owned = try gpa.dupe(u8, value);
+    errdefer gpa.free(owned);
+    try list.insert(gpa, 0, owned);
+    if (list.items.len > maximum) gpa.free(list.pop().?);
+}
+
+fn deinitStrings(gpa: std.mem.Allocator, list: *std.ArrayList([]u8)) void {
+    for (list.items) |item| gpa.free(item);
+    list.deinit(gpa);
+}
+
+fn removeString(gpa: std.mem.Allocator, list: *std.ArrayList([]u8), value: []const u8) bool {
+    for (list.items, 0..) |entry, index| {
+        if (!std.ascii.eqlIgnoreCase(entry, value)) continue;
+        gpa.free(entry);
+        _ = list.orderedRemove(index);
+        return true;
+    }
+    return false;
 }
 
 fn cloneRule(gpa: std.mem.Allocator, input: anytype) !Rule {
@@ -244,7 +487,20 @@ fn cloneRule(gpa: std.mem.Allocator, input: anytype) !Rule {
     const action = try gpa.dupe(u8, input.action);
     errdefer gpa.free(action);
     const value = try gpa.dupe(u8, input.value);
-    return .{ .name = name, .event = event, .filter = filter, .action = action, .value = value, .enabled = input.enabled };
+    errdefer gpa.free(value);
+    const set_name = try gpa.dupe(u8, input.set_name);
+    return .{
+        .name = name,
+        .event = event,
+        .filter = filter,
+        .action = action,
+        .value = value,
+        .set_name = set_name,
+        .enabled = input.enabled,
+        .case_sensitive = input.case_sensitive,
+        .maximum_occurrences = input.maximum_occurrences,
+        .interval_s = input.interval_s,
+    };
 }
 
 fn cloneNotification(gpa: std.mem.Allocator, input: anytype) !Notification {
@@ -331,7 +587,11 @@ test "preferences round-trip profile rules notifications and escaped text" {
     try source.setBackdrop("den");
     try source.setAutomation("Whisper", "Welcome, %nick%!", 5, 12);
     try source.setNotificationDelivery("In-app banner");
-    try source.upsertRule(.{ .name = "Hello", .event = "Message", .filter = "ping|pong", .action = "Reply", .value = "hello\nthere" });
+    try source.setTextAppearance("Comic Neue 18", "Italic", "#334455");
+    try source.rememberFile("saved/example.ccc");
+    try source.addFavoriteRoom("#comic-art");
+    try source.addRuleSet("Quiet hours");
+    try source.upsertRule(.{ .name = "Hello", .event = "Message", .filter = "ping|pong", .action = "Reply", .value = "hello\nthere", .set_name = "Quiet hours", .case_sensitive = true, .maximum_occurrences = 3, .interval_s = 60 });
     try source.upsertNotification(.{ .nickname = "Anna", .user_mask = "*", .host_mask = "*.test", .network = "eshmaki.me" });
     const encoded = try source.encode();
     defer gpa.free(encoded);
@@ -342,4 +602,50 @@ test "preferences round-trip profile rules notifications and escaped text" {
     try std.testing.expectEqualStrings("ping|pong", decoded.rules.items[0].filter);
     try std.testing.expectEqualStrings("*.test", decoded.notifications.items[0].host_mask);
     try std.testing.expectEqual(@as(u16, 12), decoded.auto_ignore_interval_s);
+    try std.testing.expectEqualStrings("Comic Neue 18", decoded.textFont());
+    try std.testing.expectEqualStrings("#334455", decoded.textColor());
+    try std.testing.expectEqualStrings("saved/example.ccc", decoded.recent_files.items[0]);
+    try std.testing.expectEqualStrings("#comic-art", decoded.favorite_rooms.items[0]);
+    try std.testing.expectEqualStrings("Quiet hours", decoded.rule_sets.items[0]);
+    try std.testing.expectEqualStrings("Quiet hours", decoded.rules.items[0].set_name);
+    try std.testing.expect(decoded.rules.items[0].case_sensitive);
+    try std.testing.expectEqual(@as(u16, 3), decoded.rules.items[0].maximum_occurrences);
+}
+
+test "recent files are deduplicated and bounded newest first" {
+    var store = Store.init(std.testing.allocator);
+    defer store.deinit();
+    var buffer: [64]u8 = undefined;
+    for (0..max_recent_files + 3) |index| try store.rememberFile(try std.fmt.bufPrint(&buffer, "file-{d}.ccc", .{index}));
+    try std.testing.expectEqual(max_recent_files, store.recent_files.items.len);
+    try store.rememberFile("file-5.ccc");
+    try std.testing.expectEqualStrings("file-5.ccc", store.recent_files.items[0]);
+}
+
+test "rule files round trip advanced settings and set membership" {
+    var source = Store.init(std.testing.allocator);
+    defer source.deinit();
+    try source.addRuleSet("Moderation");
+    try source.upsertRule(.{ .name = "Flood", .event = "Message", .filter = "buy now", .action = "Ignore", .value = "", .set_name = "Moderation", .case_sensitive = true, .maximum_occurrences = 2, .interval_s = 30 });
+
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(std.testing.allocator);
+    try out.appendSlice(std.testing.allocator, "COMICCHAT-RULES 1\n");
+    try appendRecord(&out, std.testing.allocator, "rule_set", "Moderation");
+    const rule = source.rules.items[0];
+    try appendComposite(&out, std.testing.allocator, "rule", &.{ rule.name, rule.event, rule.filter, rule.action, rule.value, rule.set_name, "1", "1", "2", "30" });
+
+    var imported = Store.init(std.testing.allocator);
+    defer imported.deinit();
+    var lines = std.mem.splitScalar(u8, out.items, '\n');
+    try std.testing.expectEqualStrings("COMICCHAT-RULES 1", lines.next().?);
+    const set_line = lines.next().?;
+    const set_name = try decode(std.testing.allocator, set_line["rule_set=".len..]);
+    defer std.testing.allocator.free(set_name);
+    try imported.addRuleSet(set_name);
+    const rule_line = lines.next().?;
+    const parts = try decodeComposite(std.testing.allocator, rule_line["rule=".len..], 10);
+    defer freeParts(std.testing.allocator, parts);
+    try imported.upsertRule(.{ .name = parts[0], .event = parts[1], .filter = parts[2], .action = parts[3], .value = parts[4], .set_name = parts[5], .case_sensitive = true, .maximum_occurrences = 2, .interval_s = 30 });
+    try std.testing.expectEqualStrings("Moderation", imported.rules.items[0].set_name);
 }

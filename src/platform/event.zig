@@ -43,6 +43,8 @@ pub const Pointer = struct {
     button: PointerButton = .none,
     /// Positive is up/away and negative is down/toward, in logical ticks.
     wheel_y: i16 = 0,
+    /// 1 for an ordinary activation, 2 for a native double-click.
+    clicks: u8 = 1,
 };
 
 pub const Event = union(enum) {

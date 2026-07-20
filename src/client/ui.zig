@@ -405,8 +405,8 @@ pub fn drawCommandTile(c: *Canvas, x: i32, y: i32, selected: bool, hovered: bool
     return colors.content;
 }
 
-pub fn drawMenuItem(c: *Canvas, x: i32, y: i32, width: i32, label: []const u8, hovered: bool, checked: bool) void {
-    if (hovered) {
+pub fn drawMenuItem(c: *Canvas, x: i32, y: i32, width: i32, label: []const u8, hovered: bool, checked: bool, enabled: bool) void {
+    if (hovered and enabled) {
         fillRoundedRect(c, x, y, width, 27, 7, Theme.accent_soft);
         fillRoundedRect(c, x + 5, y + 7, 3, 13, 2, Theme.accent);
     }
@@ -415,7 +415,7 @@ pub fn drawMenuItem(c: *Canvas, x: i32, y: i32, width: i32, label: []const u8, h
         c.drawLine(x + 12, y + 14, x + 14, y + 16, Theme.layer);
         c.drawLine(x + 14, y + 16, x + 18, y + 11, Theme.layer);
     }
-    _ = c.drawUiText(label, x + 27, y + 5, Theme.ink);
+    _ = c.drawUiText(label, x + 27, y + 5, if (enabled) Theme.ink else Theme.secondary);
 }
 
 pub fn drawMenuLabel(c: *Canvas, x: i32, y: i32, width: i32, label: []const u8, selected: bool) void {
@@ -569,19 +569,24 @@ pub fn drawStepper(c: *Canvas, rect: Rect, decrease_hovered: bool, increase_hove
     c.fillRect(rect.right() - 31, rect.y + 5, 1, rect.h - 10, Theme.divider);
 }
 
-pub fn drawMessageRow(c: *Canvas, rect: Rect, nick: []const u8, text: []const u8, alternate: bool) void {
+pub fn drawMessageRow(c: *Canvas, rect: Rect, nick: []const u8, text: []const u8, alternate: bool, selected: bool) void {
     const nick_w = @min(112, @max(54, Canvas.uiTextWidth(nick) + 14));
-    drawRoundedBorder(c, rect.x + 7, rect.y - 2, rect.w - 14, rect.h - 3, 5, if (alternate) Theme.chrome else Theme.layer, Theme.divider);
+    drawRoundedBorder(c, rect.x + 7, rect.y - 2, rect.w - 14, rect.h - 3, 5, if (selected) Theme.accent_soft else if (alternate) Theme.chrome else Theme.layer, if (selected) Theme.focus else Theme.divider);
     c.fillRect(rect.x + 7, rect.y + 3, 3, rect.h - 13, Theme.accent);
     fillRoundedRect(c, rect.x + 16, rect.y + 2, nick_w - 8, 18, 4, Theme.accent_soft);
     drawEllipsized(c, nick, rect.x + 20, rect.y + 3, nick_w - 16, Theme.accent);
     drawEllipsized(c, text, rect.x + nick_w + 14, rect.y + 3, rect.w - nick_w - 24, Theme.ink);
 }
 
-pub fn drawMemberRow(c: *Canvas, rect: Rect, label: []const u8, selected: bool, departed: bool, away: bool, hovered: bool) void {
+pub fn drawMemberRow(c: *Canvas, rect: Rect, label: []const u8, role_badge: []const u8, selected: bool, departed: bool, away: bool, hovered: bool) void {
     if (selected or hovered) fillRoundedRect(c, rect.x + 3, rect.y - 1, rect.w - 6, 23, 6, if (selected) Theme.accent_soft else Theme.chrome);
     fillRoundedRect(c, rect.x + 8, rect.y + 5, 8, 8, 4, if (departed) Theme.divider else if (away) Theme.warning else Theme.success);
-    drawEllipsized(c, label, rect.x + 24, rect.y, rect.w - 30, if (departed) Theme.secondary else Theme.ink);
+    const badge_w: i32 = if (role_badge.len == 0) 0 else 21;
+    drawEllipsized(c, label, rect.x + 24, rect.y, rect.w - 30 - badge_w, if (departed) Theme.secondary else Theme.ink);
+    if (role_badge.len != 0) {
+        fillRoundedRect(c, rect.right() - 24, rect.y + 2, 18, 18, 6, Theme.accent_soft);
+        _ = c.drawUiText(role_badge, rect.right() - 19, rect.y + 2, Theme.accent);
+    }
 }
 
 pub fn drawPaneHeader(c: *Canvas, rect: Rect, title: []const u8) void {

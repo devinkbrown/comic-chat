@@ -54,6 +54,11 @@ pub const Id = enum {
     ircx_events,
     call_link,
     member_profile,
+    open_locator,
+    recent_files,
+    favorite_rooms,
+    print_preview,
+    connection_features,
 };
 
 pub const Group = enum { connection, rooms, automation, files };
@@ -122,6 +127,11 @@ pub const specs = [_]Spec{
     .{ .id = .ircx_events, .resource = "PORTABLE_IRCX_EVENTS", .title = "IRCX Operator Events", .group = .rooms, .source_w = 300, .source_h = 184 },
     .{ .id = .call_link, .resource = "PORTABLE_CALL_LINK", .title = "Call Link", .group = .connection, .source_w = 300, .source_h = 184 },
     .{ .id = .member_profile, .resource = "PORTABLE_MEMBER_PROFILE", .title = "Member Profile", .group = .connection, .source_w = 300, .source_h = 132 },
+    .{ .id = .open_locator, .resource = "PORTABLE_OPEN_LOCATOR", .title = "Open Chat Locator", .group = .files, .source_w = 300, .source_h = 108 },
+    .{ .id = .recent_files, .resource = "PORTABLE_RECENT_FILES", .title = "Recent Conversations", .group = .files, .source_w = 340, .source_h = 150 },
+    .{ .id = .favorite_rooms, .resource = "PORTABLE_FAVORITE_ROOMS", .title = "Favorite Rooms", .group = .rooms, .source_w = 320, .source_h = 184 },
+    .{ .id = .print_preview, .resource = "PORTABLE_PRINT_PREVIEW", .title = "Print and PDF Preview", .group = .files, .source_w = 320, .source_h = 150 },
+    .{ .id = .connection_features, .resource = "PORTABLE_CONNECTION_FEATURES", .title = "Connection Features", .group = .connection, .source_w = 360, .source_h = 210 },
 };
 
 pub const microsoft_dialog_count: usize = 40;
@@ -148,9 +158,11 @@ pub fn prompt(id: Id) ?[]const u8 {
         .rename_loaded_set, .rename_set, .create_set => "Rule set name",
         .advanced_event_params => "Event parameters",
         .file_transfer => "File path",
-        .open_conversation => "Conversation file",
+        .open_conversation, .recent_files => "Conversation file",
+        .open_locator => "Chat locator file",
         .save_conversation => "Conversation file",
         .export_image => "PNG file",
+        .print_preview => "PDF file",
         .background => "Backdrop name",
         .character => "Character name",
         .personal => "Profile text",
@@ -189,12 +201,22 @@ pub fn fields(id: Id) []const Field {
         .comics_view => &.{ .{ .label = "View mode", .hint = "Comic", .kind = .choice }, .{ .label = "Panels across", .hint = "4 panels", .kind = .choice } },
         .automation => &.{ .{ .label = "Greeting mode", .kind = .choice }, .{ .label = "Greeting", .hint = "Use %nick% for the arriving member" }, .{ .label = "Flood message count", .hint = "8" }, .{ .label = "Flood interval seconds", .hint = "10" } },
         .rules, .edit_rule => &.{ .{ .label = "Rule name" }, .{ .label = "Event", .kind = .choice }, .{ .label = "Filter", .hint = "Optional text or nickname mask" }, .{ .label = "Action", .kind = .choice }, .{ .label = "Action value", .hint = "Message, room or sound" } },
-        .rule_sets, .add_to_sets, .rename_loaded_set, .rename_set, .create_set, .advanced_event_params, .advanced_rule_settings => &.{ .{ .label = "Rule or set name" }, .{ .label = "Condition", .hint = "Event match" }, .{ .label = "Action", .hint = "Portable action" } },
+        .rule_sets => &.{ .{ .label = "Action", .kind = .choice }, .{ .label = "Rule set name" }, .{ .label = "Import or export file", .hint = "Optional .ccrules path" } },
+        .add_to_sets => &.{ .{ .label = "Rule name" }, .{ .label = "Rule set" } },
+        .rename_loaded_set, .rename_set => &.{ .{ .label = "Current rule set" }, .{ .label = "New name" } },
+        .create_set => &.{.{ .label = "Rule set name" }},
+        .advanced_event_params => &.{ .{ .label = "Rule name" }, .{ .label = "Maximum occurrences", .hint = "0 means unlimited" }, .{ .label = "Interval seconds", .hint = "0 means any interval" } },
+        .advanced_rule_settings => &.{ .{ .label = "Rule name" }, .{ .label = "Enabled", .kind = .choice }, .{ .label = "Case-sensitive match", .kind = .choice } },
         .notifications => &.{ .{ .label = "Nickname", .hint = "Nickname or * pattern" }, .{ .label = "User mask", .hint = "*" }, .{ .label = "Host mask", .hint = "*" }, .{ .label = "Network", .hint = "Optional server" }, .{ .label = "Delivery", .kind = .choice } },
         .file_transfer => &.{ .{ .label = "Direction", .kind = .choice }, .{ .label = "Member" }, .{ .label = "File or save path" }, .{ .label = "Address / size", .hint = "IPv4 when sending" }, .{ .label = "Port / status", .hint = "Port when sending" } },
         .open_conversation => &.{.{ .label = "Conversation file", .hint = "Path to a .ccc file" }},
         .save_conversation => &.{.{ .label = "Conversation file", .hint = "Save as .ccc" }},
         .export_image => &.{.{ .label = "Image file", .hint = "Export as .png" }},
+        .open_locator => &.{.{ .label = "Locator file", .hint = "Path to a .ccr file" }},
+        .recent_files => &.{ .{ .label = "Recent conversation", .hint = "Most recent path; edit to choose another" }, .{ .label = "Action", .kind = .choice } },
+        .favorite_rooms => &.{ .{ .label = "Room", .hint = "#room" }, .{ .label = "Action", .kind = .choice } },
+        .print_preview => &.{ .{ .label = "PDF file", .hint = "Save printable preview as .pdf" }, .{ .label = "Action", .kind = .choice } },
+        .connection_features => &.{ .{ .label = "Transport", .kind = .readonly }, .{ .label = "Authentication", .kind = .readonly }, .{ .label = "IRCX", .kind = .readonly }, .{ .label = "Enabled IRCv3 capabilities", .kind = .readonly } },
         .motd => &.{.{ .label = "Message of the day", .hint = "Server supplied", .kind = .readonly }},
         .invitation => &.{ .{ .label = "Room" }, .{ .label = "Invitation note" } },
         .about => &.{ .{ .label = "ComicChat", .hint = "Portable Zig client", .kind = .readonly }, .{ .label = "License", .hint = "AGPL-3.0-or-later", .kind = .readonly } },
@@ -246,13 +268,18 @@ pub fn choiceOptions(id: Id, index: usize) []const []const u8 {
         else
             &.{},
         .ircx_events => if (index == 0) &.{ "List", "Add", "Delete" } else &.{},
+        .rule_sets => if (index == 0) &.{ "Create", "Rename", "Assign rule", "Advanced limits", "Advanced matching", "Import", "Export" } else &.{},
+        .advanced_rule_settings => if (index == 1 or index == 2) &.{ "Yes", "No" } else &.{},
+        .recent_files => if (index == 1) &.{ "Open", "Remove from list" } else &.{},
+        .favorite_rooms => if (index == 1) &.{ "Join", "Add current room", "Remove" } else &.{},
+        .print_preview => if (index == 1) &.{ "Save PDF", "Save PDF and open", "Save PDF and print" } else &.{},
         else => &.{},
     };
 }
 
 pub fn requiresInput(id: Id) bool {
     return switch (id) {
-        .about, .motd, .comics_view, .automation, .rules, .rule_sets, .notifications, .notification_users, .servers, .settings, .setup, .room_list, .ircx_properties, .room_access, .ircx_events => false,
+        .about, .motd, .comics_view, .automation, .rules, .rule_sets, .notifications, .notification_users, .servers, .settings, .setup, .room_list, .recent_files, .favorite_rooms, .ircx_properties, .room_access, .ircx_events, .connection_features => false,
         else => true,
     };
 }
@@ -274,6 +301,10 @@ pub fn primaryLabel(id: Id) []const u8 {
         .open_conversation => "Open",
         .save_conversation => "Save",
         .export_image => "Export",
+        .open_locator => "Open locator",
+        .recent_files => "Apply",
+        .favorite_rooms => "Apply",
+        .print_preview => "Create PDF",
         .away => "Set Away",
         .automation, .rules, .edit_rule, .rule_sets, .add_to_sets, .rename_loaded_set, .rename_set, .create_set, .advanced_event_params, .advanced_rule_settings => "Save rule",
         .notifications, .notification_users => "Save notifications",
@@ -282,13 +313,13 @@ pub fn primaryLabel(id: Id) []const u8 {
         .ircx_events => "Apply event action",
         .call_link => "Send call link",
         .member_profile => "Request profile",
-        .about, .motd => "Close",
+        .about, .motd, .connection_features => "Close",
         else => "OK",
     };
 }
 
 test "registry covers all forty Microsoft dialog templates plus portable dialogs" {
-    try std.testing.expectEqual(@as(usize, 48), specs.len);
+    try std.testing.expectEqual(@as(usize, 53), specs.len);
     try std.testing.expectEqual(@as(usize, 40), microsoft_dialog_count);
     var seen: [specs.len]bool = @splat(false);
     for (specs) |spec| {

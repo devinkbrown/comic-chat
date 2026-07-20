@@ -5,6 +5,7 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const strip = b.option(bool, "strip", "Strip symbols and build-path debug metadata") orelse false;
     const onyx_build_info = b.addOptions();
     onyx_build_info.addOption([]const u8, "git_commit", "06bb350");
     onyx_build_info.addOption([]const u8, "version", "0.5.6");
@@ -36,6 +37,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+            .strip = strip,
             .imports = &.{
                 .{ .name = "comicchat", .module = mod },
             },
