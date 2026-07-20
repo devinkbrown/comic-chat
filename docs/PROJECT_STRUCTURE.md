@@ -19,7 +19,7 @@ not vendored here.
 
 ## Releases
 
-The published `comicchat-portable-2026-07-19.2` release provides x86_64 Windows,
+The published `comicchat-portable-2026-07-20.1` release provides x86_64 Windows,
 Linux, FreeBSD, and OpenBSD binary packages, a source archive with the pinned
 Onyx TLS submodule expanded, and a SHA-256 manifest.
 The source archive is the self-contained distribution artifact; a repository

@@ -135,7 +135,7 @@ env -u WAYLAND_DISPLAY zig build run -- window anna
 
 ## Release packages
 
-The current published release is `comicchat-portable-2026-07-19.2`.
+The current published release is `comicchat-portable-2026-07-20.1`.
 It contains x86_64 binary packages for Windows, Linux, FreeBSD, and OpenBSD,
 an explicit buildable source archive, and a single SHA-256 manifest covering
 all five artifacts. The source archive includes the pinned Onyx TLS submodule,
@@ -144,18 +144,19 @@ so it can be built after extraction without a separate submodule checkout.
 Verify downloaded artifacts before use:
 
 ```sh
-sha256sum -c comicchat-unofficial-modern-builds-2026-07-SHA256SUMS.txt
+sha256sum -c comicchat-portable-2026-07-20.1-SHA256SUMS.txt
 ```
 
 To build the binary archives from a clean checkout:
 
 ```sh
-./tools/package-release.sh unofficial-modern-builds-2026-07
+./tools/package-release.sh portable-2026-07-20.1
 ```
 
 Each archive contains the executable, this README, the AGPL license, and
-third-party notices. Comic characters, backdrops, face expressions, and fonts
-are embedded in the binary.
+third-party notices. The explicit source archive expands the exact pinned Onyx
+TLS submodule and builds without a second checkout. Comic characters,
+backdrops, face expressions, and fonts are embedded in the binaries.
 `comicchat app <nick>` defaults to the `eshmaki.me` server and `#root` channel;
 pass a host and/or channel to override either default.
 

@@ -1,6 +1,6 @@
 # Portable ComicChat Completeness Audit
 
-**Date:** 2026-07-19  
+**Date:** 2026-07-20
 **Scope:** the complete repository, with product reachability evaluated from
 the portable executable rather than inferred from module or test existence.
 
@@ -31,7 +31,7 @@ This distinction is important:
 - The portable tree contains 82 files under `src/`. `src/root.zig:68-118`
   explicitly references every portable module and the four source-parity test
   modules so their inline tests are compiled and run.
-- The current release test gate reports 373 passed tests and one intentionally
+- The current release test gate reports 395 passed tests and one intentionally
   skipped platform-conditional test.
 - Native Linux plus x86_64 Windows, FreeBSD, and OpenBSD release builds pass.
 - The published source archive includes the source tree and the exact pinned
