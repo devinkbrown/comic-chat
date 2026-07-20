@@ -97,11 +97,13 @@ pub const DialogLayout = struct {
         return .{ .x = self.rect.x + 24, .y = self.fieldLabelY(index) + 18, .w = self.rect.w - 48, .h = 30 };
     }
 
-    pub fn fieldIndexAt(self: DialogLayout, y: i32) ?usize {
+    pub fn fieldIndexAt(self: DialogLayout, x: i32, y: i32) ?usize {
         if (y < self.body_y or y >= self.rect.bottom() - 43) return null;
         const raw = @divTrunc(y - self.body_y, self.row_h);
         if (raw < 0 or raw >= self.field_count) return null;
-        return @intCast(raw);
+        const index: usize = @intCast(raw);
+        if (!contains(self.fieldRect(index), x, y)) return null;
+        return index;
     }
 };
 
@@ -224,6 +226,32 @@ pub fn drawField(c: *Canvas, x: i32, y: i32, width: i32, active: bool) void {
     if (active) c.fillRect(x + 1, y + 7, 3, 16, Theme.accent);
 }
 
+pub fn drawChoiceField(c: *Canvas, x: i32, y: i32, width: i32, active: bool) void {
+    drawRoundedBorder(c, x, y, width, 30, 7, if (active) Theme.layer else Theme.chrome, if (active) Theme.accent else Theme.divider);
+    c.fillRect(x + width - 34, y + 5, 1, 20, Theme.divider);
+    const cx = x + width - 17;
+    c.drawLine(cx - 4, y + 12, cx, y + 16, Theme.secondary);
+    c.drawLine(cx, y + 16, cx + 4, y + 12, Theme.secondary);
+}
+
+pub fn drawListField(c: *Canvas, x: i32, y: i32, width: i32, active: bool) void {
+    drawRoundedBorder(c, x, y, width, 30, 7, if (active) Theme.layer else Theme.chrome, if (active) Theme.accent else Theme.divider);
+    fillRoundedRect(c, x + 8, y + 8, 14, 14, 4, Theme.accent_soft);
+    c.fillRect(x + 12, y + 11, 7, 2, Theme.accent);
+    c.fillRect(x + 12, y + 16, 7, 2, Theme.accent);
+}
+
+pub fn drawPreviewField(c: *Canvas, x: i32, y: i32, width: i32) void {
+    drawRoundedBorder(c, x, y, width, 30, 7, Theme.chrome, Theme.divider);
+    fillRoundedRect(c, x + 8, y + 7, 30, 16, 5, Theme.accent);
+    fillRoundedRect(c, x + 43, y + 7, 20, 16, 5, Theme.accent_soft);
+}
+
+pub fn drawReadonlyField(c: *Canvas, x: i32, y: i32, width: i32) void {
+    fillRoundedRect(c, x, y, width, 30, 7, Theme.subtle);
+    fillRoundedRect(c, x + 9, y + 11, 8, 8, 4, Theme.success);
+}
+
 /// A compact command tile for icon-only tools.  The top ink mark is the
 /// Comic Chat signature: selected modes read at a glance without a bulky
 /// native-toolbar bevel.
@@ -300,10 +328,10 @@ pub fn drawStatusTab(c: *Canvas, rect: Rect) void {
     fillRoundedRect(c, rect.x + 8, rect.y + 6, 96, rect.h - 12, 8, Theme.subtle);
 }
 
-pub fn drawMemberCard(c: *Canvas, rect: Rect, selected: bool, departed: bool) void {
+pub fn drawMemberCard(c: *Canvas, rect: Rect, selected: bool, departed: bool, hovered: bool) void {
     const card = Rect{ .x = rect.x + 4, .y = rect.y + 4, .w = rect.w - 8, .h = rect.h - 8 };
     if (selected) fillRoundedRect(c, card.x + 2, card.y + 3, card.w, card.h, 9, Theme.shadow);
-    drawRoundedBorder(c, card.x, card.y, card.w, card.h, 9, if (selected) Theme.accent_soft else Theme.layer, if (selected) Theme.accent else Theme.divider);
+    drawRoundedBorder(c, card.x, card.y, card.w, card.h, 9, if (selected) Theme.accent_soft else if (hovered) Theme.chrome else Theme.layer, if (selected) Theme.accent else if (hovered) Theme.secondary else Theme.divider);
     fillRoundedRect(c, rect.x + 10, rect.y + 10, 7, 7, 4, if (departed) Theme.divider else Theme.success);
 }
 
@@ -345,15 +373,15 @@ pub fn drawTab(c: *Canvas, x: i32, y: i32, width: i32, height: i32, selected: bo
     }
 }
 
-pub fn drawActionTile(c: *Canvas, x: i32, y: i32, width: i32, height: i32, selected: bool) u32 {
+pub fn drawActionTile(c: *Canvas, x: i32, y: i32, width: i32, height: i32, selected: bool, hovered: bool) u32 {
     const inset = Rect{ .x = x + 5, .y = y + 7, .w = width - 10, .h = height - 14 };
     if (selected) {
         fillRoundedRect(c, inset.x + 2, inset.y + 3, inset.w, inset.h, 9, Theme.shadow);
         drawRoundedBorder(c, inset.x, inset.y, inset.w, inset.h, 9, Theme.accent, Theme.accent);
         return Theme.layer;
     }
-    drawRoundedBorder(c, inset.x, inset.y, inset.w, inset.h, 9, Theme.layer, Theme.divider);
-    return Theme.secondary;
+    drawRoundedBorder(c, inset.x, inset.y, inset.w, inset.h, 9, if (hovered) Theme.accent_soft else Theme.layer, if (hovered) Theme.accent else Theme.divider);
+    return if (hovered) Theme.accent else Theme.secondary;
 }
 
 pub fn drawFocusRing(c: *Canvas, rect: Rect) void {
@@ -371,8 +399,10 @@ pub fn drawComposerField(c: *Canvas, rect: Rect, focused: bool) void {
     if (focused) fillRoundedRect(c, field.x + 1, field.y + 9, 3, field.h - 18, 2, Theme.accent);
 }
 
-pub fn drawStepper(c: *Canvas, rect: Rect) void {
+pub fn drawStepper(c: *Canvas, rect: Rect, decrease_hovered: bool, increase_hovered: bool) void {
     drawRoundedBorder(c, rect.x, rect.y, rect.w, rect.h, 8, Theme.layer, Theme.divider);
+    if (decrease_hovered) fillRoundedRect(c, rect.x + 1, rect.y + 1, 29, rect.h - 2, 7, Theme.accent_soft);
+    if (increase_hovered) fillRoundedRect(c, rect.right() - 30, rect.y + 1, 29, rect.h - 2, 7, Theme.accent_soft);
     c.fillRect(rect.x + 30, rect.y + 5, 1, rect.h - 10, Theme.divider);
     c.fillRect(rect.right() - 31, rect.y + 5, 1, rect.h - 10, Theme.divider);
 }
@@ -386,8 +416,8 @@ pub fn drawMessageRow(c: *Canvas, rect: Rect, nick: []const u8, text: []const u8
     drawEllipsized(c, text, rect.x + nick_w + 14, rect.y + 3, rect.w - nick_w - 24, Theme.ink);
 }
 
-pub fn drawMemberRow(c: *Canvas, rect: Rect, label: []const u8, selected: bool, departed: bool) void {
-    if (selected) fillRoundedRect(c, rect.x + 3, rect.y - 1, rect.w - 6, 23, 4, Theme.accent_soft);
+pub fn drawMemberRow(c: *Canvas, rect: Rect, label: []const u8, selected: bool, departed: bool, hovered: bool) void {
+    if (selected or hovered) fillRoundedRect(c, rect.x + 3, rect.y - 1, rect.w - 6, 23, 6, if (selected) Theme.accent_soft else Theme.chrome);
     fillRoundedRect(c, rect.x + 8, rect.y + 5, 8, 8, 4, if (departed) Theme.divider else Theme.success);
     drawEllipsized(c, label, rect.x + 24, rect.y, rect.w - 30, if (departed) Theme.secondary else Theme.ink);
 }
@@ -429,13 +459,13 @@ pub fn statusTone(status: []const u8) NoticeTone {
 
 pub fn drawEmptyState(c: *Canvas, x: i32, y: i32, width: i32, height: i32, detail: []const u8, requested_columns: u8) void {
     c.fillRect(x, y, width, height, Theme.workspace);
-    if (width < 320 or height < 220) {
+    if (width < 360 or height < 170) {
         const label = "Type a message to start the scene";
         drawEllipsized(c, label, x + 16, y + @max(8, @divTrunc(height - 17, 2)), width - 32, Theme.secondary);
         return;
     }
     const page_w = @min(620, @max(280, width - 56));
-    const page_h = @min(390, @max(210, height - 48));
+    const page_h = @min(390, @max(170, height - 32));
     const page_x = x + @divTrunc(width - page_w, 2);
     const page_y = y + @divTrunc(height - page_h, 2);
     drawSurface(c, .{ .x = page_x, .y = page_y, .w = page_w, .h = page_h }, .raised);
@@ -454,17 +484,19 @@ pub fn drawEmptyState(c: *Canvas, x: i32, y: i32, width: i32, height: i32, detai
     const inner_x = page_x + 16;
     const inner_y = page_y + 58;
     const inner_w = page_w - 32;
-    const panel_h = page_h - 132;
+    const available_panel_h = page_h - 132;
     const panel_w = @divTrunc(inner_w - (columns - 1) * gutter, columns);
+    const panel_h = @min(available_panel_h, panel_w);
+    const panels_y = inner_y + @divTrunc(available_panel_h - panel_h, 2);
     var column: i32 = 0;
     while (column < columns) : (column += 1) {
         const panel_x = inner_x + column * (panel_w + gutter);
         const actual_w = if (column == columns - 1) inner_x + inner_w - panel_x else panel_w;
-        drawRoundedBorder(c, panel_x, inner_y, actual_w, panel_h, 5, if (column == 0) Theme.layer else Theme.chrome, Theme.paper_ink);
-        fillRoundedRect(c, panel_x + 10, inner_y + 10, 20, 5, 3, if (column == 0) Theme.accent else Theme.divider);
+        drawRoundedBorder(c, panel_x, panels_y, actual_w, panel_h, 5, if (column == 0) Theme.layer else Theme.chrome, Theme.paper_ink);
+        fillRoundedRect(c, panel_x + 10, panels_y + 10, 20, 5, 3, if (column == 0) Theme.accent else Theme.divider);
         var number_buf: [8]u8 = undefined;
         const number = std.fmt.bufPrint(&number_buf, "{d}", .{column + 1}) catch "1";
-        _ = c.drawUiText(number, panel_x + actual_w - Canvas.uiTextWidth(number) - 9, inner_y + 6, Theme.secondary);
+        _ = c.drawUiText(number, panel_x + actual_w - Canvas.uiTextWidth(number) - 9, panels_y + 6, Theme.secondary);
     }
 
     const prompt_y = page_y + page_h - 57;
@@ -507,6 +539,8 @@ test "dialog layout keeps fields and actions inside the modal" {
     const last_field = layout.fieldRect(2);
     try std.testing.expect(last_field.y > layout.fieldRect(0).y);
     try std.testing.expect(last_field.y + last_field.h < layout.primary.y);
+    try std.testing.expectEqual(@as(?usize, 2), layout.fieldIndexAt(last_field.x + 2, last_field.y + 2));
+    try std.testing.expectEqual(@as(?usize, null), layout.fieldIndexAt(layout.rect.x + 2, last_field.y + 2));
 }
 
 test "semantic feedback primitives classify status and button targets" {

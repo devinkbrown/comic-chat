@@ -24,8 +24,8 @@ const Canvas = canvas_mod.Canvas;
 const Rect = geometry.Rect;
 const TextSelection = input_mod.Editor.Selection;
 
-pub const min_width: u32 = 320;
-pub const min_height: u32 = 240;
+pub const min_width: u32 = 640;
+pub const min_height: u32 = 480;
 
 pub const Action = union(enum) {
     none,
@@ -47,6 +47,7 @@ const divider = ui.Theme.divider;
 const accent = ui.Theme.accent;
 const accent_soft = ui.Theme.accent_soft;
 const focus_color = ui.Theme.focus;
+const ColumnControlHover = enum { decrease, increase };
 
 pub const View = struct {
     gpa: std.mem.Allocator,
@@ -59,6 +60,9 @@ pub const View = struct {
     hovered_menu: ?u8 = null,
     hovered_menu_item: ?u8 = null,
     hovered_toolbar: ?u8 = null,
+    hovered_say_action: ?u8 = null,
+    hovered_column_control: ?ColumnControlHover = null,
+    hovered_member: ?usize = null,
     emotion_dragging: bool = false,
     dialog_editors: [3]input_mod.Editor,
     dialog_field: usize = 0,
@@ -136,6 +140,9 @@ pub const View = struct {
         self.dialog_field = 0;
         self.dialog_notice = "";
         self.hovered_dialog_button = null;
+        self.hovered_say_action = null;
+        self.hovered_column_control = null;
+        self.hovered_member = null;
         self.active_dialog = id;
     }
 
@@ -160,11 +167,14 @@ pub const View = struct {
         if (self.active_dialog) |id| {
             const dialog_layout = dialogLayout(self.canvas.width, self.canvas.height, dialogs.get(id));
             const next = ui.dialogButtonAt(dialog_layout, pointer.x, pointer.y);
-            const changed = self.hovered_dialog_button != next or self.hovered_menu != null or self.hovered_toolbar != null;
+            const changed = self.hovered_dialog_button != next or self.hovered_menu != null or self.hovered_toolbar != null or self.hovered_say_action != null or self.hovered_column_control != null or self.hovered_member != null;
             self.hovered_dialog_button = next;
             self.hovered_menu = null;
             self.hovered_menu_item = null;
             self.hovered_toolbar = null;
+            self.hovered_say_action = null;
+            self.hovered_column_control = null;
+            self.hovered_member = null;
             return changed;
         }
         if (self.active_menu) |menu| {
@@ -172,18 +182,24 @@ pub const View = struct {
             const target = hit_test.shell(layout, self.shell.content_mode == .comic, pointer.x, pointer.y, member_count);
             if (target == .menu) {
                 const next_menu = target.menu;
-                const changed = self.active_menu != next_menu or self.hovered_menu != next_menu or self.hovered_menu_item != null;
+                const changed = self.active_menu != next_menu or self.hovered_menu != next_menu or self.hovered_menu_item != null or self.hovered_say_action != null or self.hovered_column_control != null or self.hovered_member != null;
                 self.active_menu = next_menu;
                 self.hovered_menu = next_menu;
                 self.hovered_menu_item = null;
                 self.hovered_toolbar = null;
+                self.hovered_say_action = null;
+                self.hovered_column_control = null;
+                self.hovered_member = null;
                 return changed;
             }
             const item = menuPopupItem(menu, pointer.x, pointer.y);
-            const changed = self.hovered_menu_item != item or self.hovered_menu != null or self.hovered_toolbar != null;
+            const changed = self.hovered_menu_item != item or self.hovered_menu != null or self.hovered_toolbar != null or self.hovered_say_action != null or self.hovered_column_control != null or self.hovered_member != null;
             self.hovered_menu_item = item;
             self.hovered_menu = null;
             self.hovered_toolbar = null;
+            self.hovered_say_action = null;
+            self.hovered_column_control = null;
+            self.hovered_member = null;
             return changed;
         }
         const comic_mode = self.shell.content_mode == .comic;
@@ -196,15 +212,33 @@ pub const View = struct {
         return switch (target) {
             .menu => |index| self.setHover(index, null),
             .toolbar => |index| self.setHover(null, index),
+            .say_action => |index| self.setContentHover(index, null, null),
+            .comic_columns_decrease => self.setContentHover(null, .decrease, null),
+            .comic_columns_increase => self.setContentHover(null, .increase, null),
+            .member => |index| self.setContentHover(null, null, index),
             else => self.setHover(null, null),
         };
     }
 
     fn setHover(self: *View, menu: ?u8, toolbar: ?u8) bool {
-        const changed = self.hovered_menu != menu or self.hovered_menu_item != null or self.hovered_toolbar != toolbar;
+        const changed = self.hovered_menu != menu or self.hovered_menu_item != null or self.hovered_toolbar != toolbar or self.hovered_say_action != null or self.hovered_column_control != null or self.hovered_member != null;
         self.hovered_menu = menu;
         self.hovered_menu_item = null;
         self.hovered_toolbar = toolbar;
+        self.hovered_say_action = null;
+        self.hovered_column_control = null;
+        self.hovered_member = null;
+        return changed;
+    }
+
+    fn setContentHover(self: *View, say_action: ?u8, column_control: ?ColumnControlHover, member: ?usize) bool {
+        const changed = self.hovered_menu != null or self.hovered_menu_item != null or self.hovered_toolbar != null or self.hovered_say_action != say_action or self.hovered_column_control != column_control or self.hovered_member != member;
+        self.hovered_menu = null;
+        self.hovered_menu_item = null;
+        self.hovered_toolbar = null;
+        self.hovered_say_action = say_action;
+        self.hovered_column_control = column_control;
+        self.hovered_member = member;
         return changed;
     }
 
@@ -236,7 +270,7 @@ pub const View = struct {
             .tab => {
                 if (field_count > 0) self.dialog_field = (self.dialog_field + 1) % field_count;
             },
-            .char => |ch| if (dialogs.acceptsText(id) and editor.text().len < 512) try editor.insert(ch),
+            .char => |ch| if (dialogs.fieldAcceptsText(id, self.dialog_field) and editor.text().len < 512) try editor.insert(ch),
             .backspace => editor.backspace(),
             .delete => editor.delete(),
             .left => editor.left(),
@@ -267,8 +301,12 @@ pub const View = struct {
                     },
                 }
             }
-            if (dialog_layout.fieldIndexAt(pointer.y)) |index| {
-                if (index < self.dialog_editors.len) self.dialog_field = index;
+            if (dialog_layout.fieldIndexAt(pointer.x, pointer.y)) |index| {
+                if (index < self.dialog_editors.len) {
+                    self.dialog_field = index;
+                    const field = dialogs.fields(id)[index];
+                    if (field.kind == .choice) self.cycleDialogChoice(id, index);
+                }
             }
             return .none;
         }
@@ -357,6 +395,21 @@ pub const View = struct {
         };
     }
 
+    fn cycleDialogChoice(self: *View, id: dialogs.Id, index: usize) void {
+        const options = dialogs.choiceOptions(id, index);
+        if (options.len == 0 or index >= self.dialog_editors.len) return;
+        const editor = &self.dialog_editors[index];
+        var next: usize = 0;
+        for (options, 0..) |option, option_index| {
+            if (std.mem.eql(u8, editor.text(), option)) {
+                next = (option_index + 1) % options.len;
+                break;
+            }
+        }
+        editor.clear();
+        editor.paste(options[next]) catch {};
+    }
+
     fn setEmotionFromPoint(self: *View, layout: geometry.Layout, x: i32, y: i32) bool {
         const dial = emotionDialRect(emotionWheelRect(layout));
         if (dial.w < 72 or dial.h < 72 or !ui.contains(dial, x, y)) return false;
@@ -402,7 +455,7 @@ pub const View = struct {
 
         drawMenuBar(&self.canvas, layout.menu, self.active_menu, self.hovered_menu);
         drawToolBar(&self.canvas, layout.toolbar, comic_mode, self.hovered_toolbar);
-        drawTabBar(&self.canvas, layout, tabs, active_tab, self.shell.focus == .navigation, comic_mode, self.shell.comic_columns);
+        drawTabBar(&self.canvas, layout, tabs, active_tab, self.shell.focus == .navigation, comic_mode, self.shell.comic_columns, self.hovered_column_control);
         drawSplitters(&self.canvas, layout, comic_mode);
 
         if (comic_mode) {
@@ -410,17 +463,18 @@ pub const View = struct {
         } else {
             self.drawTextBuffer(layout.transcript, transcript);
         }
-        if (self.shell.show_members) {
+        if (layout.right.w > 0) {
             try self.drawMemberList(layout.members, transcript, comic_mode);
             if (comic_mode) try self.drawBodyCamera(layout.body_camera, transcript);
         }
-        drawSayWindow(&self.canvas, layout, input, cursor, selection, self.shell.focus == .composer, self.shell.say_mode);
+        drawSayWindow(&self.canvas, layout, input, cursor, selection, self.shell.focus == .composer, self.shell.say_mode, self.hovered_say_action);
         drawStatusBar(&self.canvas, layout.status, self.hoveredToolbarLabel() orelse status, transcript.roster.items.len);
 
         if (self.shell.focus == .transcript) drawFocus(&self.canvas, layout.transcript);
         if (self.shell.focus == .members) drawFocus(&self.canvas, layout.members);
         if (self.shell.focus == .emotion) drawFocus(&self.canvas, layout.body_camera);
         if (self.hovered_toolbar) |index| drawToolbarTooltip(&self.canvas, layout, index);
+        if (self.hovered_say_action) |index| drawSayActionTooltip(&self.canvas, layout, index);
         if (self.active_menu) |menu| drawMenuPopup(&self.canvas, menu, self.hovered_menu_item);
         if (self.active_dialog) |id| drawDialog(&self.canvas, dialogs.get(id), &self.dialog_editors, self.dialog_field, self.dialog_notice, self.hovered_dialog_button);
     }
@@ -452,13 +506,13 @@ pub const View = struct {
             .focused = index == active_tab and self.shell.focus == .navigation,
         });
         snapshot.append(.{ .id = "transcript", .role = .transcript, .bounds = layout.transcript, .label = "Conversation", .focused = self.shell.focus == .transcript });
-        if (self.shell.show_members) snapshot.append(.{ .id = "members", .role = .member_list, .bounds = layout.members, .label = "Members", .focused = self.shell.focus == .members });
+        if (layout.right.w > 0) snapshot.append(.{ .id = "members", .role = .member_list, .bounds = layout.members, .label = "Members", .focused = self.shell.focus == .members });
         snapshot.append(.{ .id = "composer", .role = .composer, .bounds = layout.say_editor, .label = "Message", .focused = self.shell.focus == .composer });
         var action_index: i32 = 0;
         while (action_index < geometry.say_button_count) : (action_index += 1) snapshot.append(.{
             .id = "say-action",
             .role = .say_action,
-            .bounds = .{ .x = layout.say_actions.x + action_index * geometry.say_button_size, .y = layout.say_actions.y, .w = geometry.say_button_size, .h = layout.say_actions.h },
+            .bounds = .{ .x = layout.say_actions.x + action_index * layout.say_action_size, .y = layout.say_actions.y, .w = layout.say_action_size, .h = layout.say_actions.h },
             .label = sayActionLabel(@intCast(action_index)),
             .selected = @as(i32, @intFromEnum(self.shell.say_mode)) == action_index,
         });
@@ -560,7 +614,8 @@ pub const View = struct {
         var y = content.y + 7;
         for (transcript.roster.items, 0..) |member, index| {
             if (y + 24 > content.bottom()) break;
-            ui.drawMemberRow(&self.canvas, .{ .x = content.x, .y = y, .w = content.w, .h = 24 }, member.nick, member.is_self or self.shell.selected_member == index, member.departed);
+            const selected = if (self.shell.selected_member) |selected_index| selected_index == index else member.is_self;
+            ui.drawMemberRow(&self.canvas, .{ .x = content.x, .y = y, .w = content.w, .h = 24 }, member.nick, selected, member.departed, self.hovered_member == index);
             y += 24;
         }
     }
@@ -568,7 +623,7 @@ pub const View = struct {
     fn drawMemberIcons(self: *View, rect: Rect, transcript: *const session.Transcript) !void {
         const columns = @max(1, @divTrunc(rect.w, 88));
         const cell_w = @divTrunc(rect.w, columns);
-        const cell_h: i32 = 72;
+        const cell_h: i32 = 82;
         for (transcript.roster.items, 0..) |member, index| {
             const column: i32 = @intCast(index % @as(usize, @intCast(columns)));
             const row: i32 = @intCast(index / @as(usize, @intCast(columns)));
@@ -579,17 +634,18 @@ pub const View = struct {
                 .h = cell_h,
             };
             if (cell.bottom() > rect.bottom()) break;
-            ui.drawMemberCard(&self.canvas, cell, member.is_self or self.shell.selected_member == index, member.departed);
+            const selected = if (self.shell.selected_member) |selected_index| selected_index == index else member.is_self;
+            ui.drawMemberCard(&self.canvas, cell, selected, member.departed, self.hovered_member == index);
             const avatar = strip.avatarByName(member.avatar) orelse continue;
             var icon = bgb.decodeIcon(self.gpa, avatar) catch continue;
             defer icon.deinit(self.gpa);
-            blitHeightBottomAlpha(&self.canvas, icon.pixels, icon.width, icon.height, cell.x + @divTrunc(cell.w - 40, 2), cell.y + 7, 40, 40);
+            blitHeightBottomAlphaSmooth(&self.canvas, icon.pixels, icon.width, icon.height, cell.x + @divTrunc(cell.w - 52, 2), cell.y + 6, 52, 52);
             const name_w = Canvas.uiTextWidth(member.nick);
             drawTextEllipsized(
                 &self.canvas,
                 member.nick,
                 cell.x + @max(3, @divTrunc(cell.w - name_w, 2)),
-                cell.y + 47,
+                cell.y + 59,
                 cell.w - 6,
                 if (member.departed) secondary else ink,
             );
@@ -606,8 +662,16 @@ pub const View = struct {
         const body_h = @max(0, rect.h - wheel_side);
 
         var avatar_name: []const u8 = "anna";
-        for (transcript.roster.items) |member| if (member.is_self) {
+        var character_name: []const u8 = "Character";
+        if (self.shell.selected_member) |selected_index| {
+            if (selected_index < transcript.roster.items.len) {
+                const member = transcript.roster.items[selected_index];
+                avatar_name = member.avatar;
+                character_name = member.nick;
+            }
+        } else for (transcript.roster.items) |member| if (member.is_self) {
             avatar_name = member.avatar;
+            character_name = member.nick;
             break;
         };
         const avb_data = strip.avatarByName(avatar_name) orelse return;
@@ -619,7 +683,7 @@ pub const View = struct {
             break :selected detailed.image;
         };
         defer rendered.deinit(self.gpa);
-        blitHeightBottomAlpha(
+        blitHeightBottomAlphaSmooth(
             &self.canvas,
             rendered.pixels,
             rendered.width,
@@ -632,7 +696,9 @@ pub const View = struct {
         if (wheel_side > 0) drawEmotionWheel(&self.canvas, emotionWheelRectFromPane(rect), self.shell.emotion_x, self.shell.emotion_y);
         // Avatar pixels can be opaque even around the figure. Draw the card
         // header last so it remains legible on every source avatar.
-        ui.drawPaneHeader(&self.canvas, rect, "Character");
+        var header_buf: [96]u8 = undefined;
+        const header = std.fmt.bufPrint(&header_buf, "Character  /  {s}", .{character_name}) catch "Character";
+        ui.drawPaneHeader(&self.canvas, rect, header);
     }
 
     fn invokeMenuItem(self: *View, menu: u8, item: u8) void {
@@ -977,7 +1043,7 @@ fn drawToolbarSeparator(c: *Canvas, x: i32, rect: Rect) i32 {
     return ui.drawToolbarSeparator(c, x, rect);
 }
 
-fn drawTabBar(c: *Canvas, layout: geometry.Layout, tabs: []const View.Tab, active: usize, focused: bool, comic_mode: bool, comic_columns: u8) void {
+fn drawTabBar(c: *Canvas, layout: geometry.Layout, tabs: []const View.Tab, active: usize, focused: bool, comic_mode: bool, comic_columns: u8, column_hover: ?ColumnControlHover) void {
     const rect = layout.tabs;
     ui.drawTabStrip(c, rect);
     const status_w: i32 = 108;
@@ -999,12 +1065,12 @@ fn drawTabBar(c: *Canvas, layout: geometry.Layout, tabs: []const View.Tab, activ
         }
         if (focused and index == active) drawFocus(c, .{ .x = x, .y = rect.y + 2, .w = width, .h = rect.h - 2 });
     }
-    if (comic_mode and layout.transcript.w >= 430) drawComicColumnControl(c, layout, comic_columns);
+    if (comic_mode and layout.transcript.w >= 430) drawComicColumnControl(c, layout, comic_columns, column_hover);
 }
 
-fn drawComicColumnControl(c: *Canvas, layout: geometry.Layout, columns: u8) void {
+fn drawComicColumnControl(c: *Canvas, layout: geometry.Layout, columns: u8, hovered: ?ColumnControlHover) void {
     const control = geometry.comicColumnControl(layout);
-    ui.drawStepper(c, control);
+    ui.drawStepper(c, control, hovered == .decrease, hovered == .increase);
     const minus = geometry.comicColumnDecrease(layout);
     const plus = geometry.comicColumnIncrease(layout);
     c.drawLine(minus.x + 10, minus.y + 13, minus.x + 19, minus.y + 13, secondary);
@@ -1034,7 +1100,7 @@ fn drawSplitters(c: *Canvas, layout: geometry.Layout, comic_mode: bool) void {
     if (comic_mode) ui.drawSplitter(c, .{ .x = layout.right.x, .y = layout.members.bottom(), .w = layout.right.w, .h = geometry.splitter });
 }
 
-fn drawSayWindow(c: *Canvas, layout: geometry.Layout, input: []const u8, cursor: usize, selection: ?TextSelection, focused: bool, say_mode: shell_mod.SayMode) void {
+fn drawSayWindow(c: *Canvas, layout: geometry.Layout, input: []const u8, cursor: usize, selection: ?TextSelection, focused: bool, say_mode: shell_mod.SayMode, hovered_action: ?u8) void {
     const edit = layout.say_editor;
     ui.drawComposerSurface(c, layout.say);
     ui.drawComposerField(c, edit, focused);
@@ -1058,11 +1124,20 @@ fn drawSayWindow(c: *Canvas, layout: geometry.Layout, input: []const u8, cursor:
     var x = layout.say_actions.x;
     for (glyphs, 0..) |glyph, index| {
         const selected = @intFromEnum(say_mode) == index;
-        const glyph_color = ui.drawActionTile(c, x, layout.say_actions.y, geometry.say_button_size, layout.say_actions.h, selected);
-        drawSayGlyph(c, glyph, x + 15, layout.say_actions.y + 18, glyph_color);
-        x += geometry.say_button_size;
+        const glyph_color = ui.drawActionTile(c, x, layout.say_actions.y, layout.say_action_size, layout.say_actions.h, selected, hovered_action == @as(u8, @intCast(index)));
+        drawSayGlyph(c, glyph, x + @divTrunc(layout.say_action_size - 16, 2), layout.say_actions.y + 18, glyph_color);
+        x += layout.say_action_size;
     }
     if (focused) drawFocus(c, layout.say);
+}
+
+fn drawSayActionTooltip(c: *Canvas, layout: geometry.Layout, index: u8) void {
+    if (index >= geometry.say_button_count) return;
+    const label = sayActionLabel(index);
+    const width = Canvas.uiTextWidth(label) + 20;
+    const action_x = layout.say_actions.x + @as(i32, index) * layout.say_action_size;
+    const x = std.math.clamp(action_x + @divTrunc(layout.say_action_size - width, 2), 6, @max(6, layout.transcript.right() - width - 6));
+    ui.drawTooltip(c, .{ .x = x, .y = layout.say.y - 34, .w = width, .h = 28 }, label);
 }
 
 const SayGlyph = enum { say, think, whisper, action, sound };
@@ -1133,21 +1208,63 @@ fn blitFit(c: *Canvas, src: []const u32, sw: u32, sh: u32, x: i32, y: i32, max_w
     }
 }
 
-fn blitHeightBottomAlpha(c: *Canvas, src: []const u32, sw: u32, sh: u32, x: i32, y: i32, area_w: i32, area_h: i32) void {
+fn blitHeightBottomAlphaSmooth(c: *Canvas, src: []const u32, sw: u32, sh: u32, x: i32, y: i32, area_w: i32, area_h: i32) void {
     if (sw == 0 or sh == 0 or area_w <= 0 or area_h <= 0) return;
-    const draw_h = area_h;
-    const draw_w: i32 = @max(1, @as(i32, @intCast(@divTrunc(@as(i64, sw) * draw_h, sh))));
+    var draw_h = area_h;
+    var draw_w: i32 = @max(1, @as(i32, @intCast(@divTrunc(@as(i64, sw) * draw_h, sh))));
+    if (draw_w > area_w) {
+        draw_w = area_w;
+        draw_h = @max(1, @as(i32, @intCast(@divTrunc(@as(i64, sh) * draw_w, sw))));
+    }
     const draw_x = x + @divTrunc(area_w - draw_w, 2);
+    const draw_y = y + area_h - draw_h;
     var oy: i32 = 0;
     while (oy < draw_h) : (oy += 1) {
-        const sy: u32 = @intCast(@divTrunc(@as(i64, oy) * sh, draw_h));
+        const sy_fp: u64 = if (draw_h <= 1 or sh <= 1) 0 else @intCast(@divTrunc(@as(i64, oy) * (@as(i64, sh) - 1) * 65536, draw_h - 1));
         var ox: i32 = 0;
         while (ox < draw_w) : (ox += 1) {
-            const sx: u32 = @intCast(@divTrunc(@as(i64, ox) * sw, draw_w));
-            const pixel = src[@as(usize, sy) * sw + sx];
-            if (pixel >> 24 != 0) c.set(draw_x + ox, y + oy, pixel);
+            const sx_fp: u64 = if (draw_w <= 1 or sw <= 1) 0 else @intCast(@divTrunc(@as(i64, ox) * (@as(i64, sw) - 1) * 65536, draw_w - 1));
+            const sample = bilinearAlphaSample(src, sw, sh, sx_fp, sy_fp);
+            if (sample.alpha != 0) c.blendPixel(draw_x + ox, draw_y + oy, sample.rgb, sample.alpha);
         }
     }
+}
+
+const AlphaSample = struct { rgb: u32, alpha: u32 };
+
+fn bilinearAlphaSample(src: []const u32, sw: u32, sh: u32, sx_fp: u64, sy_fp: u64) AlphaSample {
+    const x0: u32 = @intCast(@min(@as(u64, sw - 1), sx_fp >> 16));
+    const y0: u32 = @intCast(@min(@as(u64, sh - 1), sy_fp >> 16));
+    const x1 = @min(sw - 1, x0 + 1);
+    const y1 = @min(sh - 1, y0 + 1);
+    const fx = sx_fp & 0xffff;
+    const fy = sy_fp & 0xffff;
+    const one: u64 = 65536;
+    const weights = [_]u64{ (one - fx) * (one - fy), fx * (one - fy), (one - fx) * fy, fx * fy };
+    const pixels = [_]u32{
+        src[@as(usize, y0) * @as(usize, sw) + @as(usize, x0)],
+        src[@as(usize, y0) * @as(usize, sw) + @as(usize, x1)],
+        src[@as(usize, y1) * @as(usize, sw) + @as(usize, x0)],
+        src[@as(usize, y1) * @as(usize, sw) + @as(usize, x1)],
+    };
+    var weighted_alpha: u64 = 0;
+    var red: u64 = 0;
+    var green: u64 = 0;
+    var blue: u64 = 0;
+    for (pixels, weights) |pixel, weight| {
+        const alpha = @as(u64, pixel >> 24);
+        const alpha_weight = alpha * weight;
+        weighted_alpha += alpha_weight;
+        red += @as(u64, (pixel >> 16) & 0xff) * alpha_weight;
+        green += @as(u64, (pixel >> 8) & 0xff) * alpha_weight;
+        blue += @as(u64, pixel & 0xff) * alpha_weight;
+    }
+    if (weighted_alpha == 0) return .{ .rgb = 0, .alpha = 0 };
+    const alpha: u32 = @intCast(@min(@as(u64, 255), weighted_alpha >> 32));
+    const rgb = (@as(u32, @intCast(red / weighted_alpha)) << 16) |
+        (@as(u32, @intCast(green / weighted_alpha)) << 8) |
+        @as(u32, @intCast(blue / weighted_alpha));
+    return .{ .rgb = rgb, .alpha = alpha };
 }
 
 fn drawEmotionWheel(c: *Canvas, rect: Rect, selector_x: i16, selector_y: i16) void {
@@ -1172,13 +1289,11 @@ fn drawEmotionWheel(c: *Canvas, rect: Rect, selector_x: i16, selector_y: i16) vo
         const gx = cx + @divTrunc(direction[0] * icon_radius, 1000);
         const gy = cy + @divTrunc(direction[1] * icon_radius, 1000);
         const selected = glyph_position[1] == selected_col and glyph_position[0] == selected_row;
-        if (selected) fillOutlinedCircle(c, gx, gy, 12, accent, layer);
-        drawMoodGlyph(c, gx, gy, glyph_position[0], glyph_position[1], if (selected) layer else secondary);
+        drawMoodGlyph(c, gx, gy, glyph_position[0], glyph_position[1], selected);
     }
 
     const neutral = selected_col == 1 and selected_row == 1;
-    fillOutlinedCircle(c, cx, cy, 14, if (neutral) accent else ui.Theme.layer, if (neutral) layer else ui.Theme.divider);
-    drawMoodGlyph(c, cx, cy, 1, 1, if (neutral) layer else ink);
+    drawMoodGlyph(c, cx, cy, 1, 1, neutral);
 }
 
 fn emotionWheelRect(layout: geometry.Layout) Rect {
@@ -1216,30 +1331,78 @@ fn emotionLabel(x: i16, y: i16) []const u8 {
     };
 }
 
-fn drawMoodGlyph(c: *Canvas, cx: i32, cy: i32, row: i32, column: i32, color: u32) void {
-    const radius: i32 = 8;
-    drawCircleOutline(c, cx, cy, radius, color);
-    c.fillRect(cx - 3, cy - 2, 2, 2, color);
-    c.fillRect(cx + 2, cy - 2, 2, 2, color);
-    if (row == 1 and column == 1) {
-        c.drawLine(cx - 3, cy + 4, cx + 3, cy + 4, color);
-    } else if (row == 0 and column == 1) {
-        drawCircleOutline(c, cx, cy + 3, 3, color);
-    } else if (row == 1 and column == 0) {
-        c.drawLine(cx - 4, cy + 5, cx + 4, cy + 5, color);
-        c.drawLine(cx - 4, cy + 4, cx - 1, cy + 1, color);
-        c.drawLine(cx - 1, cy + 1, cx + 2, cy + 4, color);
-        c.drawLine(cx + 2, cy + 4, cx + 4, cy + 5, color);
-    } else if (row == 2 and column == 1) {
-        c.drawLine(cx - 4, cy + 4, cx + 4, cy + 4, color);
-        c.drawLine(cx - 4, cy + 5, cx + 4, cy + 5, color);
-    } else {
-        const up = row == 2;
-        const outer_y: i32 = if (up) 3 else 5;
-        const inner_y: i32 = if (up) 5 else 3;
-        c.drawLine(cx - 4, cy + outer_y, cx, cy + inner_y, color);
-        c.drawLine(cx, cy + inner_y, cx + 4, cy + outer_y, color);
+fn drawMoodGlyph(c: *Canvas, cx: i32, cy: i32, row: i32, column: i32, selected: bool) void {
+    const face_fill = if (selected) accent else layer;
+    const face_border = if (selected) accent else divider;
+    const feature = if (selected) layer else ink;
+    fillOutlinedCircle(c, cx, cy, 11, face_fill, face_border);
+
+    const mood = row * 3 + column;
+    switch (mood) {
+        0 => { // angry
+            drawFeatureLine(c, cx - 6, cy - 5, cx - 2, cy - 3, feature);
+            drawFeatureLine(c, cx + 2, cy - 3, cx + 6, cy - 5, feature);
+            c.fillRect(cx - 5, cy - 1, 2, 2, feature);
+            c.fillRect(cx + 3, cy - 1, 2, 2, feature);
+            drawFeatureLine(c, cx - 4, cy + 6, cx, cy + 3, feature);
+            drawFeatureLine(c, cx, cy + 3, cx + 4, cy + 6, feature);
+        },
+        1 => { // loud
+            c.fillRect(cx - 5, cy - 3, 3, 2, feature);
+            c.fillRect(cx + 2, cy - 3, 3, 2, feature);
+            fillOutlinedCircle(c, cx, cy + 4, 4, feature, feature);
+            c.fillRect(cx - 2, cy + 3, 4, 2, face_fill);
+        },
+        2 => { // laughing
+            drawFeatureLine(c, cx - 6, cy - 2, cx - 4, cy - 4, feature);
+            drawFeatureLine(c, cx - 4, cy - 4, cx - 2, cy - 2, feature);
+            drawFeatureLine(c, cx + 2, cy - 2, cx + 4, cy - 4, feature);
+            drawFeatureLine(c, cx + 4, cy - 4, cx + 6, cy - 2, feature);
+            drawFeatureLine(c, cx - 5, cy + 2, cx, cy + 6, feature);
+            drawFeatureLine(c, cx, cy + 6, cx + 5, cy + 2, feature);
+        },
+        3 => { // sad
+            c.fillRect(cx - 5, cy - 3, 2, 2, feature);
+            c.fillRect(cx + 3, cy - 3, 2, 2, feature);
+            drawFeatureLine(c, cx - 5, cy + 6, cx, cy + 3, feature);
+            drawFeatureLine(c, cx, cy + 3, cx + 5, cy + 6, feature);
+        },
+        4 => { // neutral
+            c.fillRect(cx - 5, cy - 3, 2, 2, feature);
+            c.fillRect(cx + 3, cy - 3, 2, 2, feature);
+            drawFeatureLine(c, cx - 4, cy + 4, cx + 4, cy + 4, feature);
+        },
+        5 => { // happy
+            c.fillRect(cx - 5, cy - 3, 2, 2, feature);
+            c.fillRect(cx + 3, cy - 3, 2, 2, feature);
+            drawFeatureLine(c, cx - 5, cy + 2, cx, cy + 6, feature);
+            drawFeatureLine(c, cx, cy + 6, cx + 5, cy + 2, feature);
+        },
+        6 => { // uneasy
+            c.fillRect(cx - 5, cy - 3, 2, 2, feature);
+            c.fillRect(cx + 3, cy - 2, 2, 2, feature);
+            drawFeatureLine(c, cx - 5, cy + 5, cx - 1, cy + 3, feature);
+            drawFeatureLine(c, cx - 1, cy + 3, cx + 4, cy + 5, feature);
+        },
+        7 => { // bored
+            drawFeatureLine(c, cx - 6, cy - 3, cx - 2, cy - 3, feature);
+            drawFeatureLine(c, cx + 2, cy - 3, cx + 6, cy - 3, feature);
+            c.fillRect(cx - 5, cy - 1, 2, 1, feature);
+            c.fillRect(cx + 3, cy - 1, 2, 1, feature);
+            drawFeatureLine(c, cx - 4, cy + 5, cx + 4, cy + 5, feature);
+        },
+        else => { // coy
+            c.fillRect(cx - 5, cy - 3, 2, 2, feature);
+            drawFeatureLine(c, cx + 2, cy - 3, cx + 6, cy - 3, feature);
+            drawFeatureLine(c, cx - 3, cy + 3, cx + 1, cy + 5, feature);
+            drawFeatureLine(c, cx + 1, cy + 5, cx + 5, cy + 2, feature);
+        },
     }
+}
+
+fn drawFeatureLine(c: *Canvas, x1: i32, y1: i32, x2: i32, y2: i32, color: u32) void {
+    c.drawLine(x1, y1, x2, y2, color);
+    c.drawLine(x1, y1 + 1, x2, y2 + 1, color);
 }
 
 fn fillOutlinedCircle(c: *Canvas, cx: i32, cy: i32, radius: i32, fill: u32, outline: u32) void {
@@ -1364,18 +1527,37 @@ fn drawDialog(c: *Canvas, spec: dialogs.Spec, editors: *const [3]input_mod.Edito
         drawTextEllipsized(c, field.label, rect.x + 20, row_y, rect.w - 40, secondary);
         const field_rect = dialog_layout.fieldRect(index);
         const field_y = field_rect.y;
-        ui.drawField(c, field_rect.x, field_y, field_rect.w, index == active_field);
+        const field_active = index == active_field;
+        switch (field.kind) {
+            .text, .password => ui.drawField(c, field_rect.x, field_y, field_rect.w, field_active),
+            .choice => ui.drawChoiceField(c, field_rect.x, field_y, field_rect.w, field_active),
+            .list => ui.drawListField(c, field_rect.x, field_y, field_rect.w, field_active),
+            .preview => ui.drawPreviewField(c, field_rect.x, field_y, field_rect.w),
+            .readonly => ui.drawReadonlyField(c, field_rect.x, field_y, field_rect.w),
+        }
         if (index < editors.len) {
             const editor = &editors[index];
             const value = editor.text();
-            drawTextEllipsized(c, value, rect.x + 26, field_y + 1, rect.w - 52, ink);
-            if (index == active_field) {
+            if (value.len != 0 and field.kind == .password) {
+                var mask: [64]u8 = undefined;
+                const mask_len = @min(value.len, mask.len);
+                @memset(mask[0..mask_len], '*');
+                drawTextEllipsized(c, mask[0..mask_len], field_rect.x + 10, field_y + 4, field_rect.w - 20, ink);
+            } else if (value.len != 0) {
+                const value_x = field_rect.x + if (field.kind == .list or field.kind == .readonly) @as(i32, 28) else @as(i32, 10);
+                drawTextEllipsized(c, value, value_x, field_y + 4, field_rect.right() - value_x - 10, ink);
+            }
+            if (field_active and dialogs.fieldAcceptsText(spec.id, index)) {
                 const safe_cursor = @min(editor.cursor, value.len);
-                const caret_x = @min(rect.right() - 27, rect.x + 26 + Canvas.uiTextWidth(value[0..safe_cursor]));
-                c.fillRect(caret_x, field_y + 3, 2, 17, accent);
+                const caret_x = @min(field_rect.right() - 12, field_rect.x + 10 + Canvas.uiTextWidth(value[0..safe_cursor]));
+                c.fillRect(caret_x, field_y + 6, 2, 18, accent);
             }
         }
-        if (editors[index].text().len == 0) drawTextEllipsized(c, field.hint, rect.x + 26, field_y + 1, rect.w - 52, secondary);
+        if (editors[index].text().len == 0) {
+            const hint_x = field_rect.x + if (field.kind == .list or field.kind == .readonly) @as(i32, 28) else if (field.kind == .preview) @as(i32, 72) else @as(i32, 10);
+            const hint_right = field_rect.right() - if (field.kind == .choice) @as(i32, 42) else @as(i32, 10);
+            drawTextEllipsized(c, field.hint, hint_x, field_y + 4, hint_right - hint_x, secondary);
+        }
     }
 
     if (notice.len != 0) ui.drawNotice(c, rect.x + 14, dialog_layout.primary.y - 22, rect.w - 28, notice, .warning);
@@ -1462,6 +1644,72 @@ test "comic density stepper changes the live four-across layout" {
     const decrease = geometry.comicColumnDecrease(layout);
     _ = view.handlePointer(.{ .kind = .down, .x = decrease.x + 3, .y = decrease.y + 3, .button = .primary }, 0, 0);
     try std.testing.expectEqual(@as(u8, 4), view.shell.comic_columns);
+}
+
+test "composer and member controls expose hover state" {
+    var view = try View.init(std.testing.allocator, 960, 720);
+    defer view.deinit();
+    const layout = geometry.Layout.compute(960, 720, true, true);
+    const whisper_x = layout.say_actions.x + 2 * layout.say_action_size + 4;
+    try std.testing.expect(view.handlePointerMove(.{ .kind = .move, .x = whisper_x, .y = layout.say_actions.y + 8 }, 2));
+    try std.testing.expectEqual(@as(?u8, 2), view.hovered_say_action);
+    try std.testing.expect(view.handlePointerMove(.{ .kind = .move, .x = layout.members.x + 8, .y = layout.members.y + 35 }, 2));
+    try std.testing.expectEqual(@as(?usize, 0), view.hovered_member);
+}
+
+test "typed dialog choices cycle instead of accepting arbitrary text" {
+    var view = try View.init(std.testing.allocator, 960, 720);
+    defer view.deinit();
+    view.openDialog(.settings);
+    const layout = dialogLayout(view.width(), view.height(), dialogs.get(.settings));
+    const security = layout.fieldRect(2);
+    _ = view.handlePointer(.{ .kind = .down, .x = security.x + 4, .y = security.y + 4, .button = .primary }, 0, 0);
+    try std.testing.expectEqualStrings("Verified TLS", view.dialogValueAt(2));
+    _ = view.handlePointer(.{ .kind = .down, .x = security.x + 4, .y = security.y + 4, .button = .primary }, 0, 0);
+    try std.testing.expectEqualStrings("Strict TLS", view.dialogValueAt(2));
+}
+
+test "alpha-aware avatar scaling does not pull black from transparent pixels" {
+    const source = [_]u32{ 0xffffffff, 0x00000000 };
+    const sample = bilinearAlphaSample(&source, 2, 1, 32768, 0);
+    try std.testing.expect(sample.alpha >= 127 and sample.alpha <= 128);
+    try std.testing.expectEqual(@as(u32, 0x00ffffff), sample.rgb);
+}
+
+test "every bundled avatar produces a visible mugshot and full figure" {
+    const names = [_][]const u8{
+        "anna",   "armando",  "bolo",    "cro",  "dan",     "denise", "hugh",   "jordan", "kevin", "kwensa",   "lance",
+        "lynnea", "margaret", "maynard", "mike", "rebecca", "sage",   "scotty", "susan",  "tiki",  "tongtyed", "xeno",
+    };
+    var canvas = try Canvas.init(std.testing.allocator, 120, 180);
+    defer canvas.deinit(std.testing.allocator);
+    for (names) |name| {
+        const data = strip.avatarByName(name) orelse return error.TestUnexpectedResult;
+        var icon = try bgb.decodeIcon(std.testing.allocator, data);
+        defer icon.deinit(std.testing.allocator);
+        try std.testing.expect(icon.width > 0 and icon.height > 0);
+        canvas.clear(layer);
+        blitHeightBottomAlphaSmooth(&canvas, icon.pixels, icon.width, icon.height, 30, 10, 60, 60);
+        var visible_icon = false;
+        for (canvas.px) |pixel| if (pixel != layer) {
+            visible_icon = true;
+            break;
+        };
+        try std.testing.expect(visible_icon);
+
+        var full = try figure.assembleForText(std.testing.allocator, data, "");
+        defer full.deinit(std.testing.allocator);
+        try std.testing.expect(full.width > 0 and full.height > 0);
+        canvas.clear(layer);
+        blitHeightBottomAlphaSmooth(&canvas, full.pixels, full.width, full.height, 10, 10, 100, 160);
+        var visible_figure = false;
+        for (canvas.px) |pixel| if (pixel != layer) {
+            visible_figure = true;
+            break;
+        };
+        try std.testing.expect(visible_figure);
+        try std.testing.expectEqual(layer, canvas.px[0]);
+    }
 }
 
 test "dialog dimmer preserves an opaque visible frame" {

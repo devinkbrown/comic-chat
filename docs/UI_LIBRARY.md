@@ -15,6 +15,8 @@ visual contract.
   sized for a modern desktop.
 - The radial mood dial remains the signature interaction. It supports direct
   click and captured drag selection, including a neutral center.
+- Mood expressions use a newly drawn, high-contrast face set with consistent
+  geometry rather than the original tiny pixel marks.
 - An empty conversation renders as a responsive blank comic page with real
   panel gutters. At minimum window sizes it collapses to a compact instruction
   instead of overflowing the available buffer.
@@ -23,6 +25,12 @@ visual contract.
   rendered pages remain top-aligned as conversation history grows.
 - Draw geometry, pointer targets, focus, and accessibility bounds must derive
   from the same layout values.
+- The desktop surface enforces a 640x480 minimum. Below 760 pixels wide the
+  inspector collapses so the composer and comic buffer remain usable.
+- Roster and character previews use alpha-aware smooth scaling and larger
+  portrait targets. Authored art inside comic panels stays source-faithful.
+- Dialog fields are typed: text, password, choice, list, preview, and read-only
+  controls render and interact according to their actual purpose.
 
 ## Reusable primitives
 
@@ -50,11 +58,15 @@ zig build run -- render-ui conversation > ui-conversation-preview.png
 zig build run -- render-ui menu > ui-menu-preview.png
 zig build run -- render-ui settings > ui-dialog-preview.png
 zig build run -- render-ui hover > ui-hover-preview.png
+zig build run -- render-ui say-hover > ui-say-hover-preview.png
+zig build run -- render-ui member > ui-member-preview.png
+zig build run -- render-ui compact > ui-compact-preview.png
 ```
 
 These previews exercise the empty shell, real comic content, menu surface, and
-modal surface. Run `zig build test --summary all` with them; pixel checks cover
-the shell palette and dial while semantic tests cover control geometry.
+modal surface, plus composer hover, member selection, and narrow responsive
+geometry. Run `zig build test --summary all` with them; pixel checks cover the
+shell palette and dial while semantic tests cover control geometry.
 
 ## Font regeneration
 

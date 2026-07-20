@@ -1909,12 +1909,14 @@ fn runToPng(gpa: std.mem.Allocator, io: std.Io, name: []const u8) !void {
 /// Win32 window. This is both a release-preview command and a deterministic
 /// visual regression surface for the modern UI library.
 fn runUiPreview(gpa: std.mem.Allocator, io: std.Io, surface: []const u8) !void {
-    var view = try cc.client.view.View.init(gpa, 960, 720);
+    const compact = std.mem.eql(u8, surface, "compact");
+    var view = try cc.client.view.View.init(gpa, if (compact) 640 else 960, if (compact) 480 else 720);
     defer view.deinit();
     var transcript = cc.comic.session.Transcript.init(gpa);
     defer transcript.deinit();
     try transcript.setSelf("comicchat");
-    if (std.mem.eql(u8, surface, "conversation")) {
+    const with_conversation = std.mem.eql(u8, surface, "conversation") or std.mem.eql(u8, surface, "member");
+    if (with_conversation) {
         try transcript.setAvatar("comicchat", "anna");
         try transcript.setAvatar("alex", "armando");
         try transcript.add("alex", "Welcome to #root. The new studio is ready.");
@@ -1923,6 +1925,8 @@ fn runUiPreview(gpa: std.mem.Allocator, io: std.Io, surface: []const u8) !void {
     if (std.mem.eql(u8, surface, "settings")) view.openDialog(.settings);
     if (std.mem.eql(u8, surface, "menu")) view.active_menu = 0;
     if (std.mem.eql(u8, surface, "hover")) view.hovered_toolbar = 5;
+    if (std.mem.eql(u8, surface, "say-hover")) view.hovered_say_action = 2;
+    if (std.mem.eql(u8, surface, "member")) view.shell.selected_member = 1;
     try view.render("#root", "reconnecting", &transcript, "", 0);
     const png = try cc.render.png.encode(gpa, view.pixels(), view.width(), view.height());
     defer gpa.free(png);

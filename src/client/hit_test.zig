@@ -32,7 +32,7 @@ pub fn shell(layout: geometry.Layout, comic_mode: bool, x: i32, y: i32, member_c
     if (contains(layout.tabs, x, y)) return .room_tab;
     if (contains(layout.say_editor, x, y)) return .composer;
     if (contains(layout.say_actions, x, y)) {
-        const index = @divTrunc(x - layout.say_actions.x, geometry.say_button_size);
+        const index = @divTrunc(x - layout.say_actions.x, layout.say_action_size);
         if (index >= 0 and index < geometry.say_button_count) return .{ .say_action = @intCast(index) };
     }
     if (contains(layout.transcript, x, y)) return .transcript;
@@ -68,7 +68,7 @@ fn iconIndex(rect: Rect, x: i32, y: i32) usize {
     const columns: i32 = @max(1, @divTrunc(rect.w, 88));
     const cell_w = @max(1, @divTrunc(rect.w, columns));
     const column = std.math.clamp(@divTrunc(x - rect.x, cell_w), 0, columns - 1);
-    const row = @max(0, @divTrunc(y - rect.y - 30, 72));
+    const row = @max(0, @divTrunc(y - rect.y - 30, 82));
     return @intCast(row * columns + column);
 }
 
