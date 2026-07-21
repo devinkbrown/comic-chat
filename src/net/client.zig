@@ -23,6 +23,7 @@ pub const Security = transport.Security;
 pub const TypingStatus = enum { active, paused, done };
 pub const PinsOperation = enum { list, add, delete, clear };
 pub const MonitorOperation = enum { add, remove, clear, list, status };
+pub const SilenceOperation = enum { list, add, remove };
 
 const desired_without_sasl = blk: {
     var names: [ircv3.default_desired_capabilities.len - 1][]const u8 = undefined;
@@ -527,6 +528,23 @@ pub const Client = struct {
         } else {
             if (nicks != null) return error.InvalidIrcParameter;
             try self.appendCommand("MONITOR", &.{verb});
+        }
+        try self.queueOut(.interactive, true, false);
+    }
+
+    /// Onyx `SILENCE [<mask>|+<mask>|-<mask>]` sender-mask control.
+    pub fn silence(self: *Client, operation: SilenceOperation, mask: ?[]const u8) !void {
+        if (operation == .list) {
+            if (mask != null) return error.InvalidIrcParameter;
+            try self.appendCommand("SILENCE", &.{});
+        } else {
+            const raw = mask orelse return error.InvalidIrcParameter;
+            if (!validSilenceMask(raw)) return error.InvalidIrcParameter;
+            var token: std.ArrayList(u8) = .empty;
+            defer token.deinit(self.gpa);
+            try token.append(self.gpa, if (operation == .add) '+' else '-');
+            try token.appendSlice(self.gpa, raw);
+            try self.appendCommand("SILENCE", &.{token.items});
         }
         try self.queueOut(.interactive, true, false);
     }
@@ -1337,6 +1355,10 @@ fn validMonitorList(value: []const u8) bool {
     return true;
 }
 
+fn validSilenceMask(value: []const u8) bool {
+    return value.len != 0 and value.len <= 256 and std.mem.indexOfAny(u8, value, " \r\n\x00") == null;
+}
+
 fn validHistorySelector(value: []const u8) bool {
     if (std.mem.eql(u8, value, "*")) return true;
     if (std.mem.startsWith(u8, value, "msgid=")) {
@@ -1692,6 +1714,12 @@ test "reply reaction and typing commands are bounded tagged client messages" {
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[21].bytes, "MONITOR C\r\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[22].bytes, "MONITOR L\r\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[23].bytes, "MONITOR S\r\n") != null);
+    try client.silence(.list, null);
+    try client.silence(.add, "*!*@bad.example");
+    try client.silence(.remove, "*!*@bad.example");
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[24].bytes, "SILENCE\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[25].bytes, "SILENCE +*!*@bad.example\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[26].bytes, "SILENCE -*!*@bad.example\r\n") != null);
 }
 
 test "Onyx narrow tag capabilities and no-implicit-names alias work without message-tags" {
