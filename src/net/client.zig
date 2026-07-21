@@ -663,6 +663,89 @@ pub const Client = struct {
         try self.queueOut(.interactive, false, false);
     }
 
+    /// Onyx `SEARCH <target> :<query>` capability path. Results return through
+    /// the normal CHATHISTORY/BATCH receive pipeline.
+    pub fn search(self: *Client, target: []const u8, query: []const u8) !void {
+        try self.requireCapability("draft/search");
+        if (target.len == 0 or query.len == 0) return error.InvalidIrcParameter;
+        try self.validateOutgoingText(query);
+        try self.appendCommandTrailing("SEARCH", &.{ target, query });
+        try self.queueOut(.bulk, false, false);
+    }
+
+    /// Onyx `EDIT <target> <msgid> :<text>` path. The server enforces original
+    /// sender ownership and broadcasts an edit-tagged replacement to capable
+    /// peers; the client validates only its own wire invariants.
+    pub fn editMessage(self: *Client, target: []const u8, msgid: []const u8, text: []const u8) !void {
+        try self.requireCapability("draft/message-editing");
+        if (!validMessageReference(msgid) or text.len == 0) return error.InvalidIrcParameter;
+        try self.validateOutgoingText(text);
+        try self.appendCommandTrailing("EDIT", &.{ target, msgid, text });
+        try self.queueOut(.interactive, false, false);
+    }
+
+    /// Onyx `REDACT <channel> <msgid> [:reason]` path. Authorization remains
+    /// server-owned; a missing reason deliberately remains an ordinary parameter
+    /// form so the daemon uses its default audit reason.
+    pub fn redactMessage(self: *Client, channel: []const u8, msgid: []const u8, reason: ?[]const u8) !void {
+        try self.requireCapability("draft/message-redaction");
+        if (channel.len == 0 or !validMessageReference(msgid)) return error.InvalidIrcParameter;
+        if (reason) |text| {
+            try self.validateOutgoingText(text);
+            try self.appendCommandTrailing("REDACT", &.{ channel, msgid, text });
+        } else {
+            try self.appendCommand("REDACT", &.{ channel, msgid });
+        }
+        try self.queueOut(.interactive, false, false);
+    }
+
+    /// Onyx `MARKREAD <target> [timestamp=<rfc3339>|*]` path. Passing null
+    /// requests the current marker; `*` explicitly clears it on the server.
+    pub fn markRead(self: *Client, target: []const u8, marker: ?[]const u8) !void {
+        try self.requireCapability("draft/read-marker");
+        if (target.len == 0) return error.InvalidIrcParameter;
+        if (marker) |value| {
+            if (!std.mem.eql(u8, value, "*") and !std.mem.startsWith(u8, value, "timestamp=")) return error.InvalidIrcParameter;
+            try self.appendCommand("MARKREAD", &.{ target, value });
+        } else {
+            try self.appendCommand("MARKREAD", &.{target});
+        }
+        try self.queueOut(.interactive, false, false);
+    }
+
+    /// Metadata-2 command builder for GET/LIST/SET/CLEAR. `value` is sent as
+    /// the forced trailing field so an empty value expresses deletion exactly as
+    /// the Onyx metadata handler expects.
+    pub fn metadata(self: *Client, target: []const u8, operation: []const u8, key: ?[]const u8, visibility: ?[]const u8, value: ?[]const u8) !void {
+        try self.requireCapability("draft/metadata-2");
+        if (target.len == 0 or !validMetadataOperation(operation)) return error.InvalidIrcParameter;
+        var params: [5][]const u8 = undefined;
+        var count: usize = 0;
+        params[count] = target;
+        count += 1;
+        params[count] = operation;
+        count += 1;
+        if (key) |item| {
+            if (item.len == 0) return error.InvalidIrcParameter;
+            params[count] = item;
+            count += 1;
+        }
+        if (visibility) |item| {
+            if (item.len == 0) return error.InvalidIrcParameter;
+            params[count] = item;
+            count += 1;
+        }
+        if (value) |text| {
+            try self.validateOutgoingText(text);
+            params[count] = text;
+            count += 1;
+            try self.appendCommandTrailing("METADATA", params[0..count]);
+        } else {
+            try self.appendCommand("METADATA", params[0..count]);
+        }
+        try self.queueOut(.interactive, false, false);
+    }
+
     pub fn react(self: *Client, target: []const u8, msgid: []const u8, reaction: []const u8, remove: bool) !void {
         if (!validMessageReference(msgid)) return error.InvalidMessageReference;
         if (reaction.len > 256 or !std.unicode.utf8ValidateSlice(reaction)) return error.InvalidReaction;
@@ -879,6 +962,10 @@ pub const Client = struct {
         return false;
     }
 
+    fn requireCapability(self: *const Client, name: []const u8) !void {
+        if (!self.capabilityEnabled(name)) return error.CapabilityNotEnabled;
+    }
+
     pub fn appendEnabledCapabilities(self: *const Client, out: *std.ArrayList(u8), gpa: std.mem.Allocator) !void {
         const registration = if (self.registration) |*value| value else return;
         for (registration.cap.enabled.entries.items, 0..) |capability, index| {
@@ -1088,6 +1175,13 @@ fn validIrcxAuthSequence(value: []const u8) bool {
     return std.mem.eql(u8, value, "I") or std.mem.eql(u8, value, "S") or std.mem.eql(u8, value, "*");
 }
 
+fn validMetadataOperation(value: []const u8) bool {
+    return std.ascii.eqlIgnoreCase(value, "GET") or
+        std.ascii.eqlIgnoreCase(value, "LIST") or
+        std.ascii.eqlIgnoreCase(value, "SET") or
+        std.ascii.eqlIgnoreCase(value, "CLEAR");
+}
+
 // --- Tests ----------------------------------------------------------------
 
 test "autoRespond answers PING with matching PONG" {
@@ -1284,12 +1378,32 @@ test "reply reaction and typing commands are bounded tagged client messages" {
         .policy_now_ms = 1000,
     };
     client.registration = Registration.init(gpa, owned_host, .tls, .{});
+    try std.testing.expectError(error.CapabilityNotEnabled, client.search("#c", "release checklist"));
+    try std.testing.expectError(error.CapabilityNotEnabled, client.editMessage("#c", "msg-1", "corrected text"));
+    try std.testing.expectError(error.CapabilityNotEnabled, client.redactMessage("#c", "msg-1", null));
+    try std.testing.expectError(error.CapabilityNotEnabled, client.markRead("#c", null));
+    try std.testing.expectError(error.CapabilityNotEnabled, client.metadata("*", "GET", null, null, null));
+    // Keep this command-builder test independent from the global desired
+    // profile: the profile intentionally evolves with the capability catalog.
+    const desired = [_][]const u8{
+        "batch",
+        "draft/account-registration",
+        "labeled-response",
+        "message-tags",
+        "draft/chathistory",
+        "draft/search",
+        "draft/message-editing",
+        "draft/message-redaction",
+        "draft/read-marker",
+        "draft/metadata-2",
+    };
+    client.registration.?.cap.config.desired = &desired;
     client.features = try features_mod.State.init(gpa, "me", .{});
     try client.registration.?.cap.begin(&client.out);
     client.out.clearRetainingCapacity();
-    _ = try client.registration.?.cap.handle(&client.out, message.parse(":irc CAP * LS :batch draft/account-registration labeled-response message-tags"));
+    _ = try client.registration.?.cap.handle(&client.out, message.parse(":irc CAP * LS :batch draft/account-registration labeled-response message-tags draft/chathistory draft/search draft/message-editing draft/message-redaction draft/read-marker draft/metadata-2"));
     client.out.clearRetainingCapacity();
-    _ = try client.registration.?.cap.handle(&client.out, message.parse(":irc CAP * ACK :batch draft/account-registration labeled-response message-tags"));
+    _ = try client.registration.?.cap.handle(&client.out, message.parse(":irc CAP * ACK :batch draft/account-registration labeled-response message-tags draft/chathistory draft/search draft/message-editing draft/message-redaction draft/read-marker draft/metadata-2"));
     client.out.clearRetainingCapacity();
     defer {
         client.registration.?.deinit();
@@ -1315,6 +1429,17 @@ test "reply reaction and typing commands are bounded tagged client messages" {
     try client.typing("#c", .done);
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[3].bytes, "+typing=done") != null);
 
+    try client.search("#c", "release checklist");
+    try client.editMessage("#c", "msg-1", "corrected text");
+    try client.redactMessage("#c", "msg-1", "off-topic");
+    try client.markRead("#c", "timestamp=2026-07-22T00:00:00Z");
+    try client.metadata("*", "SET", "theme", "public", "ink");
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[4].bytes, "SEARCH #c :release checklist") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[5].bytes, "EDIT #c msg-1 :corrected text") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[6].bytes, "REDACT #c msg-1 :off-topic") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[7].bytes, "MARKREAD #c timestamp=2026-07-22T00:00:00Z") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[8].bytes, "METADATA * SET theme public :ink") != null);
+
     _ = try client.features.?.observe(&message.parse(":irc 005 me UTF8ONLY :are supported"));
     try std.testing.expectError(error.InvalidUtf8, client.privmsg("#c", &.{0xff}));
     try std.testing.expectError(error.InvalidMessageReference, client.reply("#c", "bad id", "text"));
@@ -1322,8 +1447,8 @@ test "reply reaction and typing commands are bounded tagged client messages" {
     var password = [_]u8{ 'p', 'w' };
     try client.accountRegister("*", "user@example.test", &password);
     try std.testing.expectEqualSlices(u8, &.{ 0, 0 }, &password);
-    try std.testing.expect(client.tx.items.items[4].sensitive);
-    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[4].bytes, "REGISTER * user@example.test pw") != null);
+    try std.testing.expect(client.tx.items.items[9].sensitive);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[9].bytes, "REGISTER * user@example.test pw") != null);
 }
 
 test "live registration probes IRCX before CAP NICK and USER" {

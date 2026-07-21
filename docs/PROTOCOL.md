@@ -240,6 +240,13 @@ the complete non-deprecated client-facing CAP set in the pinned tree:
 | `standard-replies` | The latest typed `FAIL`, `WARN`, or `NOTE` code and description are retained |
 | `sts` | Observed only, never requested; plaintext upgrades fail closed and verified-TLS duration policies persist by hostname |
 
+When connected to the pinned Onyx server, the client also exposes
+capability-gated builders for `SEARCH`, `EDIT`, `REDACT`, `MARKREAD`, and
+`METADATA`. Their exact Onyx registry comparison and wire forms are recorded
+in [`docs/audits/2026-07-22-comicchat-onyx-ircv3-parity.md`](audits/2026-07-22-comicchat-onyx-ircv3-parity.md).
+`onyx/e2ee` is intentionally never requested until its complete encryption and
+decryption control plane is implemented.
+
 ### Onyx reusable sessions and same-nick clients
 
 After successful SASL and numeric `001`, the portable client follows the live
