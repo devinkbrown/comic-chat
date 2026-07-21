@@ -435,7 +435,8 @@ pub const Client = struct {
             try self.appendCommand("JOIN", &.{channel})
         else
             try self.appendCommand("JOIN", &.{ channel, key });
-        if (self.capabilityEnabled("no-implicit-names")) try self.appendCommand("NAMES", &.{channel});
+        if (self.capabilityEnabled("no-implicit-names") or self.capabilityEnabled("draft/no-implicit-names"))
+            try self.appendCommand("NAMES", &.{channel});
         try self.queueOut(.interactive, true, false);
     }
 
@@ -652,14 +653,15 @@ pub const Client = struct {
     }
 
     pub fn reply(self: *Client, target: []const u8, msgid: []const u8, text: []const u8) !void {
+        try self.requireClientTagCapability("draft/reply");
         if (!validMessageReference(msgid)) return error.InvalidMessageReference;
         try self.validateOutgoingText(text);
         var tags: std.ArrayList(u8) = .empty;
         defer tags.deinit(self.gpa);
-        try tags.appendSlice(self.gpa, "+reply=");
+        try tags.appendSlice(self.gpa, "+draft/reply=");
         try message.escapeTagValue(&tags, self.gpa, msgid);
         if (self.capabilityEnabled("echo-message")) if (self.features) |*state| try state.recordEcho(target, text);
-        try self.appendCommandWithTags("PRIVMSG", &.{ target, text }, tags.items);
+        try self.appendCommandWithNarrowTags("PRIVMSG", &.{ target, text }, tags.items);
         try self.queueOut(.interactive, false, false);
     }
 
@@ -747,15 +749,16 @@ pub const Client = struct {
     }
 
     pub fn react(self: *Client, target: []const u8, msgid: []const u8, reaction: []const u8, remove: bool) !void {
+        try self.requireClientTagCapability("draft/react");
         if (!validMessageReference(msgid)) return error.InvalidMessageReference;
         if (reaction.len > 256 or !std.unicode.utf8ValidateSlice(reaction)) return error.InvalidReaction;
         var tags: std.ArrayList(u8) = .empty;
         defer tags.deinit(self.gpa);
-        try tags.appendSlice(self.gpa, "+reply=");
+        try tags.appendSlice(self.gpa, "+draft/reply=");
         try message.escapeTagValue(&tags, self.gpa, msgid);
         try tags.appendSlice(self.gpa, if (remove) ";+draft/unreact=" else ";+draft/react=");
         try message.escapeTagValue(&tags, self.gpa, reaction);
-        try self.appendCommandWithTags("TAGMSG", &.{target}, tags.items);
+        try self.appendCommandWithNarrowTags("TAGMSG", &.{target}, tags.items);
         try self.queueOut(.interactive, false, false);
     }
 
@@ -966,6 +969,14 @@ pub const Client = struct {
         if (!self.capabilityEnabled(name)) return error.CapabilityNotEnabled;
     }
 
+    /// Onyx relays the named activity tag when either generic message-tags or
+    /// its narrow draft capability is negotiated. Prefer the generic path when
+    /// available, but do not reject a standards-compliant narrow-only peer.
+    fn requireClientTagCapability(self: *const Client, narrow: []const u8) !void {
+        if (!self.capabilityEnabled("message-tags") and !self.capabilityEnabled(narrow))
+            return error.MessageTagsNotEnabled;
+    }
+
     pub fn appendEnabledCapabilities(self: *const Client, out: *std.ArrayList(u8), gpa: std.mem.Allocator) !void {
         const registration = if (self.registration) |*value| value else return;
         for (registration.cap.enabled.entries.items, 0..) |capability, index| {
@@ -1008,11 +1019,16 @@ pub const Client = struct {
     }
 
     fn appendCommandWithTags(self: *Client, command: []const u8, params: []const []const u8, client_tags: ?[]const u8) !void {
+        try self.requireClientTagCapability("");
+        return self.appendCommandWithTagsAndTrailing(command, params, client_tags, false);
+    }
+
+    /// Caller has already checked its specific narrow capability.
+    fn appendCommandWithNarrowTags(self: *Client, command: []const u8, params: []const []const u8, client_tags: []const u8) !void {
         return self.appendCommandWithTagsAndTrailing(command, params, client_tags, false);
     }
 
     fn appendCommandWithTagsAndTrailing(self: *Client, command: []const u8, params: []const []const u8, client_tags: ?[]const u8, force_trailing: bool) !void {
-        if (client_tags != null and !self.capabilityEnabled("message-tags")) return error.MessageTagsNotEnabled;
         var msg = Message{ .command = command, .force_trailing = force_trailing };
         if (params.len > message.max_params) return error.InvalidIrcParameter;
         for (params, 0..) |param, index| msg.params[index] = param;
@@ -1030,9 +1046,10 @@ pub const Client = struct {
     }
 
     fn sendTyping(self: *Client, target: []const u8, status: TypingStatus) !void {
+        try self.requireClientTagCapability("draft/typing");
         var buffer: [32]u8 = undefined;
         const tags = try std.fmt.bufPrint(&buffer, "+typing={s}", .{@tagName(status)});
-        try self.appendCommandWithTags("TAGMSG", &.{target}, tags);
+        try self.appendCommandWithNarrowTags("TAGMSG", &.{target}, tags);
         try self.queueOut(.interactive, false, false);
     }
 
@@ -1419,7 +1436,7 @@ test "reply reaction and typing commands are bounded tagged client messages" {
     }
 
     try client.reply("#c", "msg-1", "reply text");
-    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[0].bytes, "+reply=msg-1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[0].bytes, "+draft/reply=msg-1") != null);
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[0].bytes, "label=cc-1") != null);
     try client.react("#c", "msg-1", "wave", false);
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[1].bytes, "+draft/react=wave") != null);
@@ -1449,6 +1466,51 @@ test "reply reaction and typing commands are bounded tagged client messages" {
     try std.testing.expectEqualSlices(u8, &.{ 0, 0 }, &password);
     try std.testing.expect(client.tx.items.items[9].sensitive);
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[9].bytes, "REGISTER * user@example.test pw") != null);
+}
+
+test "Onyx narrow tag capabilities and no-implicit-names alias work without message-tags" {
+    const gpa = std.testing.allocator;
+    const owned_host = try gpa.dupe(u8, "irc.example");
+    var client = Client{
+        .gpa = gpa,
+        .transport = undefined,
+        .host = owned_host,
+        .port = 6697,
+        .connect_options = .{},
+        .framer = irc.LineFramer.init(gpa),
+        .tx = policy.TxQueue.init(gpa, .{}, 0, 1, 0),
+        .deadlines = policy.Deadlines.init(0, .{}),
+        .aggregator = features_mod.Aggregator.init(gpa, .{}),
+        .policy_now_ms = 4000,
+    };
+    client.registration = Registration.init(gpa, owned_host, .tls, .{});
+    const desired = [_][]const u8{ "draft/reply", "draft/react", "draft/typing", "draft/no-implicit-names" };
+    client.registration.?.cap.config.desired = &desired;
+    try client.registration.?.cap.begin(&client.out);
+    client.out.clearRetainingCapacity();
+    _ = try client.registration.?.cap.handle(&client.out, message.parse(":irc CAP * LS :draft/reply draft/react draft/typing draft/no-implicit-names"));
+    client.out.clearRetainingCapacity();
+    _ = try client.registration.?.cap.handle(&client.out, message.parse(":irc CAP * ACK :draft/reply draft/react draft/typing draft/no-implicit-names"));
+    client.out.clearRetainingCapacity();
+    defer {
+        client.registration.?.deinit();
+        client.aggregator.deinit();
+        client.tx.deinit();
+        for (client.typing_targets.items) |entry| gpa.free(entry.target);
+        client.typing_targets.deinit(gpa);
+        client.framer.deinit();
+        client.out.deinit(gpa);
+        gpa.free(owned_host);
+    }
+
+    try client.reply("#c", "msg-1", "reply text");
+    try client.react("#c", "msg-1", "wave", false);
+    try client.typing("#c", .active);
+    try client.join("#c");
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[0].bytes, "+draft/reply=msg-1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[1].bytes, "+draft/react=wave") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[2].bytes, "+typing=active") != null);
+    try std.testing.expectEqualStrings("JOIN #c\r\nNAMES #c\r\n", client.tx.items.items[3].bytes);
 }
 
 test "live registration probes IRCX before CAP NICK and USER" {

@@ -1,10 +1,9 @@
 //! Pure IRCv3 CAP 302 negotiation state machine.
 //!
-//! Pinned protocol reference: `ircv3-specifications` commit
-//! `5eca32ce8cbc0c8f9d123529ef221d8da9516b65`, especially
-//! `extensions/capability-negotiation.md`. This module owns no transport. It
-//! consumes parsed IRC messages and appends complete client commands to a
-//! caller-owned output buffer.
+//! Protocol reference: the current IRCv3 specification catalog plus the
+//! capability surface advertised by the pinned Onyx Server submodule. This
+//! module owns no transport. It consumes parsed IRC messages and appends
+//! complete client commands to a caller-owned output buffer.
 
 const std = @import("std");
 const message = @import("message.zig");
@@ -152,13 +151,14 @@ pub const CapabilitySpec = struct {
     requestable: bool = true,
 };
 
-const deps_message_tags = [_][]const u8{"message-tags"};
 const deps_batch = [_][]const u8{"batch"};
 const deps_event_playback = [_][]const u8{"draft/chathistory"};
 
-/// Non-deprecated client-facing capabilities published by the pinned IRCv3 specification
-/// checkout. Transport/server-only extensions and ISUPPORT tokens are not CAP
-/// requests. STS is retained for advertisement inspection but is not desired.
+/// Client-applicable IRCv3 capabilities plus the pinned Onyx extensions which
+/// have concrete consumers in Client/State. Transport-only features such as
+/// WebSocket and server/gateway features such as WebIRC are not CAP requests.
+/// STS is policy, and E2EE is cataloged but deliberately not requested until a
+/// real encrypt/decrypt implementation exists.
 pub const published_client_capabilities = [_]CapabilitySpec{
     .{ .name = "account-notify" },
     .{ .name = "draft/account-registration" },
@@ -168,6 +168,7 @@ pub const published_client_capabilities = [_]CapabilitySpec{
     .{ .name = "cap-notify" },
     .{ .name = "draft/channel-rename" },
     .{ .name = "draft/chathistory" },
+    .{ .name = "draft/search" },
     .{ .name = "draft/event-playback", .dependencies = &deps_event_playback },
     .{ .name = "chghost" },
     .{ .name = "echo-message" },
@@ -176,15 +177,30 @@ pub const published_client_capabilities = [_]CapabilitySpec{
     .{ .name = "extended-monitor" },
     .{ .name = "invite-notify" },
     .{ .name = "labeled-response", .dependencies = &deps_batch },
-    .{ .name = "draft/message-redaction", .dependencies = &deps_message_tags },
+    .{ .name = "draft/message-redaction" },
+    .{ .name = "draft/message-editing" },
     .{ .name = "message-tags" },
-    .{ .name = "draft/metadata-2", .dependencies = &deps_batch },
+    .{ .name = "draft/metadata-2" },
     .{ .name = "multi-prefix" },
     .{ .name = "draft/multiline", .dependencies = &deps_batch },
     .{ .name = "no-implicit-names" },
+    .{ .name = "draft/no-implicit-names" },
     .{ .name = "draft/oper-tag" },
     .{ .name = "draft/pre-away" },
     .{ .name = "draft/read-marker" },
+    .{ .name = "draft/typing" },
+    .{ .name = "draft/react" },
+    .{ .name = "draft/reply" },
+    .{ .name = "draft/channel-context" },
+    .{ .name = "bot" },
+    .{ .name = "account-extban" },
+    .{ .name = "utf8-only" },
+    .{ .name = "draft/netsplit", .dependencies = &deps_batch },
+    .{ .name = "draft/netjoin", .dependencies = &deps_batch },
+    .{ .name = "onyx/session-sync" },
+    .{ .name = "onyx/bouncer" },
+    .{ .name = "onyx/topics" },
+    .{ .name = "onyx/e2ee", .requestable = false },
     .{ .name = "sasl" },
     .{ .name = "server-time" },
     .{ .name = "setname" },
@@ -196,7 +212,14 @@ pub const published_client_capabilities = [_]CapabilitySpec{
 /// Default to every requestable published client capability. Applications can
 /// pass a narrower list when a message handler is intentionally incomplete.
 pub const default_desired_capabilities = blk: {
-    var names: [published_client_capabilities.len - 1][]const u8 = undefined;
+    const count = count_requestable: {
+        var value: usize = 0;
+        for (published_client_capabilities) |spec| if (spec.requestable) {
+            value += 1;
+        };
+        break :count_requestable value;
+    };
+    var names: [count][]const u8 = undefined;
     var at: usize = 0;
     for (published_client_capabilities) |spec| {
         if (spec.requestable) {
