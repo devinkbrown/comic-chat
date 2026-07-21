@@ -41,6 +41,7 @@ queueing it:
 
 | Capability | Wire form |
 | --- | --- |
+| `draft/chathistory` | `CHATHISTORY LATEST <target> <selector> <limit>` |
 | `draft/search` | `SEARCH <target> :<query>` |
 | `draft/message-editing` | `EDIT <target> <msgid> :<text>` |
 | `draft/message-redaction` | `REDACT <channel> <msgid> [:reason]` |

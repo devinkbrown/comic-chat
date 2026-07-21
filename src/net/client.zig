@@ -703,6 +703,17 @@ pub const Client = struct {
         try self.queueOut(.bulk, false, false);
     }
 
+    /// Request the newest bounded CHATHISTORY window before `selector` (`*`,
+    /// `msgid=<id>`, or `timestamp=<ISO8601Z>`).
+    pub fn chatHistoryLatest(self: *Client, target: []const u8, selector: []const u8, limit: u16) !void {
+        try self.sendChatHistoryLatest(target, selector, limit, null);
+    }
+
+    /// Onyx named-conversation variant of `chatHistoryLatest`.
+    pub fn chatHistoryLatestTopic(self: *Client, target: []const u8, selector: []const u8, limit: u16, topic: []const u8) !void {
+        try self.sendChatHistoryLatest(target, selector, limit, topic);
+    }
+
     /// Onyx `EDIT <target> <msgid> :<text>` path. The server enforces original
     /// sender ownership and broadcasts an edit-tagged replacement to capable
     /// peers; the client validates only its own wire invariants.
@@ -1081,6 +1092,25 @@ pub const Client = struct {
         try self.queueOut(.interactive, false, false);
     }
 
+    fn sendChatHistoryLatest(self: *Client, target: []const u8, selector: []const u8, limit: u16, topic: ?[]const u8) !void {
+        try self.requireCapability("draft/chathistory");
+        if (!validHistoryTarget(target) or !validHistorySelector(selector)) return error.InvalidIrcParameter;
+        var limit_buffer: [5]u8 = undefined;
+        const limit_text = try std.fmt.bufPrint(&limit_buffer, "{d}", .{limit});
+        if (topic) |label| {
+            try self.requireClientTagCapability("onyx/topics");
+            if (!validTopicLabel(label)) return error.InvalidIrcParameter;
+            var tags: std.ArrayList(u8) = .empty;
+            defer tags.deinit(self.gpa);
+            try tags.appendSlice(self.gpa, "+onyx/topic=");
+            try message.escapeTagValue(&tags, self.gpa, label);
+            try self.appendCommandWithTagsAndTrailing("CHATHISTORY", &.{ "LATEST", target, selector, limit_text }, tags.items, false);
+        } else {
+            try self.appendCommand("CHATHISTORY", &.{ "LATEST", target, selector, limit_text });
+        }
+        try self.queueOut(.bulk, false, false);
+    }
+
     fn sendWithTopic(self: *Client, command: []const u8, target: []const u8, topic: []const u8, text: []const u8) !void {
         try self.requireClientTagCapability("onyx/topics");
         if (!isChannelTarget(target) or !validTopicLabel(topic)) return error.InvalidIrcParameter;
@@ -1246,6 +1276,38 @@ fn validTopicLabel(value: []const u8) bool {
     if (value.len == 0 or value.len > 50 or !std.unicode.utf8ValidateSlice(value)) return false;
     for (value) |byte| if (byte < 0x20 or byte == 0x7f or byte == ',') return false;
     return true;
+}
+
+fn validHistoryTarget(value: []const u8) bool {
+    if (value.len == 0 or value.len > 128 or std.mem.eql(u8, value, "*")) return false;
+    for (value) |byte| if (byte <= ' ' or byte == 0x7f or byte == ',') return false;
+    return true;
+}
+
+fn validHistorySelector(value: []const u8) bool {
+    if (std.mem.eql(u8, value, "*")) return true;
+    if (std.mem.startsWith(u8, value, "msgid=")) {
+        const msgid = value["msgid=".len..];
+        if (msgid.len == 0 or msgid.len > 128) return false;
+        for (msgid) |byte| if (byte <= ' ' or byte == 0x7f or byte == ';' or byte == '\\') return false;
+        return true;
+    }
+    if (std.mem.startsWith(u8, value, "timestamp=")) return validHistoryTimestamp(value["timestamp=".len..]);
+    return false;
+}
+
+fn validHistoryTimestamp(value: []const u8) bool {
+    if (value.len != 24 or value[4] != '-' or value[7] != '-' or value[10] != 'T' or value[13] != ':' or value[16] != ':' or value[19] != '.' or value[23] != 'Z') return false;
+    const year = std.fmt.parseUnsigned(u16, value[0..4], 10) catch return false;
+    const month = std.fmt.parseUnsigned(u8, value[5..7], 10) catch return false;
+    const day = std.fmt.parseUnsigned(u8, value[8..10], 10) catch return false;
+    const hour = std.fmt.parseUnsigned(u8, value[11..13], 10) catch return false;
+    const minute = std.fmt.parseUnsigned(u8, value[14..16], 10) catch return false;
+    const second = std.fmt.parseUnsigned(u8, value[17..19], 10) catch return false;
+    _ = std.fmt.parseUnsigned(u16, value[20..23], 10) catch return false;
+    if (year < 1970 or month < 1 or month > 12 or hour > 23 or minute > 59 or second > 59) return false;
+    const month_enum: std.time.epoch.Month = @enumFromInt(month);
+    return day >= 1 and day <= std.time.epoch.getDaysInMonth(year, month_enum);
 }
 
 fn isChannelTarget(value: []const u8) bool {
@@ -1465,6 +1527,7 @@ test "reply reaction and typing commands are bounded tagged client messages" {
     try std.testing.expectError(error.CapabilityNotEnabled, client.redactMessage("#c", "msg-1", null));
     try std.testing.expectError(error.CapabilityNotEnabled, client.markRead("#c", null));
     try std.testing.expectError(error.CapabilityNotEnabled, client.metadata("*", "GET", null, null, null));
+    try std.testing.expectError(error.CapabilityNotEnabled, client.chatHistoryLatest("#c", "*", 20));
     try std.testing.expectError(error.MessageTagsNotEnabled, client.privmsgWithTopic("#c", "general", "hello"));
     try std.testing.expectError(error.CapabilityNotEnabled, client.privmsgWithChannelContext("alice", "#c", "hello"));
     // Keep this command-builder test independent from the global desired
@@ -1520,6 +1583,10 @@ test "reply reaction and typing commands are bounded tagged client messages" {
     try client.redactMessage("#c", "msg-1", "off-topic");
     try client.markRead("#c", "timestamp=2026-07-22T00:00:00Z");
     try client.metadata("*", "SET", "theme", "public", "ink");
+    try std.testing.expectError(error.InvalidIrcParameter, client.chatHistoryLatest("*", "*", 20));
+    try std.testing.expectError(error.InvalidIrcParameter, client.chatHistoryLatest("#c", "bogus", 20));
+    try std.testing.expectError(error.InvalidIrcParameter, client.chatHistoryLatest("#c", "msgid=bad;id", 20));
+    try std.testing.expectError(error.InvalidIrcParameter, client.chatHistoryLatest("#c", "timestamp=2026-02-30T00:00:00.000Z", 20));
     try std.testing.expectError(error.InvalidIrcParameter, client.privmsgWithTopic("alice", "general", "topic text"));
     try std.testing.expectError(error.InvalidIrcParameter, client.privmsgWithTopic("#c", "bad,label", "topic text"));
     try std.testing.expectError(error.InvalidIrcParameter, client.privmsgWithChannelContext("#c", "#other", "direct text"));
@@ -1527,6 +1594,8 @@ test "reply reaction and typing commands are bounded tagged client messages" {
     try client.privmsgWithTopic("#c", "release plan", "topic text");
     try client.noticeWithTopic("#c", "release plan", "topic notice");
     try client.privmsgWithChannelContext("alice", "#c", "direct text");
+    try client.chatHistoryLatest("#c", "msgid=msg-1", 20);
+    try client.chatHistoryLatestTopic("#c", "timestamp=2026-07-22T00:00:00.000Z", 20, "release plan");
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[4].bytes, "SEARCH #c :release checklist") != null);
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[5].bytes, "EDIT #c msg-1 :corrected text") != null);
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[6].bytes, "REDACT #c msg-1 :off-topic") != null);
@@ -1538,6 +1607,9 @@ test "reply reaction and typing commands are bounded tagged client messages" {
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[10].bytes, "NOTICE #c :topic notice") != null);
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[11].bytes, "+draft/channel-context=#c") != null);
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[11].bytes, "PRIVMSG alice :direct text") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[12].bytes, "CHATHISTORY LATEST #c msgid=msg-1 20") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[13].bytes, "+onyx/topic=release\\splan") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[13].bytes, "CHATHISTORY LATEST #c timestamp=2026-07-22T00:00:00.000Z 20") != null);
 
     _ = try client.features.?.observe(&message.parse(":irc 005 me UTF8ONLY :are supported"));
     try std.testing.expectError(error.InvalidUtf8, client.privmsg("#c", &.{0xff}));
@@ -1546,8 +1618,8 @@ test "reply reaction and typing commands are bounded tagged client messages" {
     var password = [_]u8{ 'p', 'w' };
     try client.accountRegister("*", "user@example.test", &password);
     try std.testing.expectEqualSlices(u8, &.{ 0, 0 }, &password);
-    try std.testing.expect(client.tx.items.items[12].sensitive);
-    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[12].bytes, "REGISTER * user@example.test pw") != null);
+    try std.testing.expect(client.tx.items.items[14].sensitive);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[14].bytes, "REGISTER * user@example.test pw") != null);
 }
 
 test "Onyx narrow tag capabilities and no-implicit-names alias work without message-tags" {

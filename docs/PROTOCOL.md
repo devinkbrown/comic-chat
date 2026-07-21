@@ -247,6 +247,11 @@ in [`docs/audits/2026-07-22-comicchat-onyx-ircv3-parity.md`](audits/2026-07-22-c
 `onyx/e2ee` is intentionally never requested until its complete encryption and
 decryption control plane is implemented.
 
+The client exposes bounded `CHATHISTORY LATEST` requests after negotiating
+`draft/chathistory`, with `*`, `msgid=...`, or `timestamp=...` selectors.
+Onyx topic-filtered replay uses the same escaped `+onyx/topic` tag as live
+named-conversation messages.
+
 ### Onyx reusable sessions and same-nick clients
 
 After successful SASL and numeric `001`, the portable client follows the live
