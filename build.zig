@@ -8,7 +8,7 @@ pub fn build(b: *std.Build) void {
     const strip = b.option(bool, "strip", "Strip symbols and build-path debug metadata") orelse false;
     const onyx_build_info = b.addOptions();
     onyx_build_info.addOption([]const u8, "git_commit", "06bb350");
-    onyx_build_info.addOption([]const u8, "version", "0.5.6");
+    onyx_build_info.addOption([]const u8, "version", "0.5.7");
     const onyx_tls = b.addModule("onyx_tls", .{
         .root_source_file = b.path("onyx_tls_root.zig"),
         .target = target,

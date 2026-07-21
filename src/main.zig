@@ -1573,6 +1573,7 @@ fn runInteractivePollBackend(
     defer state.deinit(gpa);
     var network = try AsyncNetwork.init(gpa, host, port, nick, runtime);
     defer network.deinit();
+    applyStoredUiPreferences(&view, &network.runtime.preferences);
     if (startup_document) |path| try loadStartupDocument(gpa, io, path, &network, &state, &workspace, nick);
 
     try presentWorkspace(win, &view, state.status, &workspace);
@@ -1684,6 +1685,7 @@ fn runInteractiveWin32(gpa: std.mem.Allocator, host: []const u8, port: u16, nick
     defer state.deinit(gpa);
     var network = try AsyncNetwork.init(gpa, host, port, nick, runtime);
     defer network.deinit();
+    applyStoredUiPreferences(&view, &network.runtime.preferences);
     if (startup_document) |path| try loadStartupDocument(gpa, io, path, &network, &state, &workspace, nick);
     try presentWorkspace(win, &view, state.status, &workspace);
 
@@ -1768,6 +1770,52 @@ fn handleWindowEvent(
                 if (try view.handleDialogKey(key, key_input.modifiers)) |action| try applyDialogAction(gpa, io, window, action, view, network, state, workspace, nick);
                 break :key_result .{ .redraw = true };
             }
+            const previous_dialog = view.active_dialog;
+            if (view.handleMenuKey(key)) |action| {
+                if (previous_dialog != view.active_dialog)
+                    try prefillOpenedDialog(view, transcript, editor.text(), &network.runtime.preferences, state, network.clientPtr());
+                const keep_running = switch (action) {
+                    .quit => false,
+                    .connection => connection: {
+                        view.openConnectionDialog(network.host, network.reconnect.port, network.effectiveOptions().security == .tls);
+                        break :connection true;
+                    },
+                    .transcript_command => |command| transcript_command: {
+                        switch (command) {
+                            0 => {
+                                try copyTranscriptSelection(workspace, transcript, view.shell.transcriptSelection());
+                                syncClipboardToNative(window, workspace);
+                            },
+                            1 => {
+                                const at = if (view.shell.transcriptSelection()) |selection| selection.end else transcript.lines.items.len;
+                                try transcript.insertPageBreak(nick, at);
+                                view.shell.selectTranscriptLine(transcript.lines.items.len, @min(at, transcript.lines.items.len - 1), false);
+                            },
+                            else => removeTranscriptSelection(transcript, &view.shell),
+                        }
+                        break :transcript_command true;
+                    },
+                    .composer_format => |format_index| format: {
+                        const control: u8 = switch (format_index) {
+                            0 => cc.comic.formatting.control.bold,
+                            1 => cc.comic.formatting.control.italic,
+                            else => cc.comic.formatting.control.underline,
+                        };
+                        if (editor.text().len + (if (editor.selection() == null) @as(usize, 1) else @as(usize, 2)) <= 400)
+                            try editor.toggleControl(control);
+                        break :format true;
+                    },
+                    .child_window => child: {
+                        spawnRoomWindow(gpa, io, network.runtime.executable, network.host, network.reconnect.port, nick, room.name) catch {
+                            view.openDialog(.channel);
+                            view.setDialogNotice("A separate room window could not be started.");
+                        };
+                        break :child true;
+                    },
+                    else => true,
+                };
+                break :key_result .{ .keep_running = keep_running, .redraw = true };
+            }
             if (view.handleTranscriptKey(key, transcript.lines.items.len, key_input.modifiers.shift))
                 break :key_result .{ .redraw = true };
             if (key_input.modifiers.control and view.shell.focus == .transcript and try handleTranscriptShortcut(window, key, workspace, transcript, view))
@@ -1804,10 +1852,6 @@ fn handleWindowEvent(
                     view.openConnectionDialog(network.host, network.reconnect.port, network.effectiveOptions().security == .tls);
                     break :connection true;
                 },
-                .endpoint_dialog => |id| endpoint: {
-                    view.openEndpointDialog(id, network.host, network.reconnect.port, network.effectiveOptions().security == .tls);
-                    break :endpoint true;
-                },
                 .toolbar => |index| toolbar: {
                     if (index == 1) break :toolbar false;
                     if (index == 3) {
@@ -1830,8 +1874,8 @@ fn handleWindowEvent(
                     break :toolbar true;
                 },
                 .room_tab => |index| workspace.activate(index),
-                .composer_cursor => |pointer_x| cursor: {
-                    view.placeComposerCursor(editor, pointer_x);
+                .composer_cursor => |coordinates| cursor: {
+                    view.placeComposerCursor(editor, coordinates.x, coordinates.y);
                     break :cursor true;
                 },
                 .composer_format => |format_index| format: {
@@ -1940,6 +1984,13 @@ fn prefillOpenedDialog(
 ) !void {
     const id = view.active_dialog orelse return;
     switch (id) {
+        .settings => {
+            try view.setDialogValueAt(0, if (view.shell.content_mode == .comic) "Comic" else "Text");
+            var panels: [16]u8 = undefined;
+            try view.setDialogValueAt(1, try std.fmt.bufPrint(&panels, "{d} panels", .{view.shell.comic_columns}));
+            try view.setDialogValueAt(2, if (view.shell.show_members) "Shown" else "Hidden");
+            try view.setDialogValueAt(3, if (view.shell.member_view == .icons) "Icons" else "List");
+        },
         .personal => {
             try view.setDialogValueAt(0, preferences.profile.items);
             try view.setDialogValueAt(1, preferences.display_name.items);
@@ -2047,6 +2098,13 @@ fn prefillOpenedDialog(
         },
         else => {},
     }
+}
+
+fn applyStoredUiPreferences(view: *cc.client.view.View, preferences: *const cc.client.preferences.Store) void {
+    view.setContentMode(if (preferences.ui_text_mode) .text else .comic);
+    view.shell.setComicColumns(preferences.ui_comic_columns);
+    view.shell.setMemberView(if (preferences.ui_member_list) .list else .icons);
+    view.shell.setMembersVisible(preferences.ui_members_visible);
 }
 
 fn handleEditorSelectionKey(editor: *cc.client.input.Editor, key: cc.platform.event.Key) bool {
@@ -2203,7 +2261,7 @@ fn applyDialogAction(
         else => return,
     };
     const value = std.mem.trim(u8, view.dialogValue(), " \t");
-    if (id == .setup or id == .settings or id == .servers) {
+    if (id == .setup or id == .servers) {
         const request = parseConnectionDialog(value, view.dialogValueAt(1), view.dialogValueAt(2)) catch |err| {
             view.setDialogNotice(switch (err) {
                 error.InvalidHost => "Enter a valid server name without spaces.",
@@ -2228,6 +2286,15 @@ fn applyDialogAction(
     const room = workspace.activeRoom() orelse return;
     const preferences = &network.runtime.preferences;
     switch (id) {
+        .settings => {
+            const text_mode = std.ascii.eqlIgnoreCase(view.dialogValueAt(0), "Text");
+            const comic_columns = comicColumnsFromDialog(view.dialogValueAt(1));
+            const members_visible = !std.ascii.eqlIgnoreCase(view.dialogValueAt(2), "Hidden");
+            const member_list = std.ascii.eqlIgnoreCase(view.dialogValueAt(3), "List");
+            preferences.setUiLayout(text_mode, comic_columns, members_visible, member_list);
+            try preferences.saveFile(io, network.runtime.preferences_path);
+            applyStoredUiPreferences(view, preferences);
+        },
         .room_list => {
             const client = maybe_client orelse {
                 view.setDialogNotice("Connect before browsing rooms.");
@@ -4060,7 +4127,7 @@ fn runUiPreview(gpa: std.mem.Allocator, io: std.Io, surface: []const u8) !void {
         for ("comicchat") |ch| _ = try view.handleDialogKey(.{ .char = ch }, .{});
         _ = try view.handleDialogKey(.tab, .{});
         for ("private password") |ch| _ = try view.handleDialogKey(.{ .char = ch }, .{});
-        const password_layout = cc.client.ui.DialogLayout.init(view.width(), view.height(), cc.client.dialogs.get(.password).source_w, cc.client.dialogs.get(.password).source_h, cc.client.dialogs.fields(.password).len, 78);
+        const password_layout = cc.client.ui.DialogLayout.init(view.width(), view.height(), cc.client.dialogs.get(.password).source_w, cc.client.dialogs.get(.password).source_h, cc.client.dialogs.fields(.password).len, 78, true);
         const password_field = password_layout.fieldRect(1);
         _ = view.handlePointerMove(.{ .kind = .move, .x = password_field.x + 20, .y = password_field.y + 12 }, transcript.roster.items.len);
     }
@@ -4069,12 +4136,28 @@ fn runUiPreview(gpa: std.mem.Allocator, io: std.Io, surface: []const u8) !void {
     if (std.mem.eql(u8, surface, "hover")) view.hovered_toolbar = 5;
     if (std.mem.eql(u8, surface, "say-hover")) view.hovered_say_action = 2;
     if (std.mem.eql(u8, surface, "member")) view.shell.selected_member = 1;
+    if (std.mem.eql(u8, surface, "mood-laughing")) view.shell.setEmotionPoint(30, -30, 48);
     if (std.mem.eql(u8, surface, "context")) {
         const layout = cc.client.geometry.Layout.compute(view.width(), view.height(), true, true);
         _ = view.handlePointer(.{ .kind = .down, .x = layout.body_camera.x + 30, .y = layout.body_camera.y + 60, .button = .secondary }, transcript.count(), transcript.roster.items.len);
     }
-    const preview_input = if (std.mem.eql(u8, surface, "composer")) "A polished input should keep the caret visible even when the message becomes wider than the available composer field." else "";
-    try view.render("#root", "reconnecting", &transcript, preview_input, preview_input.len);
+    const preview_input = if (std.mem.eql(u8, surface, "composer"))
+        "A polished input should keep the caret visible even when the message becomes wider than the available composer field."
+    else if (std.mem.eql(u8, surface, "composer-multiline"))
+        "First line stays visible.\nThe active second line has its own caret."
+    else
+        "";
+    if (std.mem.eql(u8, surface, "multi-tabs") or std.mem.eql(u8, surface, "compact-multi-tabs")) {
+        const tabs = [_]cc.client.view.View.Tab{
+            .{ .label = "#root" },
+            .{ .label = "#illustration", .unread = 2 },
+            .{ .label = "#portable-ui" },
+            .{ .label = "#source-parity", .unread = 7 },
+        };
+        try view.renderTabs("reconnecting", &transcript, preview_input, preview_input.len, null, &tabs, tabs.len - 1);
+    } else {
+        try view.render("#root", "reconnecting", &transcript, preview_input, preview_input.len);
+    }
     const png = try cc.render.png.encode(gpa, view.pixels(), view.width(), view.height());
     defer gpa.free(png);
     try writeStdout(io, png);

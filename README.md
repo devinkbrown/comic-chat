@@ -106,7 +106,9 @@ and maps selection and context actions to the correct scrolled member.
 NAMES prefixes and live MODE changes drive visible voice/half-op/operator/owner
 badges; room administration, Kick, and Ban controls disable when the local
 member lacks permission.
-Edit > Settings uses the same prefilled, validated reconnect path. Room List
+Edit > Settings controls persistent conversation view, panel density,
+member-pane visibility, and member layout. Connection Setup remains the
+separate live reconnect path. Room List
 uses source-shaped LIST/LISTX queries and optionally joins a result, User List
 selects an active member, and Comic View applies both content mode and one-to-six panel density. Sparse conversations
 reserve that selected desktop grid, so a single message or break control can
@@ -179,13 +181,14 @@ Cross-compile examples:
 
 ```sh
 zig build -Dtarget=x86_64-windows
-zig build -Dtarget=x86-windows
 zig build -Dtarget=aarch64-windows
 zig build -Dtarget=x86_64-linux
 ```
 
 Cross-compilation installs the Windows binary at
-`zig-out\bin\comicchat.exe`; it does not execute it. On Linux, a nonempty
+`zig-out\bin\comicchat.exe`; it does not execute it. The pinned Onyx TLS
+implementation requires a 64-bit target, so 32-bit Windows is not supported.
+On Linux, a nonempty
 `WAYLAND_DISPLAY` selects the Wayland backend and an unset/empty value selects
 X11. There is no automatic fallback after a Wayland connection failure. To
 force the X11 smoke explicitly:
@@ -196,7 +199,7 @@ env -u WAYLAND_DISPLAY zig build run -- window anna
 
 ## Release packages
 
-The current published release is `comicchat-portable-2026-07-20.5`.
+The current published release is `comicchat-portable-2026-07-21.1`.
 It contains x86_64 binary packages for Windows, Linux, FreeBSD, and OpenBSD,
 an explicit buildable source archive, and a single SHA-256 manifest covering
 all five artifacts. The source archive includes the narrow Onyx TLS dependency
@@ -206,13 +209,13 @@ without a separate submodule checkout.
 Verify downloaded artifacts before use:
 
 ```sh
-sha256sum -c comicchat-portable-2026-07-20.5-SHA256SUMS.txt
+sha256sum -c comicchat-portable-2026-07-21.1-SHA256SUMS.txt
 ```
 
 To build the binary archives from a clean checkout:
 
 ```sh
-./tools/package-release.sh portable-2026-07-20.5
+./tools/package-release.sh portable-2026-07-21.1
 ```
 
 Each archive contains the executable, this README, the AGPL license, and

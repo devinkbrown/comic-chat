@@ -1,5 +1,9 @@
 # Worker brief — Comic Chat
 
+For model selection, parallel-lane sizing, escalation, and cross-model handoff,
+follow [`.ai/WORKFLOW.md`](../.ai/WORKFLOW.md). Repository invariants and build
+gates in this document remain authoritative.
+
 This repository ships one portable implementation under `src/`. It uses a
 software framebuffer renderer with direct X11, Wayland, and Win32 backends and
 no SDL. TLS is supplied by the pinned portable Onyx TLS implementation.

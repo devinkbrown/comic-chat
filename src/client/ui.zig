@@ -77,7 +77,7 @@ pub const DialogLayout = struct {
     primary: Rect,
     cancel: Rect,
 
-    pub fn init(canvas_width: u32, canvas_height: u32, source_width: u16, source_height: u16, field_count: usize, primary_width: i32) DialogLayout {
+    pub fn init(canvas_width: u32, canvas_height: u32, source_width: u16, source_height: u16, field_count: usize, primary_width: i32, show_cancel: bool) DialogLayout {
         const canvas_w: i32 = @intCast(canvas_width);
         const canvas_h: i32 = @intCast(canvas_height);
         const desired_w = @divTrunc(@as(i32, source_width) * 3, 2);
@@ -101,8 +101,11 @@ pub const DialogLayout = struct {
             .body_y = body_y,
             .row_h = row_h,
             .field_count = field_count,
-            .primary = .{ .x = rect.right() - 100 - primary_width, .y = rect.bottom() - 42, .w = primary_width, .h = 32 },
-            .cancel = .{ .x = rect.right() - 88, .y = rect.bottom() - 42, .w = 78, .h = 32 },
+            .primary = .{ .x = rect.right() - (if (show_cancel) @as(i32, 100) else @as(i32, 10)) - primary_width, .y = rect.bottom() - 42, .w = primary_width, .h = 32 },
+            .cancel = if (show_cancel)
+                .{ .x = rect.right() - 88, .y = rect.bottom() - 42, .w = 78, .h = 32 }
+            else
+                .{ .x = rect.right() - 10, .y = rect.bottom() - 42, .w = 0, .h = 0 },
         };
     }
 
@@ -281,9 +284,13 @@ pub fn drawButton(c: *Canvas, x: i32, y: i32, width: i32, label: []const u8, kin
     };
     if (kind == .primary) fillRoundedRect(c, x + 2, y + 3, width, 32, 7, Theme.shadow);
     drawRoundedBorder(c, x, y, width, 32, 7, fill, border);
-    const text_w = Canvas.uiTextWidth(label);
     const text_color = if (kind == .primary) Theme.layer else Theme.ink;
-    _ = c.drawUiText(label, x + @divTrunc(width - text_w, 2), y + 3, text_color);
+    const available = @max(0, width - 16);
+    const text_w = Canvas.uiTextWidth(label);
+    if (text_w <= available)
+        _ = c.drawUiText(label, x + @divTrunc(width - text_w, 2), y + 3, text_color)
+    else
+        drawEllipsized(c, label, x + 8, y + 3, available, text_color);
 }
 
 pub fn drawModalBackdrop(c: *Canvas) void {
@@ -301,8 +308,8 @@ pub fn drawDialogSurface(c: *Canvas, rect: Rect, title: []const u8, subtitle: []
     fillRoundedRect(c, rect.x + 24, rect.y + 18, 32, 32, 9, Theme.navigation);
     fillRoundedRect(c, rect.x + 31, rect.y + 25, 18, 18, 5, Theme.accent);
     _ = c.drawUiText("C", rect.x + 36, rect.y + 25, Theme.layer);
-    _ = c.drawUiText(title, rect.x + 70, rect.y + 16, Theme.ink);
-    _ = c.drawUiText(subtitle, rect.x + 70, rect.y + 34, Theme.secondary);
+    drawEllipsized(c, title, rect.x + 70, rect.y + 16, rect.w - 94, Theme.ink);
+    drawEllipsized(c, subtitle, rect.x + 70, rect.y + 34, rect.w - 94, Theme.secondary);
     c.fillRect(rect.x + 24, rect.y + 66, rect.w - 48, 1, Theme.divider);
 }
 
@@ -415,7 +422,7 @@ pub fn drawMenuItem(c: *Canvas, x: i32, y: i32, width: i32, label: []const u8, h
         c.drawLine(x + 12, y + 14, x + 14, y + 16, Theme.layer);
         c.drawLine(x + 14, y + 16, x + 18, y + 11, Theme.layer);
     }
-    _ = c.drawUiText(label, x + 27, y + 5, if (enabled) Theme.ink else Theme.secondary);
+    drawEllipsized(c, label, x + 27, y + 5, width - 36, if (enabled) Theme.ink else Theme.secondary);
 }
 
 pub fn drawMenuLabel(c: *Canvas, x: i32, y: i32, width: i32, label: []const u8, selected: bool) void {
@@ -512,9 +519,10 @@ pub fn drawExpressionPanel(c: *Canvas, rect: Rect, selection: []const u8) void {
     c.fillRect(rect.x + 12, rect.y, @max(0, rect.w - 24), @max(0, rect.h - 8), Theme.layer);
     c.fillRect(rect.x + 12, rect.y, @max(0, rect.w - 24), 1, Theme.divider);
     fillRoundedRect(c, rect.x + 18, rect.y + 11, 5, 5, 3, Theme.accent);
-    _ = c.drawUiText("MOOD", rect.x + 31, rect.y + 6, Theme.ink);
-    const label_w = Canvas.uiTextWidth(selection) + 20;
-    const label_x = rect.right() - label_w - 18;
+    const label_w = @min(@max(40, rect.w - 44), Canvas.uiTextWidth(selection) + 20);
+    const label_x = rect.right() - label_w - 12;
+    const mood_w = label_x - (rect.x + 31) - 6;
+    if (mood_w >= Canvas.uiTextWidth("MOOD")) _ = c.drawUiText("MOOD", rect.x + 31, rect.y + 6, Theme.ink);
     drawPill(c, .{ .x = label_x, .y = rect.y + 5, .w = label_w, .h = 20 }, selection, true);
     c.fillRect(rect.x + 18, rect.y + 31, rect.w - 36, 1, Theme.divider);
 }
@@ -590,9 +598,13 @@ pub fn drawMemberRow(c: *Canvas, rect: Rect, label: []const u8, role_badge: []co
 }
 
 pub fn drawPaneHeader(c: *Canvas, rect: Rect, title: []const u8) void {
+    drawPaneHeaderReserved(c, rect, title, 0);
+}
+
+pub fn drawPaneHeaderReserved(c: *Canvas, rect: Rect, title: []const u8, trailing_width: i32) void {
     c.fillRect(rect.x, rect.y, rect.w, 30, Theme.rail);
     fillRoundedRect(c, rect.x + 12, rect.y + 12, 5, 5, 3, Theme.accent);
-    _ = c.drawUiText(title, rect.x + 25, rect.y + 7, Theme.ink);
+    drawEllipsized(c, title, rect.x + 25, rect.y + 7, rect.w - 37 - @max(0, trailing_width), Theme.ink);
     c.fillRect(rect.x + 12, rect.y + 29, @max(0, rect.w - 24), 1, Theme.divider);
 }
 
@@ -707,7 +719,7 @@ test "primary buttons and focused fields use the shared accent" {
 }
 
 test "dialog layout keeps fields and actions inside the modal" {
-    const layout = DialogLayout.init(640, 430, 252, 226, 3, 108);
+    const layout = DialogLayout.init(640, 430, 252, 226, 3, 108, true);
     try std.testing.expect(layout.rect.w >= 300);
     try std.testing.expect(contains(layout.primary, layout.primary.x + 1, layout.primary.y + 1));
     try std.testing.expect(contains(layout.cancel, layout.cancel.x + 1, layout.cancel.y + 1));
@@ -719,7 +731,7 @@ test "dialog layout keeps fields and actions inside the modal" {
 }
 
 test "semantic feedback primitives classify status and button targets" {
-    const layout = DialogLayout.init(640, 430, 252, 218, 2, 96);
+    const layout = DialogLayout.init(640, 430, 252, 218, 2, 96, true);
     try std.testing.expectEqual(NoticeTone.success, statusTone("connected"));
     try std.testing.expectEqual(NoticeTone.warning, statusTone("reconnecting"));
     try std.testing.expectEqual(NoticeTone.failure, statusTone("connection failed"));
