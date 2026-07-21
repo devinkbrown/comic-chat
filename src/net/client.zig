@@ -21,6 +21,7 @@ pub const Message = message.Message;
 pub const ConnectOptions = transport.ConnectOptions;
 pub const Security = transport.Security;
 pub const TypingStatus = enum { active, paused, done };
+pub const PinsOperation = enum { list, add, delete, clear };
 
 const desired_without_sasl = blk: {
     var names: [ircv3.default_desired_capabilities.len - 1][]const u8 = undefined;
@@ -490,6 +491,22 @@ pub const Client = struct {
 
     pub fn setTopic(self: *Client, channel: []const u8, topic: []const u8) !void {
         try self.appendCommandTrailing("TOPIC", &.{ channel, topic });
+        try self.queueOut(.interactive, true, false);
+    }
+
+    /// Onyx `PINS <#channel> [LIST|ADD <msgid>|DEL <msgid>|CLEAR]`.
+    /// Authorization remains exclusively server-owned.
+    pub fn pins(self: *Client, channel: []const u8, operation: PinsOperation, msgid: ?[]const u8) !void {
+        if (!isChannelTarget(channel)) return error.InvalidIrcParameter;
+        switch (operation) {
+            .list => if (msgid != null) return error.InvalidIrcParameter else try self.appendCommand("PINS", &.{ channel, "LIST" }),
+            .clear => if (msgid != null) return error.InvalidIrcParameter else try self.appendCommand("PINS", &.{ channel, "CLEAR" }),
+            .add, .delete => {
+                const id = msgid orelse return error.InvalidIrcParameter;
+                if (!validHistorySelectorForPin(id)) return error.InvalidIrcParameter;
+                try self.appendCommand("PINS", &.{ channel, if (operation == .add) "ADD" else "DEL", id });
+            },
+        }
         try self.queueOut(.interactive, true, false);
     }
 
@@ -1284,6 +1301,12 @@ fn validHistoryTarget(value: []const u8) bool {
     return true;
 }
 
+fn validHistorySelectorForPin(value: []const u8) bool {
+    if (value.len == 0 or value.len > 64) return false;
+    for (value) |byte| if (byte <= ' ' or byte == 0x7f or byte == ';' or byte == '\\') return false;
+    return true;
+}
+
 fn validHistorySelector(value: []const u8) bool {
     if (std.mem.eql(u8, value, "*")) return true;
     if (std.mem.startsWith(u8, value, "msgid=")) {
@@ -1620,6 +1643,15 @@ test "reply reaction and typing commands are bounded tagged client messages" {
     try std.testing.expectEqualSlices(u8, &.{ 0, 0 }, &password);
     try std.testing.expect(client.tx.items.items[14].sensitive);
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[14].bytes, "REGISTER * user@example.test pw") != null);
+    try client.pins("#c", .list, null);
+    try client.pins("#c", .add, "msg-1");
+    try client.pins("#c", .delete, "msg-1");
+    try client.pins("#c", .clear, null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[15].bytes, "PINS #c LIST\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[16].bytes, "PINS #c ADD msg-1\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[17].bytes, "PINS #c DEL msg-1\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[18].bytes, "PINS #c CLEAR\r\n") != null);
+    try std.testing.expectError(error.InvalidIrcParameter, client.pins("#c", .add, "bad;id"));
 }
 
 test "Onyx narrow tag capabilities and no-implicit-names alias work without message-tags" {
