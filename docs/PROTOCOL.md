@@ -269,8 +269,14 @@ produce `+draft/reply`, `+draft/react`, `+draft/unreact`, and rate-limited `+typ
 messages when either generic `message-tags` or their corresponding narrow Onyx
 draft capability is enabled; incoming `TAGMSG` is not inserted into comic
 history by default.
-`+channel-context` and unknown future tags remain accessible through the
-generic tag iterator. `msgid`, bot/oper tags, UTF8ONLY, CLIENTTAGDENY,
+Onyx named conversations use the narrow `onyx/topics` capability and emit
+escaped `+onyx/topic=<label>` tags on `PRIVMSG` or `NOTICE`, without requiring
+generic tags. Contextual direct messages use
+`+draft/channel-context=<channel>` only when both `draft/channel-context` and
+generic `message-tags` are negotiated. This is ComicChat's conservative
+semantic policy; the daemon's generic client-tag relay itself is authorized by
+`message-tags`. Unknown future tags remain accessible through the generic tag
+iterator. `msgid`, bot/oper tags, UTF8ONLY, CLIENTTAGDENY,
 CHATHISTORY, MSGREFTYPES, MONITOR, WHOX, BOT, NETWORK, and draft ICON
 advertisements are either interpreted by feature state or retained in the
 ISUPPORT map. WEBIRC and WebSocket are separate gateway/transport modes, not

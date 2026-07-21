@@ -618,6 +618,34 @@ pub const Client = struct {
         try self.queueOut(.interactive, false, false);
     }
 
+    /// Send a named-conversation message using Onyx's narrow `onyx/topics`
+    /// capability. The tag is valid without generic `message-tags`.
+    pub fn privmsgWithTopic(self: *Client, target: []const u8, topic: []const u8, text: []const u8) !void {
+        return self.sendWithTopic("PRIVMSG", target, topic, text);
+    }
+
+    /// NOTICE counterpart to `privmsgWithTopic`.
+    pub fn noticeWithTopic(self: *Client, target: []const u8, topic: []const u8, text: []const u8) !void {
+        return self.sendWithTopic("NOTICE", target, topic, text);
+    }
+
+    /// Associate a direct message with a channel. Onyx's channel-context
+    /// capability defines the tag semantics, while generic `message-tags`
+    /// remains the relay authorization for this draft extension.
+    pub fn privmsgWithChannelContext(self: *Client, target: []const u8, channel: []const u8, text: []const u8) !void {
+        try self.requireCapability("draft/channel-context");
+        try self.requireClientTagCapability("");
+        if (isChannelTarget(target) or !validChannelContext(channel)) return error.InvalidIrcParameter;
+        try self.validateOutgoingText(text);
+        var tags: std.ArrayList(u8) = .empty;
+        defer tags.deinit(self.gpa);
+        try tags.appendSlice(self.gpa, "+draft/channel-context=");
+        try message.escapeTagValue(&tags, self.gpa, channel);
+        if (self.capabilityEnabled("echo-message")) if (self.features) |*state| try state.recordEcho(target, text);
+        try self.appendCommandWithTagsAndTrailing("PRIVMSG", &.{ target, text }, tags.items, true);
+        try self.queueOut(.interactive, false, false);
+    }
+
     /// Emit the NOTICE form used by Microsoft's CTCP information replies.
     /// A non-null empty payload intentionally retains the separating space.
     pub fn ctcpReply(self: *Client, target: []const u8, command: []const u8, payload: ?[]const u8) !void {
@@ -1053,6 +1081,21 @@ pub const Client = struct {
         try self.queueOut(.interactive, false, false);
     }
 
+    fn sendWithTopic(self: *Client, command: []const u8, target: []const u8, topic: []const u8, text: []const u8) !void {
+        try self.requireClientTagCapability("onyx/topics");
+        if (!isChannelTarget(target) or !validTopicLabel(topic)) return error.InvalidIrcParameter;
+        try self.validateOutgoingText(text);
+        var tags: std.ArrayList(u8) = .empty;
+        defer tags.deinit(self.gpa);
+        try tags.appendSlice(self.gpa, "+onyx/topic=");
+        try message.escapeTagValue(&tags, self.gpa, topic);
+        if (std.mem.eql(u8, command, "PRIVMSG"))
+            if (self.capabilityEnabled("echo-message"))
+                if (self.features) |*state| try state.recordEcho(target, text);
+        try self.appendCommandWithTagsAndTrailing(command, &.{ target, text }, tags.items, true);
+        try self.queueOut(.interactive, false, false);
+    }
+
     fn validateOutgoingText(self: *const Client, text: []const u8) !void {
         if (self.features) |*state| {
             if (state.isupport("UTF8ONLY") != null and !std.unicode.utf8ValidateSlice(text))
@@ -1197,6 +1240,28 @@ fn validMetadataOperation(value: []const u8) bool {
         std.ascii.eqlIgnoreCase(value, "LIST") or
         std.ascii.eqlIgnoreCase(value, "SET") or
         std.ascii.eqlIgnoreCase(value, "CLEAR");
+}
+
+fn validTopicLabel(value: []const u8) bool {
+    if (value.len == 0 or value.len > 50 or !std.unicode.utf8ValidateSlice(value)) return false;
+    for (value) |byte| if (byte < 0x20 or byte == 0x7f or byte == ',') return false;
+    return true;
+}
+
+fn isChannelTarget(value: []const u8) bool {
+    return value.len != 0 and switch (value[0]) {
+        '#', '&', '+', '!' => true,
+        else => false,
+    };
+}
+
+fn validChannelContext(value: []const u8) bool {
+    if (value.len < 2 or value.len > 64 or !isChannelTarget(value)) return false;
+    for (value[1..]) |byte| switch (byte) {
+        0...0x20, 0x7f, ',', ';', '\\' => return false,
+        else => {},
+    };
+    return true;
 }
 
 // --- Tests ----------------------------------------------------------------
@@ -1400,6 +1465,8 @@ test "reply reaction and typing commands are bounded tagged client messages" {
     try std.testing.expectError(error.CapabilityNotEnabled, client.redactMessage("#c", "msg-1", null));
     try std.testing.expectError(error.CapabilityNotEnabled, client.markRead("#c", null));
     try std.testing.expectError(error.CapabilityNotEnabled, client.metadata("*", "GET", null, null, null));
+    try std.testing.expectError(error.MessageTagsNotEnabled, client.privmsgWithTopic("#c", "general", "hello"));
+    try std.testing.expectError(error.CapabilityNotEnabled, client.privmsgWithChannelContext("alice", "#c", "hello"));
     // Keep this command-builder test independent from the global desired
     // profile: the profile intentionally evolves with the capability catalog.
     const desired = [_][]const u8{
@@ -1413,14 +1480,16 @@ test "reply reaction and typing commands are bounded tagged client messages" {
         "draft/message-redaction",
         "draft/read-marker",
         "draft/metadata-2",
+        "onyx/topics",
+        "draft/channel-context",
     };
     client.registration.?.cap.config.desired = &desired;
     client.features = try features_mod.State.init(gpa, "me", .{});
     try client.registration.?.cap.begin(&client.out);
     client.out.clearRetainingCapacity();
-    _ = try client.registration.?.cap.handle(&client.out, message.parse(":irc CAP * LS :batch draft/account-registration labeled-response message-tags draft/chathistory draft/search draft/message-editing draft/message-redaction draft/read-marker draft/metadata-2"));
+    _ = try client.registration.?.cap.handle(&client.out, message.parse(":irc CAP * LS :batch draft/account-registration labeled-response message-tags draft/chathistory draft/search draft/message-editing draft/message-redaction draft/read-marker draft/metadata-2 onyx/topics draft/channel-context"));
     client.out.clearRetainingCapacity();
-    _ = try client.registration.?.cap.handle(&client.out, message.parse(":irc CAP * ACK :batch draft/account-registration labeled-response message-tags draft/chathistory draft/search draft/message-editing draft/message-redaction draft/read-marker draft/metadata-2"));
+    _ = try client.registration.?.cap.handle(&client.out, message.parse(":irc CAP * ACK :batch draft/account-registration labeled-response message-tags draft/chathistory draft/search draft/message-editing draft/message-redaction draft/read-marker draft/metadata-2 onyx/topics draft/channel-context"));
     client.out.clearRetainingCapacity();
     defer {
         client.registration.?.deinit();
@@ -1451,11 +1520,24 @@ test "reply reaction and typing commands are bounded tagged client messages" {
     try client.redactMessage("#c", "msg-1", "off-topic");
     try client.markRead("#c", "timestamp=2026-07-22T00:00:00Z");
     try client.metadata("*", "SET", "theme", "public", "ink");
+    try std.testing.expectError(error.InvalidIrcParameter, client.privmsgWithTopic("alice", "general", "topic text"));
+    try std.testing.expectError(error.InvalidIrcParameter, client.privmsgWithTopic("#c", "bad,label", "topic text"));
+    try std.testing.expectError(error.InvalidIrcParameter, client.privmsgWithChannelContext("#c", "#other", "direct text"));
+    try std.testing.expectError(error.InvalidIrcParameter, client.privmsgWithChannelContext("alice", "not-a-channel", "direct text"));
+    try client.privmsgWithTopic("#c", "release plan", "topic text");
+    try client.noticeWithTopic("#c", "release plan", "topic notice");
+    try client.privmsgWithChannelContext("alice", "#c", "direct text");
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[4].bytes, "SEARCH #c :release checklist") != null);
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[5].bytes, "EDIT #c msg-1 :corrected text") != null);
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[6].bytes, "REDACT #c msg-1 :off-topic") != null);
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[7].bytes, "MARKREAD #c timestamp=2026-07-22T00:00:00Z") != null);
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[8].bytes, "METADATA * SET theme public :ink") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[9].bytes, "+onyx/topic=release\\splan") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[9].bytes, "PRIVMSG #c :topic text") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[10].bytes, "+onyx/topic=release\\splan") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[10].bytes, "NOTICE #c :topic notice") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[11].bytes, "+draft/channel-context=#c") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[11].bytes, "PRIVMSG alice :direct text") != null);
 
     _ = try client.features.?.observe(&message.parse(":irc 005 me UTF8ONLY :are supported"));
     try std.testing.expectError(error.InvalidUtf8, client.privmsg("#c", &.{0xff}));
@@ -1464,8 +1546,8 @@ test "reply reaction and typing commands are bounded tagged client messages" {
     var password = [_]u8{ 'p', 'w' };
     try client.accountRegister("*", "user@example.test", &password);
     try std.testing.expectEqualSlices(u8, &.{ 0, 0 }, &password);
-    try std.testing.expect(client.tx.items.items[9].sensitive);
-    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[9].bytes, "REGISTER * user@example.test pw") != null);
+    try std.testing.expect(client.tx.items.items[12].sensitive);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[12].bytes, "REGISTER * user@example.test pw") != null);
 }
 
 test "Onyx narrow tag capabilities and no-implicit-names alias work without message-tags" {
@@ -1484,13 +1566,13 @@ test "Onyx narrow tag capabilities and no-implicit-names alias work without mess
         .policy_now_ms = 4000,
     };
     client.registration = Registration.init(gpa, owned_host, .tls, .{});
-    const desired = [_][]const u8{ "draft/reply", "draft/react", "draft/typing", "draft/no-implicit-names" };
+    const desired = [_][]const u8{ "draft/reply", "draft/react", "draft/typing", "draft/no-implicit-names", "onyx/topics", "draft/channel-context" };
     client.registration.?.cap.config.desired = &desired;
     try client.registration.?.cap.begin(&client.out);
     client.out.clearRetainingCapacity();
-    _ = try client.registration.?.cap.handle(&client.out, message.parse(":irc CAP * LS :draft/reply draft/react draft/typing draft/no-implicit-names"));
+    _ = try client.registration.?.cap.handle(&client.out, message.parse(":irc CAP * LS :draft/reply draft/react draft/typing draft/no-implicit-names onyx/topics draft/channel-context"));
     client.out.clearRetainingCapacity();
-    _ = try client.registration.?.cap.handle(&client.out, message.parse(":irc CAP * ACK :draft/reply draft/react draft/typing draft/no-implicit-names"));
+    _ = try client.registration.?.cap.handle(&client.out, message.parse(":irc CAP * ACK :draft/reply draft/react draft/typing draft/no-implicit-names onyx/topics draft/channel-context"));
     client.out.clearRetainingCapacity();
     defer {
         client.registration.?.deinit();
@@ -1506,11 +1588,74 @@ test "Onyx narrow tag capabilities and no-implicit-names alias work without mess
     try client.reply("#c", "msg-1", "reply text");
     try client.react("#c", "msg-1", "wave", false);
     try client.typing("#c", .active);
+    try client.privmsgWithTopic("#c", "general", "topic text");
+    try std.testing.expectError(error.MessageTagsNotEnabled, client.privmsgWithChannelContext("alice", "#c", "direct text"));
     try client.join("#c");
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[0].bytes, "+draft/reply=msg-1") != null);
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[1].bytes, "+draft/react=wave") != null);
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[2].bytes, "+typing=active") != null);
-    try std.testing.expectEqualStrings("JOIN #c\r\nNAMES #c\r\n", client.tx.items.items[3].bytes);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[3].bytes, "+onyx/topic=general PRIVMSG #c :topic text") != null);
+    try std.testing.expectEqualStrings("JOIN #c\r\nNAMES #c\r\n", client.tx.items.items[4].bytes);
+}
+
+test "channel context requires both its semantic and generic relay capabilities" {
+    const gpa = std.testing.allocator;
+    const owned_host = try gpa.dupe(u8, "irc.example");
+    var client = Client{
+        .gpa = gpa,
+        .transport = undefined,
+        .host = owned_host,
+        .port = 6697,
+        .connect_options = .{},
+        .framer = irc.LineFramer.init(gpa),
+        .tx = policy.TxQueue.init(gpa, .{}, 0, 1, 0),
+        .deadlines = policy.Deadlines.init(0, .{}),
+        .aggregator = features_mod.Aggregator.init(gpa, .{}),
+    };
+    client.registration = Registration.init(gpa, owned_host, .tls, .{});
+    const desired = [_][]const u8{"message-tags"};
+    client.registration.?.cap.config.desired = &desired;
+    try client.registration.?.cap.begin(&client.out);
+    client.out.clearRetainingCapacity();
+    _ = try client.registration.?.cap.handle(&client.out, message.parse(":irc CAP * LS :message-tags"));
+    client.out.clearRetainingCapacity();
+    _ = try client.registration.?.cap.handle(&client.out, message.parse(":irc CAP * ACK :message-tags"));
+    client.out.clearRetainingCapacity();
+    defer {
+        client.registration.?.deinit();
+        client.aggregator.deinit();
+        client.tx.deinit();
+        client.framer.deinit();
+        client.out.deinit(gpa);
+        gpa.free(owned_host);
+    }
+    try std.testing.expectError(error.CapabilityNotEnabled, client.privmsgWithChannelContext("alice", "#c", "direct text"));
+}
+
+test "Onyx topic and channel-context bounds match the pinned protocol helpers" {
+    var topic_max: [50]u8 = undefined;
+    @memset(topic_max[0..], 't');
+    var topic_over: [51]u8 = undefined;
+    @memset(topic_over[0..], 't');
+    try std.testing.expect(validTopicLabel(&topic_max));
+    try std.testing.expect(!validTopicLabel(&topic_over));
+    try std.testing.expect(validTopicLabel("semi;colon"));
+    try std.testing.expect(validTopicLabel("slash\\label"));
+    var escaped: std.ArrayList(u8) = .empty;
+    defer escaped.deinit(std.testing.allocator);
+    try message.escapeTagValue(&escaped, std.testing.allocator, "semi;slash\\label");
+    try std.testing.expectEqualStrings("semi\\:slash\\\\label", escaped.items);
+
+    var context_max: [64]u8 = undefined;
+    @memset(context_max[0..], 'c');
+    context_max[0] = '#';
+    var context_over: [65]u8 = undefined;
+    @memset(context_over[0..], 'c');
+    context_over[0] = '#';
+    try std.testing.expect(validChannelContext(&context_max));
+    try std.testing.expect(!validChannelContext(&context_over));
+    try std.testing.expect(!validChannelContext("#semi;colon"));
+    try std.testing.expect(!validChannelContext("#back\\slash"));
 }
 
 test "live registration probes IRCX before CAP NICK and USER" {
