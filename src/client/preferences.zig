@@ -73,6 +73,10 @@ pub const Store = struct {
     ui_comic_columns: u8 = 4,
     ui_members_visible: bool = true,
     ui_member_list: bool = false,
+    ui_dark_mode: bool = false,
+    ui_accent: u8 = 0,
+    ui_high_contrast: bool = false,
+    ui_status_detailed: bool = true,
     recent_files: std.ArrayList([]u8) = .empty,
     favorite_rooms: std.ArrayList([]u8) = .empty,
     rule_sets: std.ArrayList([]u8) = .empty,
@@ -183,6 +187,13 @@ pub const Store = struct {
         self.ui_comic_columns = std.math.clamp(comic_columns, 1, 6);
         self.ui_members_visible = members_visible;
         self.ui_member_list = member_list;
+    }
+
+    pub fn setUiTheme(self: *Store, dark_mode: bool, accent: u8, high_contrast: bool, status_detailed: bool) void {
+        self.ui_dark_mode = dark_mode;
+        self.ui_accent = @min(accent, 2);
+        self.ui_high_contrast = high_contrast;
+        self.ui_status_detailed = status_detailed;
     }
 
     pub fn rememberFile(self: *Store, path: []const u8) !void {
@@ -373,6 +384,10 @@ pub const Store = struct {
         try appendRecord(&out, self.gpa, "ui_comic_columns", try std.fmt.bufPrint(&number, "{d}", .{self.ui_comic_columns}));
         try appendRecord(&out, self.gpa, "ui_members_visible", if (self.ui_members_visible) "1" else "0");
         try appendRecord(&out, self.gpa, "ui_member_list", if (self.ui_member_list) "1" else "0");
+        try appendRecord(&out, self.gpa, "ui_dark_mode", if (self.ui_dark_mode) "1" else "0");
+        try appendRecord(&out, self.gpa, "ui_accent", try std.fmt.bufPrint(&number, "{d}", .{self.ui_accent}));
+        try appendRecord(&out, self.gpa, "ui_high_contrast", if (self.ui_high_contrast) "1" else "0");
+        try appendRecord(&out, self.gpa, "ui_status_detailed", if (self.ui_status_detailed) "1" else "0");
         for (self.recent_files.items) |path| try appendRecord(&out, self.gpa, "recent_file", path);
         for (self.favorite_rooms.items) |room| try appendRecord(&out, self.gpa, "favorite_room", room);
         for (self.rule_sets.items) |name| try appendRecord(&out, self.gpa, "rule_set", name);
@@ -442,7 +457,7 @@ pub fn parse(gpa: std.mem.Allocator, bytes: []const u8) !Store {
         defer gpa.free(decoded);
         if (std.mem.eql(u8, key, "profile")) try replace(&store.profile, gpa, decoded) else if (std.mem.eql(u8, key, "display_name")) try replace(&store.display_name, gpa, decoded) else if (std.mem.eql(u8, key, "homepage")) try replace(&store.homepage, gpa, decoded) else if (std.mem.eql(u8, key, "email")) try replace(&store.email, gpa, decoded) else if (std.mem.eql(u8, key, "backdrop")) try store.setBackdrop(decoded) else if (std.mem.eql(u8, key, "greeting_mode")) try replace(&store.greeting_mode, gpa, decoded) else if (std.mem.eql(u8, key, "greeting")) try replace(&store.greeting, gpa, decoded) else if (std.mem.eql(u8, key, "auto_ignore_count")) store.auto_ignore_count = std.fmt.parseInt(u16, decoded, 10) catch store.auto_ignore_count else if (std.mem.eql(u8, key, "auto_ignore_interval")) store.auto_ignore_interval_s = std.fmt.parseInt(u16, decoded, 10) catch store.auto_ignore_interval_s else if (std.mem.eql(u8, key, "notification_delivery")) try replace(&store.notification_delivery, gpa, decoded) else if (std.mem.eql(u8, key, "text_font")) try replace(&store.text_font, gpa, decoded) else if (std.mem.eql(u8, key, "text_style")) try replace(&store.text_style, gpa, decoded) else if (std.mem.eql(u8, key, "text_color")) {
             if (validHexColor(decoded)) try replace(&store.text_color, gpa, decoded);
-        } else if (std.mem.eql(u8, key, "ui_text_mode")) store.ui_text_mode = std.mem.eql(u8, decoded, "1") else if (std.mem.eql(u8, key, "ui_comic_columns")) store.ui_comic_columns = std.math.clamp(std.fmt.parseInt(u8, decoded, 10) catch 4, 1, 6) else if (std.mem.eql(u8, key, "ui_members_visible")) store.ui_members_visible = std.mem.eql(u8, decoded, "1") else if (std.mem.eql(u8, key, "ui_member_list")) store.ui_member_list = std.mem.eql(u8, decoded, "1") else if (std.mem.eql(u8, key, "recent_file")) try rememberBounded(gpa, &store.recent_files, decoded, max_recent_files) else if (std.mem.eql(u8, key, "favorite_room")) try store.addFavoriteRoom(decoded) else if (std.mem.eql(u8, key, "rule_set")) try store.addRuleSet(decoded);
+        } else if (std.mem.eql(u8, key, "ui_text_mode")) store.ui_text_mode = std.mem.eql(u8, decoded, "1") else if (std.mem.eql(u8, key, "ui_comic_columns")) store.ui_comic_columns = std.math.clamp(std.fmt.parseInt(u8, decoded, 10) catch 4, 1, 6) else if (std.mem.eql(u8, key, "ui_members_visible")) store.ui_members_visible = std.mem.eql(u8, decoded, "1") else if (std.mem.eql(u8, key, "ui_member_list")) store.ui_member_list = std.mem.eql(u8, decoded, "1") else if (std.mem.eql(u8, key, "ui_dark_mode")) store.ui_dark_mode = std.mem.eql(u8, decoded, "1") else if (std.mem.eql(u8, key, "ui_accent")) store.ui_accent = @min(std.fmt.parseInt(u8, decoded, 10) catch 0, 2) else if (std.mem.eql(u8, key, "ui_high_contrast")) store.ui_high_contrast = std.mem.eql(u8, decoded, "1") else if (std.mem.eql(u8, key, "ui_status_detailed")) store.ui_status_detailed = std.mem.eql(u8, decoded, "1") else if (std.mem.eql(u8, key, "recent_file")) try rememberBounded(gpa, &store.recent_files, decoded, max_recent_files) else if (std.mem.eql(u8, key, "favorite_room")) try store.addFavoriteRoom(decoded) else if (std.mem.eql(u8, key, "rule_set")) try store.addRuleSet(decoded);
     }
     return store;
 }
@@ -604,6 +619,7 @@ test "preferences round-trip profile rules notifications and escaped text" {
     try source.setNotificationDelivery("In-app banner");
     try source.setTextAppearance("Comic Neue 18", "Italic", "#334455");
     source.setUiLayout(true, 6, false, true);
+    source.setUiTheme(true, 2, true, false);
     try source.rememberFile("saved/example.ccc");
     try source.addFavoriteRoom("#comic-art");
     try source.addRuleSet("Quiet hours");
@@ -624,6 +640,10 @@ test "preferences round-trip profile rules notifications and escaped text" {
     try std.testing.expectEqual(@as(u8, 6), decoded.ui_comic_columns);
     try std.testing.expect(!decoded.ui_members_visible);
     try std.testing.expect(decoded.ui_member_list);
+    try std.testing.expect(decoded.ui_dark_mode);
+    try std.testing.expectEqual(@as(u8, 2), decoded.ui_accent);
+    try std.testing.expect(decoded.ui_high_contrast);
+    try std.testing.expect(!decoded.ui_status_detailed);
     try std.testing.expectEqualStrings("saved/example.ccc", decoded.recent_files.items[0]);
     try std.testing.expectEqualStrings("#comic-art", decoded.favorite_rooms.items[0]);
     try std.testing.expectEqualStrings("Quiet hours", decoded.rule_sets.items[0]);

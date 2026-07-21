@@ -9,8 +9,12 @@ visual contract.
 
 - Application chrome uses the embedded neutral sans-serif atlas in
   `src/render/font_ui.zig`. Comic Neue is reserved for authored comic content.
-- The shell uses a restrained ink-and-drafting-blue system: paper-white work
-  surfaces, graphite chrome, and one cobalt interaction color.
+- The shell supports persistent Light studio and Dark studio appearances with
+  cobalt, violet, or forest interaction accents and an optional high-contrast
+  text/border treatment. Palette roles are selected before controls and text
+  are rasterized, preserving anti-aliased edges. Dark mode is a midnight studio
+  around deliberately stable light comic and character-art paper; authored
+  raster pixels are never inverted or post-processed.
 - The established 80/20 conversation/inspector and 30/70 member/character
   proportions remain recognizable, while control heights and spacing are
   sized for a modern desktop.
@@ -50,6 +54,15 @@ visual contract.
   every bundled asset and show live previews.
 - The condensed toolbar is intentionally modern; commands that do not belong
   in the primary strip remain reachable through menus and context actions.
+  File, Edit, View, Format, Room, Member, and Tools each have one distinct
+  responsibility: Settings appears once in Edit, connection management once in
+  Tools, and file transfer once in Member.
+- The Status tab and bottom connection strip open a shared, keyboard-dismissable
+  activity panel. It reports connection state, active members, view density,
+  member presentation, and studio appearance without covering the composer.
+- Settings uses eight persisted choices and scrolls its field viewport at the
+  640x480 minimum. Character selection provides adjacent-cast browsing, a live
+  expression choice, larger source-faithful portraits, and contained actions.
 - Popup rows expose disabled states for role-gated moderation commands. Member
   rows and cards show live IRC role badges without modifying authored art.
 - File-path controls use the same input geometry with a distinct Browse action;
@@ -58,7 +71,8 @@ visual contract.
 
 ## Reusable primitives
 
-`Theme` is the color token source. `ControlState` and
+`Theme` defines the canonical light values; `Appearance`, `Palette`, and
+`paletteFor()` resolve the active draw-time color set. `ControlState` and
 `resolveControlColors()` define normal, hovered, selected, focused, pressed,
 and disabled behavior. New screens should compose the existing primitives:
 
@@ -98,6 +112,12 @@ zig build run -- render-ui member > ui-member-preview.png
 zig build run -- render-ui compact > ui-compact-preview.png
 zig build run -- render-ui compact-menu > ui-compact-menu-preview.png
 zig build run -- render-ui compact-settings > ui-compact-settings-preview.png
+zig build run -- render-ui dark > ui-dark-preview.png
+zig build run -- render-ui dark-settings > ui-dark-settings-preview.png
+zig build run -- render-ui compact-dark-settings > ui-compact-dark-settings-preview.png
+zig build run -- render-ui dark-character > ui-dark-character-preview.png
+zig build run -- render-ui status > ui-status-preview.png
+zig build run -- render-ui dark-status > ui-dark-status-preview.png
 zig build run -- render-ui multi-tabs > ui-multi-tabs-preview.png
 zig build run -- render-ui compact-multi-tabs > ui-compact-multi-tabs-preview.png
 zig build run -- render-ui mood-laughing > ui-mood-laughing-preview.png

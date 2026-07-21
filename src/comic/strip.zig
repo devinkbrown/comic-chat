@@ -1182,6 +1182,7 @@ pub fn avatarByName(name: []const u8) ?[]const u8 {
     if (eql(name, "scotty")) return @embedFile("../assets/testdata/scotty.avb");
     if (eql(name, "susan")) return @embedFile("../assets/testdata/susan.avb");
     if (eql(name, "tiki")) return @embedFile("../assets/testdata/tiki.avb");
+    if (eql(name, "tiki hd")) return @embedFile("../assets/generated/tiki-reimagined-hd-v1.avb");
     if (eql(name, "tongtyed")) return @embedFile("../assets/testdata/tongtyed.avb");
     if (eql(name, "xeno")) return @embedFile("../assets/testdata/xeno.avb");
     return null;

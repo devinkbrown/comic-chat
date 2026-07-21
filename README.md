@@ -142,9 +142,15 @@ session extension.
 
 The portable desktop UI has a shared Fluent-style component library and a
 separate neutral application font; Comic Neue remains confined to comic
-content. See `docs/UI_LIBRARY.md`. Exact headless previews are available with
-`zig build run -- render-ui`, plus the `conversation`, `menu`, and `settings`
-variants. Any registered dialog has a deterministic preview through
+content. Its persistent Settings surface controls light or dark studio chrome,
+cobalt/violet/forest accents, standard or high contrast, comic density, member
+presentation, and status detail. Dark studio colors are resolved while controls
+are drawn; comic pages and character artwork retain their authored pixels. The
+Status tab and bottom connection strip open the same connection/activity panel
+with direct Connection setup and Settings actions. See `docs/UI_LIBRARY.md`.
+Exact headless previews are available with `zig build run -- render-ui`, plus
+the `conversation`, `menu`, `settings`, `dark`, `dark-settings`, `character`,
+and `status` variants. Any registered dialog has a deterministic preview through
 `zig build run -- render-ui dialog-<enum_name>`, for example
 `dialog-file_transfer` or `dialog-room_access`.
 

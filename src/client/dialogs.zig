@@ -81,9 +81,9 @@ pub const Field = struct { label: []const u8, hint: []const u8 = "", kind: Field
 pub const specs = [_]Spec{
     .{ .id = .about, .resource = "IDD_ABOUTBOX", .title = "About Comic Chat", .group = .files, .source_w = 279, .source_h = 137 },
     .{ .id = .room_list, .resource = "IDD_ROOMLIST", .title = "Room List", .group = .rooms, .source_w = 400, .source_h = 255 },
-    .{ .id = .settings, .resource = "IDD_SETTINGSPAGE", .title = "Settings", .group = .application, .source_w = 252, .source_h = 218 },
+    .{ .id = .settings, .resource = "IDD_SETTINGSPAGE", .title = "Settings", .group = .application, .source_w = 360, .source_h = 300 },
     .{ .id = .personal, .resource = "IDD_PERSONALPAGE_IRC", .title = "Personal Profile", .group = .connection, .source_w = 252, .source_h = 218 },
-    .{ .id = .character, .resource = "IDD_CHARACTERPAGE", .title = "Character", .group = .connection, .source_w = 252, .source_h = 218 },
+    .{ .id = .character, .resource = "IDD_CHARACTERPAGE", .title = "Choose Character", .group = .connection, .source_w = 360, .source_h = 260 },
     .{ .id = .background, .resource = "IDD_BACKGROUNDPAGE", .title = "Background", .group = .connection, .source_w = 252, .source_h = 218 },
     .{ .id = .kick, .resource = "IDD_KICK", .title = "Kick Member", .group = .rooms, .source_w = 186, .source_h = 89 },
     .{ .id = .nickname, .resource = "IDD_NICKNAME", .title = "Nickname", .group = .connection, .source_w = 188, .source_h = 71 },
@@ -174,13 +174,21 @@ pub fn fields(id: Id) []const Field {
     return switch (id) {
         .setup, .servers => &.{ .{ .label = "Server", .hint = "Secure IRC endpoint" }, .{ .label = "Port", .hint = "6697" }, .{ .label = "Security", .hint = "Verified TLS", .kind = .choice } },
         .settings => &.{
+            .{ .label = "Color theme", .kind = .choice },
+            .{ .label = "Accent color", .kind = .choice },
+            .{ .label = "Contrast", .kind = .choice },
             .{ .label = "Conversation view", .kind = .choice },
             .{ .label = "Panels across", .kind = .choice },
             .{ .label = "Member pane", .kind = .choice },
             .{ .label = "Member layout", .kind = .choice },
+            .{ .label = "Status details", .kind = .choice },
         },
         .personal => &.{ .{ .label = "Profile text" }, .{ .label = "Display name" }, .{ .label = "Homepage", .hint = "Optional" }, .{ .label = "Email", .hint = "Optional" } },
-        .character => &.{ .{ .label = "Character name", .kind = .choice }, .{ .label = "Preview", .hint = "Bundled Comic Chat character", .kind = .preview } },
+        .character => &.{
+            .{ .label = "Character", .kind = .choice },
+            .{ .label = "Expression preview", .kind = .choice },
+            .{ .label = "Character gallery", .hint = "Previous, selected, and next", .kind = .preview },
+        },
         .background => &.{ .{ .label = "Backdrop name", .kind = .choice }, .{ .label = "Preview", .hint = "Bundled background", .kind = .preview } },
         .nickname => &.{.{ .label = "Nickname" }},
         .password => &.{ .{ .label = "Account" }, .{ .label = "Password", .kind = .password } },
@@ -249,17 +257,35 @@ pub fn choiceOptions(id: Id, index: usize) []const []const u8 {
     return switch (id) {
         .setup, .servers => if (index == 2) &.{ "Verified TLS", "Plaintext (unsafe)" } else &.{},
         .settings => switch (index) {
-            0 => &.{ "Comic", "Text" },
-            1 => &.{ "4 panels", "3 panels", "2 panels", "1 panel", "5 panels", "6 panels" },
-            2 => &.{ "Shown", "Hidden" },
-            3 => &.{ "Icons", "List" },
+            0 => &.{ "Light studio", "Dark studio" },
+            1 => &.{ "Cobalt", "Violet", "Forest" },
+            2 => &.{ "Standard", "High contrast" },
+            3 => &.{ "Comic", "Text" },
+            4 => &.{ "4 panels", "3 panels", "2 panels", "1 panel", "5 panels", "6 panels" },
+            5 => &.{ "Shown", "Hidden" },
+            6 => &.{ "Icons", "List" },
+            7 => &.{ "Detailed", "Compact" },
             else => &.{},
         },
-        .character => if (index == 0) &.{
-            "Anna",   "Armando",  "Bolo",    "Cro",  "Dan",     "Denise", "Hugh",   "Jordan", "Kevin", "Kwensa",   "Lance",
-            "Lynnea", "Margaret", "Maynard", "Mike", "Rebecca", "Sage",   "Scotty", "Susan",  "Tiki",  "Tongtyed", "Xeno",
+        .character => if (index == 0)
+            &.{
+                "Anna",   "Armando",  "Bolo",    "Cro",  "Dan",     "Denise", "Hugh",   "Jordan", "Kevin", "Kwensa",  "Lance",
+                "Lynnea", "Margaret", "Maynard", "Mike", "Rebecca", "Sage",   "Scotty", "Susan",  "Tiki",  "Tiki HD", "Tongtyed",
+                "Xeno",
+            }
+        else if (index == 1)
+            &.{ "Neutral", "Happy", "Laughing", "Angry", "Sad", "Surprised" }
+        else
+            &.{},
+        .background => if (index == 0) &.{
+            "Field",                   "Volcano",                  "Den",                        "Room",                    "Pastoral",
+            "HD Apartment",            "HD Rooftop",               "HD Cafe",                    "HD Park",                 "HD Space Corridor",
+            "HD Boardwalk",            "HD School Hall",           "HD Rainy Street",            "HD Library",              "HD Campsite",
+            "Color Apartment",         "Color Rooftop",            "Color Cafe",                 "Color Park",              "Color Space Corridor",
+            "Color Boardwalk",         "Color School Hall",        "Color Rainy Street",         "Color Library",           "Color Campsite",
+            "Whacky Spaceship Bridge", "Whacky Asteroid Diner",    "Whacky Sky Island Market",   "Whacky Underwater Dome",  "Whacky Friendly Castle",
+            "Whacky Pinball Interior", "Whacky Cosmic Laundromat", "Whacky Cloud Train Station", "Whacky Mushroom Village", "Whacky Arcade Planetarium",
         } else &.{},
-        .background => if (index == 0) &.{ "Field", "Volcano", "Den", "Room", "Pastoral" } else &.{},
         .sound => if (index == 0) &.{ "Chime.wav", "Knock.wav", "Laugh.wav", "Applause.wav" } else &.{},
         .set_text_font, .text_font => if (index == 0) &.{ "Comic Neue 14", "Comic Neue 16", "Comic Neue 18" } else &.{ "Regular", "Bold", "Italic" },
         .comics_view => if (index == 0) &.{ "Comic", "Text" } else &.{ "4 panels", "3 panels", "2 panels", "1 panel", "5 panels", "6 panels" },
@@ -355,9 +381,9 @@ test "registry covers all forty Microsoft dialog templates plus portable dialogs
 
 test "application settings are distinct from connection setup" {
     try std.testing.expectEqual(Group.application, get(.settings).group);
-    try std.testing.expectEqualStrings("Conversation view", fields(.settings)[0].label);
+    try std.testing.expectEqualStrings("Color theme", fields(.settings)[0].label);
     try std.testing.expectEqualStrings("Server", fields(.setup)[0].label);
-    try std.testing.expectEqualStrings("Comic", choiceOptions(.settings, 0)[0]);
+    try std.testing.expectEqualStrings("Light studio", choiceOptions(.settings, 0)[0]);
     try std.testing.expectEqualStrings("Verified TLS", choiceOptions(.setup, 2)[0]);
 }
 

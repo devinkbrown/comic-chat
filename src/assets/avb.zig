@@ -559,6 +559,23 @@ test "parse recognizes simple avatars as avatars" {
     try std.testing.expectEqualStrings("Jordan", asset.name.?);
 }
 
+test "generated Tiki HD package has a native simple-avatar pose table" {
+    const data = @embedFile("generated/tiki-reimagined-hd-v1.avb");
+    const asset = try parse(data);
+    try std.testing.expectEqual(Kind.simple_avatar, asset.kind);
+    try std.testing.expectEqualStrings("Tiki HD", asset.name.?);
+
+    var table = try parsePoseTable(std.testing.allocator, data);
+    defer table.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 6), table.records.len);
+    for (table.records) |record| {
+        try std.testing.expectEqual(PoseLayer.body, record.layer);
+        try std.testing.expect(record.images[0].offset != 0);
+        try std.testing.expectEqual(ImageFormat.dib, record.images[0].format);
+        try std.testing.expectEqual(PaletteType.none, record.images[0].palette);
+    }
+}
+
 test "parse rejects bad magic and truncation" {
     try std.testing.expectError(error.BadMagic, parse("\x00\x00\x02\x00\x02\x00"));
     try std.testing.expectError(error.Truncated, parse("\x81\x81\x02"));

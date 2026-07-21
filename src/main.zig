@@ -692,6 +692,7 @@ fn avatarByName(name: []const u8) ?[]const u8 {
     if (eql(name, "scotty")) return @embedFile("assets/testdata/scotty.avb");
     if (eql(name, "susan")) return @embedFile("assets/testdata/susan.avb");
     if (eql(name, "tiki")) return @embedFile("assets/testdata/tiki.avb");
+    if (eql(name, "tiki hd")) return @embedFile("assets/generated/tiki-reimagined-hd-v1.avb");
     if (eql(name, "tongtyed")) return @embedFile("assets/testdata/tongtyed.avb");
     if (eql(name, "xeno")) return @embedFile("assets/testdata/xeno.avb");
     return null;
@@ -1985,11 +1986,29 @@ fn prefillOpenedDialog(
     const id = view.active_dialog orelse return;
     switch (id) {
         .settings => {
-            try view.setDialogValueAt(0, if (view.shell.content_mode == .comic) "Comic" else "Text");
+            try view.setDialogValueAt(0, if (view.appearance.mode == .dark) "Dark studio" else "Light studio");
+            try view.setDialogValueAt(1, switch (view.appearance.accent) {
+                .cobalt => "Cobalt",
+                .violet => "Violet",
+                .forest => "Forest",
+            });
+            try view.setDialogValueAt(2, if (view.appearance.high_contrast) "High contrast" else "Standard");
+            try view.setDialogValueAt(3, if (view.shell.content_mode == .comic) "Comic" else "Text");
             var panels: [16]u8 = undefined;
-            try view.setDialogValueAt(1, try std.fmt.bufPrint(&panels, "{d} panels", .{view.shell.comic_columns}));
-            try view.setDialogValueAt(2, if (view.shell.show_members) "Shown" else "Hidden");
-            try view.setDialogValueAt(3, if (view.shell.member_view == .icons) "Icons" else "List");
+            try view.setDialogValueAt(4, try std.fmt.bufPrint(&panels, "{d} panels", .{view.shell.comic_columns}));
+            try view.setDialogValueAt(5, if (view.shell.show_members) "Shown" else "Hidden");
+            try view.setDialogValueAt(6, if (view.shell.member_view == .icons) "Icons" else "List");
+            try view.setDialogValueAt(7, if (view.status_detailed) "Detailed" else "Compact");
+        },
+        .character => {
+            for (transcript.roster.items) |member| if (member.is_self and !member.departed) {
+                for (cc.client.dialogs.choiceOptions(.character, 0)) |option| if (std.ascii.eqlIgnoreCase(option, member.avatar)) {
+                    try view.setDialogValueAt(0, option);
+                    break;
+                };
+                break;
+            };
+            try view.setDialogValueAt(1, view.currentEmotionLabel());
         },
         .personal => {
             try view.setDialogValueAt(0, preferences.profile.items);
@@ -2105,6 +2124,15 @@ fn applyStoredUiPreferences(view: *cc.client.view.View, preferences: *const cc.c
     view.shell.setComicColumns(preferences.ui_comic_columns);
     view.shell.setMemberView(if (preferences.ui_member_list) .list else .icons);
     view.shell.setMembersVisible(preferences.ui_members_visible);
+    view.setAppearance(.{
+        .mode = if (preferences.ui_dark_mode) .dark else .light,
+        .accent = switch (preferences.ui_accent) {
+            1 => .violet,
+            2 => .forest,
+            else => .cobalt,
+        },
+        .high_contrast = preferences.ui_high_contrast,
+    }, preferences.ui_status_detailed);
 }
 
 fn handleEditorSelectionKey(editor: *cc.client.input.Editor, key: cc.platform.event.Key) bool {
@@ -2287,11 +2315,16 @@ fn applyDialogAction(
     const preferences = &network.runtime.preferences;
     switch (id) {
         .settings => {
-            const text_mode = std.ascii.eqlIgnoreCase(view.dialogValueAt(0), "Text");
-            const comic_columns = comicColumnsFromDialog(view.dialogValueAt(1));
-            const members_visible = !std.ascii.eqlIgnoreCase(view.dialogValueAt(2), "Hidden");
-            const member_list = std.ascii.eqlIgnoreCase(view.dialogValueAt(3), "List");
+            const dark_mode = std.ascii.eqlIgnoreCase(view.dialogValueAt(0), "Dark studio");
+            const accent: u8 = if (std.ascii.eqlIgnoreCase(view.dialogValueAt(1), "Violet")) 1 else if (std.ascii.eqlIgnoreCase(view.dialogValueAt(1), "Forest")) 2 else 0;
+            const high_contrast = std.ascii.eqlIgnoreCase(view.dialogValueAt(2), "High contrast");
+            const text_mode = std.ascii.eqlIgnoreCase(view.dialogValueAt(3), "Text");
+            const comic_columns = comicColumnsFromDialog(view.dialogValueAt(4));
+            const members_visible = !std.ascii.eqlIgnoreCase(view.dialogValueAt(5), "Hidden");
+            const member_list = std.ascii.eqlIgnoreCase(view.dialogValueAt(6), "List");
+            const status_detailed = !std.ascii.eqlIgnoreCase(view.dialogValueAt(7), "Compact");
             preferences.setUiLayout(text_mode, comic_columns, members_visible, member_list);
+            preferences.setUiTheme(dark_mode, accent, high_contrast, status_detailed);
             try preferences.saveFile(io, network.runtime.preferences_path);
             applyStoredUiPreferences(view, preferences);
         },
@@ -4054,6 +4087,8 @@ fn runUiPreview(gpa: std.mem.Allocator, io: std.Io, surface: []const u8) !void {
     const compact = std.mem.eql(u8, surface, "compact") or std.mem.startsWith(u8, surface, "compact-");
     var view = try cc.client.view.View.init(gpa, if (compact) 640 else 960, if (compact) 480 else 720);
     defer view.deinit();
+    const dark_surface = std.mem.indexOf(u8, surface, "dark") != null;
+    if (dark_surface) view.setAppearance(.{ .mode = .dark, .accent = .violet }, true);
     var transcript = cc.comic.session.Transcript.init(gpa);
     defer transcript.deinit();
     try transcript.setSelf("comicchat");
@@ -4121,7 +4156,18 @@ fn runUiPreview(gpa: std.mem.Allocator, io: std.Io, surface: []const u8) !void {
     }
     if (std.mem.eql(u8, surface, "settings")) view.openDialog(.settings);
     if (std.mem.eql(u8, surface, "compact-settings")) view.openDialog(.settings);
-    if (std.mem.eql(u8, surface, "character")) view.openDialog(.character);
+    if (std.mem.endsWith(u8, surface, "dark-settings")) {
+        view.openDialog(.settings);
+        try view.setDialogValueAt(0, "Dark studio");
+        try view.setDialogValueAt(1, "Violet");
+        try view.setDialogValueAt(2, "High contrast");
+    }
+    if (std.mem.eql(u8, surface, "character") or std.mem.endsWith(u8, surface, "dark-character")) {
+        view.openDialog(.character);
+        try view.setDialogValueAt(0, "Xeno");
+        try view.setDialogValueAt(1, "Laughing");
+    }
+    if (std.mem.eql(u8, surface, "status") or std.mem.endsWith(u8, surface, "dark-status")) view.status_panel_open = true;
     if (std.mem.eql(u8, surface, "inputs")) {
         view.openDialog(.password);
         for ("comicchat") |ch| _ = try view.handleDialogKey(.{ .char = ch }, .{});
