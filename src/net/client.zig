@@ -22,6 +22,7 @@ pub const ConnectOptions = transport.ConnectOptions;
 pub const Security = transport.Security;
 pub const TypingStatus = enum { active, paused, done };
 pub const PinsOperation = enum { list, add, delete, clear };
+pub const MonitorOperation = enum { add, remove, clear, list, status };
 
 const desired_without_sasl = blk: {
     var names: [ircv3.default_desired_capabilities.len - 1][]const u8 = undefined;
@@ -506,6 +507,26 @@ pub const Client = struct {
                 if (!validHistorySelectorForPin(id)) return error.InvalidIrcParameter;
                 try self.appendCommand("PINS", &.{ channel, if (operation == .add) "ADD" else "DEL", id });
             },
+        }
+        try self.queueOut(.interactive, true, false);
+    }
+
+    /// Onyx `MONITOR <+|-|C|L|S> [nick[,nick]...]` subscription command.
+    pub fn monitor(self: *Client, operation: MonitorOperation, nicks: ?[]const u8) !void {
+        const verb = switch (operation) {
+            .add => "+",
+            .remove => "-",
+            .clear => "C",
+            .list => "L",
+            .status => "S",
+        };
+        if (operation == .add or operation == .remove) {
+            const names = nicks orelse return error.InvalidIrcParameter;
+            if (!validMonitorList(names)) return error.InvalidIrcParameter;
+            try self.appendCommand("MONITOR", &.{ verb, names });
+        } else {
+            if (nicks != null) return error.InvalidIrcParameter;
+            try self.appendCommand("MONITOR", &.{verb});
         }
         try self.queueOut(.interactive, true, false);
     }
@@ -1307,6 +1328,15 @@ fn validHistorySelectorForPin(value: []const u8) bool {
     return true;
 }
 
+fn validMonitorList(value: []const u8) bool {
+    if (value.len == 0 or value.len > 510) return false;
+    var names = std.mem.splitScalar(u8, value, ',');
+    while (names.next()) |name| {
+        if (name.len == 0 or name.len > 64 or std.mem.indexOfAny(u8, name, " \r\n\x00,@") != null) return false;
+    }
+    return true;
+}
+
 fn validHistorySelector(value: []const u8) bool {
     if (std.mem.eql(u8, value, "*")) return true;
     if (std.mem.startsWith(u8, value, "msgid=")) {
@@ -1652,6 +1682,16 @@ test "reply reaction and typing commands are bounded tagged client messages" {
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[17].bytes, "PINS #c DEL msg-1\r\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[18].bytes, "PINS #c CLEAR\r\n") != null);
     try std.testing.expectError(error.InvalidIrcParameter, client.pins("#c", .add, "bad;id"));
+    try client.monitor(.add, "alice,bob");
+    try client.monitor(.remove, "alice");
+    try client.monitor(.clear, null);
+    try client.monitor(.list, null);
+    try client.monitor(.status, null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[19].bytes, "MONITOR + alice,bob\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[20].bytes, "MONITOR - alice\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[21].bytes, "MONITOR C\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[22].bytes, "MONITOR L\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[23].bytes, "MONITOR S\r\n") != null);
 }
 
 test "Onyx narrow tag capabilities and no-implicit-names alias work without message-tags" {
