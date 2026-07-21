@@ -736,6 +736,26 @@ pub const Client = struct {
         try self.queueOut(.interactive, false, false);
     }
 
+    /// IRCX draft 04 §5.2 legacy SASL envelope. Modern CAP SASL remains the
+    /// normal registration path; this method exists for an IRCX-only server
+    /// and deliberately requires verified TLS. The caller owns the mechanism
+    /// payload and it is zeroed once copied into the sensitive transmit queue.
+    pub fn ircxAuth(self: *Client, mechanism: []const u8, sequence: []const u8, payload: ?[]u8) !void {
+        defer if (payload) |secret| std.crypto.secureZero(u8, secret);
+        if (self.connect_options.security != .tls) return error.AccountRegistrationRequiresTls;
+        if (!validIrcAtom(mechanism) or !validIrcxAuthSequence(sequence)) return error.InvalidIrcParameter;
+        if (payload) |secret| {
+            if (std.mem.indexOfAny(u8, secret, "\r\n\x00") != null) return error.InvalidIrcParameter;
+            try self.appendCommandTrailing("AUTH", &.{ mechanism, sequence, secret });
+        } else {
+            try self.appendCommand("AUTH", &.{ mechanism, sequence });
+        }
+        // AUTH carries credentials but is an application-initiated IRCX
+        // message, not a transport keepalive; use the sensitive interactive
+        // queue just like account registration so normal backpressure applies.
+        try self.queueOut(.interactive, false, true);
+    }
+
     fn ircxTaggedData(self: *Client, command: []const u8, target: []const u8, tag: []const u8, payload: []const u8) !void {
         if (target.len == 0 or !validIrcxDataTag(tag)) return error.InvalidIrcParameter;
         try self.validateOutgoingText(payload);
@@ -1058,6 +1078,14 @@ fn validIrcxDataTag(tag: []const u8) bool {
     if (!std.ascii.isAlphabetic(tag[0])) return false;
     for (tag) |byte| if (!std.ascii.isAlphanumeric(byte) and byte != '.') return false;
     return true;
+}
+
+fn validIrcAtom(value: []const u8) bool {
+    return value.len != 0 and std.mem.indexOfAny(u8, value, " \r\n\x00:") == null;
+}
+
+fn validIrcxAuthSequence(value: []const u8) bool {
+    return std.mem.eql(u8, value, "I") or std.mem.eql(u8, value, "S") or std.mem.eql(u8, value, "*");
 }
 
 // --- Tests ----------------------------------------------------------------
@@ -1445,6 +1473,9 @@ test "IRCX workflow commands follow the draft wire grammar" {
     try client.ircxRequest("#root", "APP.INFO", "version?");
     try client.ircxReply("#root", "APP.INFO", "ComicChat");
     try client.whisper("#root", "anna,bob", "secret panel plan");
+    var auth = [_]u8{ 's', 'e', 'c', 'r', 'e', 't' };
+    try client.ircxAuth("PLAIN", "I", &auth);
+    try std.testing.expect(std.mem.allEqual(u8, &auth, 0));
 
     const expected = [_][]const u8{
         "LISTX N=#root,>10 25\r\n",
@@ -1459,6 +1490,7 @@ test "IRCX workflow commands follow the draft wire grammar" {
         "REQUEST #root APP.INFO :version?\r\n",
         "REPLY #root APP.INFO :ComicChat\r\n",
         "WHISPER #root anna,bob :secret panel plan\r\n",
+        "AUTH PLAIN I :secret\r\n",
     };
     try std.testing.expectEqual(expected.len, client.tx.items.items.len);
     for (expected, client.tx.items.items) |wire, item| try std.testing.expectEqualStrings(wire, item.bytes);
@@ -1470,4 +1502,8 @@ test "IRCX tagged data rejects malformed draft tags" {
     try std.testing.expect(!validIrcxDataTag("1BAD"));
     try std.testing.expect(!validIrcxDataTag("BAD-TAG"));
     try std.testing.expect(!validIrcxDataTag("this-tag-is-far-too-long"));
+    try std.testing.expect(validIrcxAuthSequence("I"));
+    try std.testing.expect(validIrcxAuthSequence("S"));
+    try std.testing.expect(validIrcxAuthSequence("*"));
+    try std.testing.expect(!validIrcxAuthSequence("Q"));
 }

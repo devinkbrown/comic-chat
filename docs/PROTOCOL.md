@@ -153,6 +153,12 @@ whispers remain in their channel context and render as private comic lines.
 ACCESS removal emits the normative `DELETE` token; the non-standard `DEL`
 abbreviation is never sent.
 
+For IRCX-only services, the client also exposes the draft §5.2 `AUTH` envelope
+with `I`, `S`, and abort (`*`) sequence validation. It accepts this only over
+verified TLS, marks the queued payload sensitive, and zeroes the caller's
+mutable credential bytes after queuing. CAP SASL remains the preferred modern
+registration path.
+
 Replies 801-819 and relevant IRCX errors 913-925 are shown in the active room
 as server action rows. The exact command bytes are pinned by unit tests against
 the [IRCX Internet-Draft](https://datatracker.ietf.org/doc/html/draft-pfenning-irc-extensions-04.txt)
