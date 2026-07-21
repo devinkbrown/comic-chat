@@ -3457,6 +3457,19 @@ fn processWorkspaceMessages(
             }
             _ = cc.proto.udi.parseAnnotation(wire) catch continue;
             try state.rememberUdi(workspace.gpa, target, who, wire);
+        } else if (std.mem.eql(u8, msg.command, "WHISPER")) {
+            // IRCX contextual whispers carry both a channel and recipient
+            // list. The server has already filtered delivery to us; retain
+            // the channel context and render it as a private comic line.
+            const target = msg.param(0) orelse continue;
+            const room_index = workspace.find(target) orelse continue;
+            const text = msg.param(2) orelse continue;
+            const who = if (msg.prefix) |p| cc.comic.session.nickFromPrefix(p) else "someone";
+            var room = &workspace.rooms.items[room_index];
+            try room.transcript.addWireMessage(who, text, true, null);
+            room.transcript.trimTo(64);
+            if (workspace.active != room_index) room.unread +|= 1;
+            redraw = true;
         } else if (std.mem.eql(u8, msg.command, "PRIVMSG")) {
             const target = msg.param(0) orelse continue;
             const is_private = std.ascii.eqlIgnoreCase(target, nick);

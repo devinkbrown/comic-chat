@@ -532,7 +532,10 @@ pub const Client = struct {
     }
 
     pub fn accessDelete(self: *Client, channel: []const u8, level: []const u8, mask: []const u8) !void {
-        try self.appendCommand("ACCESS", &.{ channel, "DEL", level, mask });
+        // IRCX draft 04 §5.1 names the removal operation `DELETE` (not the
+        // convenient but non-standard abbreviation `DEL`). Keep this exact so
+        // draft-conforming servers do not reject an otherwise valid ACL edit.
+        try self.appendCommand("ACCESS", &.{ channel, "DELETE", level, mask });
         try self.queueOut(.interactive, true, false);
     }
 
@@ -708,7 +711,35 @@ pub const Client = struct {
     }
 
     pub fn comicData(self: *Client, target: []const u8, annotation: []const u8) !void {
-        try self.appendCommandTrailing("DATA", &.{ target, "CCUDI1", annotation });
+        return self.ircxTaggedData("DATA", target, "CCUDI1", annotation);
+    }
+
+    /// IRCX draft 04 §5.4: request a tagged payload. This is deliberately a
+    /// separate wire verb from DATA so peer applications can distinguish a
+    /// request from an unsolicited update.
+    pub fn ircxRequest(self: *Client, target: []const u8, tag: []const u8, payload: []const u8) !void {
+        return self.ircxTaggedData("REQUEST", target, tag, payload);
+    }
+
+    /// IRCX draft 04 §5.4: reply to a tagged REQUEST.
+    pub fn ircxReply(self: *Client, target: []const u8, tag: []const u8, payload: []const u8) !void {
+        return self.ircxTaggedData("REPLY", target, tag, payload);
+    }
+
+    /// IRCX draft 04 §5.13 contextual whisper. Unlike a private PRIVMSG, the
+    /// channel and recipient list remain visible on the wire, allowing an IRCX
+    /// peer to display the whisper in its channel context.
+    pub fn whisper(self: *Client, channel: []const u8, recipients: []const u8, text: []const u8) !void {
+        if (channel.len == 0 or recipients.len == 0) return error.InvalidIrcParameter;
+        try self.validateOutgoingText(text);
+        try self.appendCommandTrailing("WHISPER", &.{ channel, recipients, text });
+        try self.queueOut(.interactive, false, false);
+    }
+
+    fn ircxTaggedData(self: *Client, command: []const u8, target: []const u8, tag: []const u8, payload: []const u8) !void {
+        if (target.len == 0 or !validIrcxDataTag(tag)) return error.InvalidIrcParameter;
+        try self.validateOutgoingText(payload);
+        try self.appendCommandTrailing(command, &.{ target, tag, payload });
         try self.queueOut(.interactive, false, false);
     }
 
@@ -1017,6 +1048,16 @@ const TypingTarget = struct { target: []u8, last_ms: u64 };
 fn validMessageReference(reference: []const u8) bool {
     return reference.len != 0 and reference[0] != ':' and
         std.mem.indexOfAny(u8, reference, " \r\n\x00") == null;
+}
+
+/// IRCX draft 04 §5.4 reserves a compact tag grammar for DATA, REQUEST, and
+/// REPLY. Reject malformed tags locally rather than relying on server-specific
+/// recovery, and leave authorization of SYS/ADM/OWN/HST prefixes to the server.
+fn validIrcxDataTag(tag: []const u8) bool {
+    if (tag.len == 0 or tag.len > 15) return false;
+    if (!std.ascii.isAlphabetic(tag[0])) return false;
+    for (tag) |byte| if (!std.ascii.isAlphanumeric(byte) and byte != '.') return false;
+    return true;
 }
 
 // --- Tests ----------------------------------------------------------------
@@ -1401,6 +1442,9 @@ test "IRCX workflow commands follow the draft wire grammar" {
     try client.accessClear("#root", "DENY");
     try client.eventList("CHANNEL");
     try client.eventChange(true, "MEMBER", "*!*@*");
+    try client.ircxRequest("#root", "APP.INFO", "version?");
+    try client.ircxReply("#root", "APP.INFO", "ComicChat");
+    try client.whisper("#root", "anna,bob", "secret panel plan");
 
     const expected = [_][]const u8{
         "LISTX N=#root,>10 25\r\n",
@@ -1408,11 +1452,22 @@ test "IRCX workflow commands follow the draft wire grammar" {
         "PROP #root TOPIC :New topic\r\n",
         "ACCESS #root LIST\r\n",
         "ACCESS #root ADD HOST anna!*@* 0 :trusted helper\r\n",
-        "ACCESS #root DEL HOST anna!*@*\r\n",
+        "ACCESS #root DELETE HOST anna!*@*\r\n",
         "ACCESS #root CLEAR DENY\r\n",
         "EVENT LIST CHANNEL\r\n",
         "EVENT ADD MEMBER *!*@*\r\n",
+        "REQUEST #root APP.INFO :version?\r\n",
+        "REPLY #root APP.INFO :ComicChat\r\n",
+        "WHISPER #root anna,bob :secret panel plan\r\n",
     };
     try std.testing.expectEqual(expected.len, client.tx.items.items.len);
     for (expected, client.tx.items.items) |wire, item| try std.testing.expectEqualStrings(wire, item.bytes);
+}
+
+test "IRCX tagged data rejects malformed draft tags" {
+    try std.testing.expect(validIrcxDataTag("CCUDI1"));
+    try std.testing.expect(validIrcxDataTag("APP.INFO"));
+    try std.testing.expect(!validIrcxDataTag("1BAD"));
+    try std.testing.expect(!validIrcxDataTag("BAD-TAG"));
+    try std.testing.expect(!validIrcxDataTag("this-tag-is-far-too-long"));
 }

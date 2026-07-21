@@ -146,6 +146,13 @@ The Room menu exposes the IRCX draft's typed management paths after numeric
 - `EVENT LIST [event]` and `EVENT ADD|DELETE <event> [mask]` for authorized
   operators.
 
+The IRCX transport also implements all three draft §5.4 tagged-message verbs:
+`DATA`, `REQUEST`, and `REPLY`, with locally validated 1–15 character tags,
+plus contextual `WHISPER <channel> <nick-list> :<message>`. Incoming IRCX
+whispers remain in their channel context and render as private comic lines.
+ACCESS removal emits the normative `DELETE` token; the non-standard `DEL`
+abbreviation is never sent.
+
 Replies 801-819 and relevant IRCX errors 913-925 are shown in the active room
 as server action rows. The exact command bytes are pinned by unit tests against
 the [IRCX Internet-Draft](https://datatracker.ietf.org/doc/html/draft-pfenning-irc-extensions-04.txt)
