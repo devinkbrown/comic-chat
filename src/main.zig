@@ -695,6 +695,27 @@ fn avatarByName(name: []const u8) ?[]const u8 {
     if (eql(name, "tiki hd")) return @embedFile("assets/generated/tiki-reimagined-hd-v1.avb");
     if (eql(name, "tongtyed")) return @embedFile("assets/testdata/tongtyed.avb");
     if (eql(name, "xeno")) return @embedFile("assets/testdata/xeno.avb");
+    if (eql(name, "anna hd")) return @embedFile("assets/generated/anna-reimagined-hd-v1.avb");
+    if (eql(name, "armando hd")) return @embedFile("assets/generated/armando-reimagined-hd-v1.avb");
+    if (eql(name, "bolo hd")) return @embedFile("assets/generated/bolo-reimagined-hd-v1.avb");
+    if (eql(name, "cro hd")) return @embedFile("assets/generated/cro-reimagined-hd-v1.avb");
+    if (eql(name, "dan hd")) return @embedFile("assets/generated/dan-reimagined-hd-v1.avb");
+    if (eql(name, "denise hd")) return @embedFile("assets/generated/denise-reimagined-hd-v1.avb");
+    if (eql(name, "hugh hd")) return @embedFile("assets/generated/hugh-reimagined-hd-v1.avb");
+    if (eql(name, "jordan hd")) return @embedFile("assets/generated/jordan-reimagined-hd-v1.avb");
+    if (eql(name, "kevin hd")) return @embedFile("assets/generated/kevin-reimagined-hd-v1.avb");
+    if (eql(name, "kwensa hd")) return @embedFile("assets/generated/kwensa-reimagined-hd-v1.avb");
+    if (eql(name, "lance hd")) return @embedFile("assets/generated/lance-reimagined-hd-v1.avb");
+    if (eql(name, "lynnea hd")) return @embedFile("assets/generated/lynnea-reimagined-hd-v1.avb");
+    if (eql(name, "margaret hd")) return @embedFile("assets/generated/margaret-reimagined-hd-v1.avb");
+    if (eql(name, "maynard hd")) return @embedFile("assets/generated/maynard-reimagined-hd-v1.avb");
+    if (eql(name, "mike hd")) return @embedFile("assets/generated/mike-reimagined-hd-v1.avb");
+    if (eql(name, "rebecca hd")) return @embedFile("assets/generated/rebecca-reimagined-hd-v1.avb");
+    if (eql(name, "sage hd")) return @embedFile("assets/generated/sage-reimagined-hd-v1.avb");
+    if (eql(name, "scotty hd")) return @embedFile("assets/generated/scotty-reimagined-hd-v1.avb");
+    if (eql(name, "susan hd")) return @embedFile("assets/generated/susan-reimagined-hd-v1.avb");
+    if (eql(name, "tongtyed hd")) return @embedFile("assets/generated/tongtyed-reimagined-hd-v1.avb");
+    if (eql(name, "xeno hd")) return @embedFile("assets/generated/xeno-reimagined-hd-v1.avb");
     return null;
 }
 
@@ -705,6 +726,36 @@ fn bgByName(name: []const u8) ?[]const u8 {
     if (eql(u8, name, "den")) return @embedFile("assets/testdata/den.bgb");
     if (eql(u8, name, "room")) return @embedFile("assets/testdata/room.bgb");
     if (eql(u8, name, "pastoral")) return @embedFile("assets/testdata/pastoral.bgb");
+    if (eql(u8, name, "hd apartment")) return @embedFile("assets/generated/hd-apartment.bgb");
+    if (eql(u8, name, "hd rooftop")) return @embedFile("assets/generated/hd-rooftop.bgb");
+    if (eql(u8, name, "hd cafe")) return @embedFile("assets/generated/hd-cafe.bgb");
+    if (eql(u8, name, "hd park")) return @embedFile("assets/generated/hd-park.bgb");
+    if (eql(u8, name, "hd space corridor")) return @embedFile("assets/generated/hd-space-corridor.bgb");
+    if (eql(u8, name, "hd boardwalk")) return @embedFile("assets/generated/hd-boardwalk.bgb");
+    if (eql(u8, name, "hd school hall")) return @embedFile("assets/generated/hd-school-hall.bgb");
+    if (eql(u8, name, "hd rainy street")) return @embedFile("assets/generated/hd-rainy-street.bgb");
+    if (eql(u8, name, "hd library")) return @embedFile("assets/generated/hd-library.bgb");
+    if (eql(u8, name, "hd campsite")) return @embedFile("assets/generated/hd-campsite.bgb");
+    if (eql(u8, name, "color apartment")) return @embedFile("assets/generated/color-apartment.bgb");
+    if (eql(u8, name, "color rooftop")) return @embedFile("assets/generated/color-rooftop.bgb");
+    if (eql(u8, name, "color cafe")) return @embedFile("assets/generated/color-cafe.bgb");
+    if (eql(u8, name, "color park")) return @embedFile("assets/generated/color-park.bgb");
+    if (eql(u8, name, "color space corridor")) return @embedFile("assets/generated/color-space-corridor.bgb");
+    if (eql(u8, name, "color boardwalk")) return @embedFile("assets/generated/color-boardwalk.bgb");
+    if (eql(u8, name, "color school hall")) return @embedFile("assets/generated/color-school-hall.bgb");
+    if (eql(u8, name, "color rainy street")) return @embedFile("assets/generated/color-rainy-street.bgb");
+    if (eql(u8, name, "color library")) return @embedFile("assets/generated/color-library.bgb");
+    if (eql(u8, name, "color campsite")) return @embedFile("assets/generated/color-campsite.bgb");
+    if (eql(u8, name, "whacky spaceship bridge")) return @embedFile("assets/generated/whacky-spaceship-bridge.bgb");
+    if (eql(u8, name, "whacky asteroid diner")) return @embedFile("assets/generated/whacky-asteroid-diner.bgb");
+    if (eql(u8, name, "whacky sky island market")) return @embedFile("assets/generated/whacky-sky-island-market.bgb");
+    if (eql(u8, name, "whacky underwater dome")) return @embedFile("assets/generated/whacky-underwater-dome.bgb");
+    if (eql(u8, name, "whacky friendly castle")) return @embedFile("assets/generated/whacky-friendly-castle.bgb");
+    if (eql(u8, name, "whacky pinball interior")) return @embedFile("assets/generated/whacky-pinball-interior.bgb");
+    if (eql(u8, name, "whacky cosmic laundromat")) return @embedFile("assets/generated/whacky-cosmic-laundromat.bgb");
+    if (eql(u8, name, "whacky cloud train station")) return @embedFile("assets/generated/whacky-cloud-train-station.bgb");
+    if (eql(u8, name, "whacky mushroom village")) return @embedFile("assets/generated/whacky-mushroom-village.bgb");
+    if (eql(u8, name, "whacky arcade planetarium")) return @embedFile("assets/generated/whacky-arcade-planetarium.bgb");
     return null;
 }
 

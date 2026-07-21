@@ -1185,6 +1185,27 @@ pub fn avatarByName(name: []const u8) ?[]const u8 {
     if (eql(name, "tiki hd")) return @embedFile("../assets/generated/tiki-reimagined-hd-v1.avb");
     if (eql(name, "tongtyed")) return @embedFile("../assets/testdata/tongtyed.avb");
     if (eql(name, "xeno")) return @embedFile("../assets/testdata/xeno.avb");
+    if (eql(name, "anna hd")) return @embedFile("../assets/generated/anna-reimagined-hd-v1.avb");
+    if (eql(name, "armando hd")) return @embedFile("../assets/generated/armando-reimagined-hd-v1.avb");
+    if (eql(name, "bolo hd")) return @embedFile("../assets/generated/bolo-reimagined-hd-v1.avb");
+    if (eql(name, "cro hd")) return @embedFile("../assets/generated/cro-reimagined-hd-v1.avb");
+    if (eql(name, "dan hd")) return @embedFile("../assets/generated/dan-reimagined-hd-v1.avb");
+    if (eql(name, "denise hd")) return @embedFile("../assets/generated/denise-reimagined-hd-v1.avb");
+    if (eql(name, "hugh hd")) return @embedFile("../assets/generated/hugh-reimagined-hd-v1.avb");
+    if (eql(name, "jordan hd")) return @embedFile("../assets/generated/jordan-reimagined-hd-v1.avb");
+    if (eql(name, "kevin hd")) return @embedFile("../assets/generated/kevin-reimagined-hd-v1.avb");
+    if (eql(name, "kwensa hd")) return @embedFile("../assets/generated/kwensa-reimagined-hd-v1.avb");
+    if (eql(name, "lance hd")) return @embedFile("../assets/generated/lance-reimagined-hd-v1.avb");
+    if (eql(name, "lynnea hd")) return @embedFile("../assets/generated/lynnea-reimagined-hd-v1.avb");
+    if (eql(name, "margaret hd")) return @embedFile("../assets/generated/margaret-reimagined-hd-v1.avb");
+    if (eql(name, "maynard hd")) return @embedFile("../assets/generated/maynard-reimagined-hd-v1.avb");
+    if (eql(name, "mike hd")) return @embedFile("../assets/generated/mike-reimagined-hd-v1.avb");
+    if (eql(name, "rebecca hd")) return @embedFile("../assets/generated/rebecca-reimagined-hd-v1.avb");
+    if (eql(name, "sage hd")) return @embedFile("../assets/generated/sage-reimagined-hd-v1.avb");
+    if (eql(name, "scotty hd")) return @embedFile("../assets/generated/scotty-reimagined-hd-v1.avb");
+    if (eql(name, "susan hd")) return @embedFile("../assets/generated/susan-reimagined-hd-v1.avb");
+    if (eql(name, "tongtyed hd")) return @embedFile("../assets/generated/tongtyed-reimagined-hd-v1.avb");
+    if (eql(name, "xeno hd")) return @embedFile("../assets/generated/xeno-reimagined-hd-v1.avb");
     return null;
 }
 

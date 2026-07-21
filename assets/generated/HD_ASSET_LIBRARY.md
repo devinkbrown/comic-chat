@@ -40,12 +40,13 @@ compression records and cannot be safely replaced by a single flattened PNG.
 
 ## Native runtime package
 
-`src/assets/generated/tiki-reimagined-hd-v1.avb` is the first approved
-generated runtime package. It is a native simple-avatar AVB with a dedicated
-icon and six authored body records (neutral, laugh, surprised, angry, sad,
-and action), built from the Tiki pose source set. It is selectable in the
-character dialog as **Tiki HD**. Its full source checksums,
-license boundary, output checksum, and exact rebuild command live in
+Every legacy identity now has an approved generated runtime AVB under
+`src/assets/generated/`. Each is a native simple-avatar package with an icon
+and six authored body records (neutral, happy, surprised, angry, sad, and
+action), built from its named pose-source set. The character dialog exposes
+all twenty-two as **Name HD** choices. `AVB_SHA256SUMS.txt` records every
+runtime package digest; the package format, source path convention, license
+boundary, and rebuild command live in
 [`src/assets/generated/README.md`](../../src/assets/generated/README.md).
 
 ## Runtime integration gate
@@ -58,9 +59,6 @@ source library.
 
 ## Pose-source sets
 
-`avatar-pose-sheets-v1/tiki/` contains a six-pose source set for the original
-Tiki v3 redesign: neutral, happy, surprised, angry, sad, and action. The six
-crop tiles retain stable pose order for eventual face/body/mask separation.
-They are AVB packaging source material. The Tiki set has now been packaged as
-the native simple-avatar asset above; the remaining characters still need
-their own approved multi-pose sheets before they can be packaged truthfully.
+Each `avatar-pose-sheets-v1/<name>/` directory contains a generated pose sheet
+and six crop tiles in stable order: neutral, happy, surprised, angry, sad,
+and action. These are the exact packaging inputs for that name's native AVB.

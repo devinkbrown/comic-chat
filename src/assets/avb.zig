@@ -576,6 +576,36 @@ test "generated Tiki HD package has a native simple-avatar pose table" {
     }
 }
 
+test "every generated HD avatar package has six decodable body poses" {
+    const gpa = std.testing.allocator;
+    const blobs = [_][]const u8{
+        @embedFile("generated/anna-reimagined-hd-v1.avb"),     @embedFile("generated/armando-reimagined-hd-v1.avb"),
+        @embedFile("generated/bolo-reimagined-hd-v1.avb"),     @embedFile("generated/cro-reimagined-hd-v1.avb"),
+        @embedFile("generated/dan-reimagined-hd-v1.avb"),      @embedFile("generated/denise-reimagined-hd-v1.avb"),
+        @embedFile("generated/hugh-reimagined-hd-v1.avb"),     @embedFile("generated/jordan-reimagined-hd-v1.avb"),
+        @embedFile("generated/kevin-reimagined-hd-v1.avb"),    @embedFile("generated/kwensa-reimagined-hd-v1.avb"),
+        @embedFile("generated/lance-reimagined-hd-v1.avb"),    @embedFile("generated/lynnea-reimagined-hd-v1.avb"),
+        @embedFile("generated/margaret-reimagined-hd-v1.avb"), @embedFile("generated/maynard-reimagined-hd-v1.avb"),
+        @embedFile("generated/mike-reimagined-hd-v1.avb"),     @embedFile("generated/rebecca-reimagined-hd-v1.avb"),
+        @embedFile("generated/sage-reimagined-hd-v1.avb"),     @embedFile("generated/scotty-reimagined-hd-v1.avb"),
+        @embedFile("generated/susan-reimagined-hd-v1.avb"),    @embedFile("generated/tiki-reimagined-hd-v1.avb"),
+        @embedFile("generated/tongtyed-reimagined-hd-v1.avb"), @embedFile("generated/xeno-reimagined-hd-v1.avb"),
+    };
+    inline for (blobs) |blob| {
+        const asset = try parse(blob);
+        try std.testing.expectEqual(Kind.simple_avatar, asset.kind);
+        var table = try parsePoseTable(gpa, blob);
+        defer table.deinit(gpa);
+        try std.testing.expectEqual(@as(usize, 6), table.records.len);
+        for (table.records) |record| {
+            try std.testing.expectEqual(PoseLayer.body, record.layer);
+            const image = record.images[0];
+            try std.testing.expect(image.offset < blob.len);
+            try std.testing.expectEqual(ImageFormat.dib, image.format);
+        }
+    }
+}
+
 test "parse rejects bad magic and truncation" {
     try std.testing.expectError(error.BadMagic, parse("\x00\x00\x02\x00\x02\x00"));
     try std.testing.expectError(error.Truncated, parse("\x81\x81\x02"));

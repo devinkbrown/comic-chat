@@ -269,9 +269,10 @@ pub fn choiceOptions(id: Id, index: usize) []const []const u8 {
         },
         .character => if (index == 0)
             &.{
-                "Anna",   "Armando",  "Bolo",    "Cro",  "Dan",     "Denise", "Hugh",   "Jordan", "Kevin", "Kwensa",  "Lance",
-                "Lynnea", "Margaret", "Maynard", "Mike", "Rebecca", "Sage",   "Scotty", "Susan",  "Tiki",  "Tiki HD", "Tongtyed",
-                "Xeno",
+                "Anna",      "Armando",     "Bolo",       "Cro",     "Dan",        "Denise",    "Hugh",      "Jordan",    "Kevin",    "Kwensa",      "Lance",
+                "Lynnea",    "Margaret",    "Maynard",    "Mike",    "Rebecca",    "Sage",      "Scotty",    "Susan",     "Tiki",     "Tongtyed",    "Xeno",
+                "Anna HD",   "Armando HD",  "Bolo HD",    "Cro HD",  "Dan HD",     "Denise HD", "Hugh HD",   "Jordan HD", "Kevin HD", "Kwensa HD",   "Lance HD",
+                "Lynnea HD", "Margaret HD", "Maynard HD", "Mike HD", "Rebecca HD", "Sage HD",   "Scotty HD", "Susan HD",  "Tiki HD",  "Tongtyed HD", "Xeno HD",
             }
         else if (index == 1)
             &.{ "Neutral", "Happy", "Laughing", "Angry", "Sad", "Surprised" }
