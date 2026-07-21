@@ -89,6 +89,7 @@ zig build run -- render-ui menu > ui-menu-preview.png
 zig build run -- render-ui settings > ui-dialog-preview.png
 zig build run -- render-ui inputs > ui-input-preview.png
 zig build run -- render-ui composer > ui-composer-preview.png
+zig build run -- render-ui composer-multiline > ui-composer-multiline-preview.png
 zig build run -- render-ui character > ui-character-preview.png
 zig build run -- render-ui context > ui-context-preview.png
 zig build run -- render-ui hover > ui-hover-preview.png
@@ -97,6 +98,9 @@ zig build run -- render-ui member > ui-member-preview.png
 zig build run -- render-ui compact > ui-compact-preview.png
 zig build run -- render-ui compact-menu > ui-compact-menu-preview.png
 zig build run -- render-ui compact-settings > ui-compact-settings-preview.png
+zig build run -- render-ui multi-tabs > ui-multi-tabs-preview.png
+zig build run -- render-ui compact-multi-tabs > ui-compact-multi-tabs-preview.png
+zig build run -- render-ui mood-laughing > ui-mood-laughing-preview.png
 zig build run -- render-ui dialog-file_transfer > ui-transfer-preview.png
 zig build run -- render-ui dialog-room_access > ui-access-preview.png
 ```
@@ -106,7 +110,9 @@ modal surface, populated account/password controls, composer overflow, member
 selection, and narrow responsive geometry. The generic `dialog-<enum_name>`
 form renders any registered dialog with the exact shared geometry; specialized
 sample data is included for IRCX, DCC, automation, notification, profile, and
-call-link workflows. Run `zig build test --summary all`
+call-link workflows. Multi-tab captures reserve the density stepper and keep a
+later active room visible; the laughing-mood capture exercises the longest
+expression chip in the narrow inspector. Run `zig build test --summary all`
 with them; pixel checks cover the shell palette and dial while semantic tests
 cover control geometry.
 

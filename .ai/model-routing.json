@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "model_family": "gpt-5.6-codex",
+  "models": {
+    "fast": {
+      "model": "gpt-5.6-terra",
+      "reasoning_effort": "low",
+      "roles": ["scout", "inventory", "test-triage", "mechanical-edit", "documentation-check"]
+    },
+    "balanced": {
+      "model": "gpt-5.6",
+      "reasoning_effort": "medium",
+      "roles": ["implementation", "focused-debugging", "test-authoring", "integration"]
+    },
+    "frontier": {
+      "model": "gpt-5.6",
+      "reasoning_effort": "high",
+      "roles": ["architecture", "ambiguous-debugging", "security-review", "source-parity-review", "release-review", "synthesis"]
+    }
+  },
+  "routing": {
+    "balanced_min_score": 3,
+    "frontier_min_score": 7,
+    "default_max_parallel": 4,
+    "critical_domains": [
+      "security",
+      "tls",
+      "credentials",
+      "memory-safety",
+      "concurrency",
+      "release",
+      "source-parity",
+      "protocol-compatibility"
+    ]
+  },
+  "environment_overrides": {
+    "fast": "COMICCHAT_MODEL_FAST",
+    "balanced": "COMICCHAT_MODEL_BALANCED",
+    "frontier": "COMICCHAT_MODEL_FRONTIER",
+    "max_parallel": "COMICCHAT_AI_MAX_PARALLEL"
+  }
+}

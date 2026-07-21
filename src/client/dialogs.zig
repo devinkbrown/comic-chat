@@ -61,7 +61,7 @@ pub const Id = enum {
     connection_features,
 };
 
-pub const Group = enum { connection, rooms, automation, files };
+pub const Group = enum { application, connection, rooms, automation, files };
 
 pub const Spec = struct {
     id: Id,
@@ -81,7 +81,7 @@ pub const Field = struct { label: []const u8, hint: []const u8 = "", kind: Field
 pub const specs = [_]Spec{
     .{ .id = .about, .resource = "IDD_ABOUTBOX", .title = "About Comic Chat", .group = .files, .source_w = 279, .source_h = 137 },
     .{ .id = .room_list, .resource = "IDD_ROOMLIST", .title = "Room List", .group = .rooms, .source_w = 400, .source_h = 255 },
-    .{ .id = .settings, .resource = "IDD_SETTINGSPAGE", .title = "Settings", .group = .connection, .source_w = 252, .source_h = 218 },
+    .{ .id = .settings, .resource = "IDD_SETTINGSPAGE", .title = "Settings", .group = .application, .source_w = 252, .source_h = 218 },
     .{ .id = .personal, .resource = "IDD_PERSONALPAGE_IRC", .title = "Personal Profile", .group = .connection, .source_w = 252, .source_h = 218 },
     .{ .id = .character, .resource = "IDD_CHARACTERPAGE", .title = "Character", .group = .connection, .source_w = 252, .source_h = 218 },
     .{ .id = .background, .resource = "IDD_BACKGROUNDPAGE", .title = "Background", .group = .connection, .source_w = 252, .source_h = 218 },
@@ -172,7 +172,13 @@ pub fn prompt(id: Id) ?[]const u8 {
 
 pub fn fields(id: Id) []const Field {
     return switch (id) {
-        .setup, .settings, .servers => &.{ .{ .label = "Server", .hint = "Secure IRC endpoint" }, .{ .label = "Port", .hint = "6697" }, .{ .label = "Security", .hint = "Verified TLS", .kind = .choice } },
+        .setup, .servers => &.{ .{ .label = "Server", .hint = "Secure IRC endpoint" }, .{ .label = "Port", .hint = "6697" }, .{ .label = "Security", .hint = "Verified TLS", .kind = .choice } },
+        .settings => &.{
+            .{ .label = "Conversation view", .kind = .choice },
+            .{ .label = "Panels across", .kind = .choice },
+            .{ .label = "Member pane", .kind = .choice },
+            .{ .label = "Member layout", .kind = .choice },
+        },
         .personal => &.{ .{ .label = "Profile text" }, .{ .label = "Display name" }, .{ .label = "Homepage", .hint = "Optional" }, .{ .label = "Email", .hint = "Optional" } },
         .character => &.{ .{ .label = "Character name", .kind = .choice }, .{ .label = "Preview", .hint = "Bundled Comic Chat character", .kind = .preview } },
         .background => &.{ .{ .label = "Backdrop name", .kind = .choice }, .{ .label = "Preview", .hint = "Bundled background", .kind = .preview } },
@@ -241,7 +247,14 @@ pub fn fieldAcceptsText(id: Id, index: usize) bool {
 
 pub fn choiceOptions(id: Id, index: usize) []const []const u8 {
     return switch (id) {
-        .setup, .settings, .servers => if (index == 2) &.{ "Verified TLS", "Plaintext (unsafe)" } else &.{},
+        .setup, .servers => if (index == 2) &.{ "Verified TLS", "Plaintext (unsafe)" } else &.{},
+        .settings => switch (index) {
+            0 => &.{ "Comic", "Text" },
+            1 => &.{ "4 panels", "3 panels", "2 panels", "1 panel", "5 panels", "6 panels" },
+            2 => &.{ "Shown", "Hidden" },
+            3 => &.{ "Icons", "List" },
+            else => &.{},
+        },
         .character => if (index == 0) &.{
             "Anna",   "Armando",  "Bolo",    "Cro",  "Dan",     "Denise", "Hugh",   "Jordan", "Kevin", "Kwensa",   "Lance",
             "Lynnea", "Margaret", "Maynard", "Mike", "Rebecca", "Sage",   "Scotty", "Susan",  "Tiki",  "Tongtyed", "Xeno",
@@ -287,7 +300,8 @@ pub fn requiresInput(id: Id) bool {
 pub fn primaryLabel(id: Id) []const u8 {
     return switch (id) {
         .setup => "Connect",
-        .settings, .servers => "Save changes",
+        .settings => "Apply settings",
+        .servers => "Save changes",
         .personal, .character, .background, .text_font, .set_text_font, .choose_color, .comics_view => "Apply",
         .room_list => "Join room",
         .user_list => "Select",
@@ -318,6 +332,15 @@ pub fn primaryLabel(id: Id) []const u8 {
     };
 }
 
+/// Informational surfaces have one unambiguous way out. Editing workflows
+/// retain Cancel so their pending values can be dismissed without applying.
+pub fn showsCancel(id: Id) bool {
+    return switch (id) {
+        .about, .motd, .connection_features => false,
+        else => true,
+    };
+}
+
 test "registry covers all forty Microsoft dialog templates plus portable dialogs" {
     try std.testing.expectEqual(@as(usize, 53), specs.len);
     try std.testing.expectEqual(@as(usize, 40), microsoft_dialog_count);
@@ -328,4 +351,19 @@ test "registry covers all forty Microsoft dialog templates plus portable dialogs
         seen[index] = true;
         try std.testing.expectEqual(spec.id, fromResource(spec.resource).?);
     }
+}
+
+test "application settings are distinct from connection setup" {
+    try std.testing.expectEqual(Group.application, get(.settings).group);
+    try std.testing.expectEqualStrings("Conversation view", fields(.settings)[0].label);
+    try std.testing.expectEqualStrings("Server", fields(.setup)[0].label);
+    try std.testing.expectEqualStrings("Comic", choiceOptions(.settings, 0)[0]);
+    try std.testing.expectEqualStrings("Verified TLS", choiceOptions(.setup, 2)[0]);
+}
+
+test "informational dialogs use one close action" {
+    try std.testing.expect(!showsCancel(.about));
+    try std.testing.expect(!showsCancel(.motd));
+    try std.testing.expect(!showsCancel(.connection_features));
+    try std.testing.expect(showsCancel(.settings));
 }

@@ -34,7 +34,7 @@ This distinction is important:
 - The portable tree is rooted under `src/`. `src/root.zig`
   explicitly references every portable module and the four source-parity test
   modules so their inline tests are compiled and run.
-- The current release test gate reports 433 passed tests and one intentionally
+- The current release test gate reports 440 passed tests and one intentionally
   skipped platform-conditional test.
 - Native Linux plus x86_64 Windows, FreeBSD, and OpenBSD release builds pass.
 - Published binaries are stripped so source paths and other build-machine debug

@@ -77,7 +77,11 @@ pub const State = struct {
     }
 
     pub fn toggleMembers(self: *State) void {
-        self.show_members = !self.show_members;
+        self.setMembersVisible(!self.show_members);
+    }
+
+    pub fn setMembersVisible(self: *State, visible: bool) void {
+        self.show_members = visible;
         if (!self.show_members and (self.focus == .members or self.focus == .emotion)) self.focus = .composer;
     }
 
@@ -334,6 +338,15 @@ test "member roving and body camera keyboard controls stay bounded" {
     state.neutralEmotion();
     try std.testing.expectEqual(@as(i16, 0), state.emotion_x);
     try std.testing.expectEqual(@as(i16, 0), state.emotion_y);
+}
+
+test "explicit member visibility keeps focus on a visible region" {
+    var state: State = .{ .focus = .members };
+    state.setMembersVisible(false);
+    try std.testing.expect(!state.show_members);
+    try std.testing.expectEqual(Focus.composer, state.focus);
+    state.setMembersVisible(true);
+    try std.testing.expect(state.show_members);
 }
 
 test "member viewport scrolling and selection reveal stay bounded" {

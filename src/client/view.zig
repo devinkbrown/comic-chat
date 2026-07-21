@@ -32,7 +32,7 @@ pub const Action = union(enum) {
     menu: u8,
     toolbar: u8,
     room_tab: usize,
-    composer_cursor: i32,
+    composer_cursor: struct { x: i32, y: i32 },
     composer_format: u8,
     transcript_command: u8,
     send_expression,
@@ -40,7 +40,6 @@ pub const Action = union(enum) {
     send,
     quit,
     connection,
-    endpoint_dialog: dialogs.Id,
     dialog_accept: dialogs.Id,
     dialog_cancel: dialogs.Id,
     dialog_browse: dialogs.Id,
@@ -97,7 +96,9 @@ pub const View = struct {
     emotion_dragging: bool = false,
     dialog_editors: [5]input_mod.Editor,
     dialog_field: usize = 0,
+    dialog_action_focus: ?ui.DialogButton = null,
     room_tab_count: usize = 1,
+    room_tab_first: usize = 0,
     can_moderate: bool = false,
 
     pub fn init(gpa: std.mem.Allocator, initial_width: u32, initial_height: u32) !View {
@@ -193,6 +194,41 @@ pub const View = struct {
         return true;
     }
 
+    /// Keyboard navigation for the complete menu bar. A menu owns arrow,
+    /// Home/End, Enter, and Escape until it closes so commands never leak into
+    /// the composer or transcript.
+    pub fn handleMenuKey(self: *View, key: platform_event.Key) ?Action {
+        const menu = self.active_menu orelse {
+            if (self.shell.focus != .navigation) return null;
+            switch (key) {
+                .enter, .down => {
+                    self.active_menu = self.hovered_menu orelse 0;
+                    self.hovered_menu_item = firstEnabledMenuItem(self.active_menu.?, self.can_moderate);
+                    return .none;
+                },
+                else => return null,
+            }
+        };
+        switch (key) {
+            .escape => {
+                self.active_menu = null;
+                self.hovered_menu_item = null;
+            },
+            .left, .right => {
+                const count: u8 = @intCast(menu_labels.len);
+                self.active_menu = if (key == .left) (menu + count - 1) % count else (menu + 1) % count;
+                self.hovered_menu_item = firstEnabledMenuItem(self.active_menu.?, self.can_moderate);
+            },
+            .up => self.hovered_menu_item = nextEnabledMenuItem(menu, self.hovered_menu_item orelse 0, false, self.can_moderate),
+            .down => self.hovered_menu_item = nextEnabledMenuItem(menu, self.hovered_menu_item orelse menuItemCount(menu) - 1, true, self.can_moderate),
+            .home => self.hovered_menu_item = firstEnabledMenuItem(menu, self.can_moderate),
+            .end => self.hovered_menu_item = lastEnabledMenuItem(menu, self.can_moderate),
+            .enter => return self.activateMenuItem(menu, self.hovered_menu_item orelse firstEnabledMenuItem(menu, self.can_moderate)),
+            else => return .none,
+        }
+        return .none;
+    }
+
     pub fn pageEarlier(self: *View, total_lines: usize) void {
         self.shell.pageEarlier(total_lines, 9);
     }
@@ -222,6 +258,14 @@ pub const View = struct {
             if (options.len > 0) self.dialog_editors[index].paste(options[0]) catch {};
         }
         self.dialog_field = 0;
+        self.dialog_action_focus = null;
+        var has_focusable_field = false;
+        for (dialogs.fields(id), 0..) |field, index| if (dialogFieldFocusable(field)) {
+            self.dialog_field = index;
+            has_focusable_field = true;
+            break;
+        };
+        if (!has_focusable_field) self.dialog_action_focus = .primary;
         self.dialog_notice = "";
         self.hovered_dialog_button = null;
         self.hovered_dialog_field = null;
@@ -239,7 +283,7 @@ pub const View = struct {
     }
 
     pub fn openEndpointDialog(self: *View, id: dialogs.Id, host: []const u8, port: u16, use_tls: bool) void {
-        std.debug.assert(id == .setup or id == .settings or id == .servers);
+        std.debug.assert(id == .setup or id == .servers);
         self.openDialog(id);
         var port_buffer: [5]u8 = undefined;
         const port_text = std.fmt.bufPrint(&port_buffer, "{d}", .{port}) catch "6697";
@@ -430,10 +474,33 @@ pub const View = struct {
                 return .{ .dialog_cancel = id };
             },
             .enter => {
+                if (self.dialog_action_focus == .cancel) {
+                    self.active_dialog = null;
+                    self.dialog_action_focus = null;
+                    return .{ .dialog_cancel = id };
+                }
                 return .{ .dialog_accept = id };
             },
             .tab => {
-                if (field_count > 0) self.dialog_field = (self.dialog_field + 1) % field_count;
+                const action_count: usize = if (dialogs.showsCancel(id)) 2 else 1;
+                const total = field_count + action_count;
+                if (total != 0) {
+                    var position: usize = if (self.dialog_action_focus) |button|
+                        field_count + @as(usize, if (button == .primary) 0 else 1)
+                    else
+                        self.dialog_field;
+                    var attempts: usize = 0;
+                    while (attempts < total) : (attempts += 1) {
+                        position = if (modifiers.shift) (position + total - 1) % total else (position + 1) % total;
+                        if (position >= field_count or dialogFieldFocusable(dialogs.fields(id)[position])) break;
+                    }
+                    if (position < field_count) {
+                        self.dialog_field = position;
+                        self.dialog_action_focus = null;
+                    } else {
+                        self.dialog_action_focus = if (position == field_count) .primary else .cancel;
+                    }
+                }
             },
             .char => |ch| {
                 if (modifiers.control) {
@@ -449,18 +516,32 @@ pub const View = struct {
                     self.dialog_notice = "";
                 }
             },
-            .backspace => {
+            .backspace => if (dialogs.fieldAcceptsText(id, self.dialog_field) and self.dialog_action_focus == null) {
                 editor.backspace();
                 self.dialog_notice = "";
             },
-            .delete => {
+            .delete => if (dialogs.fieldAcceptsText(id, self.dialog_field) and self.dialog_action_focus == null) {
                 editor.delete();
                 self.dialog_notice = "";
             },
-            .left => if (modifiers.shift) editor.extendLeft() else editor.left(),
-            .right => if (modifiers.shift) editor.extendRight() else editor.right(),
-            .home => if (modifiers.shift) editor.extendHome() else editor.home(),
-            .end => if (modifiers.shift) editor.extendEnd() else editor.end(),
+            .left => if (self.dialog_action_focus == null) {
+                if (dialogs.fields(id)[self.dialog_field].kind == .choice)
+                    self.cycleDialogChoiceDirection(id, self.dialog_field, false)
+                else if (dialogs.fieldAcceptsText(id, self.dialog_field))
+                    if (modifiers.shift) editor.extendLeft() else editor.left();
+            },
+            .right => if (self.dialog_action_focus == null) {
+                if (dialogs.fields(id)[self.dialog_field].kind == .choice)
+                    self.cycleDialogChoiceDirection(id, self.dialog_field, true)
+                else if (dialogs.fieldAcceptsText(id, self.dialog_field))
+                    if (modifiers.shift) editor.extendRight() else editor.right();
+            },
+            .home => if (dialogs.fieldAcceptsText(id, self.dialog_field) and self.dialog_action_focus == null) {
+                if (modifiers.shift) editor.extendHome() else editor.home();
+            },
+            .end => if (dialogs.fieldAcceptsText(id, self.dialog_field) and self.dialog_action_focus == null) {
+                if (modifiers.shift) editor.extendEnd() else editor.end();
+            },
             else => {},
         }
         return .none;
@@ -476,6 +557,7 @@ pub const View = struct {
             const spec = dialogs.get(id);
             const dialog_layout = dialogLayout(self.canvas.width, self.canvas.height, spec);
             if (ui.dialogButtonAt(dialog_layout, pointer.x, pointer.y)) |button| {
+                self.dialog_action_focus = button;
                 switch (button) {
                     .primary => return .{ .dialog_accept = id },
                     .cancel => {
@@ -490,6 +572,7 @@ pub const View = struct {
                     if (dialogBrowseField(id) == index and ui.contains(dialogBrowseRect(dialog_layout.fieldRect(index)), pointer.x, pointer.y))
                         return .{ .dialog_browse = id };
                     self.dialog_field = index;
+                    self.dialog_action_focus = null;
                     const field = dialogs.fields(id)[index];
                     if (field.kind == .choice) {
                         self.cycleDialogChoice(id, index);
@@ -519,17 +602,11 @@ pub const View = struct {
         }
         if (self.active_menu) |menu| {
             if (pointer.kind != .down or pointer.button != .primary) return .none;
-            self.active_menu = null;
             if (menuPopupItem(self.canvas.width, menu, pointer.x, pointer.y)) |item| {
-                if (!menuItemEnabled(menu, item, self.can_moderate)) return .none;
-                if (isConnectionMenuItem(menu, item)) return .connection;
-                if (isQuitMenuItem(menu, item)) return .quit;
-                if (menu == 1 and item < 3) return .{ .transcript_command = item };
-                if (menu == 3 and item >= 5) return .{ .composer_format = item - 5 };
-                if (menu == 4 and item == 10) return .child_window;
-                if (endpointDialogMenuItem(menu, item)) |id| return .{ .endpoint_dialog = id };
-                self.invokeMenuItem(menu, item);
+                return self.activateMenuItem(menu, item);
             }
+            self.active_menu = null;
+            self.hovered_menu_item = null;
             return .{ .menu = menu };
         }
         const comic_mode = self.shell.content_mode == .comic;
@@ -601,9 +678,11 @@ pub const View = struct {
                 self.shell.focus = .navigation;
                 const first_x = layout.tabs.x + 114;
                 const tab_width: i32 = 164;
+                const viewport = tabViewport(layout, comic_mode);
+                if (pointer.x >= viewport.right) break :room .none;
                 const raw = @divTrunc(pointer.x - first_x, tab_width);
                 if (raw < 0) break :room .none;
-                const index: usize = @intCast(raw);
+                const index = self.room_tab_first + @as(usize, @intCast(raw));
                 if (index >= self.room_tab_count) break :room .none;
                 break :room .{ .room_tab = index };
             },
@@ -622,7 +701,7 @@ pub const View = struct {
             },
             .composer => focus: {
                 self.shell.focus = .composer;
-                break :focus .{ .composer_cursor = pointer.x };
+                break :focus .{ .composer_cursor = .{ .x = pointer.x, .y = pointer.y } };
             },
             .say_action => |index| say: {
                 if (index == @intFromEnum(shell_mod.SayMode.sound)) {
@@ -673,12 +752,14 @@ pub const View = struct {
         self.shell.selectTranscriptLine(total_lines, range.start + visible_index, false);
     }
 
-    pub fn placeComposerCursor(self: *View, editor: *input_mod.Editor, pointer_x: i32) void {
+    pub fn placeComposerCursor(self: *View, editor: *input_mod.Editor, pointer_x: i32, pointer_y: i32) void {
         const layout = geometry.Layout.compute(self.canvas.width, self.canvas.height, self.shell.content_mode == .comic, self.shell.show_members);
         const content_x = layout.say_editor.x + 18;
         const content_width = @max(0, layout.say_editor.w - 36);
-        const window = visibleTextWindow(editor.text(), editor.cursor, content_width);
-        placeEditorCursor(editor, window, pointer_x - content_x);
+        const viewport = composerViewport(editor.text(), editor.cursor, content_width);
+        if (viewport.count == 0) return;
+        const row: usize = if (viewport.count > 1 and pointer_y >= layout.say_editor.y + 26) 1 else 0;
+        placeEditorCursor(editor, viewport.rows[@min(row, viewport.count - 1)].window, pointer_x - content_x);
     }
 
     fn openContextMenu(self: *View, kind: ContextKind, x: i32, y: i32) void {
@@ -713,13 +794,17 @@ pub const View = struct {
     }
 
     fn cycleDialogChoice(self: *View, id: dialogs.Id, index: usize) void {
+        self.cycleDialogChoiceDirection(id, index, true);
+    }
+
+    fn cycleDialogChoiceDirection(self: *View, id: dialogs.Id, index: usize, forward: bool) void {
         const options = dialogs.choiceOptions(id, index);
         if (options.len == 0 or index >= self.dialog_editors.len) return;
         const editor = &self.dialog_editors[index];
         var next: usize = 0;
         for (options, 0..) |option, option_index| {
             if (std.mem.eql(u8, editor.text(), option)) {
-                next = (option_index + 1) % options.len;
+                next = if (forward) (option_index + 1) % options.len else (option_index + options.len - 1) % options.len;
                 break;
             }
         }
@@ -773,11 +858,12 @@ pub const View = struct {
         self.room_tab_count = tabs.len;
         const comic_mode = self.shell.content_mode == .comic;
         const layout = geometry.Layout.compute(self.canvas.width, self.canvas.height, comic_mode, self.shell.show_members);
+        updateTabViewport(self, layout, comic_mode, tabs.len, active_tab);
         self.canvas.clear(chrome);
 
         drawMenuBar(&self.canvas, layout.menu, self.active_menu, self.hovered_menu);
         drawToolBar(&self.canvas, layout.toolbar, comic_mode, self.hovered_toolbar);
-        drawTabBar(&self.canvas, layout, tabs, active_tab, self.shell.focus == .navigation, comic_mode, self.shell.comic_columns, self.hovered_column_control);
+        drawTabBar(&self.canvas, layout, tabs, active_tab, self.room_tab_first, self.shell.focus == .navigation, comic_mode, self.shell.comic_columns, self.hovered_column_control);
         drawSplitters(&self.canvas, layout, comic_mode);
 
         if (comic_mode) {
@@ -800,7 +886,7 @@ pub const View = struct {
         if (self.hovered_say_action) |index| drawSayActionTooltip(&self.canvas, layout, index);
         if (self.active_menu) |menu| drawMenuPopup(&self.canvas, menu, self.hovered_menu_item, self.shell, self.can_moderate);
         if (self.context_menu) |kind| drawContextPopup(&self.canvas, kind, self.context_x, self.context_y, self.hovered_context_item, self.shell.emotion_frozen, self.can_moderate);
-        if (self.active_dialog) |id| drawDialog(&self.canvas, dialogs.get(id), &self.dialog_editors, self.dialog_field, self.hovered_dialog_field, self.dialog_notice, self.hovered_dialog_button);
+        if (self.active_dialog) |id| drawDialog(&self.canvas, dialogs.get(id), &self.dialog_editors, self.dialog_field, self.dialog_action_focus, self.hovered_dialog_field, self.dialog_notice, self.hovered_dialog_button);
     }
 
     fn hoveredToolbarLabel(self: *const View) ?[]const u8 {
@@ -820,15 +906,20 @@ pub const View = struct {
             snapshot.append(.{ .id = "comic-columns-decrease", .role = .button, .bounds = geometry.comicColumnDecrease(layout), .label = "Fewer panels across" });
             snapshot.append(.{ .id = "comic-columns-increase", .role = .button, .bounds = geometry.comicColumnIncrease(layout), .label = "More panels across" });
         }
-        const first_x = layout.tabs.x + 114;
-        for (tabs, 0..) |tab, index| snapshot.append(.{
-            .id = "room-tab",
-            .role = .tab,
-            .bounds = .{ .x = first_x + @as(i32, @intCast(index)) * 164, .y = layout.tabs.y + 5, .w = 164, .h = layout.tabs.h - 5 },
-            .label = tab.label,
-            .selected = index == active_tab,
-            .focused = index == active_tab and self.shell.focus == .navigation,
-        });
+        const viewport = tabViewport(layout, comic_mode);
+        for (tabs[self.room_tab_first..], self.room_tab_first..) |tab, index| {
+            const slot: i32 = @intCast(index - self.room_tab_first);
+            const tab_x = viewport.first_x + slot * 164;
+            if (tab_x + 164 > viewport.right) break;
+            snapshot.append(.{
+                .id = "room-tab",
+                .role = .tab,
+                .bounds = .{ .x = tab_x, .y = layout.tabs.y + 5, .w = 164, .h = layout.tabs.h - 5 },
+                .label = tab.label,
+                .selected = index == active_tab,
+                .focused = index == active_tab and self.shell.focus == .navigation,
+            });
+        }
         snapshot.append(.{ .id = "transcript", .role = .transcript, .bounds = layout.transcript, .label = "Conversation", .focused = self.shell.focus == .transcript });
         if (layout.right.w > 0) snapshot.append(.{ .id = "members", .role = .member_list, .bounds = layout.members, .label = "Members", .focused = self.shell.focus == .members });
         snapshot.append(.{ .id = "composer", .role = .composer, .bounds = layout.say_editor, .label = "Message", .focused = self.shell.focus == .composer });
@@ -855,10 +946,14 @@ pub const View = struct {
             });
         }
         if (self.active_dialog) |id| {
+            // A modal owns the semantic tree while open. Background controls
+            // remain visible behind the scrim but cannot receive focus.
+            snapshot.len = 1;
             const dialog_layout = dialogLayout(self.canvas.width, self.canvas.height, dialogs.get(id));
-            snapshot.append(.{ .id = "dialog", .role = .dialog, .bounds = dialog_layout.rect, .label = dialogs.get(id).title, .focused = true });
+            snapshot.append(.{ .id = "dialog", .role = .dialog, .bounds = dialog_layout.rect, .label = dialogs.get(id).title });
+            const field_ids = [_][]const u8{ "dialog-field-1", "dialog-field-2", "dialog-field-3", "dialog-field-4", "dialog-field-5" };
             for (dialogs.fields(id), 0..) |field, index| snapshot.append(.{
-                .id = "dialog-field",
+                .id = field_ids[@min(index, field_ids.len - 1)],
                 .role = switch (field.kind) {
                     .choice => .combo_box,
                     .list => .list_item,
@@ -866,11 +961,11 @@ pub const View = struct {
                 },
                 .bounds = dialog_layout.fieldRect(index),
                 .label = field.label,
-                .focused = self.dialog_field == index,
+                .focused = self.dialog_action_focus == null and self.dialog_field == index,
                 .enabled = field.kind != .readonly and field.kind != .preview,
             });
-            snapshot.append(.{ .id = "dialog-accept", .role = .button, .bounds = dialog_layout.primary, .label = dialogs.primaryLabel(id) });
-            snapshot.append(.{ .id = "dialog-cancel", .role = .button, .bounds = dialog_layout.cancel, .label = "Cancel" });
+            snapshot.append(.{ .id = "dialog-accept", .role = .button, .bounds = dialog_layout.primary, .label = dialogs.primaryLabel(id), .focused = self.dialog_action_focus == .primary });
+            if (dialogs.showsCancel(id)) snapshot.append(.{ .id = "dialog-cancel", .role = .button, .bounds = dialog_layout.cancel, .label = "Cancel", .focused = self.dialog_action_focus == .cancel });
         }
         return snapshot;
     }
@@ -968,10 +1063,10 @@ pub const View = struct {
     fn drawMemberList(self: *View, rect: Rect, transcript: *const session.Transcript, icon_mode: bool) !void {
         self.canvas.fillRect(rect.x, rect.y, rect.w, rect.h, ui.Theme.rail);
         if (rect.h <= 0) return;
-        ui.drawPaneHeader(&self.canvas, rect, "In this room");
         var count_buf: [16]u8 = undefined;
         const count = std.fmt.bufPrint(&count_buf, "{d}", .{transcript.activeMemberCount()}) catch "0";
         const count_w = @max(32, Canvas.uiTextWidth(count) + 20);
+        ui.drawPaneHeaderReserved(&self.canvas, rect, "In this room", count_w + 8);
         ui.drawPill(&self.canvas, .{ .x = rect.right() - count_w - 12, .y = rect.y + 5, .w = count_w, .h = 20 }, count, false);
         const content = Rect{ .x = rect.x, .y = rect.y + 30, .w = rect.w, .h = @max(0, rect.h - 30) };
         const viewport = memberViewport(rect, icon_mode);
@@ -1155,9 +1250,22 @@ pub const View = struct {
             else => {},
         }
     }
+
+    fn activateMenuItem(self: *View, menu: u8, item: u8) Action {
+        self.active_menu = null;
+        self.hovered_menu_item = null;
+        if (!menuItemEnabled(menu, item, self.can_moderate)) return .none;
+        if (isConnectionMenuItem(menu, item)) return .connection;
+        if (isQuitMenuItem(menu, item)) return .quit;
+        if (menu == 1 and item < 3) return .{ .transcript_command = item };
+        if (menu == 3 and item >= 5) return .{ .composer_format = item - 5 };
+        if (menu == 4 and item == 10) return .child_window;
+        self.invokeMenuItem(menu, item);
+        return .{ .menu = menu };
+    }
 };
 
-const menu_labels = [_][]const u8{ "File", "Edit", "View", "Format", "Room", "Member", "More" };
+const menu_labels = [_][]const u8{ "File", "Edit", "View", "Format", "Room", "Member", "Tools" };
 
 fn menuStart(menu: u8) i32 {
     var x: i32 = 170;
@@ -1262,13 +1370,12 @@ fn isQuitMenuItem(menu: u8, item: u8) bool {
     return menu == 0 and item == 7;
 }
 
-fn endpointDialogMenuItem(menu: u8, item: u8) ?dialogs.Id {
-    if ((menu == 1 and item == 3) or (menu == 6 and item == 7)) return .settings;
-    return null;
-}
-
 fn menuPopupRect(canvas_width: u32, menu: u8) Rect {
-    const width: i32 = 210;
+    var content_width: i32 = 210;
+    var item: u8 = 0;
+    while (item < menuItemCount(menu)) : (item += 1)
+        content_width = @max(content_width, Canvas.uiTextWidth(menuItemLabel(menu, item)) + 52);
+    const width = @min(content_width, @max(210, @as(i32, @intCast(canvas_width)) - 12));
     const right_limit = @max(6, @as(i32, @intCast(canvas_width)) - width - 6);
     return .{
         .x = std.math.clamp(menuStart(menu), 6, right_limit),
@@ -1296,9 +1403,9 @@ fn drawMenuBar(c: *Canvas, rect: Rect, active: ?u8, hovered: ?u8) void {
         const index: u8 = @intCast(raw_index);
         const selected = active == index or hovered == index;
         const item_w = Canvas.uiTextWidth(item) + 16;
+        if (x + item_w > rect.right() - 8) break;
         ui.drawMenuLabel(c, x, rect.y, item_w, item, selected);
         x += Canvas.uiTextWidth(item) + 28;
-        if (x >= rect.right() - 40) break;
     }
 }
 
@@ -1308,15 +1415,56 @@ fn drawMenuPopup(c: *Canvas, menu: u8, hovered: ?u8, shell: shell_mod.State, can
     var item: u8 = 0;
     while (item < menuItemCount(menu)) : (item += 1) {
         const y = rect.y + 5 + @as(i32, item) * 29;
+        if (menuStartsGroup(menu, item))
+            c.drawLine(rect.x + 14, y, rect.right() - 14, y, ui.Theme.divider);
         const enabled = menuItemEnabled(menu, item, can_moderate);
         ui.drawMenuItem(c, rect.x + 5, y, rect.w - 10, menuItemLabel(menu, item), hovered == item, menuItemChecked(menu, item, shell), enabled);
     }
+}
+
+fn menuStartsGroup(menu: u8, item: u8) bool {
+    return switch (menu) {
+        0 => item == 3 or item == 6 or item == 7,
+        1 => item == 3,
+        2 => item == 2 or item == 5,
+        3 => item == 2 or item == 5,
+        4 => item == 3 or item == 6 or item == 9 or item == 10,
+        5 => item == 2 or item == 4 or item == 6,
+        6 => item == 3 or item == 5 or item == 6 or item == 8 or item == 9,
+        else => false,
+    };
 }
 
 fn menuItemEnabled(menu: u8, item: u8, can_moderate: bool) bool {
     if (can_moderate) return true;
     return !((menu == 4 and (item == 3 or item == 7 or item == 8)) or
         (menu == 5 and (item == 4 or item == 5)));
+}
+
+fn firstEnabledMenuItem(menu: u8, can_moderate: bool) u8 {
+    var item: u8 = 0;
+    while (item < menuItemCount(menu)) : (item += 1) if (menuItemEnabled(menu, item, can_moderate)) return item;
+    return 0;
+}
+
+fn lastEnabledMenuItem(menu: u8, can_moderate: bool) u8 {
+    var item = menuItemCount(menu);
+    while (item > 0) {
+        item -= 1;
+        if (menuItemEnabled(menu, item, can_moderate)) return item;
+    }
+    return 0;
+}
+
+fn nextEnabledMenuItem(menu: u8, current: u8, forward: bool, can_moderate: bool) u8 {
+    const count = menuItemCount(menu);
+    var item = current;
+    var checked: u8 = 0;
+    while (checked < count) : (checked += 1) {
+        item = if (forward) (item + 1) % count else (item + count - 1) % count;
+        if (menuItemEnabled(menu, item, can_moderate)) return item;
+    }
+    return current;
 }
 
 fn menuItemChecked(menu: u8, item: u8, shell: shell_mod.State) bool {
@@ -1618,19 +1766,53 @@ fn drawToolbarSeparator(c: *Canvas, x: i32, rect: Rect) i32 {
     return ui.drawToolbarSeparator(c, x, rect);
 }
 
-fn drawTabBar(c: *Canvas, layout: geometry.Layout, tabs: []const View.Tab, active: usize, focused: bool, comic_mode: bool, comic_columns: u8, column_hover: ?ColumnControlHover) void {
+const TabViewport = struct {
+    first_x: i32,
+    right: i32,
+    capacity: usize,
+};
+
+fn tabViewport(layout: geometry.Layout, comic_mode: bool) TabViewport {
+    const first_x = layout.tabs.x + 114;
+    const right = if (comic_mode and layout.transcript.w >= 430)
+        geometry.comicColumnControl(layout).x - 8
+    else
+        layout.tabs.right() - 8;
+    const available = @max(0, right - first_x);
+    return .{
+        .first_x = first_x,
+        .right = right,
+        .capacity = @intCast(@max(1, @divTrunc(available, 164))),
+    };
+}
+
+fn updateTabViewport(self: *View, layout: geometry.Layout, comic_mode: bool, count: usize, active: usize) void {
+    const capacity = tabViewport(layout, comic_mode).capacity;
+    if (count <= capacity) {
+        self.room_tab_first = 0;
+        return;
+    }
+    const bounded_active = @min(active, count - 1);
+    if (bounded_active < self.room_tab_first) self.room_tab_first = bounded_active;
+    if (bounded_active >= self.room_tab_first + capacity) self.room_tab_first = bounded_active - capacity + 1;
+    self.room_tab_first = @min(self.room_tab_first, count - capacity);
+}
+
+fn drawTabBar(c: *Canvas, layout: geometry.Layout, tabs: []const View.Tab, active: usize, first_visible: usize, focused: bool, comic_mode: bool, comic_columns: u8, column_hover: ?ColumnControlHover) void {
     const rect = layout.tabs;
     ui.drawTabStrip(c, rect);
     const status_w: i32 = 108;
     ui.drawStatusTab(c, rect);
     drawBubbleGlyph(c, rect.x + 16, rect.y + 11, accent, false);
     _ = c.drawUiText("Status", rect.x + 39, rect.y + 9, ink);
+    const viewport = tabViewport(layout, comic_mode);
     const first_x = rect.x + status_w + 6;
     const tab_w: i32 = 164;
-    for (tabs, 0..) |tab, index| {
-        const x = first_x + @as(i32, @intCast(index)) * tab_w;
-        if (x >= rect.right()) break;
-        const width = @min(tab_w, rect.right() - x);
+    for (tabs[first_visible..], first_visible..) |tab, index| {
+        const slot: i32 = @intCast(index - first_visible);
+        const x = first_x + slot * tab_w;
+        if (x + tab_w > viewport.right) break;
+        const width = tab_w;
         ui.drawTab(c, x, rect.y + 5, width, rect.h - 5, index == active);
         drawTextEllipsized(c, tab.label, x + 14, rect.y + 9, width - 36, if (index == active) ink else if (tab.unread > 0) accent else secondary);
         if (tab.unread > 0) {
@@ -1681,6 +1863,73 @@ const TextWindow = struct {
     left_hidden: bool,
     right_hidden: bool,
 };
+
+const ComposerRow = struct {
+    window: TextWindow,
+    cursor_row: bool,
+};
+
+const ComposerViewport = struct {
+    rows: [2]ComposerRow = undefined,
+    count: usize = 0,
+};
+
+fn composerViewport(text: []const u8, cursor: usize, max_width: i32) ComposerViewport {
+    var viewport: ComposerViewport = .{};
+    const safe_cursor = @min(cursor, text.len);
+    const current_start = if (std.mem.lastIndexOfScalar(u8, text[0..safe_cursor], '\n')) |newline| newline + 1 else 0;
+    const current_end = if (std.mem.indexOfScalar(u8, text[safe_cursor..], '\n')) |relative| safe_cursor + relative else text.len;
+    const current_local = visibleTextWindow(text[current_start..current_end], safe_cursor - current_start, max_width);
+    const current = ComposerRow{
+        .window = .{
+            .start = current_start + current_local.start,
+            .end = current_start + current_local.end,
+            .left_hidden = current_local.left_hidden,
+            .right_hidden = current_local.right_hidden,
+        },
+        .cursor_row = true,
+    };
+
+    if (current_start > 0) {
+        const previous_end = current_start - 1;
+        const previous_start = if (std.mem.lastIndexOfScalar(u8, text[0..previous_end], '\n')) |newline| newline + 1 else 0;
+        const previous_local = visibleTextWindow(text[previous_start..previous_end], 0, max_width);
+        viewport.rows[0] = .{
+            .window = .{
+                .start = previous_start + previous_local.start,
+                .end = previous_start + previous_local.end,
+                .left_hidden = previous_local.left_hidden or previous_start > 0,
+                .right_hidden = previous_local.right_hidden,
+            },
+            .cursor_row = false,
+        };
+        viewport.rows[1] = current;
+        viewport.count = 2;
+    } else {
+        viewport.rows[0] = current;
+        viewport.count = 1;
+        if (current_end < text.len) {
+            const next_start = current_end + 1;
+            const next_end = if (std.mem.indexOfScalar(u8, text[next_start..], '\n')) |relative| next_start + relative else text.len;
+            const next_local = visibleTextWindow(text[next_start..next_end], 0, max_width);
+            viewport.rows[1] = .{
+                .window = .{
+                    .start = next_start + next_local.start,
+                    .end = next_start + next_local.end,
+                    .left_hidden = next_local.left_hidden,
+                    .right_hidden = next_local.right_hidden or next_end < text.len,
+                },
+                .cursor_row = false,
+            };
+            viewport.count = 2;
+        }
+    }
+    if (viewport.count > 1) {
+        viewport.rows[0].window.right_hidden = viewport.rows[0].window.right_hidden or viewport.rows[0].window.end < text.len;
+        viewport.rows[1].window.left_hidden = viewport.rows[1].window.left_hidden or viewport.rows[1].window.start > 0;
+    }
+    return viewport;
+}
 
 const focused_placeholder_gap: i32 = 8;
 
@@ -1765,36 +2014,33 @@ fn drawSayWindow(c: *Canvas, layout: geometry.Layout, input: []const u8, cursor:
     ui.drawComposerSurface(c, layout.say);
     ui.drawComposerField(c, edit, focused, hovered, input.len > 0);
     const content_rect = Rect{ .x = edit.x + 18, .y = edit.y + 10, .w = @max(0, edit.w - 36), .h = @max(0, edit.h - 20) };
-    const safe_cursor = @min(cursor, input.len);
-    const line_start = if (std.mem.lastIndexOfScalar(u8, input[0..safe_cursor], '\n')) |newline| newline + 1 else 0;
-    const line_end = if (std.mem.indexOfScalar(u8, input[safe_cursor..], '\n')) |relative| safe_cursor + relative else input.len;
-    const line_window = visibleTextWindow(input[line_start..line_end], safe_cursor - line_start, content_rect.w);
-    const window = TextWindow{
-        .start = line_start + line_window.start,
-        .end = line_start + line_window.end,
-        .left_hidden = line_start != 0 or line_window.left_hidden,
-        .right_hidden = line_end != input.len or line_window.right_hidden,
-    };
-    const visible = input[window.start..window.end];
-    if (selection) |range| {
-        const start = @max(window.start, @min(range.start, window.end));
-        const end = @max(start, @min(range.end, window.end));
-        if (end > start) {
-            const x = content_rect.x + Canvas.uiTextWidth(input[window.start..start]);
-            const w = Canvas.uiTextWidth(input[start..end]);
-            ui.fillRoundedRect(c, x, edit.y + 11, @max(1, w), @max(1, edit.h - 22), 3, accent_soft);
-        }
-    }
     if (input.len == 0) {
         const placeholder_x = edit.x + 18 + placeholderGap(focused);
         drawTextEllipsized(c, "Write a message...", placeholder_x, edit.y + 13, edit.right() - placeholder_x - 18, secondary);
     } else {
-        drawTextEllipsized(c, visible, content_rect.x, edit.y + 13, content_rect.w, ink);
-        drawInputOverflowMarks(c, edit, window);
+        const viewport = composerViewport(input, cursor, content_rect.w);
+        for (viewport.rows[0..viewport.count], 0..) |row, row_index| {
+            const window = row.window;
+            const text_y = if (viewport.count == 1) edit.y + 13 else edit.y + 7 + @as(i32, @intCast(row_index)) * 18;
+            if (selection) |range| {
+                const start = @max(window.start, @min(range.start, window.end));
+                const end = @max(start, @min(range.end, window.end));
+                if (end > start) {
+                    const selection_x = content_rect.x + Canvas.uiTextWidth(input[window.start..start]);
+                    const selection_w = Canvas.uiTextWidth(input[start..end]);
+                    ui.fillRoundedRect(c, selection_x, text_y + 1, @max(1, selection_w), 17, 3, accent_soft);
+                }
+            }
+            drawTextEllipsized(c, input[window.start..window.end], content_rect.x, text_y, content_rect.w, ink);
+            if (row.cursor_row and focused) {
+                const safe_cursor = std.math.clamp(@min(cursor, input.len), window.start, window.end);
+                const caret_x = @min(edit.right() - 12, content_rect.x + Canvas.uiTextWidth(input[window.start..safe_cursor]));
+                c.fillRect(caret_x, text_y + 1, 2, 16, accent);
+            }
+        }
+        const cursor_row = if (viewport.count > 1 and viewport.rows[1].cursor_row) viewport.rows[1].window else viewport.rows[0].window;
+        drawInputOverflowMarks(c, edit, cursor_row);
     }
-    const visible_cursor = std.math.clamp(safe_cursor, window.start, window.end);
-    const caret_x = @min(edit.right() - 12, content_rect.x + Canvas.uiTextWidth(input[window.start..visible_cursor]));
-    if (focused) c.fillRect(caret_x, edit.y + 12, 2, @max(1, edit.h - 24), accent);
 
     const glyphs = [_]SayGlyph{ .say, .think, .whisper, .action, .sound };
     var x = layout.say_actions.x;
@@ -2175,20 +2421,29 @@ fn fitRect(sw: u32, sh: u32, x: i32, y: i32, max_w: i32, max_h: i32) ?Rect {
 }
 
 fn dialogLayout(width: u32, height: u32, spec: dialogs.Spec) ui.DialogLayout {
-    return ui.DialogLayout.init(width, height, spec.source_w, spec.source_h, dialogs.fields(spec.id).len, dialogPrimaryButtonWidth(spec.id));
+    return ui.DialogLayout.init(width, height, spec.source_w, spec.source_h, dialogs.fields(spec.id).len, dialogPrimaryButtonWidth(spec.id), dialogs.showsCancel(spec.id));
 }
 
-fn drawDialog(c: *Canvas, spec: dialogs.Spec, editors: *const [5]input_mod.Editor, active_field: usize, hovered_field: ?usize, notice: []const u8, hovered_button: ?ui.DialogButton) void {
+fn dialogFieldFocusable(field: dialogs.Field) bool {
+    return field.kind != .readonly and field.kind != .preview;
+}
+
+fn drawDialog(c: *Canvas, spec: dialogs.Spec, editors: *const [5]input_mod.Editor, active_field: usize, action_focus: ?ui.DialogButton, hovered_field: ?usize, notice: []const u8, hovered_button: ?ui.DialogButton) void {
     ui.drawModalBackdrop(c);
     const dialog_layout = dialogLayout(c.width, c.height, spec);
     const rect = dialog_layout.rect;
-    const group_text = if (spec.id == .sound)
-        "Choose a sound and message"
-    else switch (spec.group) {
-        .connection => "Connection, identity, and appearance",
-        .rooms => "Rooms and member workflow",
-        .automation => "Automation and notifications",
-        .files => "Application and file workflow",
+    const group_text = switch (spec.id) {
+        .settings => "View, panels, and member pane",
+        .setup, .servers => "Server and transport security",
+        .password => "Secure account sign-in",
+        .sound => "Choose a sound and message",
+        else => switch (spec.group) {
+            .application => "Application preferences",
+            .connection => "Connection, identity, and appearance",
+            .rooms => "Rooms and member workflow",
+            .automation => "Automation and notifications",
+            .files => "Application and file workflow",
+        },
     };
     ui.drawDialogSurface(c, rect, spec.title, group_text);
     const fields = dialogs.fields(spec.id);
@@ -2198,7 +2453,7 @@ fn drawDialog(c: *Canvas, spec: dialogs.Spec, editors: *const [5]input_mod.Edito
         drawTextEllipsized(c, field.label, rect.x + 20, row_y, rect.w - 40, if (index == active_field) accent else secondary);
         const field_rect = dialog_layout.fieldRect(index);
         const field_y = field_rect.y;
-        const field_active = index == active_field;
+        const field_active = action_focus == null and index == active_field;
         const field_hovered = hovered_field == index;
         const value = if (index < editors.len) editors[index].text() else "";
         const state: ui.InputState = .{
@@ -2264,8 +2519,9 @@ fn drawDialog(c: *Canvas, spec: dialogs.Spec, editors: *const [5]input_mod.Edito
     }
 
     if (notice.len != 0) ui.drawNotice(c, rect.x + 14, dialog_layout.primary.y - 22, rect.w - 28, notice, .warning);
-    drawDialogButton(c, dialog_layout.primary.x, dialog_layout.primary.y, dialog_layout.primary.w, dialogs.primaryLabel(spec.id), .primary, hovered_button == .primary);
-    drawDialogButton(c, dialog_layout.cancel.x, dialog_layout.cancel.y, dialog_layout.cancel.w, "Cancel", .secondary, hovered_button == .cancel);
+    drawDialogButton(c, dialog_layout.primary.x, dialog_layout.primary.y, dialog_layout.primary.w, dialogs.primaryLabel(spec.id), .primary, hovered_button == .primary or action_focus == .primary);
+    if (dialogs.showsCancel(spec.id))
+        drawDialogButton(c, dialog_layout.cancel.x, dialog_layout.cancel.y, dialog_layout.cancel.w, "Cancel", .secondary, hovered_button == .cancel or action_focus == .cancel);
 }
 
 fn dialogBrowseField(id: dialogs.Id) ?usize {
@@ -2459,24 +2715,112 @@ test "status and connect toolbar expose a prefilled connection workflow" {
     try std.testing.expectEqualStrings("Verified TLS", view.dialogValueAt(2));
 }
 
-test "settings menu requests a prefilled live endpoint dialog" {
+test "settings menu opens application preferences instead of connection setup" {
     var view = try View.init(std.testing.allocator, 960, 720);
     defer view.deinit();
-    view.active_menu = 1;
-    const popup = menuPopupRect(view.width(), 1);
-    const action = view.handlePointer(.{
-        .kind = .down,
-        .x = popup.x + 12,
-        .y = popup.y + 8 + 3 * 29,
-        .button = .primary,
-    }, 0, 0);
-    try std.testing.expectEqual(Action{ .endpoint_dialog = .settings }, action);
-    try std.testing.expect(view.active_dialog == null);
+    const routes = [_]struct { menu: u8, item: u8 }{ .{ .menu = 1, .item = 3 }, .{ .menu = 6, .item = 7 } };
+    for (routes) |route| {
+        view.active_menu = route.menu;
+        const popup = menuPopupRect(view.width(), route.menu);
+        const action = view.handlePointer(.{
+            .kind = .down,
+            .x = popup.x + 12,
+            .y = popup.y + 8 + @as(i32, route.item) * 29,
+            .button = .primary,
+        }, 0, 0);
+        try std.testing.expectEqual(Action{ .menu = route.menu }, action);
+        try std.testing.expectEqual(dialogs.Id.settings, view.active_dialog.?);
+        try std.testing.expectEqualStrings("Comic", view.dialogValueAt(0));
+        try std.testing.expectEqualStrings("4 panels", view.dialogValueAt(1));
+        try std.testing.expectEqualStrings("Shown", view.dialogValueAt(2));
+        try std.testing.expectEqualStrings("Icons", view.dialogValueAt(3));
+        _ = view.closeDialog();
+    }
+}
 
-    view.openEndpointDialog(.settings, "eshmaki.me", 6697, true);
+test "menu keyboard navigation wraps skips disabled commands and activates settings" {
+    var view = try View.init(std.testing.allocator, 960, 720);
+    defer view.deinit();
+    view.shell.focus = .navigation;
+
+    try std.testing.expectEqual(Action.none, view.handleMenuKey(.enter).?);
+    try std.testing.expectEqual(@as(?u8, 0), view.active_menu);
+    try std.testing.expectEqual(@as(?u8, 0), view.hovered_menu_item);
+    try std.testing.expectEqual(Action.none, view.handleMenuKey(.left).?);
+    try std.testing.expectEqual(@as(?u8, 6), view.active_menu);
+    try std.testing.expectEqual(Action.none, view.handleMenuKey(.end).?);
+    try std.testing.expectEqual(@as(?u8, 9), view.hovered_menu_item);
+    try std.testing.expectEqual(Action.none, view.handleMenuKey(.escape).?);
+    try std.testing.expect(view.active_menu == null);
+
+    view.active_menu = 5;
+    view.hovered_menu_item = 3;
+    try std.testing.expectEqual(Action.none, view.handleMenuKey(.down).?);
+    try std.testing.expectEqual(@as(?u8, 6), view.hovered_menu_item);
+
+    view.active_menu = 1;
+    view.hovered_menu_item = 3;
+    try std.testing.expectEqual(Action{ .menu = 1 }, view.handleMenuKey(.enter).?);
     try std.testing.expectEqual(dialogs.Id.settings, view.active_dialog.?);
-    try std.testing.expectEqualStrings("eshmaki.me", view.dialogValueAt(0));
-    try std.testing.expectEqualStrings("6697", view.dialogValueAt(1));
+}
+
+test "dialog keyboard focus includes actions and protects typed choices" {
+    var view = try View.init(std.testing.allocator, 960, 720);
+    defer view.deinit();
+    view.openDialog(.settings);
+    try std.testing.expectEqualStrings("Comic", view.dialogValueAt(0));
+    _ = try view.handleDialogKey(.left, .{});
+    try std.testing.expectEqualStrings("Text", view.dialogValueAt(0));
+    _ = try view.handleDialogKey(.backspace, .{});
+    try std.testing.expectEqualStrings("Text", view.dialogValueAt(0));
+
+    var tab_count: usize = 0;
+    while (tab_count < 4) : (tab_count += 1) _ = try view.handleDialogKey(.tab, .{});
+    try std.testing.expectEqual(ui.DialogButton.primary, view.dialog_action_focus.?);
+    _ = try view.handleDialogKey(.tab, .{});
+    try std.testing.expectEqual(ui.DialogButton.cancel, view.dialog_action_focus.?);
+    _ = try view.handleDialogKey(.tab, .{ .shift = true });
+    try std.testing.expectEqual(ui.DialogButton.primary, view.dialog_action_focus.?);
+
+    view.openDialog(.about);
+    try std.testing.expectEqual(ui.DialogButton.primary, view.dialog_action_focus.?);
+    const snapshot = view.semanticSnapshot("offline", &.{.{ .label = "Room" }}, 0);
+    var focused: usize = 0;
+    var cancel_buttons: usize = 0;
+    for (snapshot.items()) |node| {
+        if (node.focused) focused += 1;
+        if (std.mem.eql(u8, node.id, "dialog-cancel")) cancel_buttons += 1;
+        try std.testing.expect(node.role == .window or node.role == .dialog or std.mem.startsWith(u8, node.id, "dialog-"));
+    }
+    try std.testing.expectEqual(@as(usize, 1), focused);
+    try std.testing.expectEqual(@as(usize, 0), cancel_buttons);
+}
+
+test "room tabs reserve the comic density control and keep the active room reachable" {
+    var view = try View.init(std.testing.allocator, min_width, min_height);
+    defer view.deinit();
+    var transcript = session.Transcript.init(std.testing.allocator);
+    defer transcript.deinit();
+    const tabs = [_]View.Tab{ .{ .label = "#one" }, .{ .label = "#two" }, .{ .label = "#three" } };
+
+    try view.renderTabs("connected", &transcript, "", 0, null, &tabs, 2);
+    try std.testing.expectEqual(@as(usize, 1), view.room_tab_first);
+    const layout = geometry.Layout.compute(min_width, min_height, true, true);
+    const viewport = tabViewport(layout, true);
+    const snapshot = view.semanticSnapshot("connected", &tabs, 2);
+    var visible_tabs: usize = 0;
+    for (snapshot.items()) |item| if (item.role == .tab) {
+        visible_tabs += 1;
+        try std.testing.expect(item.bounds.right() <= viewport.right);
+    };
+    try std.testing.expectEqual(@as(usize, 2), visible_tabs);
+
+    const first_visible = view.handlePointer(.{ .kind = .down, .x = viewport.first_x + 8, .y = layout.tabs.y + 10, .button = .primary }, 0, 0);
+    try std.testing.expectEqual(Action{ .room_tab = 1 }, first_visible);
+    const increase = geometry.comicColumnIncrease(layout);
+    const stepper = view.handlePointer(.{ .kind = .down, .x = increase.x + 4, .y = increase.y + 4, .button = .primary }, 0, 0);
+    try std.testing.expectEqual(Action.none, stepper);
+    try std.testing.expectEqual(@as(u8, 5), view.shell.comic_columns);
 }
 
 test "body camera and members expose working context menus" {
@@ -2495,11 +2839,11 @@ test "body camera and members expose working context menus" {
     try std.testing.expectEqual(@as(?usize, 0), view.shell.selected_member);
 }
 
-test "typed dialog choices cycle instead of accepting arbitrary text" {
+test "typed connection choices cycle instead of accepting arbitrary text" {
     var view = try View.init(std.testing.allocator, 960, 720);
     defer view.deinit();
-    view.openDialog(.settings);
-    const layout = dialogLayout(view.width(), view.height(), dialogs.get(.settings));
+    view.openDialog(.setup);
+    const layout = dialogLayout(view.width(), view.height(), dialogs.get(.setup));
     const security = layout.fieldRect(2);
     try std.testing.expectEqualStrings("Verified TLS", view.dialogValueAt(2));
     _ = view.handlePointer(.{ .kind = .down, .x = security.x + 4, .y = security.y + 4, .button = .primary }, 0, 0);
@@ -2549,6 +2893,29 @@ test "single line inputs retain a visible caret window and place the cursor by p
     const full = visibleTextWindow(editor.text(), editor.cursor, 200);
     placeEditorCursor(&editor, full, Canvas.uiTextWidth("hello"));
     try std.testing.expectEqual(@as(usize, 5), editor.cursor);
+}
+
+test "multiline composer shares a two-row viewport with pointer placement" {
+    const text = "first line\nsecond line\nthird line";
+    const second_cursor = "first line\nsecond".len;
+    const middle = composerViewport(text, second_cursor, 240);
+    try std.testing.expectEqual(@as(usize, 2), middle.count);
+    try std.testing.expectEqualStrings("first line", text[middle.rows[0].window.start..middle.rows[0].window.end]);
+    try std.testing.expectEqualStrings("second line", text[middle.rows[1].window.start..middle.rows[1].window.end]);
+    try std.testing.expect(middle.rows[1].cursor_row);
+
+    var view = try View.init(std.testing.allocator, 960, 720);
+    defer view.deinit();
+    var editor = input_mod.Editor.init(std.testing.allocator);
+    defer editor.deinit();
+    try editor.paste(text);
+    editor.cursor = second_cursor;
+    const layout = geometry.Layout.compute(960, 720, true, true);
+    view.placeComposerCursor(&editor, layout.say_editor.x + 18 + Canvas.uiTextWidth("first"), layout.say_editor.y + 12);
+    try std.testing.expectEqual(@as(usize, "first".len), editor.cursor);
+    editor.cursor = second_cursor;
+    view.placeComposerCursor(&editor, layout.say_editor.x + 18 + Canvas.uiTextWidth("second"), layout.say_editor.y + 34);
+    try std.testing.expectEqual(@as(usize, "first line\nsecond".len), editor.cursor);
 }
 
 test "dialog inputs support shift selection and mouse caret placement" {
