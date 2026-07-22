@@ -72,6 +72,17 @@ pub fn bundledAvatarByName(name: []const u8) ?[]const u8 {
     for (avatars) |avatar| {
         if (std.ascii.eqlIgnoreCase(avatar, name)) return avatar;
     }
+    // The live source control is a compact token (`AnnaColor.`), while the
+    // portable renderer keeps family display names readable (`anna color`).
+    // Accept the compact color spelling emitted on IRC and resolve it to the
+    // generated AVB selected by the peer.
+    for (avatars, 0..) |avatar, index| {
+        const suffix = "color";
+        if (name.len == avatar.len + suffix.len and
+            std.ascii.eqlIgnoreCase(name[0..avatar.len], avatar) and
+            std.ascii.eqlIgnoreCase(name[avatar.len..], suffix))
+            return default_avatars[index];
+    }
     // Generated HD and Color AVBs plus the source-faithful originals are
     // canonical runtime families, not UI-only display names.  Keep this
     // normalization alongside the wire validator so avatar announcements and
@@ -93,22 +104,14 @@ pub fn bundledAvatarByName(name: []const u8) ?[]const u8 {
 /// so original Comic Chat clients can resolve it instead of rejecting the
 /// whole control message.
 pub fn avatarAnnouncementName(name: []const u8) ?[]const u8 {
-    for (avatars) |avatar| {
-        if (std.ascii.eqlIgnoreCase(avatar, name)) return avatar;
-    }
-    const families = [_][]const u8{ " hd", " color", " original" };
-    for (families) |family| {
-        if (name.len <= family.len or !std.ascii.eqlIgnoreCase(name[name.len - family.len ..], family)) continue;
-        const base = name[0 .. name.len - family.len];
-        for (avatars) |avatar| if (std.ascii.eqlIgnoreCase(avatar, base)) return avatar;
-    }
-    return null;
+    return bundledAvatarByName(name);
 }
 
 test "generated avatar families announce their legacy-compatible base name" {
-    try std.testing.expectEqualStrings("anna", avatarAnnouncementName("anna color").?);
-    try std.testing.expectEqualStrings("tiki", avatarAnnouncementName("Tiki HD").?);
-    try std.testing.expectEqualStrings("xeno", avatarAnnouncementName("xeno original").?);
+    try std.testing.expectEqualStrings("anna color", avatarAnnouncementName("anna color").?);
+    try std.testing.expectEqualStrings("Tiki HD", avatarAnnouncementName("Tiki HD").?);
+    try std.testing.expectEqualStrings("xeno original", avatarAnnouncementName("xeno original").?);
+    try std.testing.expectEqualStrings("anna color", bundledAvatarByName("AnnaColor").?);
     try std.testing.expect(avatarAnnouncementName("not a bundled avatar") == null);
 }
 
@@ -140,11 +143,15 @@ pub fn parseAvatarAnnouncement(text: []const u8) AvatarAnnouncement {
         if (!std.ascii.isAlphanumeric(ch) and ch != '_' and ch != '-' and ch != ' ') return .invalid;
     }
 
+    // ChatAnnounceNewAvatar emits a terminal period after the local avatar
+    // token.  A period followed by bytes remains the optional source URL;
+    // the terminal punctuation is not an empty URL.
     if (dot) |index| {
-        const url = value[index + 1 ..];
-        if (url.len == 0) return .invalid;
-        for (url) |ch| {
-            if (ch <= ' ' or ch > '~') return .invalid;
+        if (index + 1 < value.len) {
+            const url = value[index + 1 ..];
+            for (url) |ch| {
+                if (ch <= ' ' or ch > '~') return .invalid;
+            }
         }
     }
 
@@ -880,12 +887,13 @@ test "avatar announcement parser is strict and canonicalizes bundled names" {
     try std.testing.expectEqualStrings("Anna HD", parseAvatarAnnouncement("# Appears as Anna HD").avatar);
     try std.testing.expectEqualStrings("Xeno Color", parseAvatarAnnouncement("# Appears as Xeno Color").avatar);
     try std.testing.expectEqualStrings("Tiki Original", parseAvatarAnnouncement("# Appears as Tiki Original").avatar);
+    try std.testing.expectEqualStrings("anna", parseAvatarAnnouncement("# Appears as Anna.").avatar);
+    try std.testing.expectEqualStrings("anna color", parseAvatarAnnouncement("# Appears as AnnaColor.").avatar);
     try std.testing.expect(parseAvatarAnnouncement("# Appears as none") == .none);
     try std.testing.expect(parseAvatarAnnouncement("hello") == .not_control);
     try std.testing.expect(parseAvatarAnnouncement("# appears as anna") == .not_control);
     try std.testing.expect(parseAvatarAnnouncement("# Appears as ") == .invalid);
     try std.testing.expect(parseAvatarAnnouncement("# Appears as anna ") == .invalid);
-    try std.testing.expect(parseAvatarAnnouncement("# Appears as anna.") == .invalid);
     try std.testing.expect(parseAvatarAnnouncement("# Appears as unknown") == .invalid);
     try std.testing.expect(parseAvatarAnnouncement("# Appears as anna.bad\nurl") == .invalid);
 }

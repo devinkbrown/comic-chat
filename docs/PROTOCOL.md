@@ -44,10 +44,12 @@ contiguous string. Every numeric field is encoded as one byte with value
 explicitly requested pose. Serial modes are 1 = say, 2 = whisper, 3 = think,
 and 5 = action; other serial values are read as say by the released client.
 
-- Without IRCX, the sender prefixes readable text inside one message:
+- The source-compatible sender prefixes readable text inside one message,
+  including when IRCX is available:
   `PRIVMSG target :(#G...E...M...) readable text`.
-- With IRCX, it first sends `DATA target CCUDI1 :#G...E...M...`, followed by a
-  separate `PRIVMSG` or `NOTICE` containing the readable text.
+- Reinked accepts a peer's standalone `DATA target CCUDI1 :#G...E...M...`
+  representation, but does not require that optional extension to interoperate
+  with original clients.
 
 In comic mode, action text remains ordinary readable text; serial mode `M5`
 selects the box balloon. The CTCP `ACTION` wrapper is only Microsoft's
@@ -59,9 +61,9 @@ This distinction matters: a saved conversation record is not copied wholesale
 into an IRC `PRIVMSG`. Separate live control comments begin with `#` and use
 source-defined phrases such as ` Appears as `, ` GetInfo`, ` HeresInfo: `,
 ` BDrop: `, ` BDrop2: `, and ` GetCharInfo`. Microsoft passes these comment
-controls through the annotation argument: negotiated IRCX therefore sends
-them as `DATA target CCUDI1 :# ...`; plain IRC sends the same bytes in
-`PRIVMSG`. The portable sender and receiver preserve that distinction.
+controls through the annotation argument. With Comic Chat data enabled (the
+source default), they are regular `PRIVMSG` bytes such as `# Appears as Tiki.`.
+The portable receiver also accepts a peer's IRCX `DATA` representation.
 
 The portable live client implements `# Appears as <name>[.<url>]` for bundled
 avatars in either outer transport, consumes the control without creating a

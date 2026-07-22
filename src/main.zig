@@ -4138,19 +4138,17 @@ fn handleInputKey(
                 .requested = pose_state.requested,
                 .modes = modes,
                 .talk_tos = talk_tos,
-            }, !ircx_data);
+            }, true);
             var chat_message: std.ArrayList(u8) = .empty;
             defer chat_message.deinit(gpa);
             try appendSourceComicText(&chat_message, gpa, visible_text);
-            if (ircx_data) {
-                try client.comicData(target, comic_message.items);
-                try client.privmsg(target, chat_message.items);
-                try transcript.addWireMessage(nick, chat_message.items, is_private, comic_message.items);
-            } else {
-                try comic_message.appendSlice(gpa, chat_message.items);
-                try client.privmsg(target, comic_message.items);
-                try transcript.addWireMessage(nick, comic_message.items, is_private, null);
-            }
+            // Source Comic Chat sends the canonical embedded UDI form through
+            // PRIVMSG even after IRCX is available.  This keeps old clients
+            // in the room synchronized without requiring the optional DATA
+            // extension; inbound DATA remains accepted for peer compatibility.
+            try comic_message.appendSlice(gpa, chat_message.items);
+            try client.privmsg(target, comic_message.items);
+            try transcript.addWireMessage(nick, comic_message.items, is_private, null);
             view.shell.setSayMode(.say);
             transcript.trimTo(64);
             view.jumpLatest();

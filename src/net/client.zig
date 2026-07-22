@@ -1079,12 +1079,26 @@ pub const Client = struct {
     /// argument: IRCX therefore carries it in `DATA ... CCUDI1`, while plain
     /// IRC carries the same bytes in a `PRIVMSG`.
     pub fn announceAvatar(self: *Client, target: []const u8, avatar: []const u8, ircx_data: bool) !void {
-        if (avatar.len == 0 or std.mem.indexOfAny(u8, avatar, " .\r\n") != null)
+        if (avatar.len == 0 or std.mem.indexOfAny(u8, avatar, ".\r\n") != null)
             return error.InvalidIrcParameter;
         var text: std.ArrayList(u8) = .empty;
         defer text.deinit(self.gpa);
         try text.appendSlice(self.gpa, "# Appears as ");
-        try text.appendSlice(self.gpa, avatar);
+        // The original client uses a display-cased character token followed
+        // by a period.  Keep this precise comment shape: old Comic Chat
+        // clients parse it as their avatar-control sentence, rather than as
+        // an arbitrary generated asset name.
+        var capitalize = true;
+        for (avatar) |ch| {
+            if (ch == ' ') {
+                capitalize = true;
+                continue;
+            }
+            if (!std.ascii.isAlphanumeric(ch) and ch != '_' and ch != '-') return error.InvalidIrcParameter;
+            try text.append(self.gpa, if (capitalize) std.ascii.toUpper(ch) else ch);
+            capitalize = false;
+        }
+        try text.append(self.gpa, '.');
         return self.comicComment(target, text.items, ircx_data);
     }
 
@@ -1227,7 +1241,9 @@ pub const Client = struct {
     }
 
     fn comicComment(self: *Client, target: []const u8, text: []const u8, ircx_data: bool) !void {
-        if (ircx_data) return self.comicData(target, text);
+        // Source Comic Chat keeps these controls in PRIVMSG even on IRCX
+        // while comic data is enabled, which is its interoperable default.
+        _ = ircx_data;
         return self.privmsg(target, text);
     }
 
@@ -2094,7 +2110,7 @@ test "live registration probes IRCX before CAP NICK and USER" {
     try std.testing.expect(registration.ircx_probe_sent);
 }
 
-test "Microsoft comment controls select DATA only after IRCX negotiation" {
+test "Microsoft comment controls retain the source PRIVMSG form on IRCX" {
     const gpa = std.testing.allocator;
     const owned_host = try gpa.dupe(u8, "irc.example");
     var client = Client{
@@ -2118,7 +2134,7 @@ test "Microsoft comment controls select DATA only after IRCX negotiation" {
 
     try client.announceAvatar("#root", "anna", false);
     try std.testing.expectEqualStrings(
-        "PRIVMSG #root :# Appears as anna\r\n",
+        "PRIVMSG #root :# Appears as Anna.\r\n",
         client.tx.items.items[0].bytes,
     );
     try client.comicData("#root", "#G123E456M1");
@@ -2128,67 +2144,72 @@ test "Microsoft comment controls select DATA only after IRCX negotiation" {
     );
     try client.announceAvatar("#root", "anna", true);
     try std.testing.expectEqualStrings(
-        "DATA #root CCUDI1 :# Appears as anna\r\n",
+        "PRIVMSG #root :# Appears as Anna.\r\n",
         client.tx.items.items[2].bytes,
+    );
+    try client.announceAvatar("#root", "anna color", false);
+    try std.testing.expectEqualStrings(
+        "PRIVMSG #root :# Appears as AnnaColor.\r\n",
+        client.tx.items.items[3].bytes,
     );
     try client.syncBackdrop("#root", "room.bgb", null, true);
     try std.testing.expectEqualStrings(
-        "DATA #root CCUDI1 :# BDrop2: room.bgb,\r\n",
-        client.tx.items.items[3].bytes,
+        "PRIVMSG #root :# BDrop2: room.bgb,\r\n",
+        client.tx.items.items[4].bytes,
     );
     try std.testing.expectEqualStrings(
-        "DATA #root CCUDI1 :# BDrop:  room\r\n",
-        client.tx.items.items[4].bytes,
+        "PRIVMSG #root :# BDrop:  room\r\n",
+        client.tx.items.items[5].bytes,
     );
     try client.sendSound("#root", "Chime.wav", "hello there");
     try std.testing.expectEqualStrings(
         "PRIVMSG #root :\x01SOUND Chime.wav hello there\x01\r\n",
-        client.tx.items.items[5].bytes,
+        client.tx.items.items[6].bytes,
     );
     try client.sendSound("alice", "Door bell.wav", "come in");
     try std.testing.expectEqualStrings(
         "PRIVMSG alice :\x01SOUND Door\x10@bell.wav come in\x01\r\n",
-        client.tx.items.items[6].bytes,
+        client.tx.items.items[7].bytes,
     );
     try client.joinWithKey("#locked", "swordfish");
     try std.testing.expectEqualStrings(
         "JOIN #locked swordfish\r\n",
-        client.tx.items.items[7].bytes,
+        client.tx.items.items[8].bytes,
     );
     try client.create("#new", "+nt", "42", "secret");
     try std.testing.expectEqualStrings(
         "CREATE #new +nt 42 secret\r\n",
-        client.tx.items.items[8].bytes,
+        client.tx.items.items[9].bytes,
     );
     try client.kick("#root", "trouble", "flooding the room");
     try std.testing.expectEqualStrings(
         "KICK #root trouble :flooding the room\r\n",
-        client.tx.items.items[9].bytes,
+        client.tx.items.items[10].bytes,
     );
     try client.kick("#root", "quiet", "");
     try std.testing.expectEqualStrings(
         "KICK #root quiet :\r\n",
-        client.tx.items.items[10].bytes,
+        client.tx.items.items[11].bytes,
     );
     try client.setTopic("#root", "Welcome");
     try std.testing.expectEqualStrings(
         "TOPIC #root :Welcome\r\n",
-        client.tx.items.items[11].bytes,
+        client.tx.items.items[12].bytes,
     );
     try client.sendAwayControl("#root", "getting coffee");
     try std.testing.expectEqualStrings(
         "PRIVMSG #root :\x01AWAY getting coffee\x01\r\n",
-        client.tx.items.items[12].bytes,
+        client.tx.items.items[13].bytes,
     );
     try client.ctcpReply("alice", "PING", "12345");
     try std.testing.expectEqualStrings(
         "NOTICE alice :\x01PING 12345\x01\r\n",
-        client.tx.items.items[13].bytes,
+        client.tx.items.items[14].bytes,
     );
     try client.ctcpReply("alice", "EMAIL", "");
     try std.testing.expectEqualStrings(
         "NOTICE alice :\x01EMAIL \x01\r\n",
-        client.tx.items.items[14].bytes,
+        client.tx.items.items[15].bytes,
     );
 }
 

@@ -285,9 +285,10 @@ Live messages use the released compact UDI grammar: the portable client reads
 both embedded non-IRCX annotations and IRCX `DATA ... CCUDI1` state; preserves
 the authored face/torso ordinals, emotion, intensity, requested-pose flag,
 balloon mode, and talk-to participants; and renders that cooked AVB state. For
-outgoing text it runs the source-derived pose rules, sends standalone `DATA`
-metadata after IRCX negotiation, and otherwise uses the original embedded
-annotation form. Ordinary IRC clients still receive readable message text.
+outgoing text it runs the source-derived pose rules and uses the original
+embedded annotation form in one `PRIVMSG`, including when IRCX is available.
+It also accepts standalone `DATA` metadata sent by peers. Ordinary IRC clients
+still receive readable message text.
 The client also consumes the source `# Appears as ...` avatar control, announces
 its current bundled avatar after joining, and supports `/avatar <name>` in the
 interactive input so later panels use the selected character.

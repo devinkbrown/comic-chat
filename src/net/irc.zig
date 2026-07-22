@@ -121,7 +121,7 @@ pub fn writePrivmsg(
 }
 
 /// The source Comic Chat avatar control (`ChatAnnounceNewAvatar`):
-/// `PRIVMSG <target> :# Appears as <bundled-name>`.
+/// `PRIVMSG <target> :# Appears as <bundled-name>.`.
 pub fn writeAvatarAnnouncement(
     out: *std.ArrayList(u8),
     gpa: std.mem.Allocator,
@@ -130,7 +130,7 @@ pub fn writeAvatarAnnouncement(
 ) !void {
     if (target.len == 0 or avatar.len == 0 or
         std.mem.indexOfAny(u8, target, " \r\n") != null or
-        std.mem.indexOfAny(u8, avatar, " .\r\n") != null)
+        std.mem.indexOfAny(u8, avatar, ".\r\n") != null)
         return error.InvalidIrcParameter;
 
     const start = out.items.len;
@@ -138,8 +138,17 @@ pub fn writeAvatarAnnouncement(
     try out.appendSlice(gpa, "PRIVMSG ");
     try out.appendSlice(gpa, target);
     try out.appendSlice(gpa, " :# Appears as ");
-    try out.appendSlice(gpa, avatar);
-    try out.appendSlice(gpa, "\r\n");
+    var capitalize = true;
+    for (avatar) |ch| {
+        if (ch == ' ') {
+            capitalize = true;
+            continue;
+        }
+        if (!std.ascii.isAlphanumeric(ch) and ch != '_' and ch != '-') return error.InvalidIrcParameter;
+        try out.append(gpa, if (capitalize) std.ascii.toUpper(ch) else ch);
+        capitalize = false;
+    }
+    try out.appendSlice(gpa, ".\r\n");
 }
 
 /// Source IRCX UDI sideband: `DATA <target> CCUDI1 :<annotation>`.
@@ -245,7 +254,7 @@ test "avatar announcement uses the source control PRIVMSG" {
 
     try writeAvatarAnnouncement(&out, gpa, "#comics", "anna");
     try std.testing.expectEqualStrings(
-        "PRIVMSG #comics :# Appears as anna\r\n",
+        "PRIVMSG #comics :# Appears as Anna.\r\n",
         out.items,
     );
     const before = out.items.len;
