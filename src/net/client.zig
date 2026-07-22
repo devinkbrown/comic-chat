@@ -497,6 +497,81 @@ pub const Client = struct {
         try self.queueOut(.interactive, true, false);
     }
 
+    pub fn knock(self: *Client, channel: []const u8, reason: ?[]const u8) !void {
+        if (!isChannelTarget(channel)) return error.InvalidIrcParameter;
+        if (reason) |text| {
+            try self.validateOutgoingText(text);
+            try self.appendCommandTrailing("KNOCK", &.{ channel, text });
+        } else try self.appendCommand("KNOCK", &.{channel});
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn renameChannel(self: *Client, old_channel: []const u8, new_channel: []const u8, reason: ?[]const u8) !void {
+        if (!isChannelTarget(old_channel) or !isChannelTarget(new_channel)) return error.InvalidIrcParameter;
+        if (reason) |text| {
+            try self.validateOutgoingText(text);
+            try self.appendCommandTrailing("RENAME", &.{ old_channel, new_channel, text });
+        } else try self.appendCommand("RENAME", &.{ old_channel, new_channel });
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn tempModeAdd(self: *Client, channel: []const u8, flag: []const u8, parameter: ?[]const u8, duration_seconds: u32) !void {
+        if (!isChannelTarget(channel) or !validIrcAtom(flag) or duration_seconds == 0) return error.InvalidIrcParameter;
+        var duration: [10]u8 = undefined;
+        const text = try std.fmt.bufPrint(&duration, "{d}", .{duration_seconds});
+        if (parameter) |value| {
+            if (!validIrcAtom(value)) return error.InvalidIrcParameter;
+            try self.appendCommand("TEMPMODE", &.{ "ADD", channel, flag, value, text });
+        } else try self.appendCommand("TEMPMODE", &.{ "ADD", channel, flag, text });
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn tempModeCancel(self: *Client, channel: []const u8, flag: []const u8, parameter: ?[]const u8) !void {
+        if (!isChannelTarget(channel) or !validIrcAtom(flag)) return error.InvalidIrcParameter;
+        if (parameter) |value| {
+            if (!validIrcAtom(value)) return error.InvalidIrcParameter;
+            try self.appendCommand("TEMPMODE", &.{ "CANCEL", channel, flag, value });
+        } else try self.appendCommand("TEMPMODE", &.{ "CANCEL", channel, flag });
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn tempModeSweep(self: *Client) !void {
+        try self.appendCommand("TEMPMODE", &.{"SWEEP"});
+        try self.queueOut(.interactive, true, false);
+    }
+
+    /// Onyx `CLEAR <#channel> USERS [KEEP <rank>] [ALLOW <accounts>] [:reason]`.
+    pub fn clearChannelUsers(self: *Client, channel: []const u8, keep_rank: ?[]const u8, allow_accounts: ?[]const u8, reason: ?[]const u8) !void {
+        if (!isChannelTarget(channel)) return error.InvalidIrcParameter;
+        var params: [7][]const u8 = undefined;
+        var count: usize = 0;
+        params[count] = channel;
+        count += 1;
+        params[count] = "USERS";
+        count += 1;
+        if (keep_rank) |rank| {
+            if (!validIrcAtom(rank)) return error.InvalidIrcParameter;
+            params[count] = "KEEP";
+            count += 1;
+            params[count] = rank;
+            count += 1;
+        }
+        if (allow_accounts) |accounts| {
+            if (accounts.len == 0 or std.mem.indexOfAny(u8, accounts, " \r\n\x00") != null) return error.InvalidIrcParameter;
+            params[count] = "ALLOW";
+            count += 1;
+            params[count] = accounts;
+            count += 1;
+        }
+        if (reason) |text| {
+            try self.validateOutgoingText(text);
+            params[count] = text;
+            count += 1;
+            try self.appendCommandTrailing("CLEAR", params[0..count]);
+        } else try self.appendCommand("CLEAR", params[0..count]);
+        try self.queueOut(.interactive, true, false);
+    }
+
     /// Onyx `PINS <#channel> [LIST|ADD <msgid>|DEL <msgid>|CLEAR]`.
     /// Authorization remains exclusively server-owned.
     pub fn pins(self: *Client, channel: []const u8, operation: PinsOperation, msgid: ?[]const u8) !void {
@@ -648,6 +723,70 @@ pub const Client = struct {
     pub fn who(self: *Client, mask: []const u8) !void {
         if (mask.len == 0) try self.appendCommand("WHO", &.{}) else try self.appendCommand("WHO", &.{mask});
         try self.queueOut(.bulk, true, false);
+    }
+
+    // Onyx query/status surface. Each method is intentionally bounded to IRC
+    // atoms and stays on the ordinary interactive/bulk queue.
+    pub fn ison(self: *Client, nicks: []const u8) !void {
+        try self.sendRequiredAtom("ISON", nicks, .bulk);
+    }
+    pub fn userhost(self: *Client, nicks: []const u8) !void {
+        try self.sendRequiredAtom("USERHOST", nicks, .bulk);
+    }
+    pub fn whois(self: *Client, nick: []const u8) !void {
+        try self.sendRequiredAtom("WHOIS", nick, .bulk);
+    }
+    pub fn whowas(self: *Client, nick: []const u8) !void {
+        try self.sendRequiredAtom("WHOWAS", nick, .bulk);
+    }
+    pub fn help(self: *Client, topic: ?[]const u8) !void {
+        try self.sendOptionalAtom("HELP", topic, .bulk);
+    }
+    pub fn version(self: *Client, server: ?[]const u8) !void {
+        try self.sendOptionalAtom("VERSION", server, .bulk);
+    }
+    pub fn serverTime(self: *Client, server: ?[]const u8) !void {
+        try self.sendOptionalAtom("TIME", server, .bulk);
+    }
+    pub fn admin(self: *Client, server: ?[]const u8) !void {
+        try self.sendOptionalAtom("ADMIN", server, .bulk);
+    }
+    pub fn info(self: *Client, server: ?[]const u8) !void {
+        try self.sendOptionalAtom("INFO", server, .bulk);
+    }
+    pub fn motd(self: *Client, server: ?[]const u8) !void {
+        try self.sendOptionalAtom("MOTD", server, .bulk);
+    }
+    pub fn lusers(self: *Client) !void {
+        try self.sendNoArgs("LUSERS", .bulk);
+    }
+    pub fn users(self: *Client) !void {
+        try self.sendNoArgs("USERS", .bulk);
+    }
+    pub fn links(self: *Client) !void {
+        try self.sendNoArgs("LINKS", .bulk);
+    }
+    pub fn map(self: *Client) !void {
+        try self.sendNoArgs("MAP", .bulk);
+    }
+    pub fn commands(self: *Client, filter: ?[]const u8) !void {
+        try self.sendOptionalAtom("COMMANDS", filter, .bulk);
+    }
+    pub fn welcome(self: *Client) !void {
+        try self.sendNoArgs("WELCOME", .interactive);
+    }
+    pub fn accountInfo(self: *Client, account: ?[]const u8) !void {
+        try self.sendOptionalAtom("ACCOUNTINFO", account, .bulk);
+    }
+    pub fn saslInfo(self: *Client) !void {
+        try self.sendNoArgs("SASLINFO", .bulk);
+    }
+    pub fn privs(self: *Client) !void {
+        try self.sendNoArgs("PRIVS", .bulk);
+    }
+    pub fn sessionList(self: *Client) !void {
+        try self.appendCommand("SESSION", &.{"LIST"});
+        try self.queueOut(.bulk, false, false);
     }
 
     pub fn eventList(self: *Client, event: []const u8) !void {
@@ -1216,6 +1355,19 @@ pub const Client = struct {
             try self.appendCommand("CHATHISTORY", &.{ "LATEST", target, selector, limit_text });
         }
         try self.queueOut(.bulk, false, false);
+    }
+
+    fn sendNoArgs(self: *Client, command: []const u8, priority: policy.Priority) !void {
+        try self.appendCommand(command, &.{});
+        try self.queueOut(priority, true, false);
+    }
+    fn sendRequiredAtom(self: *Client, command: []const u8, value: []const u8, priority: policy.Priority) !void {
+        if (!validIrcAtom(value)) return error.InvalidIrcParameter;
+        try self.appendCommand(command, &.{value});
+        try self.queueOut(priority, true, false);
+    }
+    fn sendOptionalAtom(self: *Client, command: []const u8, value: ?[]const u8, priority: policy.Priority) !void {
+        if (value) |atom| try self.sendRequiredAtom(command, atom, priority) else try self.sendNoArgs(command, priority);
     }
 
     fn sendChatHistoryBound(self: *Client, subcommand: []const u8, target: []const u8, selector: []const u8, limit: u16) !void {
