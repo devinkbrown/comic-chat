@@ -3,6 +3,12 @@
 A portable, source-faithful continuation of **Comic Chat**, built in Zig with
 a software renderer, native X11/Wayland/Win32 presentation, and verified TLS.
 
+![Dark Comic Chat character picker](ui-dark-preview.png)
+
+![Compact menu layout](ui-compact-menu-preview.png)
+
+![Expression context menu](ui-context-preview.png)
+
 Comic Chat turns IRC conversations into auto-generated comic strips. Each
 participant has an avatar, and the client composes panels with speech balloons,
 poses, and emotions while remaining interoperable with ordinary IRC clients.
@@ -53,6 +59,30 @@ zig build run -- app your-nick                          # eshmaki.me, #root
 zig build run -- app eshmaki.me your-nick '#root' \
   --tls-cert ./client-cert-and-key.pem --sasl-user your-account --sasl-external
 ```
+
+## Releases
+
+Each `comicchat-portable-*` GitHub release contains a portable source archive,
+Windows x86_64 ZIP, Linux x86_64 tarball, FreeBSD x86_64 tarball, OpenBSD
+x86_64 tarball, and a SHA-256 manifest. Download the archive for your
+platform, extract it, and run `comicchat` (or `comicchat.exe` on Windows).
+
+Verify downloaded artifacts before use:
+
+```sh
+sha256sum -c comicchat-*-SHA256SUMS.txt
+```
+
+To produce the same release set locally from a clean committed checkout:
+
+```sh
+OUTPUT_DIR="$PWD/dist" TMPDIR="$PWD/.tmp-release" \
+  tools/package-release.sh comicchat-portable-YYYY-MM-DD.N
+```
+
+The tag workflow runs the portable tests, creates this exact artifact set, and
+publishes it with its checksum manifest. Historical Microsoft/MFC workflows
+are not part of the portable release contract.
 
 On Windows, double-clicking `comicchat.exe` opens the desktop client directly
 with the configured `eshmaki.me`, `comicchat`, and `#root` defaults. Use

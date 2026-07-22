@@ -12,8 +12,10 @@ pub const TranscriptSelection = struct { start: usize, end: usize };
 
 pub const Focus = enum {
     navigation,
+    toolbar,
     transcript,
     composer,
+    say_actions,
     members,
     emotion,
 };
@@ -38,20 +40,24 @@ pub const State = struct {
 
     pub fn cycleFocus(self: *State) void {
         self.focus = switch (self.focus) {
-            .navigation => .transcript,
+            .navigation => .toolbar,
+            .toolbar => .transcript,
             .transcript => .composer,
-            .composer => if (self.show_members) .members else if (self.show_navigation) .navigation else .transcript,
-            .members => if (self.content_mode == .comic) .emotion else if (self.show_navigation) .navigation else .transcript,
+            .composer => .say_actions,
+            .say_actions => if (self.show_members) .members else if (self.show_navigation) .navigation else .toolbar,
+            .members => if (self.content_mode == .comic) .emotion else if (self.show_navigation) .navigation else .toolbar,
             .emotion => if (self.show_navigation) .navigation else .transcript,
         };
     }
 
     pub fn cycleFocusBackward(self: *State) void {
         self.focus = switch (self.focus) {
-            .navigation => if (self.show_members and self.content_mode == .comic) .emotion else if (self.show_members) .members else .composer,
-            .transcript => if (self.show_navigation) .navigation else if (self.show_members and self.content_mode == .comic) .emotion else if (self.show_members) .members else .composer,
+            .navigation => if (self.show_members and self.content_mode == .comic) .emotion else if (self.show_members) .members else .say_actions,
+            .toolbar => if (self.show_navigation) .navigation else if (self.show_members and self.content_mode == .comic) .emotion else if (self.show_members) .members else .say_actions,
+            .transcript => .toolbar,
             .composer => .transcript,
-            .members => .composer,
+            .say_actions => .composer,
+            .members => .say_actions,
             .emotion => .members,
         };
     }
@@ -261,15 +267,21 @@ test "focus follows visible Microsoft shell regions" {
     var state: State = .{};
     try std.testing.expectEqual(Focus.composer, state.focus);
     state.cycleFocus();
+    try std.testing.expectEqual(Focus.say_actions, state.focus);
+    state.cycleFocus();
     try std.testing.expectEqual(Focus.members, state.focus);
     state.cycleFocus();
     try std.testing.expectEqual(Focus.emotion, state.focus);
     state.cycleFocus();
     try std.testing.expectEqual(Focus.navigation, state.focus);
     state.cycleFocus();
+    try std.testing.expectEqual(Focus.toolbar, state.focus);
+    state.cycleFocus();
     try std.testing.expectEqual(Focus.transcript, state.focus);
     state.cycleFocus();
     try std.testing.expectEqual(Focus.composer, state.focus);
+    state.cycleFocus();
+    try std.testing.expectEqual(Focus.say_actions, state.focus);
     state.toggleMembers();
     state.cycleFocus();
     try std.testing.expectEqual(Focus.navigation, state.focus);
@@ -291,6 +303,8 @@ test "reverse focus follows the same shell order" {
     try std.testing.expectEqual(Focus.emotion, state.focus);
     state.cycleFocusBackward();
     try std.testing.expectEqual(Focus.members, state.focus);
+    state.cycleFocusBackward();
+    try std.testing.expectEqual(Focus.say_actions, state.focus);
     state.cycleFocusBackward();
     try std.testing.expectEqual(Focus.composer, state.focus);
 }

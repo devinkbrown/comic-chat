@@ -1,0 +1,33 @@
+name: Portable CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0-dev.1282+c0f9b51d8
+      - name: Test portable client
+        run: zig build test --summary all
+      - name: Build native client
+        run: zig build --summary all
+      - name: Cross-compile release targets
+        run: |
+          zig build -Dtarget=x86_64-windows -Doptimize=ReleaseSafe -Dstrip=true
+          zig build -Dtarget=x86_64-linux -Doptimize=ReleaseSafe -Dstrip=true
+          zig build -Dtarget=x86_64-freebsd -Doptimize=ReleaseSafe -Dstrip=true
+          zig build -Dtarget=x86_64-openbsd -Doptimize=ReleaseSafe -Dstrip=true
+      - name: Check repository hygiene
+        run: git diff --check

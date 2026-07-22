@@ -22,6 +22,20 @@ Verify the pose sources from `assets/generated` with `sha256sum -c
 AVB_SOURCE_SHA256SUMS.txt`; verify runtime packages from the repository root
 with `sha256sum -c assets/generated/AVB_SHA256SUMS.txt`.
 
+## Colored portrait packages
+
+The 22 `*-color-hd-v1.avb` packages (and the deliberately newer
+`tiki-color-hd-v2.avb`) are selectable Color variants. They are packaged from
+the corresponding project-generated portrait inputs in
+`assets/generated/avatar-color-hd-v1/`; `tiki-color-hd-v2.png` is the Tiki
+source selected for the v2 package. Each package is a native simple-avatar
+AVB with a valid neutral, laugh, surprised, angry, sad, and action record so
+the same asset used in the character gallery is also the runtime avatar.
+Their gallery and roster icons are derived from the same complete figure as
+their runtime pose records; the client does not substitute a separate,
+potentially cropped head preview.
+`COLOR_AVB_SHA256SUMS.txt` records the exact runtime output digests.
+
 Rebuild it after installing the repository's pinned Pillow dependency:
 
 ```sh

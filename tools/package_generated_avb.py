@@ -101,11 +101,26 @@ def bmp24(image: Image.Image) -> bytes:
     return file_header + info_header + pixels
 
 
-def build(name: str, copyright_text: str, pose_paths: list[Path]) -> bytes:
+def build(name: str, copyright_text: str, pose_paths: list[Path], portrait_icon: bool = False) -> bytes:
     if len(pose_paths) != len(POSES):
         raise ValueError(f"expected {len(POSES)} pose PNGs")
     pose_bmps = [bmp24(normalize_pose(path)) for path in pose_paths]
-    icon = normalize_pose(pose_paths[0]).resize((64, 64), Image.Resampling.LANCZOS)
+    icon_source = normalize_pose(pose_paths[0])
+    if portrait_icon:
+        # Gallery and roster icons need a readable face at 64px. Keep the
+        # upper body while the pose records below retain the complete figure.
+        # Crop to the actual visible silhouette rather than the source canvas:
+        # narrow figures such as Xeno otherwise read as a tiny full body.
+        silhouette = ImageChops.invert(icon_source)
+        left, top, right, bottom = silhouette.getbbox() or (0, 0, icon_source.width, icon_source.height)
+        portrait_bottom = min(bottom, top + max(64, (bottom - top) * 3 // 5))
+        pad = 8
+        icon_source = icon_source.crop((max(0, left - pad), max(0, top - pad), min(icon_source.width, right + pad), min(icon_source.height, portrait_bottom + pad)))
+        icon_source.thumbnail((58, 58), Image.Resampling.LANCZOS)
+        icon = Image.new("RGB", (64, 64), "white")
+        icon.paste(icon_source, ((64 - icon_source.width) // 2, (64 - icon_source.height) // 2))
+    else:
+        icon = icon_source.resize((64, 64), Image.Resampling.LANCZOS)
     icon_bmp = bmp24(icon)
 
     name_record = u16(AK_NAME) + name.encode("utf-8") + b"\0"
@@ -146,12 +161,13 @@ def main() -> None:
     parser.add_argument("--name", required=True)
     parser.add_argument("--copyright", required=True, dest="copyright_text")
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--portrait-icon", action="store_true", help="crop the icon to a readable head-and-shoulders portrait")
     parser.add_argument("poses", nargs=len(POSES), type=Path, metavar="POSE")
     args = parser.parse_args()
     for pose in args.poses:
         if not pose.is_file():
             parser.error(f"pose file not found: {pose}")
-    data = build(args.name, args.copyright_text, args.poses)
+    data = build(args.name, args.copyright_text, args.poses, args.portrait_icon)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(data)
     print(f"wrote {args.output} ({len(data)} bytes, sha256 {hashlib.sha256(data).hexdigest()})")

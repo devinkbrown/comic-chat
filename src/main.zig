@@ -671,6 +671,7 @@ fn writeStdout(io: std.Io, bytes: []const u8) !void {
 }
 
 fn avatarByName(name: []const u8) ?[]const u8 {
+    if (cc.comic.strip.avatarByName(name)) |avatar| return avatar;
     const eql = std.ascii.eqlIgnoreCase;
     if (eql(name, "anna")) return @embedFile("assets/testdata/anna.avb");
     if (eql(name, "armando")) return @embedFile("assets/testdata/armando.avb");
@@ -716,6 +717,28 @@ fn avatarByName(name: []const u8) ?[]const u8 {
     if (eql(name, "susan hd")) return @embedFile("assets/generated/susan-reimagined-hd-v1.avb");
     if (eql(name, "tongtyed hd")) return @embedFile("assets/generated/tongtyed-reimagined-hd-v1.avb");
     if (eql(name, "xeno hd")) return @embedFile("assets/generated/xeno-reimagined-hd-v1.avb");
+    if (eql(name, "anna color")) return @embedFile("assets/generated/anna-color-hd-v1.avb");
+    if (eql(name, "armando color")) return @embedFile("assets/generated/armando-color-hd-v1.avb");
+    if (eql(name, "bolo color")) return @embedFile("assets/generated/bolo-color-hd-v1.avb");
+    if (eql(name, "cro color")) return @embedFile("assets/generated/cro-color-hd-v1.avb");
+    if (eql(name, "dan color")) return @embedFile("assets/generated/dan-color-hd-v1.avb");
+    if (eql(name, "denise color")) return @embedFile("assets/generated/denise-color-hd-v1.avb");
+    if (eql(name, "hugh color")) return @embedFile("assets/generated/hugh-color-hd-v1.avb");
+    if (eql(name, "jordan color")) return @embedFile("assets/generated/jordan-color-hd-v1.avb");
+    if (eql(name, "kevin color")) return @embedFile("assets/generated/kevin-color-hd-v1.avb");
+    if (eql(name, "kwensa color")) return @embedFile("assets/generated/kwensa-color-hd-v1.avb");
+    if (eql(name, "lance color")) return @embedFile("assets/generated/lance-color-hd-v1.avb");
+    if (eql(name, "lynnea color")) return @embedFile("assets/generated/lynnea-color-hd-v1.avb");
+    if (eql(name, "margaret color")) return @embedFile("assets/generated/margaret-color-hd-v1.avb");
+    if (eql(name, "maynard color")) return @embedFile("assets/generated/maynard-color-hd-v1.avb");
+    if (eql(name, "mike color")) return @embedFile("assets/generated/mike-color-hd-v1.avb");
+    if (eql(name, "rebecca color")) return @embedFile("assets/generated/rebecca-color-hd-v1.avb");
+    if (eql(name, "sage color")) return @embedFile("assets/generated/sage-color-hd-v1.avb");
+    if (eql(name, "scotty color")) return @embedFile("assets/generated/scotty-color-hd-v1.avb");
+    if (eql(name, "susan color")) return @embedFile("assets/generated/susan-color-hd-v1.avb");
+    if (eql(name, "tiki color")) return @embedFile("assets/generated/tiki-color-hd-v2.avb");
+    if (eql(name, "tongtyed color")) return @embedFile("assets/generated/tongtyed-color-hd-v1.avb");
+    if (eql(name, "xeno color")) return @embedFile("assets/generated/xeno-color-hd-v1.avb");
     return null;
 }
 
@@ -1819,10 +1842,52 @@ fn handleWindowEvent(
                     if (try handleEditorShortcut(window, dialog_editor, key, workspace))
                         break :key_result .{ .redraw = true };
                 };
-                if (try view.handleDialogKey(key, key_input.modifiers)) |action| try applyDialogAction(gpa, io, window, action, view, network, state, workspace, nick);
+                if (try view.handleDialogKey(key, key_input.modifiers)) |action| switch (action) {
+                    .dialog_browse => |id| try browseDialogFile(gpa, window, view, id),
+                    else => try applyDialogAction(gpa, io, window, action, view, network, state, workspace, nick),
+                };
                 break :key_result .{ .redraw = true };
             }
             const previous_dialog = view.active_dialog;
+            if (view.handleContextMenuKey(key)) |action| {
+                const keep_running = switch (action) {
+                    .send_expression => expression: {
+                        var expression_editor = cc.client.input.Editor.init(gpa);
+                        defer expression_editor.deinit();
+                        try expression_editor.paste("<Chr>");
+                        break :expression try handleInputKey(gpa, cc.platform.event.Key{ .enter = {} }, view, &expression_editor, client, transcript, nick, room.name, room.joined or state.joined, state.ircx_data);
+                    },
+                    else => true,
+                };
+                if (previous_dialog != view.active_dialog) try prefillOpenedDialog(view, transcript, editor.text(), &network.runtime.preferences, state, network.clientPtr());
+                break :key_result .{ .keep_running = keep_running, .redraw = true };
+            }
+            if (view.handleFocusedActionKey(key)) |action| {
+                const keep_running = switch (action) {
+                    .quit => false,
+                    .send => try handleWorkspaceInputKey(gpa, io, cc.platform.event.Key{ .enter = {} }, view, editor, client, workspace, nick, state.joined, state.ircx_data),
+                    .connection => connection: {
+                        view.openConnectionDialog(network.host, network.reconnect.port, network.effectiveOptions().security == .tls);
+                        break :connection true;
+                    },
+                    .toolbar => |index| toolbar: {
+                        if (index == 1) break :toolbar false;
+                        if (index >= 19 and index <= 22) {
+                            const control: u8 = switch (index) {
+                                19 => cc.comic.formatting.control.bold,
+                                20 => cc.comic.formatting.control.italic,
+                                21 => cc.comic.formatting.control.underline,
+                                else => cc.comic.formatting.control.fixed_pitch,
+                            };
+                            if (editor.text().len + (if (editor.selection() == null) @as(usize, 1) else @as(usize, 2)) <= 400) try editor.toggleControl(control);
+                        }
+                        break :toolbar true;
+                    },
+                    else => true,
+                };
+                if (previous_dialog != view.active_dialog) try prefillOpenedDialog(view, transcript, editor.text(), &network.runtime.preferences, state, network.clientPtr());
+                break :key_result .{ .keep_running = keep_running, .redraw = true };
+            }
             if (view.handleMenuKey(key)) |action| {
                 if (previous_dialog != view.active_dialog)
                     try prefillOpenedDialog(view, transcript, editor.text(), &network.runtime.preferences, state, network.clientPtr());
@@ -3751,7 +3816,7 @@ fn receiveDccOffer(
     var size_text: [64]u8 = undefined;
     try view.setDialogValueAt(3, std.fmt.bufPrint(&size_text, "{d} bytes", .{offer.size.?}) catch "size unavailable");
     try view.setDialogValueAt(4, "Waiting for approval");
-    view.setDialogNotice("Review the sender and save path. No file is opened automatically.");
+    view.setDialogNotice("Verify sender and save path before accepting.");
     return true;
 }
 
@@ -4156,13 +4221,20 @@ fn runUiPreview(gpa: std.mem.Allocator, io: std.Io, surface: []const u8) !void {
     if (std.mem.startsWith(u8, surface, "text-")) view.shell.content_mode = .text;
     var transcript = cc.comic.session.Transcript.init(gpa);
     defer transcript.deinit();
-    try transcript.setSelf("comicchat");
+    if (!std.mem.eql(u8, surface, "empty-members")) try transcript.setSelf("comicchat");
     const with_conversation = std.mem.eql(u8, surface, "conversation") or std.mem.eql(u8, surface, "member") or std.mem.eql(u8, surface, "text-conversation");
     if (with_conversation) {
         try transcript.setAvatar("comicchat", "anna");
         try transcript.setAvatar("alex", "armando");
         try transcript.add("alex", "Welcome to #root. The new studio is ready.");
         try transcript.add("comicchat", "Great. The comic view feels much clearer now.");
+        if (std.mem.eql(u8, surface, "text-conversation")) {
+            try transcript.add("comicchat", "The chat buffer now keeps a full thought together instead of turning every sentence into a separate visual interruption.");
+            try transcript.add("alex", "That makes the room easier to scan when several people are talking at once.");
+            try transcript.add("alex", "The live edge should stay quiet until you are reading older messages.");
+            try transcript.add("maya", "I can follow the conversation without losing who said what.");
+            try transcript.add("maya", "The composer also feels connected to the conversation instead of detached below it.");
+        }
     }
     if (std.mem.eql(u8, surface, "sparse")) {
         try transcript.setAvatar("alex", "armando");
@@ -4196,7 +4268,7 @@ fn runUiPreview(gpa: std.mem.Allocator, io: std.Io, surface: []const u8) !void {
                 try view.setDialogValueAt(2, "received-comic.png");
                 try view.setDialogValueAt(3, "245760 bytes");
                 try view.setDialogValueAt(4, "Waiting for approval");
-                view.setDialogNotice("Review the sender and save path. No file is opened automatically.");
+                view.setDialogNotice("Verify sender and save path before accepting.");
             },
             .automation => {
                 try view.setDialogValueAt(0, "Whisper");
@@ -4227,12 +4299,12 @@ fn runUiPreview(gpa: std.mem.Allocator, io: std.Io, surface: []const u8) !void {
         try view.setDialogValueAt(1, "Violet");
         try view.setDialogValueAt(2, "High contrast");
     }
-    if (std.mem.eql(u8, surface, "character") or std.mem.endsWith(u8, surface, "dark-character")) {
+    if (std.mem.endsWith(u8, surface, "character")) {
         view.openDialog(.character);
-        try view.setDialogValueAt(0, "Xeno");
+        try view.setDialogValueAt(0, if (std.mem.endsWith(u8, surface, "color-character")) "Xeno Color" else "Xeno HD");
         try view.setDialogValueAt(1, "Laughing");
     }
-    if (std.mem.eql(u8, surface, "status") or std.mem.endsWith(u8, surface, "dark-status")) view.status_panel_open = true;
+    if (std.mem.endsWith(u8, surface, "status")) view.status_panel_open = true;
     if (std.mem.eql(u8, surface, "inputs")) {
         view.openDialog(.password);
         for ("comicchat") |ch| _ = try view.handleDialogKey(.{ .char = ch }, .{});

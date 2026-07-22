@@ -1,5 +1,13 @@
 # Desktop integration
 
+## Portable release artifacts
+
+The portable release contains a source archive, Windows x86_64 ZIP, Linux
+x86_64 tarball, FreeBSD x86_64 tarball, OpenBSD x86_64 tarball, and a
+`SHA256SUMS` manifest. Every archive includes this guide, the top-level
+licenses/notices, and the product documentation. Verify the downloaded files
+with `sha256sum -c comicchat-*-SHA256SUMS.txt` before extracting.
+
 Comic Chat accepts a `.ccc` conversation or `.ccr` locator as its only command-line
 argument. The application opens the document and keeps the normal secure connection
 workflow active.

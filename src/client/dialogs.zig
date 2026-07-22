@@ -269,10 +269,12 @@ pub fn choiceOptions(id: Id, index: usize) []const []const u8 {
         },
         .character => if (index == 0)
             &.{
-                "Anna",      "Armando",     "Bolo",       "Cro",     "Dan",        "Denise",    "Hugh",      "Jordan",    "Kevin",    "Kwensa",      "Lance",
-                "Lynnea",    "Margaret",    "Maynard",    "Mike",    "Rebecca",    "Sage",      "Scotty",    "Susan",     "Tiki",     "Tongtyed",    "Xeno",
-                "Anna HD",   "Armando HD",  "Bolo HD",    "Cro HD",  "Dan HD",     "Denise HD", "Hugh HD",   "Jordan HD", "Kevin HD", "Kwensa HD",   "Lance HD",
-                "Lynnea HD", "Margaret HD", "Maynard HD", "Mike HD", "Rebecca HD", "Sage HD",   "Scotty HD", "Susan HD",  "Tiki HD",  "Tongtyed HD", "Xeno HD",
+                "Anna HD",         "Armando HD",        "Bolo HD",          "Cro HD",        "Dan HD",           "Denise HD",       "Hugh HD",         "Jordan HD",       "Kevin HD",       "Kwensa HD",         "Lance HD",
+                "Lynnea HD",       "Margaret HD",       "Maynard HD",       "Mike HD",       "Rebecca HD",       "Sage HD",         "Scotty HD",       "Susan HD",        "Tiki HD",        "Tongtyed HD",       "Xeno HD",
+                "Anna Color",      "Armando Color",     "Bolo Color",       "Cro Color",     "Dan Color",        "Denise Color",    "Hugh Color",      "Jordan Color",    "Kevin Color",    "Kwensa Color",      "Lance Color",
+                "Lynnea Color",    "Margaret Color",    "Maynard Color",    "Mike Color",    "Rebecca Color",    "Sage Color",      "Scotty Color",    "Susan Color",     "Tiki Color",     "Tongtyed Color",    "Xeno Color",
+                "Anna Original",   "Armando Original",  "Bolo Original",    "Cro Original",  "Dan Original",     "Denise Original", "Hugh Original",   "Jordan Original", "Kevin Original", "Kwensa Original",   "Lance Original",
+                "Lynnea Original", "Margaret Original", "Maynard Original", "Mike Original", "Rebecca Original", "Sage Original",   "Scotty Original", "Susan Original",  "Tiki Original",  "Tongtyed Original", "Xeno Original",
             }
         else if (index == 1)
             &.{ "Neutral", "Happy", "Laughing", "Angry", "Sad", "Surprised" }

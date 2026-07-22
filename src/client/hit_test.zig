@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const geometry = @import("geometry.zig");
+const ui = @import("ui.zig");
 const Canvas = @import("../render/canvas.zig").Canvas;
 
 const Rect = geometry.Rect;
@@ -60,10 +61,11 @@ fn menuIndex(pointer_x: i32) ?u8 {
 }
 
 fn toolbarIndex(rect: Rect, x: i32) ?u8 {
-    _ = rect;
     const ids = [_]u8{ 0, 2, 4, 5, 6, 7, 8, 10, 11, 13, 17, 18 };
-    const starts = [_]i32{ 12, 50, 88, 138, 176, 226, 264, 314, 352, 390, 440, 478 };
-    for (starts, ids) |start, id| if (x >= start and x < start + 32) return id;
+    const toolbar_layout = ui.ToolbarLayout.init(rect);
+    for (ids, 0..) |id, index| if (toolbar_layout.buttonRect(index)) |button| {
+        if (x >= button.x and x < button.right()) return id;
+    };
     return null;
 }
 

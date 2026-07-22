@@ -1,0 +1,43 @@
+name: Publish portable release
+
+on:
+  push:
+    tags: ["comicchat-portable-*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version (for example comicchat-portable-2026-07-22.1)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  package-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0-dev.1282+c0f9b51d8
+      - name: Install archive tool
+        run: sudo apt-get update && sudo apt-get install -y p7zip-full
+      - name: Verify portable client
+        run: zig build test --summary all
+      - name: Package source and binaries
+        env:
+          OUTPUT_DIR: ${{ github.workspace }}/dist
+          TMPDIR: ${{ github.workspace }}/.tmp-release
+          VERSION: ${{ inputs.version || github.ref_name }}
+        run: tools/package-release.sh "$VERSION"
+      - name: Verify package manifest
+        run: (cd dist && sha256sum -c *-SHA256SUMS.txt)
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version || github.ref_name }}
+        run: gh release create "$VERSION" dist/* --verify-tag --generate-notes --title "$VERSION"

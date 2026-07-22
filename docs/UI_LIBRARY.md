@@ -62,12 +62,40 @@ visual contract.
   member presentation, and studio appearance without covering the composer.
 - Settings uses eight persisted choices and scrolls its field viewport at the
   640x480 minimum. Character selection provides adjacent-cast browsing, a live
-  expression choice, larger source-faithful portraits, and contained actions.
+  expression choice, larger source-faithful portraits, selectable Color avatar
+  variants, and contained actions. The gallery resolves the same native AVB
+  selected at runtime, so a color portrait cannot silently fall back to a
+  monochrome preview. Its adjacent cards always wrap within the selected
+  HD, Color, or Original family; previews never mix body, head, or color
+  treatments from different families. A compact segmented family selector
+  switches between them while retaining the current identity. HD and Color are
+  the normal avatar families; Original is a compatibility choice.
+
+The desktop inspector, roster, and character chooser resolve a plain legacy
+identity to its generated HD presentation avatar. This is deliberately a
+client-view mapping: the source-faithful comic strip renderer keeps its pinned
+historical assets and golden-raster contract.
 - Popup rows expose disabled states for role-gated moderation commands. Member
   rows and cards show live IRC role badges without modifying authored art.
 - File-path controls use the same input geometry with a distinct Browse action;
   the action opens the native platform picker and never makes the full field
   look hovered.
+
+## Keyboard and semantic contract
+
+The framebuffer UI exposes the same interactive model to keyboard users and
+native accessibility adapters. Tab order includes the menu/navigation region,
+the compact toolbar, transcript, composer, message-mode tiles, member rail,
+and comic emotion dial when visible. Toolbar and message-mode tiles use a
+roving focus: Arrow keys and Home/End move the visible focus ring, and Enter
+invokes the same action as a pointer click. Context menus own Arrow, Home/End,
+Enter, and Escape until dismissed; disabled moderation rows are never chosen.
+
+Modal dialogs keep background controls out of the semantic tree. Browse is an
+individual button after its file-path field. The character picker exposes its
+HD/Color/Original family segments and previous/current/next cards as separate
+controls. The semantic snapshot has a bounded 256-node capacity and records
+truncation so adapters can fail visibly instead of silently losing controls.
 
 ## Reusable primitives
 
@@ -80,15 +108,81 @@ and disabled behavior. New screens should compose the existing primitives:
 - `drawAaDisc`, `drawAaLine`, `drawAaRing`, and `drawAaCircleOutline` for
   supersampled compact icon artwork
 - `drawButton`, `drawCommandTile`, `drawActionTile`, and `drawFocusRing`
-- `drawPill`, `drawTooltip`, `drawNotice`, and `drawHistoryBanner`
+- `drawPill`, `drawTooltip`, `drawTooltipWithHint`, `drawNotice`, `drawDialogActionBar`, and `drawHistoryBanner`
+- `drawDialogFieldLabel`, `drawMenuGroupDivider`, and `drawContentHeading` for
+  consistent dense-form, popup, and information hierarchy
+- `drawEmptyStateCallout` for stable empty-workspace and empty-roster guidance
 - `drawInputControl`, `InputKind`, `InputState`, `drawComposerField`, and
   `DialogLayout`
+- `drawTextSelection`, `drawTextCaret`, `drawTextOverflowMark`, and
+  `drawBrowseButton` for editable field adornments
+- `drawBrandMark`, `drawMemberRailSurface`, `drawStatusIdentity`, and
+  `drawPreviewChoiceCard` for shell identity and compact client surfaces
+- `drawAppBrand`, `drawPaneCountHeader`, and `drawDismissHint` for stable
+  shell identity, inspector headers, and temporary-popover keyboard guidance
+- `drawSegmentedChoice` for direct gallery-family selection without a long
+  cycle through unrelated asset variants
+- `drawStatusTabContent`, `drawConversationTab`, `drawLabeledStepper`, and
+  `drawStatusMetric` for the active-room navigation and activity surfaces
+- `StatusPanelLayout` and `drawEllipsized` for responsive activity geometry
+  and one consistent text-overflow treatment across every client surface
+- `drawAnchoredPopoverSurface` and `drawStatusMetricCard` for temporary
+  shell feedback with a visible origin and scannable information hierarchy
+
+All application labels use `drawEllipsized`, which preserves complete words
+when truncation is necessary. Optional identity chips are hidden when their
+full nickname cannot fit; they are never rendered as a clipped word.
+- `ToolGlyph`, `SayGlyph`, `drawToolGlyph`, and `drawSayGlyph` for every
+  palette-aware toolbar and composer icon. Their shared anti-aliased stroke
+  weight and tile state treatment are the application icon system; icon colors
+  must come from the active palette rather than hard-coded RGB values.
+- `MoodGlyph` and `drawMoodGlyph` for the full nine-expression radial dial;
+  its selected and resting faces inherit the active application palette.
+- `moodDialInterior` and `drawMoodDial` for the complete radial control,
+  sharing exact visual and pointer bounds across client rendering and input.
+- `PopupLayout` and `drawPopupListSurface` for menu and context popups that
+  share clamped bounds, row targets, and surface treatment.
+- `ToolbarLayout` for common group, command, hit-test, and tooltip geometry.
+- `AssetPreviewLayout` and `drawAssetPreviewFrame` for decoded character and
+  backdrop content framed by one responsive preview treatment.
+- `ComposerEditorLayout`, `drawComposerEditor`, and
+  `drawComposerOverflowMarks` for one composer surface with aligned content,
+  selection, caret, and overflow geometry.
 - `drawMenuItem`, `drawTab`, `drawMemberCard`, and `drawMessageRow`
 - `drawPaneHeader`, `drawExpressionPanel`, and `drawStatusBar`
 - `drawInspectorRail` and `drawVerticalScrollbar`
 
 Do not add ad-hoc colors or use Comic Neue for application controls. Add a
 token or reusable primitive when a new state is genuinely required.
+
+`drawMessageRow` uses a responsive fixed speaker rail: this aligns transcript
+copy across rows and keeps ordinary nicknames whole without allowing each row
+to push its message column to a different horizontal position.
+
+## Conversation component index
+
+The first fifty stable building blocks are cataloged below.  New room surfaces
+should compose these instead of drawing ad-hoc rectangles; the conversation
+set carries room state, local-speaker treatment, and catch-up state through the
+same themed palette.
+
+1. `Palette`; 2. `Appearance`; 3. `paletteFor`; 4. `activateAppearance`;
+5. `ControlState`; 6. `resolveControlColors`; 7. `contains`;
+8. `fillRoundedRect`; 9. `drawRoundedBorder`; 10. `drawAaDisc`;
+11. `drawAaRing`; 12. `drawAaCircleOutline`; 13. `drawAaLine`;
+14. `drawSurface`; 15. `drawPill`; 16. `drawTooltip`; 17. `drawButton`;
+18. `drawModalBackdrop`; 19. `drawDialogSurface`; 20. `drawNotice`;
+21. `drawInputControl`; 22. `drawCommandTile`; 23. `drawActionTile`;
+24. `drawFocusRing`; 25. `drawStepper`; 26. `drawVerticalScrollbar`;
+27. `drawMenuItem`; 28. `drawMenuLabel`; 29. `drawMenuBarSurface`;
+30. `drawToolbarSurface`; 31. `drawToolbarGroup`; 32. `drawPopupSurface`;
+33. `drawToolbarSeparator`; 34. `drawSplitter`; 35. `drawContentSurface`;
+36. `drawTabStrip`; 37. `drawStatusTab`; 38. `drawTab`; 39. `drawStatusBar`;
+40. `drawConversationPresenceDot`; 41. `drawConversationTitle`;
+42. `drawConversationSummary`; 43. `drawConversationStateBadge`;
+44. `drawConversationRule`; 45. `drawConversationHeader`;
+46. `drawMessageRow`; 47. `drawMemberRow`; 48. `drawMemberCard`;
+49. `drawPaneHeaderReserved`; 50. `drawComposerField`.
 
 ## Deterministic visual checks
 
@@ -117,6 +211,7 @@ zig build run -- render-ui dark-settings > ui-dark-settings-preview.png
 zig build run -- render-ui compact-dark-settings > ui-compact-dark-settings-preview.png
 zig build run -- render-ui dark-character > ui-dark-character-preview.png
 zig build run -- render-ui status > ui-status-preview.png
+zig build run -- render-ui compact-status > ui-compact-status-preview.png
 zig build run -- render-ui dark-status > ui-dark-status-preview.png
 zig build run -- render-ui multi-tabs > ui-multi-tabs-preview.png
 zig build run -- render-ui compact-multi-tabs > ui-compact-multi-tabs-preview.png
@@ -143,9 +238,9 @@ same live Win32 interaction path under headless Wine. The Wine path also
 exercises status-bar connection setup, invalid-port recovery, verified-TLS
 reconnect, live member scrolling/selection/context actions, Settings, Room
 List, User List, Comic View density, sparse-page geometry, and composer input.
-Linux and Windows
-`render-ui` output must remain byte-identical for the main, compact menu,
-settings, password input, long composer, and conversation surfaces.
+Linux and Windows `render-ui` output must remain byte-identical for the main,
+compact menu, settings, password input, long composer, and conversation
+surfaces.
 
 ## Font regeneration
 
