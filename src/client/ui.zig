@@ -922,7 +922,7 @@ pub fn drawMenuBarSurface(c: *Canvas, rect: Rect) void {
 pub fn drawBrandMark(c: *Canvas, rect: Rect) void {
     if (rect.w < 16 or rect.h < 16) return;
     fillRoundedRect(c, rect.x, rect.y, rect.w, rect.h, @min(7, @divTrunc(rect.h, 3)), current.accent);
-    _ = c.drawUiText("C", rect.x + @divTrunc(rect.w - Canvas.uiTextWidth("C"), 2), rect.y + @divTrunc(rect.h - 14, 2), current.navigation_ink);
+    _ = c.drawUiText("R", rect.x + @divTrunc(rect.w - Canvas.uiTextWidth("R"), 2), rect.y + @divTrunc(rect.h - 14, 2), current.navigation_ink);
 }
 
 /// Shared application identity for the desktop menu bar.

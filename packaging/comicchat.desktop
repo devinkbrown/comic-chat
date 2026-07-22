@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
-Name=Comic Chat: Reinked
-Comment=Open a Comic Chat: Reinked conversation or locator
+Name=Reinked
+Comment=Open a Reinked conversation or locator
 Exec=reinked %f
 Icon=applications-internet
 Terminal=false
