@@ -368,12 +368,19 @@ pub const Client = struct {
     }
 
     fn drainTx(self: *Client) !void {
-        while (self.tx.peek(self.policy_now_ms)) |next_item| {
+        // Keep native event loops responsive even when a reconnect restores a
+        // large control backlog.  The queue remains priority ordered and the
+        // next tick continues draining without dropping replay-safe traffic.
+        var writes: usize = 0;
+        const max_writes_per_tick = 16;
+        while (writes < max_writes_per_tick) {
+            const next_item = self.tx.peek(self.policy_now_ms) orelse break;
             self.transport.send(next_item.bytes) catch |err| {
                 self.tx.markUncertain(next_item.index);
                 return err;
             };
             self.tx.confirmSent(next_item.index);
+            writes += 1;
         }
     }
 
