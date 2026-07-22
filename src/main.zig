@@ -1344,8 +1344,21 @@ fn finishJoin(
     state.joined = true;
     state.status = "connected";
     if (state.avatar_announced) return;
-    try client.announceAvatar(channel, transcript.resolvedAvatar(nick), state.ircx_data);
+    try announceRoomAvatar(client, channel, transcript.resolvedAvatar(nick), state.ircx_data);
     state.avatar_announced = true;
+}
+
+/// Modern generated avatars remain a local rendering choice.  The source
+/// Comic Chat control only accepts a single legacy avatar token, so normalize
+/// a selected family name before putting it on the IRC wire.
+fn announceRoomAvatar(
+    client: *cc.net.client.Client,
+    target: []const u8,
+    selected_avatar: []const u8,
+    ircx_data: bool,
+) !void {
+    const wire_avatar = cc.comic.session.avatarAnnouncementName(selected_avatar) orelse return error.UnknownAvatar;
+    try client.announceAvatar(target, wire_avatar, ircx_data);
 }
 
 const UiEventResult = struct {
@@ -2513,7 +2526,7 @@ fn applyDialogAction(
         .character => {
             const selected = cc.comic.session.bundledAvatarByName(value) orelse return;
             try room.transcript.setAvatar(nick, selected);
-            if (maybe_client) |client| try client.announceAvatar(room.name, selected, state.ircx_data);
+            if (maybe_client) |client| try announceRoomAvatar(client, room.name, selected, state.ircx_data);
         },
         .background => {
             const selected = cc.comic.session.bundledBackdropByName(value) orelse {
@@ -3499,7 +3512,7 @@ fn processWorkspaceMessages(
                 room.joined = true;
                 state.joined = true;
                 state.status = "connected";
-                try client.announceAvatar(room.name, room.transcript.resolvedAvatar(nick), state.ircx_data);
+                try announceRoomAvatar(client, room.name, room.transcript.resolvedAvatar(nick), state.ircx_data);
                 redraw = true;
             } else if (workspace.find(joined_channel)) |room_index| {
                 try sendAutomaticGreeting(client, preferences, joined_channel, who);
@@ -3919,7 +3932,7 @@ fn processComicControl(
             return true;
         },
         .get_char_info => {
-            try client.announceAvatar(who, transcript.resolvedAvatar(self_nick), ircx_data);
+            try announceRoomAvatar(client, who, transcript.resolvedAvatar(self_nick), ircx_data);
             return true;
         },
         .heres_info => |profile| {
@@ -4073,7 +4086,7 @@ fn handleInputKey(
                 const requested = if (line.len > "/avatar ".len) line["/avatar ".len..] else "";
                 const selected = cc.comic.session.bundledAvatarByName(requested) orelse return true;
                 try transcript.setAvatar(nick, selected);
-                try client.announceAvatar(channel, selected, ircx_data);
+                try announceRoomAvatar(client, channel, selected, ircx_data);
                 return true;
             }
             const selected_mode = view.shell.say_mode;

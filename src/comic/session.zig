@@ -85,6 +85,33 @@ pub fn bundledAvatarByName(name: []const u8) ?[]const u8 {
     return null;
 }
 
+/// Return the source-era avatar token suitable for `# Appears as ...`.
+///
+/// Generated families intentionally use display names such as `anna color`,
+/// but the Microsoft comment grammar uses a single filename-like token.  Keep
+/// the richer local selection for Reinked while announcing the base cast name
+/// so original Comic Chat clients can resolve it instead of rejecting the
+/// whole control message.
+pub fn avatarAnnouncementName(name: []const u8) ?[]const u8 {
+    for (avatars) |avatar| {
+        if (std.ascii.eqlIgnoreCase(avatar, name)) return avatar;
+    }
+    const families = [_][]const u8{ " hd", " color", " original" };
+    for (families) |family| {
+        if (name.len <= family.len or !std.ascii.eqlIgnoreCase(name[name.len - family.len ..], family)) continue;
+        const base = name[0 .. name.len - family.len];
+        for (avatars) |avatar| if (std.ascii.eqlIgnoreCase(avatar, base)) return avatar;
+    }
+    return null;
+}
+
+test "generated avatar families announce their legacy-compatible base name" {
+    try std.testing.expectEqualStrings("anna", avatarAnnouncementName("anna color").?);
+    try std.testing.expectEqualStrings("tiki", avatarAnnouncementName("Tiki HD").?);
+    try std.testing.expectEqualStrings("xeno", avatarAnnouncementName("xeno original").?);
+    try std.testing.expect(avatarAnnouncementName("not a bundled avatar") == null);
+}
+
 /// Result of parsing the source client's `ProcessComment` avatar control.
 /// Recognized-but-invalid controls are distinguished from ordinary chat so a
 /// malformed announcement is still consumed instead of becoming a balloon.
