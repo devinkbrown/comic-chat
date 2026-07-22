@@ -719,20 +719,40 @@ pub fn drawStepper(c: *Canvas, rect: Rect, decrease_hovered: bool, increase_hove
     c.fillRect(rect.right() - 31, rect.y + 5, 1, rect.h - 10, current.divider);
 }
 
-pub fn drawMessageRow(c: *Canvas, rect: Rect, nick: []const u8, text: []const u8, alternate: bool, selected: bool) void {
+pub fn drawMessageRow(c: *Canvas, rect: Rect, nick: []const u8, text: []const u8, alternate: bool, selected: bool, continued: bool) void {
     const nick_w = @min(112, @max(54, Canvas.uiTextWidth(nick) + 14));
-    drawRoundedBorder(c, rect.x + 7, rect.y - 1, rect.w - 14, rect.h - 4, 7, if (selected) current.accent_soft else if (alternate) current.chrome else current.layer, if (selected) current.focus else current.divider);
-    c.fillRect(rect.x + 7, rect.y + 5, 3, rect.h - 15, current.accent);
-    fillRoundedRect(c, rect.x + 16, rect.y + 2, nick_w - 8, 18, 4, current.accent_soft);
-    drawEllipsized(c, nick, rect.x + 20, rect.y + 3, nick_w - 16, current.accent);
-    const text_x = rect.x + nick_w + 14;
-    const text_w = rect.w - nick_w - 24;
+    const left = if (continued) rect.x + 24 else rect.x + 7;
+    const text_x = if (continued) rect.x + 32 else rect.x + nick_w + 14;
+    const text_w = if (continued) rect.right() - text_x - 16 else rect.w - nick_w - 24;
+    drawRoundedBorder(c, left, rect.y - 1, rect.right() - left - 7, rect.h - 4, 7, if (selected) current.accent_soft else if (alternate) current.chrome else current.layer, if (selected) current.focus else current.divider);
+    if (continued) {
+        c.fillRect(rect.x + 16, rect.y + 9, 3, rect.h - 23, current.accent_soft);
+        fillRoundedRect(c, rect.x + 14, rect.y + 5, 7, 7, 4, current.accent);
+    } else {
+        c.fillRect(rect.x + 7, rect.y + 5, 3, rect.h - 15, current.accent);
+        fillRoundedRect(c, rect.x + 16, rect.y + 2, nick_w - 8, 18, 4, current.accent_soft);
+        drawEllipsized(c, nick, rect.x + 20, rect.y + 3, nick_w - 16, current.accent);
+    }
     const split = messageWrapPoint(text, text_w);
     drawEllipsized(c, text[0..split], text_x, rect.y + 3, text_w, current.ink);
     if (split < text.len) {
         const rest = if (text[split] == ' ') text[split + 1 ..] else text[split..];
         drawEllipsized(c, rest, text_x, rect.y + 21, text_w, current.secondary);
     }
+}
+
+pub fn drawConversationHeader(c: *Canvas, rect: Rect, count: usize, live: bool) void {
+    c.fillRect(rect.x, rect.y, rect.w, 30, current.rail);
+    fillRoundedRect(c, rect.x + 12, rect.y + 10, 6, 6, 3, if (live) current.success else current.warning);
+    _ = c.drawUiText("Conversation", rect.x + 28, rect.y + 7, current.ink);
+    var count_buf: [20]u8 = undefined;
+    const count_text = std.fmt.bufPrint(&count_buf, "{d} messages", .{count}) catch "";
+    drawEllipsized(c, count_text, rect.x + 130, rect.y + 7, @max(0, rect.w - 226), current.secondary);
+    const mode = if (live) "LIVE" else "BROWSING";
+    const width = Canvas.uiTextWidth(mode) + 16;
+    fillRoundedRect(c, rect.right() - width - 12, rect.y + 7, width, 16, 6, if (live) current.accent_soft else current.notice_warning);
+    _ = c.drawUiText(mode, rect.right() - width - 4, rect.y + 8, if (live) current.accent else current.warning);
+    c.fillRect(rect.x + 12, rect.y + 29, @max(0, rect.w - 24), 1, current.divider);
 }
 
 pub fn drawLatestEdge(c: *Canvas, rect: Rect, label: []const u8) void {

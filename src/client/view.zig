@@ -1134,7 +1134,7 @@ pub const View = struct {
         // the latest edge is unmistakable when the user is caught up.
         const header_h: i32 = 30;
         const row_h: i32 = 46;
-        ui.drawPaneHeader(&self.canvas, rect, "Conversation");
+        ui.drawConversationHeader(&self.canvas, rect, transcript.lines.items.len, self.shell.history_offset == 0);
         const capacity: usize = @intCast(@max(1, @divTrunc(rect.h - header_h - 10, row_h)));
         const range = self.shell.visibleRange(transcript.lines.items.len, capacity);
         var y = rect.y + header_h + 4;
@@ -1142,7 +1142,8 @@ pub const View = struct {
             const absolute_index = range.start + index;
             const selection = self.shell.transcriptSelection();
             const selected = if (selection) |selected_range| absolute_index >= selected_range.start and absolute_index < selected_range.end else false;
-            ui.drawMessageRow(&self.canvas, .{ .x = rect.x, .y = y, .w = rect.w, .h = row_h }, line.nick, line.text, index % 2 == 0, selected);
+            const continued = absolute_index != 0 and std.ascii.eqlIgnoreCase(transcript.lines.items[absolute_index - 1].nick, line.nick);
+            ui.drawMessageRow(&self.canvas, .{ .x = rect.x, .y = y, .w = rect.w, .h = row_h }, line.nick, line.text, index % 2 == 0, selected, continued);
             y += row_h;
             if (y + row_h > rect.bottom()) break;
         }

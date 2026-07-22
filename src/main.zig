@@ -4153,10 +4153,11 @@ fn runUiPreview(gpa: std.mem.Allocator, io: std.Io, surface: []const u8) !void {
     defer view.deinit();
     const dark_surface = std.mem.indexOf(u8, surface, "dark") != null;
     if (dark_surface) view.setAppearance(.{ .mode = .dark, .accent = .violet }, true);
+    if (std.mem.startsWith(u8, surface, "text-")) view.shell.content_mode = .text;
     var transcript = cc.comic.session.Transcript.init(gpa);
     defer transcript.deinit();
     try transcript.setSelf("comicchat");
-    const with_conversation = std.mem.eql(u8, surface, "conversation") or std.mem.eql(u8, surface, "member");
+    const with_conversation = std.mem.eql(u8, surface, "conversation") or std.mem.eql(u8, surface, "member") or std.mem.eql(u8, surface, "text-conversation");
     if (with_conversation) {
         try transcript.setAvatar("comicchat", "anna");
         try transcript.setAvatar("alex", "armando");
