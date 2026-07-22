@@ -130,7 +130,7 @@ pub const Store = struct {
     }
 
     pub fn backdropName(self: *const Store) []const u8 {
-        return if (self.backdrop.items.len == 0) "field" else self.backdrop.items;
+        return if (self.backdrop.items.len == 0) "color apartment" else self.backdrop.items;
     }
 
     pub fn greetingMode(self: *const Store) []const u8 {

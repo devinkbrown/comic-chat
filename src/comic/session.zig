@@ -15,6 +15,15 @@ pub const avatars = [_][]const u8{
     "susan",    "tiki",    "tongtyed", "xeno",
 };
 
+/// Generated Color AVBs are the portable client's default cast; original
+/// source AVBs remain available only through the explicit Original family.
+pub const default_avatars = [_][]const u8{
+    "anna color",     "armando color", "bolo color",     "cro color",     "dan color",   "denise color",
+    "hugh color",     "jordan color",  "kevin color",    "kwensa color",  "lance color", "lynnea color",
+    "margaret color", "maynard color", "mike color",     "rebecca color", "sage color",  "scotty color",
+    "susan color",    "tiki color",    "tongtyed color", "xeno color",
+};
+
 pub const avatar_announcement_prefix = "# Appears as ";
 pub const ctcp_action_prefix = "\x01ACTION ";
 pub const ctcp_sound_prefix = "\x01SOUND ";
@@ -218,13 +227,13 @@ pub fn parseBackdropControl(text: []const u8) BackdropControl {
     return .not_control;
 }
 
-/// Deterministic, case-insensitive nick → avatar (FNV-1a hash, mod 22).
+/// Deterministic, case-insensitive nick → generated Color avatar (FNV-1a).
 pub fn avatarForNick(nick: []const u8) []const u8 {
     var h: u64 = 0xcbf29ce484222325;
     for (nick) |ch| {
         h = (h ^ std.ascii.toLower(ch)) *% 0x100000001b3;
     }
-    return avatars[@intCast(h % avatars.len)];
+    return default_avatars[@intCast(h % default_avatars.len)];
 }
 
 /// "nick!user@host" or ":nick!.." → "nick".
@@ -326,7 +335,7 @@ pub const Transcript = struct {
     }
 
     pub fn resolvedBackdrop(self: *const Transcript) []const u8 {
-        return self.backdrop_storage orelse "field";
+        return self.backdrop_storage orelse "color apartment";
     }
 
     /// Resolve a participant through their most recent source announcement,
@@ -734,7 +743,7 @@ pub const Transcript = struct {
 pub fn bundledBackdropByName(name: []const u8) ?[]const u8 {
     const dot = std.mem.indexOfScalar(u8, name, '.');
     const base = if (dot) |index| name[0..index] else name;
-    for ([_][]const u8{ "field", "volcano", "den", "room", "pastoral" }) |candidate| {
+    for ([_][]const u8{ "field", "volcano", "den", "room", "pastoral", "color apartment", "color rooftop", "color cafe", "color park", "color space corridor", "color boardwalk", "color school hall", "color rainy street", "color library", "color campsite", "whacky spaceship bridge", "whacky asteroid diner", "whacky sky island market", "whacky underwater dome", "whacky friendly castle", "whacky pinball interior", "whacky cosmic laundromat", "whacky cloud train station", "whacky mushroom village", "whacky arcade planetarium" }) |candidate| {
         if (std.ascii.eqlIgnoreCase(base, candidate)) return candidate;
     }
     return null;
@@ -743,7 +752,7 @@ pub fn bundledBackdropByName(name: []const u8) ?[]const u8 {
 test "transcript applies only bundled backdrop names" {
     var transcript = Transcript.init(std.testing.allocator);
     defer transcript.deinit();
-    try std.testing.expectEqualStrings("field", transcript.resolvedBackdrop());
+    try std.testing.expectEqualStrings("color apartment", transcript.resolvedBackdrop());
     try transcript.setBackdrop("Volcano.bgb");
     try std.testing.expectEqualStrings("volcano", transcript.resolvedBackdrop());
     try std.testing.expectError(error.UnknownBackdrop, transcript.setBackdrop("https://example.test/remote.bgb"));
@@ -826,7 +835,7 @@ test "avatarForNick is deterministic, case-insensitive, and always valid" {
     try std.testing.expectEqualStrings(a, avatarForNick("bob"));
     try std.testing.expectEqualStrings(a, avatarForNick("BOB"));
     var found = false;
-    for (avatars) |av| {
+    for (default_avatars) |av| {
         if (std.mem.eql(u8, av, a)) found = true;
     }
     try std.testing.expect(found);
