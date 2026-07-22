@@ -1129,10 +1129,15 @@ pub const View = struct {
             drawEmptyBuffer(&self.canvas, rect, "No messages yet - type below and press Enter", 1);
             return;
         }
-        const row_h: i32 = 31;
-        const capacity: usize = @intCast(@max(1, @divTrunc(rect.h - 12, row_h)));
+        // The text view is a calm reading surface rather than a debug log:
+        // room context stays visible, messages have a two-line rhythm, and
+        // the latest edge is unmistakable when the user is caught up.
+        const header_h: i32 = 30;
+        const row_h: i32 = 46;
+        ui.drawPaneHeader(&self.canvas, rect, "Conversation");
+        const capacity: usize = @intCast(@max(1, @divTrunc(rect.h - header_h - 10, row_h)));
         const range = self.shell.visibleRange(transcript.lines.items.len, capacity);
-        var y = rect.y + 6;
+        var y = rect.y + header_h + 4;
         for (transcript.lines.items[range.start..range.end], 0..) |line, index| {
             const absolute_index = range.start + index;
             const selection = self.shell.transcriptSelection();
@@ -1142,6 +1147,7 @@ pub const View = struct {
             if (y + row_h > rect.bottom()) break;
         }
         ui.drawVerticalScrollbar(&self.canvas, rect, transcript.lines.items.len, capacity, range.start);
+        if (range.end == transcript.lines.items.len) ui.drawLatestEdge(&self.canvas, rect, "LIVE");
     }
 
     fn drawMemberList(self: *View, rect: Rect, transcript: *const session.Transcript, icon_mode: bool) !void {

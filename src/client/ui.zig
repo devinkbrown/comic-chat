@@ -721,11 +721,36 @@ pub fn drawStepper(c: *Canvas, rect: Rect, decrease_hovered: bool, increase_hove
 
 pub fn drawMessageRow(c: *Canvas, rect: Rect, nick: []const u8, text: []const u8, alternate: bool, selected: bool) void {
     const nick_w = @min(112, @max(54, Canvas.uiTextWidth(nick) + 14));
-    drawRoundedBorder(c, rect.x + 7, rect.y - 2, rect.w - 14, rect.h - 3, 5, if (selected) current.accent_soft else if (alternate) current.chrome else current.layer, if (selected) current.focus else current.divider);
-    c.fillRect(rect.x + 7, rect.y + 3, 3, rect.h - 13, current.accent);
+    drawRoundedBorder(c, rect.x + 7, rect.y - 1, rect.w - 14, rect.h - 4, 7, if (selected) current.accent_soft else if (alternate) current.chrome else current.layer, if (selected) current.focus else current.divider);
+    c.fillRect(rect.x + 7, rect.y + 5, 3, rect.h - 15, current.accent);
     fillRoundedRect(c, rect.x + 16, rect.y + 2, nick_w - 8, 18, 4, current.accent_soft);
     drawEllipsized(c, nick, rect.x + 20, rect.y + 3, nick_w - 16, current.accent);
-    drawEllipsized(c, text, rect.x + nick_w + 14, rect.y + 3, rect.w - nick_w - 24, current.ink);
+    const text_x = rect.x + nick_w + 14;
+    const text_w = rect.w - nick_w - 24;
+    const split = messageWrapPoint(text, text_w);
+    drawEllipsized(c, text[0..split], text_x, rect.y + 3, text_w, current.ink);
+    if (split < text.len) {
+        const rest = if (text[split] == ' ') text[split + 1 ..] else text[split..];
+        drawEllipsized(c, rest, text_x, rect.y + 21, text_w, current.secondary);
+    }
+}
+
+pub fn drawLatestEdge(c: *Canvas, rect: Rect, label: []const u8) void {
+    const width = Canvas.uiTextWidth(label) + 16;
+    const x = rect.right() - width - 16;
+    fillRoundedRect(c, x, rect.y + 7, width, 16, 6, current.accent_soft);
+    _ = c.drawUiText(label, x + 8, rect.y + 8, current.accent);
+}
+
+fn messageWrapPoint(text: []const u8, width: i32) usize {
+    if (Canvas.uiTextWidth(text) <= width) return text.len;
+    var point: usize = 0;
+    var last_space: ?usize = null;
+    while (point < text.len) : (point += 1) {
+        if (text[point] == ' ') last_space = point;
+        if (Canvas.uiTextWidth(text[0 .. point + 1]) > width) return last_space orelse point;
+    }
+    return text.len;
 }
 
 pub fn drawMemberRow(c: *Canvas, rect: Rect, label: []const u8, role_badge: []const u8, selected: bool, departed: bool, away: bool, hovered: bool) void {
