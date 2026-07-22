@@ -8,7 +8,7 @@ x86_64 tarball, FreeBSD x86_64 tarball, OpenBSD x86_64 tarball, and a
 licenses/notices, and the product documentation. Verify the downloaded files
 with `sha256sum -c comicchat-*-SHA256SUMS.txt` before extracting.
 
-Comic Chat accepts a `.ccc` conversation or `.ccr` locator as its only command-line
+Reinked accepts a `.ccc` conversation or `.ccr` locator as its only command-line
 argument. The application opens the document and keeps the normal secure connection
 workflow active.
 

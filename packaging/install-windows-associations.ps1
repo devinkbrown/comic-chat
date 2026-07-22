@@ -1,10 +1,10 @@
 $ErrorActionPreference = "Stop"
-$exe = (Resolve-Path (Join-Path $PSScriptRoot "..\comicchat.exe")).Path
+$exe = (Resolve-Path (Join-Path $PSScriptRoot "..\reinked.exe")).Path
 $command = '"' + $exe + '" "%1"'
 
 foreach ($association in @(
-    @{ Extension = ".ccc"; Class = "ComicChat.Conversation"; Description = "Comic Chat conversation" },
-    @{ Extension = ".ccr"; Class = "ComicChat.Locator"; Description = "Comic Chat locator" }
+    @{ Extension = ".ccc"; Class = "Reinked.Conversation"; Description = "Comic Chat: Reinked conversation" },
+    @{ Extension = ".ccr"; Class = "Reinked.Locator"; Description = "Comic Chat: Reinked locator" }
 )) {
     $extensionKey = "HKCU:\Software\Classes\" + $association.Extension
     $classKey = "HKCU:\Software\Classes\" + $association.Class
@@ -16,4 +16,4 @@ foreach ($association in @(
     Set-Item -Path ($classKey + "\shell\open\command") -Value $command
 }
 
-Write-Host "Comic Chat .ccc and .ccr associations were installed for the current user."
+Write-Host "Comic Chat: Reinked .ccc and .ccr associations were installed for the current user."

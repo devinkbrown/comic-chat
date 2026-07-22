@@ -1,6 +1,6 @@
-# comicchat
+# Comic Chat: Reinked
 
-A portable, source-faithful continuation of **Comic Chat**, built in Zig with
+A portable, source-faithful continuation of **Comic Chat: Reinked**, built in Zig with
 a software renderer, native X11/Wayland/Win32 presentation, and verified TLS.
 
 ![Dark Comic Chat character picker](ui-dark-preview.png)

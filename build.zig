@@ -32,7 +32,7 @@ pub fn build(b: *std.Build) void {
     });
     // The CLI / app entry point.
     const exe = b.addExecutable(.{
-        .name = "comicchat",
+        .name = "reinked",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,

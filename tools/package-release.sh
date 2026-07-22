@@ -70,7 +70,7 @@ write_tar_gz() {
 package_target() {
     local target=$1 platform=$2 executable=$3 archive=$4 format=$5
     local prefix="$stage_dir/$platform"
-    local package_dir="$prefix/comicchat-$version-$platform"
+    local package_dir="$prefix/reinked-$version-$platform"
 
     (cd "$repo_root" && zig build -Dtarget="$target" -Doptimize=ReleaseSafe -Dstrip=true --prefix "$prefix")
     mkdir -p "$package_dir"
@@ -92,7 +92,7 @@ package_target() {
 }
 
 package_source() {
-    local source_basename="comicchat-$version-source"
+    local source_basename="reinked-$version-source"
     local source_dir="$stage_dir/source/$source_basename"
     local pinned_onyx
     local -a onyx_files
@@ -112,33 +112,33 @@ package_source() {
     assert_release_clean "$source_dir"
     normalize_tree "$source_dir"
     write_tar_gz "$stage_dir/source" "$source_basename" \
-        "$output_dir/comicchat-$version-source.tar.gz"
+        "$output_dir/reinked-$version-source.tar.gz"
 }
 
 mkdir -p "$output_dir"
-rm -f "$output_dir"/comicchat-"$version"-windows-x86_64.zip \
-      "$output_dir"/comicchat-"$version"-linux-x86_64.tar.gz \
-      "$output_dir"/comicchat-"$version"-freebsd-x86_64.tar.gz \
-      "$output_dir"/comicchat-"$version"-openbsd-x86_64.tar.gz \
-      "$output_dir"/comicchat-"$version"-source.tar.gz \
-      "$output_dir"/comicchat-"$version"-SHA256SUMS.txt
+rm -f "$output_dir"/reinked-"$version"-windows-x86_64.zip \
+      "$output_dir"/reinked-"$version"-linux-x86_64.tar.gz \
+      "$output_dir"/reinked-"$version"-freebsd-x86_64.tar.gz \
+      "$output_dir"/reinked-"$version"-openbsd-x86_64.tar.gz \
+      "$output_dir"/reinked-"$version"-source.tar.gz \
+      "$output_dir"/reinked-"$version"-SHA256SUMS.txt
 
-package_target x86_64-windows windows-x86_64 comicchat.exe \
-    "comicchat-$version-windows-x86_64.zip" zip
-package_target x86_64-linux linux-x86_64 comicchat \
-    "comicchat-$version-linux-x86_64.tar.gz" tar.gz
-package_target x86_64-freebsd freebsd-x86_64 comicchat \
-    "comicchat-$version-freebsd-x86_64.tar.gz" tar.gz
-package_target x86_64-openbsd openbsd-x86_64 comicchat \
-    "comicchat-$version-openbsd-x86_64.tar.gz" tar.gz
+package_target x86_64-windows windows-x86_64 reinked.exe \
+    "reinked-$version-windows-x86_64.zip" zip
+package_target x86_64-linux linux-x86_64 reinked \
+    "reinked-$version-linux-x86_64.tar.gz" tar.gz
+package_target x86_64-freebsd freebsd-x86_64 reinked \
+    "reinked-$version-freebsd-x86_64.tar.gz" tar.gz
+package_target x86_64-openbsd openbsd-x86_64 reinked \
+    "reinked-$version-openbsd-x86_64.tar.gz" tar.gz
 package_source
 
 (cd "$output_dir" && sha256sum \
-    "comicchat-$version-windows-x86_64.zip" \
-    "comicchat-$version-linux-x86_64.tar.gz" \
-    "comicchat-$version-freebsd-x86_64.tar.gz" \
-    "comicchat-$version-openbsd-x86_64.tar.gz" \
-    "comicchat-$version-source.tar.gz" \
-    > "comicchat-$version-SHA256SUMS.txt")
+    "reinked-$version-windows-x86_64.zip" \
+    "reinked-$version-linux-x86_64.tar.gz" \
+    "reinked-$version-freebsd-x86_64.tar.gz" \
+    "reinked-$version-openbsd-x86_64.tar.gz" \
+    "reinked-$version-source.tar.gz" \
+    > "reinked-$version-SHA256SUMS.txt")
 
 printf 'Packages written to %s\n' "$output_dir"

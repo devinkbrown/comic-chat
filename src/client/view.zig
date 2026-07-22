@@ -1240,7 +1240,7 @@ pub const View = struct {
         const comic_mode = self.shell.content_mode == .comic;
         const layout = geometry.Layout.compute(self.canvas.width, self.canvas.height, comic_mode, self.shell.show_members);
         var snapshot: accessibility.Snapshot = .{ .status = status };
-        snapshot.append(.{ .id = "comicchat", .role = .window, .bounds = .{ .x = 0, .y = 0, .w = @intCast(self.canvas.width), .h = @intCast(self.canvas.height) }, .label = "Comic Chat" });
+        snapshot.append(.{ .id = "reinked", .role = .window, .bounds = .{ .x = 0, .y = 0, .w = @intCast(self.canvas.width), .h = @intCast(self.canvas.height) }, .label = "Comic Chat: Reinked" });
         snapshot.append(.{ .id = "menu", .role = .menu_bar, .bounds = layout.menu, .label = "Application menu", .focused = self.shell.focus == .navigation });
         snapshot.append(.{ .id = "toolbar", .role = .toolbar, .bounds = layout.toolbar, .label = "Application tools", .focused = self.shell.focus == .toolbar });
         const toolbar_layout = ui.ToolbarLayout.init(layout.toolbar);
@@ -1772,7 +1772,7 @@ fn menuItemLabel(menu: u8, item: u8) []const u8 {
             4 => "Rule sets",
             5 => "Logon notifications",
             6 => "Online notification users",
-            else => "About Comic Chat",
+            else => "About Comic Chat: Reinked",
         },
         else => "Settings",
     };
@@ -1801,7 +1801,7 @@ fn menuPopupItem(canvas_width: u32, menu: u8, x: i32, y: i32) ?u8 {
 
 fn drawMenuBar(c: *Canvas, rect: Rect, active: ?u8, hovered: ?u8) void {
     ui.drawMenuBarSurface(c, rect);
-    ui.drawAppBrand(c, rect, "Comic Chat");
+    ui.drawAppBrand(c, rect, "Comic Chat: Reinked");
     var x = rect.x + 170;
     for (menu_labels, 0..) |item, raw_index| {
         const index: u8 = @intCast(raw_index);
@@ -2012,7 +2012,7 @@ fn toolbarLabel(index: u8) []const u8 {
         21 => "Underline",
         22 => "Fixed-width text",
         23 => "Insert symbol",
-        else => "Comic Chat tool",
+        else => "Comic Chat: Reinked tool",
     };
 }
 

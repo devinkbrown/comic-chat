@@ -40,4 +40,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version || github.ref_name }}
-        run: gh release create "$VERSION" dist/* --verify-tag --generate-notes --title "$VERSION"
+        run: gh release create "$VERSION" dist/* --verify-tag --generate-notes --title "Comic Chat: Reinked $VERSION"
