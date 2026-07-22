@@ -63,6 +63,16 @@ pub fn bundledAvatarByName(name: []const u8) ?[]const u8 {
     for (avatars) |avatar| {
         if (std.ascii.eqlIgnoreCase(avatar, name)) return avatar;
     }
+    // Generated HD and Color AVBs plus the source-faithful originals are
+    // canonical runtime families, not UI-only display names.  Keep this
+    // normalization alongside the wire validator so avatar announcements and
+    // locally applied character choices reach strip.avatarByName unchanged.
+    const families = [_][]const u8{ " hd", " color", " original" };
+    for (families) |family| {
+        if (name.len <= family.len or !std.ascii.eqlIgnoreCase(name[name.len - family.len ..], family)) continue;
+        const base = name[0 .. name.len - family.len];
+        for (avatars) |avatar| if (std.ascii.eqlIgnoreCase(avatar, base)) return name;
+    }
     return null;
 }
 
@@ -87,10 +97,11 @@ pub fn parseAvatarAnnouncement(text: []const u8) AvatarAnnouncement {
     const name = if (dot) |index| value[0..index] else value;
     if (name.len == 0) return .invalid;
 
-    // Bundled names are simple printable tokens. Reject whitespace/control
-    // rather than accepting a loose prefix such as "anna anything".
+    // Families use a single space suffix (HD, Color, Original).  Acceptance
+    // remains strict because bundledAvatarByName below recognizes only exact
+    // base/family names; reject controls and punctuation here.
     for (name) |ch| {
-        if (!std.ascii.isAlphanumeric(ch) and ch != '_' and ch != '-') return .invalid;
+        if (!std.ascii.isAlphanumeric(ch) and ch != '_' and ch != '-' and ch != ' ') return .invalid;
     }
 
     if (dot) |index| {
@@ -830,6 +841,9 @@ test "avatar announcement parser is strict and canonicalizes bundled names" {
         "xeno",
         parseAvatarAnnouncement("# Appears as XENO.https://example.invalid/xeno.avb").avatar,
     );
+    try std.testing.expectEqualStrings("Anna HD", parseAvatarAnnouncement("# Appears as Anna HD").avatar);
+    try std.testing.expectEqualStrings("Xeno Color", parseAvatarAnnouncement("# Appears as Xeno Color").avatar);
+    try std.testing.expectEqualStrings("Tiki Original", parseAvatarAnnouncement("# Appears as Tiki Original").avatar);
     try std.testing.expect(parseAvatarAnnouncement("# Appears as none") == .none);
     try std.testing.expect(parseAvatarAnnouncement("hello") == .not_control);
     try std.testing.expect(parseAvatarAnnouncement("# appears as anna") == .not_control);
