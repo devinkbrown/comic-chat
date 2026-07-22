@@ -24,6 +24,7 @@ pub const TypingStatus = enum { active, paused, done };
 pub const PinsOperation = enum { list, add, delete, clear };
 pub const MonitorOperation = enum { add, remove, clear, list, status };
 pub const SilenceOperation = enum { list, add, remove };
+pub const AcceptOperation = enum { list, add, remove };
 
 const desired_without_sasl = blk: {
     var names: [ircv3.default_desired_capabilities.len - 1][]const u8 = undefined;
@@ -549,6 +550,22 @@ pub const Client = struct {
         try self.queueOut(.interactive, true, false);
     }
 
+    pub fn accept(self: *Client, operation: AcceptOperation, nick: ?[]const u8) !void {
+        if (operation == .list) {
+            if (nick != null) return error.InvalidIrcParameter;
+            try self.appendCommand("ACCEPT", &.{"*"});
+        } else {
+            const value = nick orelse return error.InvalidIrcParameter;
+            if (!validAcceptNick(value)) return error.InvalidIrcParameter;
+            var token: std.ArrayList(u8) = .empty;
+            defer token.deinit(self.gpa);
+            try token.append(self.gpa, if (operation == .add) '+' else '-');
+            try token.appendSlice(self.gpa, value);
+            try self.appendCommand("ACCEPT", &.{token.items});
+        }
+        try self.queueOut(.interactive, true, false);
+    }
+
     pub fn setMode(self: *Client, target: []const u8, modes: []const u8, argument: []const u8) !void {
         if (argument.len == 0)
             try self.appendCommand("MODE", &.{ target, modes })
@@ -768,6 +785,40 @@ pub const Client = struct {
     /// Onyx named-conversation variant of `chatHistoryLatest`.
     pub fn chatHistoryLatestTopic(self: *Client, target: []const u8, selector: []const u8, limit: u16, topic: []const u8) !void {
         try self.sendChatHistoryLatest(target, selector, limit, topic);
+    }
+
+    pub fn chatHistoryBefore(self: *Client, target: []const u8, selector: []const u8, limit: u16) !void {
+        try self.sendChatHistoryBound("BEFORE", target, selector, limit);
+    }
+    pub fn chatHistoryAfter(self: *Client, target: []const u8, selector: []const u8, limit: u16) !void {
+        try self.sendChatHistoryBound("AFTER", target, selector, limit);
+    }
+    pub fn chatHistoryAround(self: *Client, target: []const u8, selector: []const u8, limit: u16) !void {
+        try self.sendChatHistoryBound("AROUND", target, selector, limit);
+    }
+    pub fn chatHistoryAroundWithSecond(self: *Client, target: []const u8, center: []const u8, second: []const u8, limit: u16) !void {
+        try self.requireCapability("draft/chathistory");
+        if (!validHistoryTarget(target) or !validHistorySelector(center) or !validHistorySelector(second)) return error.InvalidIrcParameter;
+        var buf: [5]u8 = undefined;
+        const text = try std.fmt.bufPrint(&buf, "{d}", .{limit});
+        try self.appendCommand("CHATHISTORY", &.{ "AROUND", target, center, second, text });
+        try self.queueOut(.bulk, false, false);
+    }
+    pub fn chatHistoryBetween(self: *Client, target: []const u8, first: []const u8, second: []const u8, limit: u16) !void {
+        try self.requireCapability("draft/chathistory");
+        if (!validHistoryTarget(target) or !validHistorySelector(first) or !validHistorySelector(second)) return error.InvalidIrcParameter;
+        var buf: [5]u8 = undefined;
+        const text = try std.fmt.bufPrint(&buf, "{d}", .{limit});
+        try self.appendCommand("CHATHISTORY", &.{ "BETWEEN", target, first, second, text });
+        try self.queueOut(.bulk, false, false);
+    }
+    pub fn chatHistoryTargets(self: *Client, first: []const u8, second: []const u8, limit: u16) !void {
+        try self.requireCapability("draft/chathistory");
+        if (!validHistoryTargetsSelector(first) or !validHistoryTargetsSelector(second) or limit == 0 or limit > 1000) return error.InvalidIrcParameter;
+        var buf: [5]u8 = undefined;
+        const text = try std.fmt.bufPrint(&buf, "{d}", .{limit});
+        try self.appendCommand("CHATHISTORY", &.{ "TARGETS", first, second, text });
+        try self.queueOut(.bulk, false, false);
     }
 
     /// Onyx `EDIT <target> <msgid> :<text>` path. The server enforces original
@@ -1167,6 +1218,15 @@ pub const Client = struct {
         try self.queueOut(.bulk, false, false);
     }
 
+    fn sendChatHistoryBound(self: *Client, subcommand: []const u8, target: []const u8, selector: []const u8, limit: u16) !void {
+        try self.requireCapability("draft/chathistory");
+        if (!validHistoryTarget(target) or !validHistorySelector(selector)) return error.InvalidIrcParameter;
+        var buf: [5]u8 = undefined;
+        const text = try std.fmt.bufPrint(&buf, "{d}", .{limit});
+        try self.appendCommand("CHATHISTORY", &.{ subcommand, target, selector, text });
+        try self.queueOut(.bulk, false, false);
+    }
+
     fn sendWithTopic(self: *Client, command: []const u8, target: []const u8, topic: []const u8, text: []const u8) !void {
         try self.requireClientTagCapability("onyx/topics");
         if (!isChannelTarget(target) or !validTopicLabel(topic)) return error.InvalidIrcParameter;
@@ -1383,6 +1443,16 @@ fn validHistoryTimestamp(value: []const u8) bool {
     if (year < 1970 or month < 1 or month > 12 or hour > 23 or minute > 59 or second > 59) return false;
     const month_enum: std.time.epoch.Month = @enumFromInt(month);
     return day >= 1 and day <= std.time.epoch.getDaysInMonth(year, month_enum);
+}
+
+fn validAcceptNick(value: []const u8) bool {
+    if (value.len == 0 or value.len > 64) return false;
+    for (value) |byte| if (!std.ascii.isAlphanumeric(byte) and std.mem.indexOfScalar(u8, "[]\\`_^{}|-", byte) == null) return false;
+    return true;
+}
+
+fn validHistoryTargetsSelector(value: []const u8) bool {
+    return std.mem.eql(u8, value, "*") or (std.mem.startsWith(u8, value, "timestamp=") and validHistoryTimestamp(value["timestamp=".len..]));
 }
 
 fn isChannelTarget(value: []const u8) bool {
@@ -1720,6 +1790,26 @@ test "reply reaction and typing commands are bounded tagged client messages" {
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[24].bytes, "SILENCE\r\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[25].bytes, "SILENCE +*!*@bad.example\r\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[26].bytes, "SILENCE -*!*@bad.example\r\n") != null);
+    try client.chatHistoryBefore("#c", "msgid=msg-2", 10);
+    try client.chatHistoryAfter("#c", "timestamp=2026-07-22T00:00:00.000Z", 10);
+    try client.chatHistoryAround("#c", "msgid=msg-3", 10);
+    try client.chatHistoryAroundWithSecond("#c", "msgid=msg-3", "timestamp=2026-07-22T00:00:00.000Z", 10);
+    try client.chatHistoryBetween("#c", "msgid=msg-1", "msgid=msg-4", 10);
+    try client.chatHistoryTargets("*", "timestamp=2026-07-22T00:00:00.000Z", 10);
+    try client.accept(.list, null);
+    try client.accept(.add, "alice");
+    try client.accept(.remove, "alice");
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[27].bytes, "CHATHISTORY BEFORE #c msgid=msg-2 10") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[28].bytes, "CHATHISTORY AFTER #c timestamp=2026-07-22T00:00:00.000Z 10") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[29].bytes, "CHATHISTORY AROUND #c msgid=msg-3 10") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[30].bytes, "CHATHISTORY AROUND #c msgid=msg-3 timestamp=2026-07-22T00:00:00.000Z 10") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[31].bytes, "CHATHISTORY BETWEEN #c msgid=msg-1 msgid=msg-4 10") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[32].bytes, "CHATHISTORY TARGETS * timestamp=2026-07-22T00:00:00.000Z 10") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[33].bytes, "ACCEPT *\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[34].bytes, "ACCEPT +alice\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[35].bytes, "ACCEPT -alice\r\n") != null);
+    try std.testing.expectError(error.InvalidIrcParameter, client.chatHistoryTargets("*", "*", 0));
+    try std.testing.expectError(error.InvalidIrcParameter, client.accept(.add, "alice@example"));
 }
 
 test "Onyx narrow tag capabilities and no-implicit-names alias work without message-tags" {
