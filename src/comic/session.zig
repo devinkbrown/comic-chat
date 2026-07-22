@@ -2,6 +2,7 @@
 //! live conversation can be rendered as a comic strip.
 
 const std = @import("std");
+const dcc = @import("../proto/dcc.zig");
 const formatting = @import("formatting.zig");
 const original_page = @import("original_page.zig");
 const irc_message = @import("../net/message.zig");
@@ -16,6 +17,8 @@ pub const avatars = [_][]const u8{
 
 pub const avatar_announcement_prefix = "# Appears as ";
 pub const ctcp_action_prefix = "\x01ACTION ";
+pub const ctcp_sound_prefix = "\x01SOUND ";
+pub const ctcp_away_prefix = "\x01AWAY";
 
 /// Unwrap the conventional CTCP ACTION payload emitted by `SlashMeOrThink`.
 /// The slice still borrows from the UDI-stripped wire message.
@@ -24,6 +27,35 @@ pub fn ctcpActionText(text: []const u8) ?[]const u8 {
         text.len <= ctcp_action_prefix.len or text[text.len - 1] != 0x01)
         return null;
     return text[ctcp_action_prefix.len .. text.len - 1];
+}
+
+pub const SoundControl = struct {
+    name: []const u8,
+    message: []const u8,
+};
+
+pub fn ctcpSound(text: []const u8) ?SoundControl {
+    if (!std.mem.startsWith(u8, text, ctcp_sound_prefix) or text.len <= ctcp_sound_prefix.len or text[text.len - 1] != 0x01)
+        return null;
+    const payload = text[ctcp_sound_prefix.len .. text.len - 1];
+    const separator = std.mem.indexOfScalar(u8, payload, ' ') orelse payload.len;
+    if (separator == 0) return null;
+    return .{
+        .name = payload[0..separator],
+        .message = if (separator < payload.len) payload[separator + 1 ..] else "",
+    };
+}
+
+/// Microsoft broadcasts `\x01AWAY [message]\x01` to each joined room after
+/// the standard IRC AWAY command. An empty payload clears away state.
+pub fn ctcpAwayMessage(text: []const u8) ?[]const u8 {
+    if (text.len < ctcp_away_prefix.len + 1 or text[text.len - 1] != 0x01)
+        return null;
+    if (!std.ascii.eqlIgnoreCase(text[0..ctcp_away_prefix.len], ctcp_away_prefix))
+        return null;
+    if (text.len == ctcp_away_prefix.len + 1) return "";
+    if (text[ctcp_away_prefix.len] != ' ') return null;
+    return text[ctcp_away_prefix.len + 1 .. text.len - 1];
 }
 
 /// Return the canonical bundled avatar name used by the renderer.
@@ -222,12 +254,37 @@ pub const AddOptions = struct {
 
 /// Live channel-member state used by the source `AddStarsAux` title pass.
 /// The transcript owns `nick`; avatar names refer to the canonical static list.
+pub const MemberRole = enum(u8) {
+    member,
+    voice,
+    halfop,
+    operator,
+    owner,
+
+    pub fn canModerate(self: MemberRole) bool {
+        return @intFromEnum(self) >= @intFromEnum(MemberRole.halfop);
+    }
+
+    pub fn badge(self: MemberRole) []const u8 {
+        return switch (self) {
+            .member => "",
+            .voice => "+",
+            .halfop => "%",
+            .operator => "@",
+            .owner => "~",
+        };
+    }
+};
+
 pub const RosterEntry = struct {
     nick: []u8,
     avatar: []const u8,
     is_self: bool = false,
     sends: u32 = 0,
     departed: bool = false,
+    away: bool = false,
+    role: MemberRole = .member,
+    status_modes: u8 = 0,
 };
 
 /// Accumulates conversation lines, owning copies of the text (wire buffers are
@@ -236,6 +293,7 @@ pub const Transcript = struct {
     gpa: std.mem.Allocator,
     lines: std.ArrayList(Line) = .empty,
     roster: std.ArrayList(RosterEntry) = .empty,
+    backdrop_storage: ?[]u8 = null,
 
     pub fn init(gpa: std.mem.Allocator) Transcript {
         return .{ .gpa = gpa };
@@ -246,6 +304,18 @@ pub const Transcript = struct {
         self.lines.deinit(self.gpa);
         for (self.roster.items) |entry| self.gpa.free(entry.nick);
         self.roster.deinit(self.gpa);
+        if (self.backdrop_storage) |name| self.gpa.free(name);
+    }
+
+    pub fn setBackdrop(self: *Transcript, name: []const u8) !void {
+        const bundled = bundledBackdropByName(name) orelse return error.UnknownBackdrop;
+        const replacement = try self.gpa.dupe(u8, bundled);
+        if (self.backdrop_storage) |old| self.gpa.free(old);
+        self.backdrop_storage = replacement;
+    }
+
+    pub fn resolvedBackdrop(self: *const Transcript) []const u8 {
+        return self.backdrop_storage orelse "field";
     }
 
     /// Resolve a participant through their most recent source announcement,
@@ -253,6 +323,14 @@ pub const Transcript = struct {
     pub fn resolvedAvatar(self: *const Transcript, nick: []const u8) []const u8 {
         if (self.findRosterIndex(nick)) |index| return self.roster.items[index].avatar;
         return avatarForNick(nick);
+    }
+
+    pub fn activeMemberCount(self: *const Transcript) usize {
+        var active_count: usize = 0;
+        for (self.roster.items) |member| if (!member.departed) {
+            active_count += 1;
+        };
+        return active_count;
     }
 
     /// Establish the local participant before NAMES arrives. `AddStarsAux`
@@ -280,7 +358,13 @@ pub const Transcript = struct {
             var names = std.mem.tokenizeScalar(u8, msg.params[msg.param_count - 1], ' ');
             while (names.next()) |decorated| {
                 var nick = decorated;
-                while (nick.len > 0 and isNickStatus(nick[0])) nick = nick[1..];
+                var role: MemberRole = .member;
+                var status_modes: u8 = 0;
+                while (nick.len > 0 and isNickStatus(nick[0])) {
+                    role = highestRole(role, roleForPrefix(nick[0]));
+                    status_modes |= modeBitForPrefix(nick[0]);
+                    nick = nick[1..];
+                }
                 const bang = std.mem.indexOfScalar(u8, nick, '!') orelse nick.len;
                 nick = nick[0..bang];
                 if (nick.len == 0) continue;
@@ -291,6 +375,10 @@ pub const Transcript = struct {
                 );
                 if (existing == null or self.roster.items[index].departed) changed = true;
                 self.roster.items[index].departed = false;
+                self.roster.items[index].away = false;
+                if (self.roster.items[index].role != role) changed = true;
+                self.roster.items[index].role = role;
+                self.roster.items[index].status_modes = status_modes;
             }
             return changed;
         }
@@ -308,6 +396,48 @@ pub const Transcript = struct {
             );
             const changed = existing == null or self.roster.items[index].departed;
             self.roster.items[index].departed = false;
+            self.roster.items[index].away = false;
+            self.roster.items[index].role = .member;
+            self.roster.items[index].status_modes = 0;
+            return changed;
+        }
+
+        if (std.ascii.eqlIgnoreCase(msg.command, "MODE")) {
+            if (msg.param_count < 2) return false;
+            if (!std.ascii.eqlIgnoreCase(msg.params[0], channel)) return false;
+            const modes = msg.params[1];
+            var adding = true;
+            var parameter_index: usize = 2;
+            var changed = false;
+            for (modes) |mode| switch (mode) {
+                '+' => adding = true,
+                '-' => adding = false,
+                'q', 'a', 'o', 'h', 'v' => {
+                    if (parameter_index >= msg.param_count) continue;
+                    const nick = msg.params[parameter_index];
+                    parameter_index += 1;
+                    const index = self.findRosterIndex(nick) orelse continue;
+                    const bit = modeBit(mode);
+                    const old_modes = self.roster.items[index].status_modes;
+                    if (adding)
+                        self.roster.items[index].status_modes |= bit
+                    else
+                        self.roster.items[index].status_modes &= ~bit;
+                    if (old_modes != self.roster.items[index].status_modes) changed = true;
+                    const replacement = highestRoleForModes(self.roster.items[index].status_modes);
+                    if (replacement != self.roster.items[index].role) {
+                        self.roster.items[index].role = replacement;
+                        changed = true;
+                    }
+                },
+                'b', 'e', 'I', 'k' => {
+                    if (parameter_index < msg.param_count) parameter_index += 1;
+                },
+                'l' => {
+                    if (adding and parameter_index < msg.param_count) parameter_index += 1;
+                },
+                else => {},
+            };
             return changed;
         }
 
@@ -338,6 +468,8 @@ pub const Transcript = struct {
                     target.avatar = old.avatar;
                     target.is_self = target.is_self or old.is_self;
                     target.departed = old.departed;
+                    target.role = highestRole(target.role, old.role);
+                    target.status_modes |= old.status_modes;
                     target.sends = saturatingAdd(target.sends, old.sends);
                     self.gpa.free(owned_new);
                     const removed = self.roster.orderedRemove(old_index);
@@ -379,6 +511,26 @@ pub const Transcript = struct {
 
     pub fn add(self: *Transcript, nick: []const u8, text: []const u8) !void {
         return self.addWithOptions(nick, text, .{});
+    }
+
+    pub fn insertPageBreak(self: *Transcript, nick: []const u8, index: usize) !void {
+        const bounded = @min(index, self.lines.items.len);
+        try self.addWithOptions(nick, "<Brk>", .{});
+        const line = self.lines.pop().?;
+        self.lines.insert(self.gpa, bounded, line) catch |err| {
+            self.lines.append(self.gpa, line) catch deinitLine(self.gpa, line);
+            return err;
+        };
+    }
+
+    pub fn removeLine(self: *Transcript, index: usize) bool {
+        if (index >= self.lines.items.len) return false;
+        const line = self.lines.orderedRemove(index);
+        if (!std.mem.eql(u8, line.text, "<Brk>")) if (self.findRosterIndex(line.nick)) |roster_index| {
+            self.roster.items[roster_index].sends -|= 1;
+        };
+        deinitLine(self.gpa, line);
+        return true;
     }
 
     pub fn addWithOptions(
@@ -459,11 +611,43 @@ pub const Transcript = struct {
             }
         }
 
+        var action_prepared = false;
+        var sound_text: std.ArrayList(u8) = .empty;
+        defer sound_text.deinit(self.gpa);
+        if (ctcpSound(text)) |sound| {
+            const unquoted_name = try dcc.ctcpUnquote(self.gpa, sound.name);
+            defer if (unquoted_name) |owned| self.gpa.free(owned);
+            const display_name = unquoted_name orelse sound.name;
+            try sound_text.appendSlice(self.gpa, nick);
+            if (sound.message.len != 0) {
+                try sound_text.append(self.gpa, ' ');
+                try sound_text.appendSlice(self.gpa, sound.message);
+            }
+            try sound_text.appendSlice(self.gpa, " (");
+            try sound_text.appendSlice(self.gpa, display_name);
+            try sound_text.append(self.gpa, ')');
+            text = sound_text.items;
+            modes = (modes & original_page.bm_whisper) | original_page.bm_action;
+            action_prepared = true;
+        }
+
         // ProcessSay removes the UDI first. Non-comics clients then arrive as
         // CTCP ACTION; keep a private whisper bit while selecting ACTION.
         if (ctcpActionText(text)) |action_text| {
             text = action_text;
             modes = (modes & original_page.bm_whisper) | original_page.bm_action;
+        }
+
+        // Both PrepareComicsAction (raw text + UDI M5) and PrepareTextAction
+        // (CTCP fallback) prefix the sender's screen name before the box is
+        // handed to ProcessLine.
+        var action_text: std.ArrayList(u8) = .empty;
+        defer action_text.deinit(self.gpa);
+        if (modes & original_page.bm_action != 0 and !action_prepared) {
+            try action_text.appendSlice(self.gpa, nick);
+            try action_text.append(self.gpa, ' ');
+            try action_text.appendSlice(self.gpa, text);
+            text = action_text.items;
         }
 
         var target_nicks: std.ArrayList([]const u8) = .empty;
@@ -497,6 +681,15 @@ pub const Transcript = struct {
         return self.lines.items.len;
     }
 
+    /// Consume the source CTCP away broadcast without turning it into a chat
+    /// bubble. Returns false for any other message.
+    pub fn consumeAwayControl(self: *Transcript, nick: []const u8, wire: []const u8) !bool {
+        const message_text = ctcpAwayMessage(wire) orelse return false;
+        const index = try self.ensureParticipant(nick, false);
+        self.roster.items[index].away = message_text.len != 0;
+        return true;
+    }
+
     fn findRosterIndex(self: *const Transcript, nick: []const u8) ?usize {
         for (self.roster.items, 0..) |entry, index| {
             if (std.ascii.eqlIgnoreCase(entry.nick, nick)) return index;
@@ -527,8 +720,81 @@ pub const Transcript = struct {
     }
 };
 
+pub fn bundledBackdropByName(name: []const u8) ?[]const u8 {
+    const dot = std.mem.indexOfScalar(u8, name, '.');
+    const base = if (dot) |index| name[0..index] else name;
+    for ([_][]const u8{ "field", "volcano", "den", "room", "pastoral" }) |candidate| {
+        if (std.ascii.eqlIgnoreCase(base, candidate)) return candidate;
+    }
+    return null;
+}
+
+test "transcript applies only bundled backdrop names" {
+    var transcript = Transcript.init(std.testing.allocator);
+    defer transcript.deinit();
+    try std.testing.expectEqualStrings("field", transcript.resolvedBackdrop());
+    try transcript.setBackdrop("Volcano.bgb");
+    try std.testing.expectEqualStrings("volcano", transcript.resolvedBackdrop());
+    try std.testing.expectError(error.UnknownBackdrop, transcript.setBackdrop("https://example.test/remote.bgb"));
+    try std.testing.expectEqualStrings("volcano", transcript.resolvedBackdrop());
+}
+
 fn isNickStatus(ch: u8) bool {
     return ch == '~' or ch == '&' or ch == '@' or ch == '%' or ch == '+';
+}
+
+fn roleForPrefix(ch: u8) MemberRole {
+    return switch (ch) {
+        '~', '&' => .owner,
+        '@' => .operator,
+        '%' => .halfop,
+        '+' => .voice,
+        else => .member,
+    };
+}
+
+fn modeBitForPrefix(ch: u8) u8 {
+    return switch (ch) {
+        '~' => modeBit('q'),
+        '&' => modeBit('a'),
+        '@' => modeBit('o'),
+        '%' => modeBit('h'),
+        '+' => modeBit('v'),
+        else => 0,
+    };
+}
+
+fn roleForMode(mode: u8) MemberRole {
+    return switch (mode) {
+        'q', 'a' => .owner,
+        'o' => .operator,
+        'h' => .halfop,
+        'v' => .voice,
+        else => .member,
+    };
+}
+
+fn highestRole(a: MemberRole, b: MemberRole) MemberRole {
+    return if (@intFromEnum(a) >= @intFromEnum(b)) a else b;
+}
+
+fn modeBit(mode: u8) u8 {
+    return switch (mode) {
+        'q' => 1 << 5,
+        'a' => 1 << 4,
+        'o' => 1 << 3,
+        'h' => 1 << 2,
+        'v' => 1 << 1,
+        else => 0,
+    };
+}
+
+fn highestRoleForModes(modes: u8) MemberRole {
+    if (modes & (modeBit('q') | modeBit('a')) != 0) return .owner;
+    if (modes & modeBit('o') != 0) return .operator;
+    if (modes & modeBit('h') != 0) return .halfop;
+    if (modes & modeBit('v') != 0) return .voice;
+    return .member;
 }
 
 fn saturatingAdd(a: u32, b: u32) u32 {
@@ -663,9 +929,31 @@ test "live roster follows NAMES membership speech and current avatars" {
     var names = irc_message.parse(":server 353 Me = #room :@Me +Alice %Bob");
     try std.testing.expect(try transcript.observeIrc(&names, "#room", "Me"));
     try std.testing.expectEqual(@as(usize, 3), transcript.roster.items.len);
+    try std.testing.expectEqual(@as(usize, 3), transcript.activeMemberCount());
     try std.testing.expect(transcript.roster.items[transcript.findRosterIndex("me").?].is_self);
+    try std.testing.expectEqual(MemberRole.operator, transcript.roster.items[transcript.findRosterIndex("me").?].role);
+    try std.testing.expectEqual(MemberRole.voice, transcript.roster.items[transcript.findRosterIndex("Alice").?].role);
+    try std.testing.expectEqual(MemberRole.halfop, transcript.roster.items[transcript.findRosterIndex("Bob").?].role);
     try std.testing.expect(transcript.findRosterIndex("@Me") == null);
     try std.testing.expect(transcript.findRosterIndex("+Alice") == null);
+
+    var promote = irc_message.parse(":server MODE #room +ov Alice Bob");
+    try std.testing.expect(try transcript.observeIrc(&promote, "#room", "Me"));
+    try std.testing.expectEqual(MemberRole.operator, transcript.roster.items[transcript.findRosterIndex("Alice").?].role);
+    try std.testing.expectEqual(MemberRole.halfop, transcript.roster.items[transcript.findRosterIndex("Bob").?].role);
+    var demote = irc_message.parse(":server MODE #room -o Alice");
+    try std.testing.expect(try transcript.observeIrc(&demote, "#room", "Me"));
+    try std.testing.expectEqual(MemberRole.voice, transcript.roster.items[transcript.findRosterIndex("Alice").?].role);
+
+    var elevated = irc_message.parse(":server MODE #room +qa Alice Alice");
+    try std.testing.expect(try transcript.observeIrc(&elevated, "#room", "Me"));
+    try std.testing.expectEqual(MemberRole.owner, transcript.roster.items[transcript.findRosterIndex("Alice").?].role);
+    var remove_founder = irc_message.parse(":server MODE #room -q Alice");
+    try std.testing.expect(try transcript.observeIrc(&remove_founder, "#room", "Me"));
+    try std.testing.expectEqual(MemberRole.owner, transcript.roster.items[transcript.findRosterIndex("Alice").?].role);
+    var remove_admin = irc_message.parse(":server MODE #room -a Alice");
+    try std.testing.expect(try transcript.observeIrc(&remove_admin, "#room", "Me"));
+    try std.testing.expectEqual(MemberRole.voice, transcript.roster.items[transcript.findRosterIndex("Alice").?].role);
 
     const first_avatar = transcript.resolvedAvatar("Alice");
     try transcript.add("Alice", "before");
@@ -687,6 +975,7 @@ test "live roster follows NAMES membership speech and current avatars" {
     var part = irc_message.parse(":Bob!u@h PART #room :later");
     try std.testing.expect(try transcript.observeIrc(&part, "#room", "Me"));
     try std.testing.expect(transcript.roster.items[transcript.findRosterIndex("Bob").?].departed);
+    try std.testing.expectEqual(@as(usize, 2), transcript.activeMemberCount());
 
     var rename = irc_message.parse(":Alice!u@h NICK :Alicia");
     try std.testing.expect(try transcript.observeIrc(&rename, "#room", "Me"));
@@ -698,9 +987,25 @@ test "live roster follows NAMES membership speech and current avatars" {
     var quit = irc_message.parse(":Alicia!u@h QUIT :gone");
     try std.testing.expect(try transcript.observeIrc(&quit, "#room", "Me"));
     try std.testing.expect(transcript.roster.items[transcript.findRosterIndex("Alicia").?].departed);
+    try std.testing.expectEqual(@as(usize, 1), transcript.activeMemberCount());
     var join = irc_message.parse(":Alicia!u@h JOIN :#room");
     try std.testing.expect(try transcript.observeIrc(&join, "#room", "Me"));
     try std.testing.expect(!transcript.roster.items[transcript.findRosterIndex("Alicia").?].departed);
+    try std.testing.expectEqual(@as(usize, 2), transcript.activeMemberCount());
+}
+
+test "page break insertion and selected line removal preserve ownership and tallies" {
+    var transcript = Transcript.init(std.testing.allocator);
+    defer transcript.deinit();
+    try transcript.add("Alice", "one");
+    try transcript.add("Bob", "two");
+    try transcript.insertPageBreak("Me", 1);
+    try std.testing.expectEqual(@as(usize, 3), transcript.lines.items.len);
+    try std.testing.expectEqualStrings("<Brk>", transcript.lines.items[1].text);
+    try std.testing.expectEqual(@as(u32, 0), transcript.roster.items[transcript.findRosterIndex("Me").?].sends);
+    try std.testing.expect(transcript.removeLine(0));
+    try std.testing.expectEqual(@as(u32, 0), transcript.roster.items[transcript.findRosterIndex("Alice").?].sends);
+    try std.testing.expect(!transcript.removeLine(99));
 }
 
 test "transcript owns its copies" {
@@ -798,7 +1103,7 @@ test "transcript strips formatting after UDI and owns clean text plus offsets" {
     try std.testing.expect(line.pose_state != null);
 }
 
-test "CTCP ACTION is unwrapped after UDI and before inline controls" {
+test "source action preparation prefixes the speaker for comic and CTCP forms" {
     const gpa = std.testing.allocator;
     var transcript = Transcript.init(gpa);
     defer transcript.deinit();
@@ -810,16 +1115,51 @@ test "CTCP ACTION is unwrapped after UDI and before inline controls" {
         null,
     );
     const line = transcript.lines.items[0];
-    try std.testing.expectEqualStrings("waves", line.text);
+    try std.testing.expectEqualStrings("Alice waves", line.text);
     try std.testing.expectEqual(original_page.bm_action, line.modes);
     try std.testing.expectEqualSlices(formatting.Change, &.{
-        .{ .offset = 0, .format = formatting.effect.italic },
+        .{ .offset = 6, .format = formatting.effect.italic },
     }, line.formatting);
 
     try transcript.addWireMessage("Bob", "\x01ACTION shrugs\x01", true, null);
-    try std.testing.expectEqualStrings("shrugs", transcript.lines.items[1].text);
+    try std.testing.expectEqualStrings("Bob shrugs", transcript.lines.items[1].text);
     try std.testing.expectEqual(
         original_page.bm_action | original_page.bm_whisper,
         transcript.lines.items[1].modes,
     );
+
+    try transcript.addWireMessage("Cro", "waves", false, "#G000E000M5");
+    try std.testing.expectEqualStrings("Cro waves", transcript.lines.items[2].text);
+    try std.testing.expectEqual(original_page.bm_action, transcript.lines.items[2].modes);
+}
+
+test "source SOUND control becomes an action box with sender and filename" {
+    const gpa = std.testing.allocator;
+    var transcript = Transcript.init(gpa);
+    defer transcript.deinit();
+
+    try transcript.addWireMessage("Alice", "\x01SOUND Chime hello there\x01", false, null);
+    try std.testing.expectEqualStrings("Alice hello there (Chime)", transcript.lines.items[0].text);
+    try std.testing.expectEqual(original_page.bm_action, transcript.lines.items[0].modes);
+
+    try transcript.addWireMessage("Bob", "\x01SOUND Knock \x01", true, null);
+    try std.testing.expectEqualStrings("Bob (Knock)", transcript.lines.items[1].text);
+    try std.testing.expectEqual(original_page.bm_action | original_page.bm_whisper, transcript.lines.items[1].modes);
+
+    try transcript.addWireMessage("Cro", "\x01SOUND Door\x10@bell.wav come in\x01", false, null);
+    try std.testing.expectEqualStrings("Cro come in (Door bell.wav)", transcript.lines.items[2].text);
+}
+
+test "source AWAY control updates roster without adding a comic line" {
+    var transcript = Transcript.init(std.testing.allocator);
+    defer transcript.deinit();
+
+    try std.testing.expect(try transcript.consumeAwayControl("Alice", "\x01AWAY getting coffee\x01"));
+    const alice = transcript.findRosterIndex("Alice").?;
+    try std.testing.expect(transcript.roster.items[alice].away);
+    try std.testing.expectEqual(@as(usize, 0), transcript.lines.items.len);
+
+    try std.testing.expect(try transcript.consumeAwayControl("Alice", "\x01AWAY\x01"));
+    try std.testing.expect(!transcript.roster.items[alice].away);
+    try std.testing.expect(!try transcript.consumeAwayControl("Alice", "ordinary text"));
 }

@@ -1,0 +1,93 @@
+[agents]
+max_threads = 4
+max_depth = 1
+job_max_runtime_seconds = 1800
+interrupt_message = true
+
+[agents.comicchat-orchestrator]
+description = "Score, decompose, assign, and synthesize a ComicChat task without taking specialist ownership."
+config_file = "./agents/comicchat-orchestrator.toml"
+
+[agents.comicchat-explorer]
+description = "Perform fast read-only ComicChat source discovery and return file-and-line evidence."
+config_file = "./agents/comicchat-explorer.toml"
+
+[agents.comicchat-source-historian]
+description = "Establish Microsoft Comic Chat source behavior and provenance before parity changes."
+config_file = "./agents/comicchat-source-historian.toml"
+
+[agents.comicchat-architect]
+description = "Design a bounded source-grounded implementation blueprint for cross-subsystem work."
+config_file = "./agents/comicchat-architect.toml"
+
+[agents.comicchat-zig-implementer]
+description = "Implement one bounded general Zig change with focused tests."
+config_file = "./agents/comicchat-zig-implementer.toml"
+
+[agents.comicchat-rendering-engineer]
+description = "Implement source-faithful comic layout, raster, font, avatar, or backdrop work."
+config_file = "./agents/comicchat-rendering-engineer.toml"
+
+[agents.comicchat-network-engineer]
+description = "Implement or diagnose IRC, IRCX, UDI, DCC, TLS, proxy, or session behavior."
+config_file = "./agents/comicchat-network-engineer.toml"
+
+[agents.comicchat-client-ui-engineer]
+description = "Implement shared client, workspace, input, dialog, and accessibility behavior."
+config_file = "./agents/comicchat-client-ui-engineer.toml"
+
+[agents.comicchat-ui-design-director]
+description = "Define a distinctive ComicChat-specific visual direction and token/layout brief before major UI work."
+config_file = "./agents/comicchat-ui-design-director.toml"
+
+[agents.comicchat-ui-component-engineer]
+description = "Build and refine shared desktop chrome primitives, states, typography, and visual tokens."
+config_file = "./agents/comicchat-ui-component-engineer.toml"
+
+[agents.comicchat-ui-interaction-engineer]
+description = "Implement focus, pointer, keyboard, menu, dialog, composer, roster, and workspace interactions."
+config_file = "./agents/comicchat-ui-interaction-engineer.toml"
+
+[agents.comicchat-ui-layout-engineer]
+description = "Own responsive desktop geometry, density, scaling, overflow, and shared hit/accessibility bounds."
+config_file = "./agents/comicchat-ui-layout-engineer.toml"
+
+[agents.comicchat-visual-qa]
+description = "Inspect deterministic UI captures across states and sizes and report concrete visual regressions."
+config_file = "./agents/comicchat-visual-qa.toml"
+
+[agents.comicchat-ui-copy-reviewer]
+description = "Review labels, actions, notices, errors, empty states, and vocabulary for clarity and consistency."
+config_file = "./agents/comicchat-ui-copy-reviewer.toml"
+
+[agents.comicchat-linux-platform-engineer]
+description = "Implement or diagnose the direct X11 and Wayland platform backends."
+config_file = "./agents/comicchat-linux-platform-engineer.toml"
+
+[agents.comicchat-windows-platform-engineer]
+description = "Implement or diagnose direct Win32 and Winsock behavior."
+config_file = "./agents/comicchat-windows-platform-engineer.toml"
+
+[agents.comicchat-verifier]
+description = "Run focused and aggregate gates and return exact test/build evidence."
+config_file = "./agents/comicchat-verifier.toml"
+
+[agents.comicchat-accessibility-reviewer]
+description = "Review keyboard, focus, scaling, semantics, contrast, and assistive behavior read-only."
+config_file = "./agents/comicchat-accessibility-reviewer.toml"
+
+[agents.comicchat-security-reviewer]
+description = "Review trust boundaries, parsing, credentials, TLS, files, and worker ownership read-only."
+config_file = "./agents/comicchat-security-reviewer.toml"
+
+[agents.comicchat-adversarial-reviewer]
+description = "Falsify a proposed change against repository invariants and regression risks read-only."
+config_file = "./agents/comicchat-adversarial-reviewer.toml"
+
+[agents.comicchat-release-auditor]
+description = "Audit documentation, licensing, provenance, packaging, and release claims read-only."
+config_file = "./agents/comicchat-release-auditor.toml"
+
+[agents.comicchat-integrator]
+description = "Integrate accepted bounded changes, resolve overlaps, and run authoritative gates."
+config_file = "./agents/comicchat-integrator.toml"

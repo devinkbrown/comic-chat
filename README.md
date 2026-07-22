@@ -1,7 +1,13 @@
-# comicchat
+# Comic Chat: Reinked
 
-A portable, source-faithful continuation of **Comic Chat**, built in Zig with
+A portable, source-faithful continuation of **Comic Chat: Reinked**, built in Zig with
 a software renderer, native X11/Wayland/Win32 presentation, and verified TLS.
+
+![Dark Comic Chat character picker](ui-dark-preview.png)
+
+![Compact menu layout](ui-compact-menu-preview.png)
+
+![Expression context menu](ui-context-preview.png)
 
 Comic Chat turns IRC conversations into auto-generated comic strips. Each
 participant has an avatar, and the client composes panels with speech balloons,
@@ -29,9 +35,10 @@ italic face.
 | Portable client | `src/` | Zig IRC client, AVB/BGB decoding, original rendering behavior, software rasterizer, and native X11/Wayland/Win32 presentation |
 | Runtime assets | `assets/` and `src/assets/testdata/` | Attributed character, backdrop, and emotion content required by the portable renderer |
 | Protocol notes | `docs/PROTOCOL.md` | Comic Chat wire-format and interoperability notes |
+| Microsoft wire audit | `docs/MICROSOFT_WIRE_AUDIT.md` | Source-by-source IRC/IRCX/UDI/CTCP compatibility ledger |
 | Completeness audit | `docs/PORTABLE_COMPLETENESS_AUDIT.md` | Reachable, substrate-only, partial, and missing portable product surfaces |
-| UI source audit | `docs/MICROSOFT_UI_SOURCE_AUDIT.md` | Microsoft menu, geometry, body-camera, member-list, buffer, and dialog contracts |
 | Repository map | `docs/PROJECT_STRUCTURE.md` | Portable-first repository ownership and layout |
+| Historical reference | `legacy/docs/` | Repository-only Microsoft-source audits and migration records; excluded from release packages |
 
 ## Portable Zig client
 
@@ -48,16 +55,53 @@ zig build run -- app irc.example 6697 nick '#channel' --ca-file ./ca.pem
 zig build run -- app irc.example nick '#channel' --socks5 127.0.0.1:1080
 zig build run -- app irc.example nick '#channel' --http-proxy proxy.example:8080
 zig build run -- app localhost 6667 nick '#channel' --plaintext
-zig build run -- app kain                               # eshmaki.me, #root
-zig build run -- app eshmaki.me kain '#root' \
-  --tls-cert ~/.weechat/tls/relay.pem --sasl-user kain --sasl-external
+zig build run -- app your-nick                          # eshmaki.me, #root
+zig build run -- app eshmaki.me your-nick '#root' \
+  --tls-cert ./client-cert-and-key.pem --sasl-user your-account --sasl-external
 ```
+
+## Releases
+
+Each `comicchat-portable-*` GitHub release contains a portable source archive,
+Windows x86_64 ZIP, Linux x86_64 tarball, FreeBSD x86_64 tarball, OpenBSD
+x86_64 tarball, and a SHA-256 manifest. Download the archive for your
+platform, extract it, and run `comicchat` (or `comicchat.exe` on Windows).
+
+Verify downloaded artifacts before use:
+
+```sh
+sha256sum -c comicchat-*-SHA256SUMS.txt
+```
+
+To produce the same release set locally from a clean committed checkout:
+
+```sh
+OUTPUT_DIR="$PWD/dist" TMPDIR="$PWD/.tmp-release" \
+  tools/package-release.sh comicchat-portable-YYYY-MM-DD.N
+```
+
+The tag workflow runs the portable tests, creates this exact artifact set, and
+publishes it with its checksum manifest. Historical Microsoft/MFC workflows
+are not part of the portable release contract.
+
+On Windows, double-clicking `comicchat.exe` opens the desktop client directly
+with the configured `eshmaki.me`, `comicchat`, and `#root` defaults. Use
+`comicchat.exe app <nick>` or the full command form above to override them.
+Passing a `.ccc` conversation or `.ccr` locator as the only argument opens it
+directly. Optional per-user Windows and freedesktop file-association helpers
+are included under `packaging/`.
 
 The app opens before DNS/TCP/TLS setup and keeps the native event loop live
 while a bounded connector races IPv6/IPv4 candidates. `--connect-timeout-ms`
 sets the per-address and proxy-read deadline. SOCKS5 uses no-auth remote-DNS
 CONNECT; HTTP proxies use a bounded CONNECT response. TLS hostname and chain
 verification still target the IRC host after either proxy handshake.
+
+Hostname lookup uses the pinned Onyx Server DNS wire codec and resolver policy.
+The transport, resolver, TLS client, and native socket adapters are Zig-only;
+Windows uses a direct Winsock boundary so the same executable works on Windows
+and Wine without Zig's AFD backend. The Windows DNS service is used only if
+direct Onyx UDP resolution is unavailable.
 
 On Onyx Server, authenticated clients persist reusable `SESSION TOKEN` and
 portable `SESSION MTOKEN` credentials in `.comicchat-session` (override with
@@ -74,6 +118,71 @@ keyboard commands are `/join #room`, `/switch #room`, and `/part`. Use
 for view and source-dialog workflows. Conversation files and rendered UI
 captures use `/open path.ccc`, `/save path.ccc`, and `/export path.png`;
 writes are bounded and atomic.
+
+File, Edit, and Format also expose native Open/Save selection, recent
+conversations, transcript range selection/copy/delete, source page-break
+editing, printable PDF export/open/print, and bold/italic/underline composer
+controls. The multiline composer sends each entered line through the same
+bounded IRC path. Windows uses the Unicode clipboard and common file dialogs;
+Wayland/X11 use the installed desktop clipboard and picker services with the
+internal clipboard/path editor as a safe fallback.
+
+The status bar and the first toolbar button both open a prefilled live
+Connection Setup dialog. Applying it stops the current connection, validates
+the endpoint and security choice, and reconnects immediately. The room member
+pane consumes live NAMES/JOIN/PART/QUIT/NICK state, reports active rather than
+historical members, scrolls with the wheel, keeps keyboard selection visible,
+and maps selection and context actions to the correct scrolled member.
+NAMES prefixes and live MODE changes drive visible voice/half-op/operator/owner
+badges; room administration, Kick, and Ban controls disable when the local
+member lacks permission.
+Edit > Settings controls persistent conversation view, panel density,
+member-pane visibility, and member layout. Connection Setup remains the
+separate live reconnect path. Room List
+uses source-shaped LIST/LISTX queries and optionally joins a result, User List
+selects an active member, and Comic View applies both content mode and one-to-six panel density. Sparse conversations
+reserve that selected desktop grid, so a single message or break control can
+never expand into a full-buffer panel.
+
+Room and Member menus now expose the remaining live workflows: IRCX PROP,
+ACCESS, LISTX, and operator EVENT commands; persistent personal-profile and
+member-profile requests; bundled backdrop synchronization; greeting/flood
+automation; persistent rules; WHO-backed logon notifications; portable HTTPS
+call links; and consent-gated DCC transfers. Incoming files require an explicit
+save path, never replace an existing file, remain bounded to 16 MiB, report
+progress, and can be cancelled without retaining a partial file. The retired
+Windows NetMeeting control is answered with `NOHAVE`; it is never launched.
+Favorites, recent files, advanced rule sets/import/export, occurrence limits,
+desktop online/offline notifications, Connection Features, and an independent
+room-window command are reachable from the modern menus.
+
+The live comic wire path is checked against Microsoft's released
+`bInsertAnnotations`, `bChatSendToTarget`, `OnDataMsg`, and `ProcessSay`
+implementations. IRCX uses `DATA ... CCUDI1` for both UDI and comment controls;
+plain IRC embeds UDI or sends comment controls with `PRIVMSG`. Comic actions
+stay as readable text with mode `M5`, and selected/whisper members are included
+in the UDI `T` list.
+
+The complete source-to-wire ledger is
+[`docs/MICROSOFT_WIRE_AUDIT.md`](docs/MICROSOFT_WIRE_AUDIT.md). It also covers
+the two-stage IRCX probe, exact trailing parameters, password JOIN, CREATE,
+reasoned KICK, exact IRCX ACCESS/PROP/LISTX/EVENT grammar, DCC consent and ACK
+flow, CTCP SOUND/AWAY/information controls, and the Onyx same-account same-nick
+session extension.
+
+The portable desktop UI has a shared Fluent-style component library and a
+separate neutral application font; Comic Neue remains confined to comic
+content. Its persistent Settings surface controls light or dark studio chrome,
+cobalt/violet/forest accents, standard or high contrast, comic density, member
+presentation, and status detail. Dark studio colors are resolved while controls
+are drawn; comic pages and character artwork retain their authored pixels. The
+Status tab and bottom connection strip open the same connection/activity panel
+with direct Connection setup and Settings actions. See `docs/UI_LIBRARY.md`.
+Exact headless previews are available with `zig build run -- render-ui`, plus
+the `conversation`, `menu`, `settings`, `dark`, `dark-settings`, `character`,
+and `status` variants. Any registered dialog has a deterministic preview through
+`zig build run -- render-ui dialog-<enum_name>`, for example
+`dialog-file_transfer` or `dialog-room_access`.
 
 `--tls-cert <cert-and-key.pem>` presents a PEM client certificate and private
 key for SASL EXTERNAL. Onyx TLS presents the certificate during a verified TLS
@@ -108,13 +217,14 @@ Cross-compile examples:
 
 ```sh
 zig build -Dtarget=x86_64-windows
-zig build -Dtarget=x86-windows
 zig build -Dtarget=aarch64-windows
 zig build -Dtarget=x86_64-linux
 ```
 
 Cross-compilation installs the Windows binary at
-`zig-out\bin\comicchat.exe`; it does not execute it. On Linux, a nonempty
+`zig-out\bin\comicchat.exe`; it does not execute it. The pinned Onyx TLS
+implementation requires a 64-bit target, so 32-bit Windows is not supported.
+On Linux, a nonempty
 `WAYLAND_DISPLAY` selects the Wayland backend and an unset/empty value selects
 X11. There is no automatic fallback after a Wayland connection failure. To
 force the X11 smoke explicitly:
@@ -125,28 +235,41 @@ env -u WAYLAND_DISPLAY zig build run -- window anna
 
 ## Release packages
 
-Build the x86_64 Windows, Linux, FreeBSD, and OpenBSD archives (with checksums)
-from a clean checkout:
+The current published release is `comicchat-portable-2026-07-21.1`.
+It contains x86_64 binary packages for Windows, Linux, FreeBSD, and OpenBSD,
+an explicit buildable source archive, and a single SHA-256 manifest covering
+all five artifacts. The source archive includes the narrow Onyx TLS dependency
+snapshot exported from its pinned revision, so it builds after extraction
+without a separate submodule checkout.
+
+Verify downloaded artifacts before use:
 
 ```sh
-./tools/package-release.sh unofficial-modern-builds-2026-07
+sha256sum -c comicchat-portable-2026-07-21.1-SHA256SUMS.txt
+```
+
+To build the binary archives from a clean checkout:
+
+```sh
+./tools/package-release.sh portable-2026-07-21.1
 ```
 
 Each archive contains the executable, this README, the AGPL license, and
-third-party notices. Comic characters, backdrops, face expressions, and fonts
-are embedded in the binary.
+third-party notices. The explicit source archive contains only the Onyx crypto,
+protocol, and certificate-loader sources used by ComicChat and builds without
+a second checkout. Legacy audit material is not included. Comic characters,
+backdrops, face expressions, and fonts are embedded in the binaries.
 `comicchat app <nick>` defaults to the `eshmaki.me` server and `#root` channel;
 pass a host and/or channel to override either default.
 
-The direct Wayland client currently uses scale 1. It parses the compositor's
-XKB keymap for base and Shift levels and implements compositor-configured
-client-side key repeat, with a US evdev fallback before a usable keymap is
-available. It does not yet support AltGr/ISO Level3, compose/dead-key sequences,
-IME, or output-scale negotiation. Win32 is system-DPI aware rather than
-per-monitor-v2 aware. Window creation, configure/resize, shared-memory
-presentation, keyboard input, IRC traffic, and clean close are implemented on
-both Wayland and Win32. Pointer input and the shared editing clipboard model
-are implemented; native OS clipboard and IME bridges remain future work.
+The direct Wayland client parses compositor XKB keymaps, implements configured
+key repeat, accepts committed compose/dead-key/IME text through text-input-v3,
+maps native touch contacts to the shared interaction contract, and allocates
+scaled buffers from `wl_output` scale. Win32 uses per-monitor-v2 DPI geometry,
+Unicode/IME input, the Unicode clipboard, and native common dialogs. Window
+creation, configure/resize, scaled presentation, keyboard/pointer input, IRC
+traffic, and clean close are implemented across Wayland, X11, Win32, FreeBSD,
+and OpenBSD.
 
 The portable lane has no SDL dependency. Native backends speak the Wayland/X11
 protocols or Win32 APIs directly, and all display the same software-rendered
@@ -189,10 +312,11 @@ historical Comic Chat source is MIT-licensed and remains an external reference
 at <https://github.com/microsoft/comic-chat>; its MFC/C++ tree is not vendored
 here. Microsoft names, logos, and artwork may be trademarks, and
 builds from this repository are unofficial and unsupported. The portable asset
-set has a byte-level source and transformation audit in
-[`docs/PORTABLE_ASSET_PROVENANCE.md`](docs/PORTABLE_ASSET_PROVENANCE.md).
+set's historical source and transformation record is repository-only legacy
+material and is intentionally excluded from release packages.
 The generated portable font atlases are derived from Comic Neue Bold and Bold
 Italic under the SIL Open Font License; see
 [`src/render/COMIC_NEUE_LICENSE.txt`](src/render/COMIC_NEUE_LICENSE.txt).
 The pinned Onyx Server TLS implementation is included as an AGPL-3.0-or-later
-submodule under `third_party/onyx-server`.
+submodule under `third_party/onyx-server`; release sources export only the
+dependency subset used by the client.

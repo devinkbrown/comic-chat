@@ -6,6 +6,7 @@
 const std = @import("std");
 const font = @import("font.zig");
 const whisper_font = @import("font_italic.zig");
+const ui_font = @import("font_ui.zig");
 
 pub const Color = u32; // 0xAARRGGBB
 
@@ -192,6 +193,10 @@ pub const Canvas = struct {
         return textWidthStyled(text, .normal);
     }
 
+    pub fn uiTextWidth(text: []const u8) i32 {
+        return textWidthFor(ui_font, text);
+    }
+
     fn drawTextFor(
         self: *Canvas,
         comptime atlas: type,
@@ -244,6 +249,10 @@ pub const Canvas = struct {
     /// top; glyphs are placed on the baseline. Returns the advanced pen X.
     pub fn drawText(self: *Canvas, text: []const u8, x: i32, y: i32, color: Color) i32 {
         return self.drawTextStyled(text, x, y, color, .normal);
+    }
+
+    pub fn drawUiText(self: *Canvas, text: []const u8, x: i32, y: i32, color: Color) i32 {
+        return self.drawTextFor(ui_font, text, x, y, color);
     }
 
     pub fn wrappedHeight(text: []const u8, max_w: i32) i32 {

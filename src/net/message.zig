@@ -44,6 +44,10 @@ pub const Message = struct {
     prefix: ?[]const u8 = null,
     /// Command word or 3-digit numeric reply.
     command: []const u8 = "",
+    /// Preserve a protocol's required/preferred trailing form even when the
+    /// final value could be serialized as a middle parameter. Microsoft
+    /// Comic Chat uses this for PRIVMSG, NOTICE, DATA, AWAY, KICK and TOPIC.
+    force_trailing: bool = false,
     params: [max_params][]const u8 = undefined,
     param_count: usize = 0,
 
@@ -200,6 +204,7 @@ pub fn write(
         try out.append(gpa, ' ');
     }
     try out.appendSlice(gpa, msg.command);
+    if (msg.force_trailing and msg.param_count == 0) return error.InvalidIrcParameter;
     var i: usize = 0;
     while (i < msg.param_count) : (i += 1) {
         const p = msg.params[i];
@@ -210,7 +215,7 @@ pub fn write(
             return error.InvalidIrcParameter;
         try out.append(gpa, ' ');
         // Only the final parameter may use the ':trailing' form.
-        if (i + 1 == msg.param_count and needsTrailing(p)) {
+        if (i + 1 == msg.param_count and (msg.force_trailing or needsTrailing(p))) {
             try out.append(gpa, ':');
         }
         try out.appendSlice(gpa, p);
@@ -233,7 +238,7 @@ test "parse: full message with prefix and trailing" {
 }
 
 test "IRCv3 tags parse before prefix and preserve null versus empty values" {
-    const m = parse("@time=2026-07-16T10:20:30.000Z;account=kain;flag;empty= :nick!u@h PRIVMSG #comic :hello");
+    const m = parse("@time=2026-07-16T10:20:30.000Z;account=alex;flag;empty= :nick!u@h PRIVMSG #comic :hello");
     try std.testing.expectEqualStrings("nick!u@h", m.prefix.?);
     try std.testing.expectEqualStrings("PRIVMSG", m.command);
     try std.testing.expectEqualStrings("2026-07-16T10:20:30.000Z", m.tag("time").?.raw_value.?);
@@ -293,6 +298,18 @@ test "write: chooses trailing form only when needed" {
     m.addParam("hello world"); // has space -> trailing
     try write(&out, gpa, m);
     try std.testing.expectEqualStrings("PRIVMSG #comics :hello world\r\n", out.items);
+}
+
+test "write: caller can require trailing form for a one-word payload" {
+    const gpa = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+
+    var msg = Message{ .command = "PRIVMSG", .force_trailing = true };
+    msg.addParam("#root");
+    msg.addParam("hello");
+    try write(&out, gpa, msg);
+    try std.testing.expectEqualStrings("PRIVMSG #root :hello\r\n", out.items);
 }
 
 test "write/parse round-trip" {

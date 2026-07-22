@@ -119,7 +119,7 @@ fn ircFold(value: u8) u8 {
 }
 
 test "workspace owns, activates, counts, and removes multiple rooms" {
-    var workspace = try Workspace.init(std.testing.allocator, "kain");
+    var workspace = try Workspace.init(std.testing.allocator, "alex");
     defer workspace.deinit();
     const root = try workspace.ensure("#root");
     const onyx = try workspace.ensure("#onyx");
@@ -137,7 +137,7 @@ test "workspace owns, activates, counts, and removes multiple rooms" {
 }
 
 test "workspace uses RFC 1459 channel casemapping" {
-    var workspace = try Workspace.init(std.testing.allocator, "kain");
+    var workspace = try Workspace.init(std.testing.allocator, "alex");
     defer workspace.deinit();
     const index = try workspace.ensure("#[room]\\^x");
     try std.testing.expectEqual(index, try workspace.ensure("#{ROOM}|~X"));

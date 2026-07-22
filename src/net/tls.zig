@@ -5,6 +5,7 @@ const onyx_root = @import("onyx_tls");
 const onyx = onyx_root.crypto.tls_client;
 const certs = onyx_root.daemon.tls_certs;
 const onyx_sign = onyx_root.crypto.sign;
+const ConnectedSocket = @import("socket.zig").ConnectedSocket;
 
 pub const ConnectOptions = struct {
     ca_file: ?[]const u8 = null,
@@ -16,22 +17,24 @@ pub const TlsTransport = struct {
     gpa: std.mem.Allocator,
     threaded: std.Io.Threaded,
     io: std.Io,
-    stream: std.Io.net.Stream,
+    stream: ConnectedSocket,
     client: onyx.Client,
     roots: std.crypto.Certificate.Bundle,
     client_material: ?certs.Loaded = null,
     pending: std.ArrayList(u8) = .empty,
 
-    pub fn connectSocket(gpa: std.mem.Allocator, io_unused: std.Io, stream: std.Io.net.Stream, host: []const u8, options: ConnectOptions) !*TlsTransport {
+    pub fn connectSocket(gpa: std.mem.Allocator, io_unused: std.Io, stream: ConnectedSocket, host: []const u8, options: ConnectOptions) !*TlsTransport {
         _ = io_unused;
         const self = try gpa.create(TlsTransport);
         errdefer gpa.destroy(self);
         self.gpa = gpa;
+        self.client_material = null;
+        self.pending = .empty;
         self.threaded = std.Io.Threaded.init(gpa, .{});
         errdefer self.threaded.deinit();
         self.io = self.threaded.io();
         self.stream = stream;
-        errdefer self.stream.close(self.io);
+        errdefer self.stream.close();
         self.roots = .empty;
         errdefer self.roots.deinit(gpa);
         const now = std.Io.Clock.real.now(self.io);
@@ -75,13 +78,13 @@ pub const TlsTransport = struct {
         if (self.client_material) |*material| material.deinit(self.gpa);
         self.pending.deinit(self.gpa);
         self.roots.deinit(self.gpa);
-        self.stream.close(self.io);
+        self.stream.close();
         self.threaded.deinit();
         self.gpa.destroy(self);
     }
 
     pub fn fd(self: *const TlsTransport) i32 {
-        return self.stream.socket.handle;
+        return self.stream.fd();
     }
 
     pub fn send(self: *TlsTransport, bytes: []const u8) !void {
@@ -144,12 +147,7 @@ pub const TlsTransport = struct {
     }
 
     fn writeAll(self: *TlsTransport, bytes: []const u8) !void {
-        var off: usize = 0;
-        while (off < bytes.len) {
-            const n = try self.io.vtable.netWrite(self.io.userdata, self.stream.socket.handle, "", &.{bytes[off..]}, 1);
-            if (n == 0) return error.WriteZero;
-            off += n;
-        }
+        try self.stream.sendAll(bytes);
     }
 
     fn readRecord(self: *TlsTransport, timeout_ms: u32) ![]u8 {
@@ -167,14 +165,27 @@ pub const TlsTransport = struct {
     fn readExact(self: *TlsTransport, dst: []u8, timeout_ms: u32) !void {
         var off: usize = 0;
         while (off < dst.len) {
-            var iov = [_][]u8{dst[off..]};
-            const result = self.io.operateTimeout(.{ .net_read = .{ .socket_handle = self.stream.socket.handle, .data = iov[0..] } }, .{ .duration = .{ .raw = std.Io.Duration.fromMilliseconds(timeout_ms), .clock = .awake } }) catch |err| switch (err) {
-                error.Timeout => return error.Timeout,
-                else => return err,
-            };
-            const n = try result.net_read;
+            const n = (try self.stream.recvTimeout(dst[off..], timeout_ms)) orelse return error.Timeout;
             if (n == 0) return error.TlsReadFailed;
             off += n;
         }
     }
 };
+
+test "decrypted pending bytes start empty and compact after reads" {
+    var transport: TlsTransport = undefined;
+    transport.gpa = std.testing.allocator;
+    transport.pending = .empty;
+    defer transport.pending.deinit(std.testing.allocator);
+    try transport.pending.appendSlice(std.testing.allocator, "hello");
+
+    var first: [2]u8 = undefined;
+    try std.testing.expectEqual(@as(usize, 2), transport.takePending(&first));
+    try std.testing.expectEqualStrings("he", &first);
+    try std.testing.expectEqualStrings("llo", transport.pending.items);
+
+    var second: [8]u8 = undefined;
+    try std.testing.expectEqual(@as(usize, 3), transport.takePending(&second));
+    try std.testing.expectEqualStrings("llo", second[0..3]);
+    try std.testing.expectEqual(@as(usize, 0), transport.pending.items.len);
+}

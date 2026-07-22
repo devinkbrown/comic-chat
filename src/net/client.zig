@@ -21,6 +21,10 @@ pub const Message = message.Message;
 pub const ConnectOptions = transport.ConnectOptions;
 pub const Security = transport.Security;
 pub const TypingStatus = enum { active, paused, done };
+pub const PinsOperation = enum { list, add, delete, clear };
+pub const MonitorOperation = enum { add, remove, clear, list, status };
+pub const SilenceOperation = enum { list, add, remove };
+pub const AcceptOperation = enum { list, add, remove };
 
 const desired_without_sasl = blk: {
     var names: [ircv3.default_desired_capabilities.len - 1][]const u8 = undefined;
@@ -74,7 +78,8 @@ const Registration = struct {
     security: Security,
     host: []const u8,
     want_ircx: bool,
-    ircx_sent: bool = false,
+    ircx_probe_sent: bool = false,
+    ircx_enable_sent: bool = false,
     done: bool = false,
     authenticated: bool = false,
     session_commands_sent: bool = false,
@@ -121,6 +126,19 @@ const Registration = struct {
         msg: *const Message,
         sts_upgrade_port: *?u16,
     ) !bool {
+        if (self.want_ircx and self.ircx_probe_sent and
+            std.mem.eql(u8, msg.command, "800") and msg.param_count >= 2)
+        {
+            if (std.mem.eql(u8, msg.params[1], "0") and !self.ircx_enable_sent) {
+                try irc.writeIrcx(out, self.cap.gpa);
+                self.ircx_enable_sent = true;
+                return true;
+            }
+            // State one must reach the application so it can select DATA for
+            // Comic Chat annotations and comment controls.
+            if (std.mem.eql(u8, msg.params[1], "1")) return false;
+        }
+
         if (std.ascii.eqlIgnoreCase(msg.command, "CAP")) {
             const event = try self.cap.handle(out, msg.*);
             try self.applySts(sts_upgrade_port);
@@ -190,9 +208,9 @@ const Registration = struct {
 
     fn finish(self: *Registration, out: *std.ArrayList(u8)) !void {
         if (self.done) return;
-        if (self.want_ircx and !self.ircx_sent) {
-            try irc.writeIrcx(out, self.cap.gpa);
-            self.ircx_sent = true;
+        if (self.want_ircx and !self.ircx_probe_sent) {
+            try irc.writeIrcxProbe(out, self.cap.gpa);
+            self.ircx_probe_sent = true;
         }
         if (self.credentials) |credentials| {
             if (self.sasl_session == null and !credentials.zeroized) credentials.zeroize();
@@ -235,6 +253,26 @@ const Registration = struct {
         if (self.session_path) |path| try store.saveFile(self.io orelse return, path);
     }
 };
+
+fn appendRegistrationStart(
+    registration: *Registration,
+    out: *std.ArrayList(u8),
+    gpa: std.mem.Allocator,
+    nick: []const u8,
+    user: []const u8,
+    realname: []const u8,
+) !void {
+    // Microsoft probes before it sends NICK/USER (ircsock.cpp:1048-1053).
+    // Do the same ahead of modern CAP negotiation so an IRCX server can
+    // complete both numeric 800 phases before the first room JOIN.
+    if (registration.want_ircx) {
+        try irc.writeIrcxProbe(out, gpa);
+        registration.ircx_probe_sent = true;
+    }
+    try registration.cap.begin(out);
+    try irc.writeNick(out, gpa, nick);
+    try irc.writeUser(out, gpa, user, realname);
+}
 
 fn isSaslNumeric(command: []const u8) bool {
     if (command.len != 3 or command[0] != '9' or command[1] != '0') return false;
@@ -386,15 +424,39 @@ pub const Client = struct {
             self.features.?.deinit();
             self.features = null;
         }
-        try self.registration.?.cap.begin(&self.out);
-        try irc.writeNick(&self.out, self.gpa, nick);
-        try irc.writeUser(&self.out, self.gpa, user, realname);
+        try appendRegistrationStart(&self.registration.?, &self.out, self.gpa, nick, user, realname);
         try self.queueOut(.control, false, false);
     }
 
     pub fn join(self: *Client, channel: []const u8) !void {
-        try self.appendCommand("JOIN", &.{channel});
-        if (self.capabilityEnabled("no-implicit-names")) try self.appendCommand("NAMES", &.{channel});
+        return self.joinWithKey(channel, "");
+    }
+
+    /// Source `ChatJoinAux` emits `JOIN <room> <password>` when the Enter Room
+    /// dialog supplies its optional password.
+    pub fn joinWithKey(self: *Client, channel: []const u8, key: []const u8) !void {
+        if (key.len == 0)
+            try self.appendCommand("JOIN", &.{channel})
+        else
+            try self.appendCommand("JOIN", &.{ channel, key });
+        if (self.capabilityEnabled("no-implicit-names") or self.capabilityEnabled("draft/no-implicit-names"))
+            try self.appendCommand("NAMES", &.{channel});
+        try self.queueOut(.interactive, true, false);
+    }
+
+    /// Microsoft IRCX `ChatCreateAux` wire order is
+    /// `CREATE <room> [creation-modes] [limit] [password]`.
+    pub fn create(self: *Client, channel: []const u8, creation_modes: []const u8, limit: []const u8, key: []const u8) !void {
+        var params: [4][]const u8 = undefined;
+        var count: usize = 0;
+        params[count] = channel;
+        count += 1;
+        for ([_][]const u8{ creation_modes, limit, key }) |value| {
+            if (value.len == 0) continue;
+            params[count] = value;
+            count += 1;
+        }
+        try self.appendCommand("CREATE", params[0..count]);
         try self.queueOut(.interactive, true, false);
     }
 
@@ -409,12 +471,14 @@ pub const Client = struct {
     }
 
     pub fn setAway(self: *Client, message_text: []const u8) !void {
-        if (message_text.len == 0) try self.appendCommand("AWAY", &.{}) else try self.appendCommand("AWAY", &.{message_text});
+        if (message_text.len == 0) try self.appendCommand("AWAY", &.{}) else try self.appendCommandTrailing("AWAY", &.{message_text});
         try self.queueOut(.interactive, true, false);
     }
 
-    pub fn kick(self: *Client, channel: []const u8, nick: []const u8) !void {
-        try self.appendCommand("KICK", &.{ channel, nick });
+    pub fn kick(self: *Client, channel: []const u8, nick: []const u8, reason: []const u8) !void {
+        // The source always includes the trailing reason, including an empty
+        // one: `KICK <room> <nick> :<reason>`.
+        try self.appendCommandTrailing("KICK", &.{ channel, nick, reason });
         try self.queueOut(.interactive, true, false);
     }
 
@@ -428,35 +492,558 @@ pub const Client = struct {
         try self.queueOut(.interactive, true, false);
     }
 
+    pub fn setTopic(self: *Client, channel: []const u8, topic: []const u8) !void {
+        try self.appendCommandTrailing("TOPIC", &.{ channel, topic });
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn knock(self: *Client, channel: []const u8, reason: ?[]const u8) !void {
+        if (!isChannelTarget(channel)) return error.InvalidIrcParameter;
+        if (reason) |text| {
+            try self.validateOutgoingText(text);
+            try self.appendCommandTrailing("KNOCK", &.{ channel, text });
+        } else try self.appendCommand("KNOCK", &.{channel});
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn renameChannel(self: *Client, old_channel: []const u8, new_channel: []const u8, reason: ?[]const u8) !void {
+        if (!isChannelTarget(old_channel) or !isChannelTarget(new_channel)) return error.InvalidIrcParameter;
+        if (reason) |text| {
+            try self.validateOutgoingText(text);
+            try self.appendCommandTrailing("RENAME", &.{ old_channel, new_channel, text });
+        } else try self.appendCommand("RENAME", &.{ old_channel, new_channel });
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn tempModeAdd(self: *Client, channel: []const u8, flag: []const u8, parameter: ?[]const u8, duration_seconds: u32) !void {
+        if (!isChannelTarget(channel) or !validIrcAtom(flag) or duration_seconds == 0) return error.InvalidIrcParameter;
+        var duration: [10]u8 = undefined;
+        const text = try std.fmt.bufPrint(&duration, "{d}", .{duration_seconds});
+        if (parameter) |value| {
+            if (!validIrcAtom(value)) return error.InvalidIrcParameter;
+            try self.appendCommand("TEMPMODE", &.{ "ADD", channel, flag, value, text });
+        } else try self.appendCommand("TEMPMODE", &.{ "ADD", channel, flag, text });
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn tempModeCancel(self: *Client, channel: []const u8, flag: []const u8, parameter: ?[]const u8) !void {
+        if (!isChannelTarget(channel) or !validIrcAtom(flag)) return error.InvalidIrcParameter;
+        if (parameter) |value| {
+            if (!validIrcAtom(value)) return error.InvalidIrcParameter;
+            try self.appendCommand("TEMPMODE", &.{ "CANCEL", channel, flag, value });
+        } else try self.appendCommand("TEMPMODE", &.{ "CANCEL", channel, flag });
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn tempModeSweep(self: *Client) !void {
+        try self.appendCommand("TEMPMODE", &.{"SWEEP"});
+        try self.queueOut(.interactive, true, false);
+    }
+
+    /// Onyx `CLEAR <#channel> USERS [KEEP <rank>] [ALLOW <accounts>] [:reason]`.
+    pub fn clearChannelUsers(self: *Client, channel: []const u8, keep_rank: ?[]const u8, allow_accounts: ?[]const u8, reason: ?[]const u8) !void {
+        if (!isChannelTarget(channel)) return error.InvalidIrcParameter;
+        var params: [7][]const u8 = undefined;
+        var count: usize = 0;
+        params[count] = channel;
+        count += 1;
+        params[count] = "USERS";
+        count += 1;
+        if (keep_rank) |rank| {
+            if (!validIrcAtom(rank)) return error.InvalidIrcParameter;
+            params[count] = "KEEP";
+            count += 1;
+            params[count] = rank;
+            count += 1;
+        }
+        if (allow_accounts) |accounts| {
+            if (accounts.len == 0 or std.mem.indexOfAny(u8, accounts, " \r\n\x00") != null) return error.InvalidIrcParameter;
+            params[count] = "ALLOW";
+            count += 1;
+            params[count] = accounts;
+            count += 1;
+        }
+        if (reason) |text| {
+            try self.validateOutgoingText(text);
+            params[count] = text;
+            count += 1;
+            try self.appendCommandTrailing("CLEAR", params[0..count]);
+        } else try self.appendCommand("CLEAR", params[0..count]);
+        try self.queueOut(.interactive, true, false);
+    }
+
+    /// Onyx `PINS <#channel> [LIST|ADD <msgid>|DEL <msgid>|CLEAR]`.
+    /// Authorization remains exclusively server-owned.
+    pub fn pins(self: *Client, channel: []const u8, operation: PinsOperation, msgid: ?[]const u8) !void {
+        if (!isChannelTarget(channel)) return error.InvalidIrcParameter;
+        switch (operation) {
+            .list => if (msgid != null) return error.InvalidIrcParameter else try self.appendCommand("PINS", &.{ channel, "LIST" }),
+            .clear => if (msgid != null) return error.InvalidIrcParameter else try self.appendCommand("PINS", &.{ channel, "CLEAR" }),
+            .add, .delete => {
+                const id = msgid orelse return error.InvalidIrcParameter;
+                if (!validHistorySelectorForPin(id)) return error.InvalidIrcParameter;
+                try self.appendCommand("PINS", &.{ channel, if (operation == .add) "ADD" else "DEL", id });
+            },
+        }
+        try self.queueOut(.interactive, true, false);
+    }
+
+    /// Onyx `MONITOR <+|-|C|L|S> [nick[,nick]...]` subscription command.
+    pub fn monitor(self: *Client, operation: MonitorOperation, nicks: ?[]const u8) !void {
+        const verb = switch (operation) {
+            .add => "+",
+            .remove => "-",
+            .clear => "C",
+            .list => "L",
+            .status => "S",
+        };
+        if (operation == .add or operation == .remove) {
+            const names = nicks orelse return error.InvalidIrcParameter;
+            if (!validMonitorList(names)) return error.InvalidIrcParameter;
+            try self.appendCommand("MONITOR", &.{ verb, names });
+        } else {
+            if (nicks != null) return error.InvalidIrcParameter;
+            try self.appendCommand("MONITOR", &.{verb});
+        }
+        try self.queueOut(.interactive, true, false);
+    }
+
+    /// Onyx `SILENCE [<mask>|+<mask>|-<mask>]` sender-mask control.
+    pub fn silence(self: *Client, operation: SilenceOperation, mask: ?[]const u8) !void {
+        if (operation == .list) {
+            if (mask != null) return error.InvalidIrcParameter;
+            try self.appendCommand("SILENCE", &.{});
+        } else {
+            const raw = mask orelse return error.InvalidIrcParameter;
+            if (!validSilenceMask(raw)) return error.InvalidIrcParameter;
+            var token: std.ArrayList(u8) = .empty;
+            defer token.deinit(self.gpa);
+            try token.append(self.gpa, if (operation == .add) '+' else '-');
+            try token.appendSlice(self.gpa, raw);
+            try self.appendCommand("SILENCE", &.{token.items});
+        }
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn accept(self: *Client, operation: AcceptOperation, nick: ?[]const u8) !void {
+        if (operation == .list) {
+            if (nick != null) return error.InvalidIrcParameter;
+            try self.appendCommand("ACCEPT", &.{"*"});
+        } else {
+            const value = nick orelse return error.InvalidIrcParameter;
+            if (!validAcceptNick(value)) return error.InvalidIrcParameter;
+            var token: std.ArrayList(u8) = .empty;
+            defer token.deinit(self.gpa);
+            try token.append(self.gpa, if (operation == .add) '+' else '-');
+            try token.appendSlice(self.gpa, value);
+            try self.appendCommand("ACCEPT", &.{token.items});
+        }
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn setMode(self: *Client, target: []const u8, modes: []const u8, argument: []const u8) !void {
+        if (argument.len == 0)
+            try self.appendCommand("MODE", &.{ target, modes })
+        else
+            try self.appendCommand("MODE", &.{ target, modes, argument });
+        try self.queueOut(.interactive, true, false);
+    }
+
+    /// Microsoft uses LISTX for the extended room browser when IRCX is live.
+    pub fn listRooms(self: *Client, filter: []const u8, limit: []const u8, ircx_data: bool) !void {
+        const command = if (ircx_data) "LISTX" else "LIST";
+        if (!ircx_data) {
+            if (filter.len == 0) try self.appendCommand(command, &.{}) else try self.appendCommand(command, &.{filter});
+        } else if (filter.len == 0 and limit.len == 0) {
+            try self.appendCommand(command, &.{});
+        } else if (limit.len == 0) {
+            try self.appendCommand(command, &.{filter});
+        } else {
+            try self.appendCommand(command, &.{ filter, limit });
+        }
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn queryProperty(self: *Client, entity: []const u8, property: []const u8) !void {
+        if (property.len == 0) return error.InvalidIrcParameter;
+        try self.appendCommand("PROP", &.{ entity, property });
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn setProperty(self: *Client, entity: []const u8, property: []const u8, value: []const u8) !void {
+        try self.appendCommandTrailing("PROP", &.{ entity, property, value });
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn accessList(self: *Client, channel: []const u8) !void {
+        try self.appendCommand("ACCESS", &.{ channel, "LIST" });
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn accessDelete(self: *Client, channel: []const u8, level: []const u8, mask: []const u8) !void {
+        // IRCX draft 04 §5.1 names the removal operation `DELETE` (not the
+        // convenient but non-standard abbreviation `DEL`). Keep this exact so
+        // draft-conforming servers do not reject an otherwise valid ACL edit.
+        try self.appendCommand("ACCESS", &.{ channel, "DELETE", level, mask });
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn accessClear(self: *Client, channel: []const u8, level: []const u8) !void {
+        var params: [3][]const u8 = .{ channel, "CLEAR", "" };
+        var count: usize = 2;
+        if (level.len != 0) {
+            params[count] = level;
+            count += 1;
+        }
+        try self.appendCommand("ACCESS", params[0..count]);
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn accessAdd(self: *Client, channel: []const u8, level: []const u8, mask: []const u8, duration: []const u8, reason: []const u8) !void {
+        var params: [7][]const u8 = .{ channel, "ADD", level, mask, "", "", "" };
+        var count: usize = 4;
+        if (duration.len != 0) {
+            params[count] = duration;
+            count += 1;
+        }
+        if (reason.len != 0) {
+            if (duration.len == 0) {
+                params[count] = "0";
+                count += 1;
+            }
+            params[count] = reason;
+            count += 1;
+            try self.appendCommandTrailing("ACCESS", params[0..count]);
+        } else {
+            try self.appendCommand("ACCESS", params[0..count]);
+        }
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn who(self: *Client, mask: []const u8) !void {
+        if (mask.len == 0) try self.appendCommand("WHO", &.{}) else try self.appendCommand("WHO", &.{mask});
+        try self.queueOut(.bulk, true, false);
+    }
+
+    // Onyx query/status surface. Each method is intentionally bounded to IRC
+    // atoms and stays on the ordinary interactive/bulk queue.
+    pub fn ison(self: *Client, nicks: []const u8) !void {
+        try self.sendRequiredAtom("ISON", nicks, .bulk);
+    }
+    pub fn userhost(self: *Client, nicks: []const u8) !void {
+        try self.sendRequiredAtom("USERHOST", nicks, .bulk);
+    }
+    pub fn whois(self: *Client, nick: []const u8) !void {
+        try self.sendRequiredAtom("WHOIS", nick, .bulk);
+    }
+    pub fn whowas(self: *Client, nick: []const u8) !void {
+        try self.sendRequiredAtom("WHOWAS", nick, .bulk);
+    }
+    pub fn help(self: *Client, topic: ?[]const u8) !void {
+        try self.sendOptionalAtom("HELP", topic, .bulk);
+    }
+    pub fn version(self: *Client, server: ?[]const u8) !void {
+        try self.sendOptionalAtom("VERSION", server, .bulk);
+    }
+    pub fn serverTime(self: *Client, server: ?[]const u8) !void {
+        try self.sendOptionalAtom("TIME", server, .bulk);
+    }
+    pub fn admin(self: *Client, server: ?[]const u8) !void {
+        try self.sendOptionalAtom("ADMIN", server, .bulk);
+    }
+    pub fn info(self: *Client, server: ?[]const u8) !void {
+        try self.sendOptionalAtom("INFO", server, .bulk);
+    }
+    pub fn motd(self: *Client, server: ?[]const u8) !void {
+        try self.sendOptionalAtom("MOTD", server, .bulk);
+    }
+    pub fn lusers(self: *Client) !void {
+        try self.sendNoArgs("LUSERS", .bulk);
+    }
+    pub fn users(self: *Client) !void {
+        try self.sendNoArgs("USERS", .bulk);
+    }
+    pub fn links(self: *Client) !void {
+        try self.sendNoArgs("LINKS", .bulk);
+    }
+    pub fn map(self: *Client) !void {
+        try self.sendNoArgs("MAP", .bulk);
+    }
+    pub fn commands(self: *Client, filter: ?[]const u8) !void {
+        try self.sendOptionalAtom("COMMANDS", filter, .bulk);
+    }
+    pub fn welcome(self: *Client) !void {
+        try self.sendNoArgs("WELCOME", .interactive);
+    }
+    pub fn accountInfo(self: *Client, account: ?[]const u8) !void {
+        try self.sendOptionalAtom("ACCOUNTINFO", account, .bulk);
+    }
+    pub fn saslInfo(self: *Client) !void {
+        try self.sendNoArgs("SASLINFO", .bulk);
+    }
+    pub fn privs(self: *Client) !void {
+        try self.sendNoArgs("PRIVS", .bulk);
+    }
+    pub fn sessionList(self: *Client) !void {
+        try self.appendCommand("SESSION", &.{"LIST"});
+        try self.queueOut(.bulk, false, false);
+    }
+
+    pub fn eventList(self: *Client, event: []const u8) !void {
+        if (event.len == 0) try self.appendCommand("EVENT", &.{"LIST"}) else try self.appendCommand("EVENT", &.{ "LIST", event });
+        try self.queueOut(.interactive, true, false);
+    }
+
+    pub fn eventChange(self: *Client, add: bool, event: []const u8, mask: []const u8) !void {
+        if (event.len == 0) return error.InvalidIrcParameter;
+        const operation = if (add) "ADD" else "DELETE";
+        if (mask.len == 0) try self.appendCommand("EVENT", &.{ operation, event }) else try self.appendCommand("EVENT", &.{ operation, event, mask });
+        try self.queueOut(.interactive, true, false);
+    }
+
+    /// In addition to standard `AWAY`, Microsoft broadcasts this CTCP control
+    /// to every joined room so peers can update their local member state.
+    pub fn sendAwayControl(self: *Client, target: []const u8, message_text: []const u8) !void {
+        if (std.mem.indexOfAny(u8, message_text, "\r\n\x00\x01") != null)
+            return error.InvalidIrcParameter;
+        var wire: std.ArrayList(u8) = .empty;
+        defer wire.deinit(self.gpa);
+        try wire.appendSlice(self.gpa, "\x01AWAY");
+        if (message_text.len != 0) {
+            try wire.append(self.gpa, ' ');
+            try wire.appendSlice(self.gpa, message_text);
+        }
+        try wire.append(self.gpa, 0x01);
+        return self.privmsg(target, wire.items);
+    }
+
     pub fn privmsg(self: *Client, target: []const u8, text: []const u8) !void {
         try self.validateOutgoingText(text);
         if (self.capabilityEnabled("echo-message")) if (self.features) |*state| try state.recordEcho(target, text);
-        try self.appendCommand("PRIVMSG", &.{ target, text });
+        try self.appendCommandTrailing("PRIVMSG", &.{ target, text });
         try self.queueOut(.interactive, false, false);
     }
 
+    pub fn notice(self: *Client, target: []const u8, text: []const u8) !void {
+        try self.validateOutgoingText(text);
+        try self.appendCommandTrailing("NOTICE", &.{ target, text });
+        try self.queueOut(.interactive, false, false);
+    }
+
+    /// Send a named-conversation message using Onyx's narrow `onyx/topics`
+    /// capability. The tag is valid without generic `message-tags`.
+    pub fn privmsgWithTopic(self: *Client, target: []const u8, topic: []const u8, text: []const u8) !void {
+        return self.sendWithTopic("PRIVMSG", target, topic, text);
+    }
+
+    /// NOTICE counterpart to `privmsgWithTopic`.
+    pub fn noticeWithTopic(self: *Client, target: []const u8, topic: []const u8, text: []const u8) !void {
+        return self.sendWithTopic("NOTICE", target, topic, text);
+    }
+
+    /// Associate a direct message with a channel. Onyx's channel-context
+    /// capability defines the tag semantics, while generic `message-tags`
+    /// remains the relay authorization for this draft extension.
+    pub fn privmsgWithChannelContext(self: *Client, target: []const u8, channel: []const u8, text: []const u8) !void {
+        try self.requireCapability("draft/channel-context");
+        try self.requireClientTagCapability("");
+        if (isChannelTarget(target) or !validChannelContext(channel)) return error.InvalidIrcParameter;
+        try self.validateOutgoingText(text);
+        var tags: std.ArrayList(u8) = .empty;
+        defer tags.deinit(self.gpa);
+        try tags.appendSlice(self.gpa, "+draft/channel-context=");
+        try message.escapeTagValue(&tags, self.gpa, channel);
+        if (self.capabilityEnabled("echo-message")) if (self.features) |*state| try state.recordEcho(target, text);
+        try self.appendCommandWithTagsAndTrailing("PRIVMSG", &.{ target, text }, tags.items, true);
+        try self.queueOut(.interactive, false, false);
+    }
+
+    /// Emit the NOTICE form used by Microsoft's CTCP information replies.
+    /// A non-null empty payload intentionally retains the separating space.
+    pub fn ctcpReply(self: *Client, target: []const u8, command: []const u8, payload: ?[]const u8) !void {
+        if (command.len == 0 or std.mem.indexOfAny(u8, command, " \r\n\x00\x01") != null)
+            return error.InvalidIrcParameter;
+        var wire: std.ArrayList(u8) = .empty;
+        defer wire.deinit(self.gpa);
+        try wire.append(self.gpa, 0x01);
+        try wire.appendSlice(self.gpa, command);
+        if (payload) |value| {
+            if (std.mem.indexOfAny(u8, value, "\r\n\x00\x01") != null)
+                return error.InvalidIrcParameter;
+            try wire.append(self.gpa, ' ');
+            try wire.appendSlice(self.gpa, value);
+        }
+        try wire.append(self.gpa, 0x01);
+        return self.notice(target, wire.items);
+    }
+
+    pub fn sendCallLink(self: *Client, target: []const u8, link: []const u8) !void {
+        if (link.len == 0 or link.len > 400 or std.mem.indexOfAny(u8, link, " \r\n\x00\x01") != null)
+            return error.InvalidIrcParameter;
+        var wire: std.ArrayList(u8) = .empty;
+        defer wire.deinit(self.gpa);
+        try wire.appendSlice(self.gpa, "\x01X-COMICCHAT-CALL ");
+        try wire.appendSlice(self.gpa, link);
+        try wire.append(self.gpa, 0x01);
+        try self.privmsg(target, wire.items);
+    }
+
+    pub fn refuseLegacyNetMeeting(self: *Client, target: []const u8) !void {
+        return self.ctcpReply(target, "NETMEET", "NOHAVE");
+    }
+
     pub fn reply(self: *Client, target: []const u8, msgid: []const u8, text: []const u8) !void {
+        try self.requireClientTagCapability("draft/reply");
         if (!validMessageReference(msgid)) return error.InvalidMessageReference;
         try self.validateOutgoingText(text);
         var tags: std.ArrayList(u8) = .empty;
         defer tags.deinit(self.gpa);
-        try tags.appendSlice(self.gpa, "+reply=");
+        try tags.appendSlice(self.gpa, "+draft/reply=");
         try message.escapeTagValue(&tags, self.gpa, msgid);
         if (self.capabilityEnabled("echo-message")) if (self.features) |*state| try state.recordEcho(target, text);
-        try self.appendCommandWithTags("PRIVMSG", &.{ target, text }, tags.items);
+        try self.appendCommandWithNarrowTags("PRIVMSG", &.{ target, text }, tags.items);
+        try self.queueOut(.interactive, false, false);
+    }
+
+    /// Onyx `SEARCH <target> :<query>` capability path. Results return through
+    /// the normal CHATHISTORY/BATCH receive pipeline.
+    pub fn search(self: *Client, target: []const u8, query: []const u8) !void {
+        try self.requireCapability("draft/search");
+        if (target.len == 0 or query.len == 0) return error.InvalidIrcParameter;
+        try self.validateOutgoingText(query);
+        try self.appendCommandTrailing("SEARCH", &.{ target, query });
+        try self.queueOut(.bulk, false, false);
+    }
+
+    /// Request the newest bounded CHATHISTORY window before `selector` (`*`,
+    /// `msgid=<id>`, or `timestamp=<ISO8601Z>`).
+    pub fn chatHistoryLatest(self: *Client, target: []const u8, selector: []const u8, limit: u16) !void {
+        try self.sendChatHistoryLatest(target, selector, limit, null);
+    }
+
+    /// Onyx named-conversation variant of `chatHistoryLatest`.
+    pub fn chatHistoryLatestTopic(self: *Client, target: []const u8, selector: []const u8, limit: u16, topic: []const u8) !void {
+        try self.sendChatHistoryLatest(target, selector, limit, topic);
+    }
+
+    pub fn chatHistoryBefore(self: *Client, target: []const u8, selector: []const u8, limit: u16) !void {
+        try self.sendChatHistoryBound("BEFORE", target, selector, limit);
+    }
+    pub fn chatHistoryAfter(self: *Client, target: []const u8, selector: []const u8, limit: u16) !void {
+        try self.sendChatHistoryBound("AFTER", target, selector, limit);
+    }
+    pub fn chatHistoryAround(self: *Client, target: []const u8, selector: []const u8, limit: u16) !void {
+        try self.sendChatHistoryBound("AROUND", target, selector, limit);
+    }
+    pub fn chatHistoryAroundWithSecond(self: *Client, target: []const u8, center: []const u8, second: []const u8, limit: u16) !void {
+        try self.requireCapability("draft/chathistory");
+        if (!validHistoryTarget(target) or !validHistorySelector(center) or !validHistorySelector(second)) return error.InvalidIrcParameter;
+        var buf: [5]u8 = undefined;
+        const text = try std.fmt.bufPrint(&buf, "{d}", .{limit});
+        try self.appendCommand("CHATHISTORY", &.{ "AROUND", target, center, second, text });
+        try self.queueOut(.bulk, false, false);
+    }
+    pub fn chatHistoryBetween(self: *Client, target: []const u8, first: []const u8, second: []const u8, limit: u16) !void {
+        try self.requireCapability("draft/chathistory");
+        if (!validHistoryTarget(target) or !validHistorySelector(first) or !validHistorySelector(second)) return error.InvalidIrcParameter;
+        var buf: [5]u8 = undefined;
+        const text = try std.fmt.bufPrint(&buf, "{d}", .{limit});
+        try self.appendCommand("CHATHISTORY", &.{ "BETWEEN", target, first, second, text });
+        try self.queueOut(.bulk, false, false);
+    }
+    pub fn chatHistoryTargets(self: *Client, first: []const u8, second: []const u8, limit: u16) !void {
+        try self.requireCapability("draft/chathistory");
+        if (!validHistoryTargetsSelector(first) or !validHistoryTargetsSelector(second) or limit == 0 or limit > 1000) return error.InvalidIrcParameter;
+        var buf: [5]u8 = undefined;
+        const text = try std.fmt.bufPrint(&buf, "{d}", .{limit});
+        try self.appendCommand("CHATHISTORY", &.{ "TARGETS", first, second, text });
+        try self.queueOut(.bulk, false, false);
+    }
+
+    /// Onyx `EDIT <target> <msgid> :<text>` path. The server enforces original
+    /// sender ownership and broadcasts an edit-tagged replacement to capable
+    /// peers; the client validates only its own wire invariants.
+    pub fn editMessage(self: *Client, target: []const u8, msgid: []const u8, text: []const u8) !void {
+        try self.requireCapability("draft/message-editing");
+        if (!validMessageReference(msgid) or text.len == 0) return error.InvalidIrcParameter;
+        try self.validateOutgoingText(text);
+        try self.appendCommandTrailing("EDIT", &.{ target, msgid, text });
+        try self.queueOut(.interactive, false, false);
+    }
+
+    /// Onyx `REDACT <channel> <msgid> [:reason]` path. Authorization remains
+    /// server-owned; a missing reason deliberately remains an ordinary parameter
+    /// form so the daemon uses its default audit reason.
+    pub fn redactMessage(self: *Client, channel: []const u8, msgid: []const u8, reason: ?[]const u8) !void {
+        try self.requireCapability("draft/message-redaction");
+        if (channel.len == 0 or !validMessageReference(msgid)) return error.InvalidIrcParameter;
+        if (reason) |text| {
+            try self.validateOutgoingText(text);
+            try self.appendCommandTrailing("REDACT", &.{ channel, msgid, text });
+        } else {
+            try self.appendCommand("REDACT", &.{ channel, msgid });
+        }
+        try self.queueOut(.interactive, false, false);
+    }
+
+    /// Onyx `MARKREAD <target> [timestamp=<rfc3339>|*]` path. Passing null
+    /// requests the current marker; `*` explicitly clears it on the server.
+    pub fn markRead(self: *Client, target: []const u8, marker: ?[]const u8) !void {
+        try self.requireCapability("draft/read-marker");
+        if (target.len == 0) return error.InvalidIrcParameter;
+        if (marker) |value| {
+            if (!std.mem.eql(u8, value, "*") and !std.mem.startsWith(u8, value, "timestamp=")) return error.InvalidIrcParameter;
+            try self.appendCommand("MARKREAD", &.{ target, value });
+        } else {
+            try self.appendCommand("MARKREAD", &.{target});
+        }
+        try self.queueOut(.interactive, false, false);
+    }
+
+    /// Metadata-2 command builder for GET/LIST/SET/CLEAR. `value` is sent as
+    /// the forced trailing field so an empty value expresses deletion exactly as
+    /// the Onyx metadata handler expects.
+    pub fn metadata(self: *Client, target: []const u8, operation: []const u8, key: ?[]const u8, visibility: ?[]const u8, value: ?[]const u8) !void {
+        try self.requireCapability("draft/metadata-2");
+        if (target.len == 0 or !validMetadataOperation(operation)) return error.InvalidIrcParameter;
+        var params: [5][]const u8 = undefined;
+        var count: usize = 0;
+        params[count] = target;
+        count += 1;
+        params[count] = operation;
+        count += 1;
+        if (key) |item| {
+            if (item.len == 0) return error.InvalidIrcParameter;
+            params[count] = item;
+            count += 1;
+        }
+        if (visibility) |item| {
+            if (item.len == 0) return error.InvalidIrcParameter;
+            params[count] = item;
+            count += 1;
+        }
+        if (value) |text| {
+            try self.validateOutgoingText(text);
+            params[count] = text;
+            count += 1;
+            try self.appendCommandTrailing("METADATA", params[0..count]);
+        } else {
+            try self.appendCommand("METADATA", params[0..count]);
+        }
         try self.queueOut(.interactive, false, false);
     }
 
     pub fn react(self: *Client, target: []const u8, msgid: []const u8, reaction: []const u8, remove: bool) !void {
+        try self.requireClientTagCapability("draft/react");
         if (!validMessageReference(msgid)) return error.InvalidMessageReference;
         if (reaction.len > 256 or !std.unicode.utf8ValidateSlice(reaction)) return error.InvalidReaction;
         var tags: std.ArrayList(u8) = .empty;
         defer tags.deinit(self.gpa);
-        try tags.appendSlice(self.gpa, "+reply=");
+        try tags.appendSlice(self.gpa, "+draft/reply=");
         try message.escapeTagValue(&tags, self.gpa, msgid);
         try tags.appendSlice(self.gpa, if (remove) ";+draft/unreact=" else ";+draft/react=");
         try message.escapeTagValue(&tags, self.gpa, reaction);
-        try self.appendCommandWithTags("TAGMSG", &.{target}, tags.items);
+        try self.appendCommandWithNarrowTags("TAGMSG", &.{target}, tags.items);
         try self.queueOut(.interactive, false, false);
     }
 
@@ -481,25 +1068,98 @@ pub const Client = struct {
         return self.sendTyping(target, status);
     }
 
-    pub fn announceAvatar(self: *Client, target: []const u8, avatar: []const u8) !void {
+    /// Source `ChatAnnounceNewAvatar` passes this comment as the annotation
+    /// argument: IRCX therefore carries it in `DATA ... CCUDI1`, while plain
+    /// IRC carries the same bytes in a `PRIVMSG`.
+    pub fn announceAvatar(self: *Client, target: []const u8, avatar: []const u8, ircx_data: bool) !void {
         if (avatar.len == 0 or std.mem.indexOfAny(u8, avatar, " .\r\n") != null)
             return error.InvalidIrcParameter;
         var text: std.ArrayList(u8) = .empty;
         defer text.deinit(self.gpa);
         try text.appendSlice(self.gpa, "# Appears as ");
         try text.appendSlice(self.gpa, avatar);
-        return self.privmsg(target, text.items);
+        return self.comicComment(target, text.items, ircx_data);
     }
 
     pub fn comicData(self: *Client, target: []const u8, annotation: []const u8) !void {
-        try self.appendCommand("DATA", &.{ target, "CCUDI1", annotation });
+        return self.ircxTaggedData("DATA", target, "CCUDI1", annotation);
+    }
+
+    /// IRCX draft 04 §5.4: request a tagged payload. This is deliberately a
+    /// separate wire verb from DATA so peer applications can distinguish a
+    /// request from an unsolicited update.
+    pub fn ircxRequest(self: *Client, target: []const u8, tag: []const u8, payload: []const u8) !void {
+        return self.ircxTaggedData("REQUEST", target, tag, payload);
+    }
+
+    /// IRCX draft 04 §5.4: reply to a tagged REQUEST.
+    pub fn ircxReply(self: *Client, target: []const u8, tag: []const u8, payload: []const u8) !void {
+        return self.ircxTaggedData("REPLY", target, tag, payload);
+    }
+
+    /// IRCX draft 04 §5.13 contextual whisper. Unlike a private PRIVMSG, the
+    /// channel and recipient list remain visible on the wire, allowing an IRCX
+    /// peer to display the whisper in its channel context.
+    pub fn whisper(self: *Client, channel: []const u8, recipients: []const u8, text: []const u8) !void {
+        if (channel.len == 0 or recipients.len == 0) return error.InvalidIrcParameter;
+        try self.validateOutgoingText(text);
+        try self.appendCommandTrailing("WHISPER", &.{ channel, recipients, text });
         try self.queueOut(.interactive, false, false);
+    }
+
+    /// IRCX draft 04 §5.2 legacy SASL envelope. Modern CAP SASL remains the
+    /// normal registration path; this method exists for an IRCX-only server
+    /// and deliberately requires verified TLS. The caller owns the mechanism
+    /// payload and it is zeroed once copied into the sensitive transmit queue.
+    pub fn ircxAuth(self: *Client, mechanism: []const u8, sequence: []const u8, payload: ?[]u8) !void {
+        defer if (payload) |secret| std.crypto.secureZero(u8, secret);
+        if (self.connect_options.security != .tls) return error.AccountRegistrationRequiresTls;
+        if (!validIrcAtom(mechanism) or !validIrcxAuthSequence(sequence)) return error.InvalidIrcParameter;
+        if (payload) |secret| {
+            if (std.mem.indexOfAny(u8, secret, "\r\n\x00") != null) return error.InvalidIrcParameter;
+            try self.appendCommandTrailing("AUTH", &.{ mechanism, sequence, secret });
+        } else {
+            try self.appendCommand("AUTH", &.{ mechanism, sequence });
+        }
+        // AUTH carries credentials but is an application-initiated IRCX
+        // message, not a transport keepalive; use the sensitive interactive
+        // queue just like account registration so normal backpressure applies.
+        try self.queueOut(.interactive, false, true);
+    }
+
+    fn ircxTaggedData(self: *Client, command: []const u8, target: []const u8, tag: []const u8, payload: []const u8) !void {
+        if (target.len == 0 or !validIrcxDataTag(tag)) return error.InvalidIrcParameter;
+        try self.validateOutgoingText(payload);
+        try self.appendCommandTrailing(command, &.{ target, tag, payload });
+        try self.queueOut(.interactive, false, false);
+    }
+
+    /// `bChatSendSound` sends no UDI. Its entire wire payload is the source
+    /// CTCP form `SOUND <filename> <accompanying-message>` in a PRIVMSG.
+    pub fn sendSound(self: *Client, target: []const u8, filename: []const u8, accompanying_message: []const u8) !void {
+        if (filename.len == 0 or std.mem.indexOfScalar(u8, filename, 0) != null)
+            return error.InvalidIrcParameter;
+        if (std.mem.indexOfAny(u8, accompanying_message, "\r\n\x00\x01") != null)
+            return error.InvalidIrcParameter;
+
+        const quoted_filename = try dcc.ctcpQuote(self.gpa, filename);
+        defer if (quoted_filename) |owned| self.gpa.free(owned);
+        const wire_filename = quoted_filename orelse filename;
+
+        var wire: std.ArrayList(u8) = .empty;
+        defer wire.deinit(self.gpa);
+        try wire.appendSlice(self.gpa, "\x01SOUND ");
+        try wire.appendSlice(self.gpa, wire_filename);
+        try wire.append(self.gpa, ' ');
+        try wire.appendSlice(self.gpa, accompanying_message);
+        try wire.append(self.gpa, 0x01);
+        return self.privmsg(target, wire.items);
     }
 
     /// `# GetInfo` (`ChatGetInfo`, protsupp.cpp:3415-3422): request the
     /// target's profile text.
-    pub fn requestProfile(self: *Client, target: []const u8) !void {
-        return self.privmsg(target, "# GetInfo");
+    pub fn requestProfile(self: *Client, target: []const u8, ircx_data: bool) !void {
+        return self.comicComment(target, "# GetInfo", ircx_data);
     }
 
     /// `# HeresInfo: <profile>` (protsupp.cpp:919-920): reply to a profile
@@ -516,8 +1176,8 @@ pub const Client = struct {
     /// target to (re)announce its avatar name/URL. This port has no avatar
     /// file-transfer path (`filesend.cpp`), so a reply only ever updates the
     /// name via `announceAvatar`/`parseAvatarAnnouncement`.
-    pub fn requestAvatarInfo(self: *Client, target: []const u8) !void {
-        return self.privmsg(target, "# GetCharInfo");
+    pub fn requestAvatarInfo(self: *Client, target: []const u8, ircx_data: bool) !void {
+        return self.comicComment(target, "# GetCharInfo", ircx_data);
     }
 
     /// `ChatSendFile`'s offer (filesend.cpp:130-198): announce a `DCC SEND`
@@ -535,7 +1195,7 @@ pub const Client = struct {
     /// backdrop change, in both the modern and legacy-compat wire forms so
     /// either kind of receiver picks it up. `name` keeps its extension
     /// (e.g. "cave.bmp"); `url` may be omitted.
-    pub fn syncBackdrop(self: *Client, target: []const u8, name: []const u8, url: ?[]const u8) !void {
+    pub fn syncBackdrop(self: *Client, target: []const u8, name: []const u8, url: ?[]const u8, ircx_data: bool) !void {
         if (name.len == 0) return error.InvalidIrcParameter;
 
         var modern: std.ArrayList(u8) = .empty;
@@ -544,7 +1204,7 @@ pub const Client = struct {
         try modern.appendSlice(self.gpa, name);
         try modern.append(self.gpa, ',');
         if (url) |u| try modern.appendSlice(self.gpa, u);
-        try self.privmsg(target, modern.items);
+        try self.comicComment(target, modern.items, ircx_data);
 
         const dot = std.mem.indexOfScalar(u8, name, '.');
         const base_name = if (dot) |i| name[0..i] else name;
@@ -556,7 +1216,12 @@ pub const Client = struct {
         // whitespace after the prefix (protsupp.cpp:975-976).
         try legacy.appendSlice(self.gpa, "# BDrop:  ");
         try legacy.appendSlice(self.gpa, base_name);
-        try self.privmsg(target, legacy.items);
+        try self.comicComment(target, legacy.items, ircx_data);
+    }
+
+    fn comicComment(self: *Client, target: []const u8, text: []const u8, ircx_data: bool) !void {
+        if (ircx_data) return self.comicData(target, text);
+        return self.privmsg(target, text);
     }
 
     pub fn accountRegister(
@@ -585,6 +1250,34 @@ pub const Client = struct {
         return false;
     }
 
+    fn requireCapability(self: *const Client, name: []const u8) !void {
+        if (!self.capabilityEnabled(name)) return error.CapabilityNotEnabled;
+    }
+
+    /// Onyx relays the named activity tag when either generic message-tags or
+    /// its narrow draft capability is negotiated. Prefer the generic path when
+    /// available, but do not reject a standards-compliant narrow-only peer.
+    fn requireClientTagCapability(self: *const Client, narrow: []const u8) !void {
+        if (!self.capabilityEnabled("message-tags") and !self.capabilityEnabled(narrow))
+            return error.MessageTagsNotEnabled;
+    }
+
+    pub fn appendEnabledCapabilities(self: *const Client, out: *std.ArrayList(u8), gpa: std.mem.Allocator) !void {
+        const registration = if (self.registration) |*value| value else return;
+        for (registration.cap.enabled.entries.items, 0..) |capability, index| {
+            if (index != 0) try out.appendSlice(gpa, ", ");
+            try out.appendSlice(gpa, capability.name);
+        }
+    }
+
+    pub fn authenticated(self: *const Client) bool {
+        return if (self.registration) |registration| registration.authenticated else false;
+    }
+
+    pub fn usesTls(self: *const Client) bool {
+        return self.connect_options.security == .tls;
+    }
+
     pub fn refreshCapabilities(self: *Client) !void {
         const registration = if (self.registration) |*value| value else return error.RegistrationNotStarted;
         try registration.cap.requestList(&self.out);
@@ -603,12 +1296,25 @@ pub const Client = struct {
     }
 
     fn appendCommand(self: *Client, command: []const u8, params: []const []const u8) !void {
-        return self.appendCommandWithTags(command, params, null);
+        return self.appendCommandWithTagsAndTrailing(command, params, null, false);
+    }
+
+    fn appendCommandTrailing(self: *Client, command: []const u8, params: []const []const u8) !void {
+        return self.appendCommandWithTagsAndTrailing(command, params, null, true);
     }
 
     fn appendCommandWithTags(self: *Client, command: []const u8, params: []const []const u8, client_tags: ?[]const u8) !void {
-        if (client_tags != null and !self.capabilityEnabled("message-tags")) return error.MessageTagsNotEnabled;
-        var msg = Message{ .command = command };
+        try self.requireClientTagCapability("");
+        return self.appendCommandWithTagsAndTrailing(command, params, client_tags, false);
+    }
+
+    /// Caller has already checked its specific narrow capability.
+    fn appendCommandWithNarrowTags(self: *Client, command: []const u8, params: []const []const u8, client_tags: []const u8) !void {
+        return self.appendCommandWithTagsAndTrailing(command, params, client_tags, false);
+    }
+
+    fn appendCommandWithTagsAndTrailing(self: *Client, command: []const u8, params: []const []const u8, client_tags: ?[]const u8, force_trailing: bool) !void {
+        var msg = Message{ .command = command, .force_trailing = force_trailing };
         if (params.len > message.max_params) return error.InvalidIrcParameter;
         for (params, 0..) |param, index| msg.params[index] = param;
         msg.param_count = params.len;
@@ -625,9 +1331,66 @@ pub const Client = struct {
     }
 
     fn sendTyping(self: *Client, target: []const u8, status: TypingStatus) !void {
+        try self.requireClientTagCapability("draft/typing");
         var buffer: [32]u8 = undefined;
         const tags = try std.fmt.bufPrint(&buffer, "+typing={s}", .{@tagName(status)});
-        try self.appendCommandWithTags("TAGMSG", &.{target}, tags);
+        try self.appendCommandWithNarrowTags("TAGMSG", &.{target}, tags);
+        try self.queueOut(.interactive, false, false);
+    }
+
+    fn sendChatHistoryLatest(self: *Client, target: []const u8, selector: []const u8, limit: u16, topic: ?[]const u8) !void {
+        try self.requireCapability("draft/chathistory");
+        if (!validHistoryTarget(target) or !validHistorySelector(selector)) return error.InvalidIrcParameter;
+        var limit_buffer: [5]u8 = undefined;
+        const limit_text = try std.fmt.bufPrint(&limit_buffer, "{d}", .{limit});
+        if (topic) |label| {
+            try self.requireClientTagCapability("onyx/topics");
+            if (!validTopicLabel(label)) return error.InvalidIrcParameter;
+            var tags: std.ArrayList(u8) = .empty;
+            defer tags.deinit(self.gpa);
+            try tags.appendSlice(self.gpa, "+onyx/topic=");
+            try message.escapeTagValue(&tags, self.gpa, label);
+            try self.appendCommandWithTagsAndTrailing("CHATHISTORY", &.{ "LATEST", target, selector, limit_text }, tags.items, false);
+        } else {
+            try self.appendCommand("CHATHISTORY", &.{ "LATEST", target, selector, limit_text });
+        }
+        try self.queueOut(.bulk, false, false);
+    }
+
+    fn sendNoArgs(self: *Client, command: []const u8, priority: policy.Priority) !void {
+        try self.appendCommand(command, &.{});
+        try self.queueOut(priority, true, false);
+    }
+    fn sendRequiredAtom(self: *Client, command: []const u8, value: []const u8, priority: policy.Priority) !void {
+        if (!validIrcAtom(value)) return error.InvalidIrcParameter;
+        try self.appendCommand(command, &.{value});
+        try self.queueOut(priority, true, false);
+    }
+    fn sendOptionalAtom(self: *Client, command: []const u8, value: ?[]const u8, priority: policy.Priority) !void {
+        if (value) |atom| try self.sendRequiredAtom(command, atom, priority) else try self.sendNoArgs(command, priority);
+    }
+
+    fn sendChatHistoryBound(self: *Client, subcommand: []const u8, target: []const u8, selector: []const u8, limit: u16) !void {
+        try self.requireCapability("draft/chathistory");
+        if (!validHistoryTarget(target) or !validHistorySelector(selector)) return error.InvalidIrcParameter;
+        var buf: [5]u8 = undefined;
+        const text = try std.fmt.bufPrint(&buf, "{d}", .{limit});
+        try self.appendCommand("CHATHISTORY", &.{ subcommand, target, selector, text });
+        try self.queueOut(.bulk, false, false);
+    }
+
+    fn sendWithTopic(self: *Client, command: []const u8, target: []const u8, topic: []const u8, text: []const u8) !void {
+        try self.requireClientTagCapability("onyx/topics");
+        if (!isChannelTarget(target) or !validTopicLabel(topic)) return error.InvalidIrcParameter;
+        try self.validateOutgoingText(text);
+        var tags: std.ArrayList(u8) = .empty;
+        defer tags.deinit(self.gpa);
+        try tags.appendSlice(self.gpa, "+onyx/topic=");
+        try message.escapeTagValue(&tags, self.gpa, topic);
+        if (std.mem.eql(u8, command, "PRIVMSG"))
+            if (self.capabilityEnabled("echo-message"))
+                if (self.features) |*state| try state.recordEcho(target, text);
+        try self.appendCommandWithTagsAndTrailing(command, &.{ target, text }, tags.items, true);
         try self.queueOut(.interactive, false, false);
     }
 
@@ -752,6 +1515,114 @@ fn validMessageReference(reference: []const u8) bool {
         std.mem.indexOfAny(u8, reference, " \r\n\x00") == null;
 }
 
+/// IRCX draft 04 §5.4 reserves a compact tag grammar for DATA, REQUEST, and
+/// REPLY. Reject malformed tags locally rather than relying on server-specific
+/// recovery, and leave authorization of SYS/ADM/OWN/HST prefixes to the server.
+fn validIrcxDataTag(tag: []const u8) bool {
+    if (tag.len == 0 or tag.len > 15) return false;
+    if (!std.ascii.isAlphabetic(tag[0])) return false;
+    for (tag) |byte| if (!std.ascii.isAlphanumeric(byte) and byte != '.') return false;
+    return true;
+}
+
+fn validIrcAtom(value: []const u8) bool {
+    return value.len != 0 and std.mem.indexOfAny(u8, value, " \r\n\x00:") == null;
+}
+
+fn validIrcxAuthSequence(value: []const u8) bool {
+    return std.mem.eql(u8, value, "I") or std.mem.eql(u8, value, "S") or std.mem.eql(u8, value, "*");
+}
+
+fn validMetadataOperation(value: []const u8) bool {
+    return std.ascii.eqlIgnoreCase(value, "GET") or
+        std.ascii.eqlIgnoreCase(value, "LIST") or
+        std.ascii.eqlIgnoreCase(value, "SET") or
+        std.ascii.eqlIgnoreCase(value, "CLEAR");
+}
+
+fn validTopicLabel(value: []const u8) bool {
+    if (value.len == 0 or value.len > 50 or !std.unicode.utf8ValidateSlice(value)) return false;
+    for (value) |byte| if (byte < 0x20 or byte == 0x7f or byte == ',') return false;
+    return true;
+}
+
+fn validHistoryTarget(value: []const u8) bool {
+    if (value.len == 0 or value.len > 128 or std.mem.eql(u8, value, "*")) return false;
+    for (value) |byte| if (byte <= ' ' or byte == 0x7f or byte == ',') return false;
+    return true;
+}
+
+fn validHistorySelectorForPin(value: []const u8) bool {
+    if (value.len == 0 or value.len > 64) return false;
+    for (value) |byte| if (byte <= ' ' or byte == 0x7f or byte == ';' or byte == '\\') return false;
+    return true;
+}
+
+fn validMonitorList(value: []const u8) bool {
+    if (value.len == 0 or value.len > 510) return false;
+    var names = std.mem.splitScalar(u8, value, ',');
+    while (names.next()) |name| {
+        if (name.len == 0 or name.len > 64 or std.mem.indexOfAny(u8, name, " \r\n\x00,@") != null) return false;
+    }
+    return true;
+}
+
+fn validSilenceMask(value: []const u8) bool {
+    return value.len != 0 and value.len <= 256 and std.mem.indexOfAny(u8, value, " \r\n\x00") == null;
+}
+
+fn validHistorySelector(value: []const u8) bool {
+    if (std.mem.eql(u8, value, "*")) return true;
+    if (std.mem.startsWith(u8, value, "msgid=")) {
+        const msgid = value["msgid=".len..];
+        if (msgid.len == 0 or msgid.len > 128) return false;
+        for (msgid) |byte| if (byte <= ' ' or byte == 0x7f or byte == ';' or byte == '\\') return false;
+        return true;
+    }
+    if (std.mem.startsWith(u8, value, "timestamp=")) return validHistoryTimestamp(value["timestamp=".len..]);
+    return false;
+}
+
+fn validHistoryTimestamp(value: []const u8) bool {
+    if (value.len != 24 or value[4] != '-' or value[7] != '-' or value[10] != 'T' or value[13] != ':' or value[16] != ':' or value[19] != '.' or value[23] != 'Z') return false;
+    const year = std.fmt.parseUnsigned(u16, value[0..4], 10) catch return false;
+    const month = std.fmt.parseUnsigned(u8, value[5..7], 10) catch return false;
+    const day = std.fmt.parseUnsigned(u8, value[8..10], 10) catch return false;
+    const hour = std.fmt.parseUnsigned(u8, value[11..13], 10) catch return false;
+    const minute = std.fmt.parseUnsigned(u8, value[14..16], 10) catch return false;
+    const second = std.fmt.parseUnsigned(u8, value[17..19], 10) catch return false;
+    _ = std.fmt.parseUnsigned(u16, value[20..23], 10) catch return false;
+    if (year < 1970 or month < 1 or month > 12 or hour > 23 or minute > 59 or second > 59) return false;
+    const month_enum: std.time.epoch.Month = @enumFromInt(month);
+    return day >= 1 and day <= std.time.epoch.getDaysInMonth(year, month_enum);
+}
+
+fn validAcceptNick(value: []const u8) bool {
+    if (value.len == 0 or value.len > 64) return false;
+    for (value) |byte| if (!std.ascii.isAlphanumeric(byte) and std.mem.indexOfScalar(u8, "[]\\`_^{}|-", byte) == null) return false;
+    return true;
+}
+
+fn validHistoryTargetsSelector(value: []const u8) bool {
+    return std.mem.eql(u8, value, "*") or (std.mem.startsWith(u8, value, "timestamp=") and validHistoryTimestamp(value["timestamp=".len..]));
+}
+
+fn isChannelTarget(value: []const u8) bool {
+    return value.len != 0 and switch (value[0]) {
+        '#', '&', '+', '!' => true,
+        else => false,
+    };
+}
+
+fn validChannelContext(value: []const u8) bool {
+    if (value.len < 2 or value.len > 64 or !isChannelTarget(value)) return false;
+    for (value[1..]) |byte| switch (byte) {
+        0...0x20, 0x7f, ',', ';', '\\' => return false,
+        else => {},
+    };
+    return true;
+}
+
 // --- Tests ----------------------------------------------------------------
 
 test "autoRespond answers PING with matching PONG" {
@@ -776,9 +1647,9 @@ test "autoRespond ignores non-PING" {
 
 test "authenticated registration resumes once then requests a fresh session token" {
     const gpa = std.testing.allocator;
-    var store = try session_store.Store.init(gpa, "eshmaki.me", "kain");
+    var store = try session_store.Store.init(gpa, "server.example", "alex");
     defer store.deinit();
-    try std.testing.expect(try store.observe(message.parse(":eshmaki.me NOTICE kain :SESSION TOKEN reusable")));
+    try std.testing.expect(try store.observe(message.parse(":server.example NOTICE alex :SESSION TOKEN reusable")));
     var registration = Registration.init(gpa, "eshmaki.me", .tls, .{
         .session = &store,
         .now_seconds = 100,
@@ -795,9 +1666,9 @@ test "authenticated registration resumes once then requests a fresh session toke
 
 test "unauthenticated registration never transmits a session bearer" {
     const gpa = std.testing.allocator;
-    var store = try session_store.Store.init(gpa, "eshmaki.me", "kain");
+    var store = try session_store.Store.init(gpa, "server.example", "alex");
     defer store.deinit();
-    try std.testing.expect(try store.observe(message.parse(":eshmaki.me NOTICE kain :SESSION TOKEN reusable")));
+    try std.testing.expect(try store.observe(message.parse(":server.example NOTICE alex :SESSION TOKEN reusable")));
     var registration = Registration.init(gpa, "eshmaki.me", .tls, .{ .session = &store });
     defer registration.deinit();
     var out: std.ArrayList(u8) = .empty;
@@ -807,7 +1678,7 @@ test "unauthenticated registration never transmits a session bearer" {
     try std.testing.expectEqual(@as(usize, 0), out.items.len);
 }
 
-test "registration advances CAP asynchronously and starts IRCX only after CAP END" {
+test "registration advances CAP then follows Microsoft IRCX probe and enable states" {
     const gpa = std.testing.allocator;
     var registration = Registration.init(gpa, "irc.example", .tls, .{});
     defer registration.deinit();
@@ -825,8 +1696,18 @@ test "registration advances CAP asynchronously and starts IRCX only after CAP EN
     out.clearRetainingCapacity();
     var ack = message.parse(":irc CAP * ACK :echo-message message-tags");
     try std.testing.expect(try registration.consume(&out, &ack, &upgrade));
-    try std.testing.expectEqualStrings("CAP END\r\nIRCX\r\n", out.items);
+    try std.testing.expectEqualStrings("CAP END\r\nMODE ISIRCX\r\n", out.items);
     try std.testing.expect(registration.done);
+
+    out.clearRetainingCapacity();
+    var probe_reply = message.parse(":irc 800 * 0 0 ANON 512 *");
+    try std.testing.expect(try registration.consume(&out, &probe_reply, &upgrade));
+    try std.testing.expectEqualStrings("IRCX\r\n", out.items);
+
+    out.clearRetainingCapacity();
+    var enabled_reply = message.parse(":irc 800 comicchat 1 0 ANON 512 *");
+    try std.testing.expect(!try registration.consume(&out, &enabled_reply, &upgrade));
+    try std.testing.expectEqual(@as(usize, 0), out.items.len);
 }
 
 test "registration drives PLAIN SASL and zeroizes caller credentials" {
@@ -868,7 +1749,7 @@ test "registration drives PLAIN SASL and zeroizes caller credentials" {
     sasl.secureClear(&out);
     var success = message.parse(":irc 903 alice :SASL authentication successful");
     _ = try registration.consume(&out, &success, &upgrade);
-    try std.testing.expectEqualStrings("CAP END\r\nIRCX\r\n", out.items);
+    try std.testing.expectEqualStrings("CAP END\r\nMODE ISIRCX\r\n", out.items);
     try std.testing.expect(credentials.zeroized);
     try std.testing.expectEqualSlices(u8, &@as([6]u8, @splat(0)), &password);
 }
@@ -915,7 +1796,7 @@ test "unsupported advertised SASL mechanisms complete CAP without blocking regis
     out.clearRetainingCapacity();
     var ack = message.parse(":irc CAP * ACK :sasl");
     _ = try registration.consume(&out, &ack, &upgrade);
-    try std.testing.expectEqualStrings("CAP END\r\nIRCX\r\n", out.items);
+    try std.testing.expectEqualStrings("CAP END\r\nMODE ISIRCX\r\n", out.items);
     try std.testing.expect(registration.done);
     try std.testing.expect(credentials.zeroized);
 }
@@ -938,12 +1819,37 @@ test "reply reaction and typing commands are bounded tagged client messages" {
         .policy_now_ms = 1000,
     };
     client.registration = Registration.init(gpa, owned_host, .tls, .{});
+    try std.testing.expectError(error.CapabilityNotEnabled, client.search("#c", "release checklist"));
+    try std.testing.expectError(error.CapabilityNotEnabled, client.editMessage("#c", "msg-1", "corrected text"));
+    try std.testing.expectError(error.CapabilityNotEnabled, client.redactMessage("#c", "msg-1", null));
+    try std.testing.expectError(error.CapabilityNotEnabled, client.markRead("#c", null));
+    try std.testing.expectError(error.CapabilityNotEnabled, client.metadata("*", "GET", null, null, null));
+    try std.testing.expectError(error.CapabilityNotEnabled, client.chatHistoryLatest("#c", "*", 20));
+    try std.testing.expectError(error.MessageTagsNotEnabled, client.privmsgWithTopic("#c", "general", "hello"));
+    try std.testing.expectError(error.CapabilityNotEnabled, client.privmsgWithChannelContext("alice", "#c", "hello"));
+    // Keep this command-builder test independent from the global desired
+    // profile: the profile intentionally evolves with the capability catalog.
+    const desired = [_][]const u8{
+        "batch",
+        "draft/account-registration",
+        "labeled-response",
+        "message-tags",
+        "draft/chathistory",
+        "draft/search",
+        "draft/message-editing",
+        "draft/message-redaction",
+        "draft/read-marker",
+        "draft/metadata-2",
+        "onyx/topics",
+        "draft/channel-context",
+    };
+    client.registration.?.cap.config.desired = &desired;
     client.features = try features_mod.State.init(gpa, "me", .{});
     try client.registration.?.cap.begin(&client.out);
     client.out.clearRetainingCapacity();
-    _ = try client.registration.?.cap.handle(&client.out, message.parse(":irc CAP * LS :batch draft/account-registration labeled-response message-tags"));
+    _ = try client.registration.?.cap.handle(&client.out, message.parse(":irc CAP * LS :batch draft/account-registration labeled-response message-tags draft/chathistory draft/search draft/message-editing draft/message-redaction draft/read-marker draft/metadata-2 onyx/topics draft/channel-context"));
     client.out.clearRetainingCapacity();
-    _ = try client.registration.?.cap.handle(&client.out, message.parse(":irc CAP * ACK :batch draft/account-registration labeled-response message-tags"));
+    _ = try client.registration.?.cap.handle(&client.out, message.parse(":irc CAP * ACK :batch draft/account-registration labeled-response message-tags draft/chathistory draft/search draft/message-editing draft/message-redaction draft/read-marker draft/metadata-2 onyx/topics draft/channel-context"));
     client.out.clearRetainingCapacity();
     defer {
         client.registration.?.deinit();
@@ -959,7 +1865,7 @@ test "reply reaction and typing commands are bounded tagged client messages" {
     }
 
     try client.reply("#c", "msg-1", "reply text");
-    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[0].bytes, "+reply=msg-1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[0].bytes, "+draft/reply=msg-1") != null);
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[0].bytes, "label=cc-1") != null);
     try client.react("#c", "msg-1", "wave", false);
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[1].bytes, "+draft/react=wave") != null);
@@ -969,6 +1875,39 @@ test "reply reaction and typing commands are bounded tagged client messages" {
     try client.typing("#c", .done);
     try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[3].bytes, "+typing=done") != null);
 
+    try client.search("#c", "release checklist");
+    try client.editMessage("#c", "msg-1", "corrected text");
+    try client.redactMessage("#c", "msg-1", "off-topic");
+    try client.markRead("#c", "timestamp=2026-07-22T00:00:00Z");
+    try client.metadata("*", "SET", "theme", "public", "ink");
+    try std.testing.expectError(error.InvalidIrcParameter, client.chatHistoryLatest("*", "*", 20));
+    try std.testing.expectError(error.InvalidIrcParameter, client.chatHistoryLatest("#c", "bogus", 20));
+    try std.testing.expectError(error.InvalidIrcParameter, client.chatHistoryLatest("#c", "msgid=bad;id", 20));
+    try std.testing.expectError(error.InvalidIrcParameter, client.chatHistoryLatest("#c", "timestamp=2026-02-30T00:00:00.000Z", 20));
+    try std.testing.expectError(error.InvalidIrcParameter, client.privmsgWithTopic("alice", "general", "topic text"));
+    try std.testing.expectError(error.InvalidIrcParameter, client.privmsgWithTopic("#c", "bad,label", "topic text"));
+    try std.testing.expectError(error.InvalidIrcParameter, client.privmsgWithChannelContext("#c", "#other", "direct text"));
+    try std.testing.expectError(error.InvalidIrcParameter, client.privmsgWithChannelContext("alice", "not-a-channel", "direct text"));
+    try client.privmsgWithTopic("#c", "release plan", "topic text");
+    try client.noticeWithTopic("#c", "release plan", "topic notice");
+    try client.privmsgWithChannelContext("alice", "#c", "direct text");
+    try client.chatHistoryLatest("#c", "msgid=msg-1", 20);
+    try client.chatHistoryLatestTopic("#c", "timestamp=2026-07-22T00:00:00.000Z", 20, "release plan");
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[4].bytes, "SEARCH #c :release checklist") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[5].bytes, "EDIT #c msg-1 :corrected text") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[6].bytes, "REDACT #c msg-1 :off-topic") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[7].bytes, "MARKREAD #c timestamp=2026-07-22T00:00:00Z") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[8].bytes, "METADATA * SET theme public :ink") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[9].bytes, "+onyx/topic=release\\splan") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[9].bytes, "PRIVMSG #c :topic text") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[10].bytes, "+onyx/topic=release\\splan") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[10].bytes, "NOTICE #c :topic notice") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[11].bytes, "+draft/channel-context=#c") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[11].bytes, "PRIVMSG alice :direct text") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[12].bytes, "CHATHISTORY LATEST #c msgid=msg-1 20") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[13].bytes, "+onyx/topic=release\\splan") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[13].bytes, "CHATHISTORY LATEST #c timestamp=2026-07-22T00:00:00.000Z 20") != null);
+
     _ = try client.features.?.observe(&message.parse(":irc 005 me UTF8ONLY :are supported"));
     try std.testing.expectError(error.InvalidUtf8, client.privmsg("#c", &.{0xff}));
     try std.testing.expectError(error.InvalidMessageReference, client.reply("#c", "bad id", "text"));
@@ -976,6 +1915,341 @@ test "reply reaction and typing commands are bounded tagged client messages" {
     var password = [_]u8{ 'p', 'w' };
     try client.accountRegister("*", "user@example.test", &password);
     try std.testing.expectEqualSlices(u8, &.{ 0, 0 }, &password);
-    try std.testing.expect(client.tx.items.items[4].sensitive);
-    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[4].bytes, "REGISTER * user@example.test pw") != null);
+    try std.testing.expect(client.tx.items.items[14].sensitive);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[14].bytes, "REGISTER * user@example.test pw") != null);
+    try client.pins("#c", .list, null);
+    try client.pins("#c", .add, "msg-1");
+    try client.pins("#c", .delete, "msg-1");
+    try client.pins("#c", .clear, null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[15].bytes, "PINS #c LIST\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[16].bytes, "PINS #c ADD msg-1\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[17].bytes, "PINS #c DEL msg-1\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[18].bytes, "PINS #c CLEAR\r\n") != null);
+    try std.testing.expectError(error.InvalidIrcParameter, client.pins("#c", .add, "bad;id"));
+    try client.monitor(.add, "alice,bob");
+    try client.monitor(.remove, "alice");
+    try client.monitor(.clear, null);
+    try client.monitor(.list, null);
+    try client.monitor(.status, null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[19].bytes, "MONITOR + alice,bob\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[20].bytes, "MONITOR - alice\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[21].bytes, "MONITOR C\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[22].bytes, "MONITOR L\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[23].bytes, "MONITOR S\r\n") != null);
+    try client.silence(.list, null);
+    try client.silence(.add, "*!*@bad.example");
+    try client.silence(.remove, "*!*@bad.example");
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[24].bytes, "SILENCE\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[25].bytes, "SILENCE +*!*@bad.example\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[26].bytes, "SILENCE -*!*@bad.example\r\n") != null);
+    try client.chatHistoryBefore("#c", "msgid=msg-2", 10);
+    try client.chatHistoryAfter("#c", "timestamp=2026-07-22T00:00:00.000Z", 10);
+    try client.chatHistoryAround("#c", "msgid=msg-3", 10);
+    try client.chatHistoryAroundWithSecond("#c", "msgid=msg-3", "timestamp=2026-07-22T00:00:00.000Z", 10);
+    try client.chatHistoryBetween("#c", "msgid=msg-1", "msgid=msg-4", 10);
+    try client.chatHistoryTargets("*", "timestamp=2026-07-22T00:00:00.000Z", 10);
+    try client.accept(.list, null);
+    try client.accept(.add, "alice");
+    try client.accept(.remove, "alice");
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[27].bytes, "CHATHISTORY BEFORE #c msgid=msg-2 10") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[28].bytes, "CHATHISTORY AFTER #c timestamp=2026-07-22T00:00:00.000Z 10") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[29].bytes, "CHATHISTORY AROUND #c msgid=msg-3 10") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[30].bytes, "CHATHISTORY AROUND #c msgid=msg-3 timestamp=2026-07-22T00:00:00.000Z 10") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[31].bytes, "CHATHISTORY BETWEEN #c msgid=msg-1 msgid=msg-4 10") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[32].bytes, "CHATHISTORY TARGETS * timestamp=2026-07-22T00:00:00.000Z 10") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[33].bytes, "ACCEPT *\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[34].bytes, "ACCEPT +alice\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[35].bytes, "ACCEPT -alice\r\n") != null);
+    try std.testing.expectError(error.InvalidIrcParameter, client.chatHistoryTargets("*", "*", 0));
+    try std.testing.expectError(error.InvalidIrcParameter, client.accept(.add, "alice@example"));
+}
+
+test "Onyx narrow tag capabilities and no-implicit-names alias work without message-tags" {
+    const gpa = std.testing.allocator;
+    const owned_host = try gpa.dupe(u8, "irc.example");
+    var client = Client{
+        .gpa = gpa,
+        .transport = undefined,
+        .host = owned_host,
+        .port = 6697,
+        .connect_options = .{},
+        .framer = irc.LineFramer.init(gpa),
+        .tx = policy.TxQueue.init(gpa, .{}, 0, 1, 0),
+        .deadlines = policy.Deadlines.init(0, .{}),
+        .aggregator = features_mod.Aggregator.init(gpa, .{}),
+        .policy_now_ms = 4000,
+    };
+    client.registration = Registration.init(gpa, owned_host, .tls, .{});
+    const desired = [_][]const u8{ "draft/reply", "draft/react", "draft/typing", "draft/no-implicit-names", "onyx/topics", "draft/channel-context" };
+    client.registration.?.cap.config.desired = &desired;
+    try client.registration.?.cap.begin(&client.out);
+    client.out.clearRetainingCapacity();
+    _ = try client.registration.?.cap.handle(&client.out, message.parse(":irc CAP * LS :draft/reply draft/react draft/typing draft/no-implicit-names onyx/topics draft/channel-context"));
+    client.out.clearRetainingCapacity();
+    _ = try client.registration.?.cap.handle(&client.out, message.parse(":irc CAP * ACK :draft/reply draft/react draft/typing draft/no-implicit-names onyx/topics draft/channel-context"));
+    client.out.clearRetainingCapacity();
+    defer {
+        client.registration.?.deinit();
+        client.aggregator.deinit();
+        client.tx.deinit();
+        for (client.typing_targets.items) |entry| gpa.free(entry.target);
+        client.typing_targets.deinit(gpa);
+        client.framer.deinit();
+        client.out.deinit(gpa);
+        gpa.free(owned_host);
+    }
+
+    try client.reply("#c", "msg-1", "reply text");
+    try client.react("#c", "msg-1", "wave", false);
+    try client.typing("#c", .active);
+    try client.privmsgWithTopic("#c", "general", "topic text");
+    try std.testing.expectError(error.MessageTagsNotEnabled, client.privmsgWithChannelContext("alice", "#c", "direct text"));
+    try client.join("#c");
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[0].bytes, "+draft/reply=msg-1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[1].bytes, "+draft/react=wave") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[2].bytes, "+typing=active") != null);
+    try std.testing.expect(std.mem.indexOf(u8, client.tx.items.items[3].bytes, "+onyx/topic=general PRIVMSG #c :topic text") != null);
+    try std.testing.expectEqualStrings("JOIN #c\r\nNAMES #c\r\n", client.tx.items.items[4].bytes);
+}
+
+test "channel context requires both its semantic and generic relay capabilities" {
+    const gpa = std.testing.allocator;
+    const owned_host = try gpa.dupe(u8, "irc.example");
+    var client = Client{
+        .gpa = gpa,
+        .transport = undefined,
+        .host = owned_host,
+        .port = 6697,
+        .connect_options = .{},
+        .framer = irc.LineFramer.init(gpa),
+        .tx = policy.TxQueue.init(gpa, .{}, 0, 1, 0),
+        .deadlines = policy.Deadlines.init(0, .{}),
+        .aggregator = features_mod.Aggregator.init(gpa, .{}),
+    };
+    client.registration = Registration.init(gpa, owned_host, .tls, .{});
+    const desired = [_][]const u8{"message-tags"};
+    client.registration.?.cap.config.desired = &desired;
+    try client.registration.?.cap.begin(&client.out);
+    client.out.clearRetainingCapacity();
+    _ = try client.registration.?.cap.handle(&client.out, message.parse(":irc CAP * LS :message-tags"));
+    client.out.clearRetainingCapacity();
+    _ = try client.registration.?.cap.handle(&client.out, message.parse(":irc CAP * ACK :message-tags"));
+    client.out.clearRetainingCapacity();
+    defer {
+        client.registration.?.deinit();
+        client.aggregator.deinit();
+        client.tx.deinit();
+        client.framer.deinit();
+        client.out.deinit(gpa);
+        gpa.free(owned_host);
+    }
+    try std.testing.expectError(error.CapabilityNotEnabled, client.privmsgWithChannelContext("alice", "#c", "direct text"));
+}
+
+test "Onyx topic and channel-context bounds match the pinned protocol helpers" {
+    var topic_max: [50]u8 = undefined;
+    @memset(topic_max[0..], 't');
+    var topic_over: [51]u8 = undefined;
+    @memset(topic_over[0..], 't');
+    try std.testing.expect(validTopicLabel(&topic_max));
+    try std.testing.expect(!validTopicLabel(&topic_over));
+    try std.testing.expect(validTopicLabel("semi;colon"));
+    try std.testing.expect(validTopicLabel("slash\\label"));
+    var escaped: std.ArrayList(u8) = .empty;
+    defer escaped.deinit(std.testing.allocator);
+    try message.escapeTagValue(&escaped, std.testing.allocator, "semi;slash\\label");
+    try std.testing.expectEqualStrings("semi\\:slash\\\\label", escaped.items);
+
+    var context_max: [64]u8 = undefined;
+    @memset(context_max[0..], 'c');
+    context_max[0] = '#';
+    var context_over: [65]u8 = undefined;
+    @memset(context_over[0..], 'c');
+    context_over[0] = '#';
+    try std.testing.expect(validChannelContext(&context_max));
+    try std.testing.expect(!validChannelContext(&context_over));
+    try std.testing.expect(!validChannelContext("#semi;colon"));
+    try std.testing.expect(!validChannelContext("#back\\slash"));
+}
+
+test "live registration probes IRCX before CAP NICK and USER" {
+    const gpa = std.testing.allocator;
+    var registration = Registration.init(gpa, "irc.example", .tls, .{ .want_ircx = true });
+    defer registration.deinit();
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+
+    try appendRegistrationStart(&registration, &out, gpa, "comicchat", "comicchat", "Comic Chat");
+    try std.testing.expectEqualStrings(
+        "MODE ISIRCX\r\nCAP LS 302\r\nNICK comicchat\r\nUSER comicchat 0 * :Comic Chat\r\n",
+        out.items,
+    );
+    try std.testing.expect(registration.ircx_probe_sent);
+}
+
+test "Microsoft comment controls select DATA only after IRCX negotiation" {
+    const gpa = std.testing.allocator;
+    const owned_host = try gpa.dupe(u8, "irc.example");
+    var client = Client{
+        .gpa = gpa,
+        .transport = undefined,
+        .host = owned_host,
+        .port = 6697,
+        .connect_options = .{},
+        .framer = irc.LineFramer.init(gpa),
+        .tx = policy.TxQueue.init(gpa, .{}, 0, 1, 0),
+        .deadlines = policy.Deadlines.init(0, .{}),
+        .aggregator = features_mod.Aggregator.init(gpa, .{}),
+    };
+    defer {
+        client.aggregator.deinit();
+        client.tx.deinit();
+        client.framer.deinit();
+        client.out.deinit(gpa);
+        gpa.free(owned_host);
+    }
+
+    try client.announceAvatar("#root", "anna", false);
+    try std.testing.expectEqualStrings(
+        "PRIVMSG #root :# Appears as anna\r\n",
+        client.tx.items.items[0].bytes,
+    );
+    try client.comicData("#root", "#G123E456M1");
+    try std.testing.expectEqualStrings(
+        "DATA #root CCUDI1 :#G123E456M1\r\n",
+        client.tx.items.items[1].bytes,
+    );
+    try client.announceAvatar("#root", "anna", true);
+    try std.testing.expectEqualStrings(
+        "DATA #root CCUDI1 :# Appears as anna\r\n",
+        client.tx.items.items[2].bytes,
+    );
+    try client.syncBackdrop("#root", "room.bgb", null, true);
+    try std.testing.expectEqualStrings(
+        "DATA #root CCUDI1 :# BDrop2: room.bgb,\r\n",
+        client.tx.items.items[3].bytes,
+    );
+    try std.testing.expectEqualStrings(
+        "DATA #root CCUDI1 :# BDrop:  room\r\n",
+        client.tx.items.items[4].bytes,
+    );
+    try client.sendSound("#root", "Chime.wav", "hello there");
+    try std.testing.expectEqualStrings(
+        "PRIVMSG #root :\x01SOUND Chime.wav hello there\x01\r\n",
+        client.tx.items.items[5].bytes,
+    );
+    try client.sendSound("alice", "Door bell.wav", "come in");
+    try std.testing.expectEqualStrings(
+        "PRIVMSG alice :\x01SOUND Door\x10@bell.wav come in\x01\r\n",
+        client.tx.items.items[6].bytes,
+    );
+    try client.joinWithKey("#locked", "swordfish");
+    try std.testing.expectEqualStrings(
+        "JOIN #locked swordfish\r\n",
+        client.tx.items.items[7].bytes,
+    );
+    try client.create("#new", "+nt", "42", "secret");
+    try std.testing.expectEqualStrings(
+        "CREATE #new +nt 42 secret\r\n",
+        client.tx.items.items[8].bytes,
+    );
+    try client.kick("#root", "trouble", "flooding the room");
+    try std.testing.expectEqualStrings(
+        "KICK #root trouble :flooding the room\r\n",
+        client.tx.items.items[9].bytes,
+    );
+    try client.kick("#root", "quiet", "");
+    try std.testing.expectEqualStrings(
+        "KICK #root quiet :\r\n",
+        client.tx.items.items[10].bytes,
+    );
+    try client.setTopic("#root", "Welcome");
+    try std.testing.expectEqualStrings(
+        "TOPIC #root :Welcome\r\n",
+        client.tx.items.items[11].bytes,
+    );
+    try client.sendAwayControl("#root", "getting coffee");
+    try std.testing.expectEqualStrings(
+        "PRIVMSG #root :\x01AWAY getting coffee\x01\r\n",
+        client.tx.items.items[12].bytes,
+    );
+    try client.ctcpReply("alice", "PING", "12345");
+    try std.testing.expectEqualStrings(
+        "NOTICE alice :\x01PING 12345\x01\r\n",
+        client.tx.items.items[13].bytes,
+    );
+    try client.ctcpReply("alice", "EMAIL", "");
+    try std.testing.expectEqualStrings(
+        "NOTICE alice :\x01EMAIL \x01\r\n",
+        client.tx.items.items[14].bytes,
+    );
+}
+
+test "IRCX workflow commands follow the draft wire grammar" {
+    const gpa = std.testing.allocator;
+    const owned_host = try gpa.dupe(u8, "irc.example");
+    var client = Client{
+        .gpa = gpa,
+        .transport = undefined,
+        .host = owned_host,
+        .port = 6697,
+        .connect_options = .{},
+        .framer = irc.LineFramer.init(gpa),
+        .tx = policy.TxQueue.init(gpa, .{}, 0, 1, 0),
+        .deadlines = policy.Deadlines.init(0, .{}),
+        .aggregator = features_mod.Aggregator.init(gpa, .{}),
+    };
+    defer {
+        client.aggregator.deinit();
+        client.tx.deinit();
+        client.framer.deinit();
+        client.out.deinit(gpa);
+        gpa.free(owned_host);
+    }
+
+    try client.listRooms("N=#root,>10", "25", true);
+    try client.queryProperty("#root", "TOPIC,ONJOIN");
+    try client.setProperty("#root", "TOPIC", "New topic");
+    try client.accessList("#root");
+    try client.accessAdd("#root", "HOST", "anna!*@*", "", "trusted helper");
+    try client.accessDelete("#root", "HOST", "anna!*@*");
+    try client.accessClear("#root", "DENY");
+    try client.eventList("CHANNEL");
+    try client.eventChange(true, "MEMBER", "*!*@*");
+    try client.ircxRequest("#root", "APP.INFO", "version?");
+    try client.ircxReply("#root", "APP.INFO", "ComicChat");
+    try client.whisper("#root", "anna,bob", "secret panel plan");
+    var auth = [_]u8{ 's', 'e', 'c', 'r', 'e', 't' };
+    try client.ircxAuth("PLAIN", "I", &auth);
+    try std.testing.expect(std.mem.allEqual(u8, &auth, 0));
+
+    const expected = [_][]const u8{
+        "LISTX N=#root,>10 25\r\n",
+        "PROP #root TOPIC,ONJOIN\r\n",
+        "PROP #root TOPIC :New topic\r\n",
+        "ACCESS #root LIST\r\n",
+        "ACCESS #root ADD HOST anna!*@* 0 :trusted helper\r\n",
+        "ACCESS #root DELETE HOST anna!*@*\r\n",
+        "ACCESS #root CLEAR DENY\r\n",
+        "EVENT LIST CHANNEL\r\n",
+        "EVENT ADD MEMBER *!*@*\r\n",
+        "REQUEST #root APP.INFO :version?\r\n",
+        "REPLY #root APP.INFO :ComicChat\r\n",
+        "WHISPER #root anna,bob :secret panel plan\r\n",
+        "AUTH PLAIN I :secret\r\n",
+    };
+    try std.testing.expectEqual(expected.len, client.tx.items.items.len);
+    for (expected, client.tx.items.items) |wire, item| try std.testing.expectEqualStrings(wire, item.bytes);
+}
+
+test "IRCX tagged data rejects malformed draft tags" {
+    try std.testing.expect(validIrcxDataTag("CCUDI1"));
+    try std.testing.expect(validIrcxDataTag("APP.INFO"));
+    try std.testing.expect(!validIrcxDataTag("1BAD"));
+    try std.testing.expect(!validIrcxDataTag("BAD-TAG"));
+    try std.testing.expect(!validIrcxDataTag("this-tag-is-far-too-long"));
+    try std.testing.expect(validIrcxAuthSequence("I"));
+    try std.testing.expect(validIrcxAuthSequence("S"));
+    try std.testing.expect(validIrcxAuthSequence("*"));
+    try std.testing.expect(!validIrcxAuthSequence("Q"));
 }

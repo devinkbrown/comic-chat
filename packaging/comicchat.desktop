@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Reinked
+Comment=Open a Reinked conversation or locator
+Exec=reinked %f
+Icon=applications-internet
+Terminal=false
+Categories=Network;Chat;
+MimeType=application/x-comicchat-conversation;application/x-comicchat-locator;

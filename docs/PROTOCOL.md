@@ -14,11 +14,17 @@ commands including `NICK`, `USER`, `JOIN`, `PRIVMSG`, `NOTICE`, `PING`, and
 `PONG`. The old client can negotiate Microsoft's IRCX extensions, but it also
 has a non-IRCX representation.
 
+Microsoft probes IRCX before login with `MODE ISIRCX`. A numeric 800 state `0`
+means the server supports IRCX but it is not enabled, so the client sends
+`IRCX`; only the following numeric 800 state `1` enables `DATA ... CCUDI1`.
+An ISUPPORT advertisement does not substitute for that state transition. The
+portable client preserves this ordering, with modern CAP/SASL negotiation
+between the probe and NICK/USER registration commands.
+
 The portable client secures that stream with the pinned Onyx TLS implementation
-at commit `0bebf8b8c7f07abe3571ded48a11aa907a1ffb20`. TLS is the default and the
-omitted port defaults to 6697. The client initializes PSA and CTR-DRBG entropy,
-uses stream-client defaults, sends SNI, verifies the hostname, and configures
-mandatory certificate-chain and hostname verification. It loads common Unix system bundles/directories
+at commit `06bb3500b4fd62e2f307cb4004340c58062c0f59`. TLS is the default and
+the omitted port defaults to 6697. The client sends SNI and verifies both the
+certificate chain and requested hostname. It loads common Unix system bundles
 or the Windows ROOT certificate store; `--ca-file <pem>` supplies an explicit
 replacement bundle. Missing roots, handshake errors, and verification errors
 fail the connection without falling back to plaintext. `--plaintext` is an
@@ -43,17 +49,29 @@ and 5 = action; other serial values are read as say by the released client.
 - With IRCX, it first sends `DATA target CCUDI1 :#G...E...M...`, followed by a
   separate `PRIVMSG` or `NOTICE` containing the readable text.
 
+In comic mode, action text remains ordinary readable text; serial mode `M5`
+selects the box balloon. The CTCP `ACTION` wrapper is only Microsoft's
+non-comic fallback. The optional `T` suffix carries the selected member (and
+always carries the whisper recipient), matching `bInsertAnnotations` rather
+than relying on the IRC target alone.
+
 This distinction matters: a saved conversation record is not copied wholesale
 into an IRC `PRIVMSG`. Separate live control comments begin with `#` and use
 source-defined phrases such as ` Appears as `, ` GetInfo`, ` HeresInfo: `,
-` BDrop: `, ` BDrop2: `, and ` GetCharInfo`.
+` BDrop: `, ` BDrop2: `, and ` GetCharInfo`. Microsoft passes these comment
+controls through the annotation argument: negotiated IRCX therefore sends
+them as `DATA target CCUDI1 :# ...`; plain IRC sends the same bytes in
+`PRIVMSG`. The portable sender and receiver preserve that distinction.
 
 The portable live client implements `# Appears as <name>[.<url>]` for bundled
-avatars, consumes the control without creating a speech balloon, and retains
-the selected avatar for later messages and talk-to bodies. It intentionally
-does not download the optional URL. The remaining profile, character-download,
-and backdrop control comments are documented compatibility surface, not yet a
-portable-client feature.
+avatars in either outer transport, consumes the control without creating a
+speech balloon, and retains the selected avatar for later messages and talk-to
+bodies. It intentionally does not download the optional URL. Profile requests
+receive the saved one-line profile or the source default, member-profile
+replies become visible action rows, and character-info requests trigger a fresh
+avatar announcement. Backdrop comments select the matching bundled BGB in the
+room renderer; unknown names and remote URLs are consumed without downloading
+untrusted content.
 
 The portable IRC framing and command path lives under [`src/net/`](../src/net/).
 The compact live codec is [`src/proto/udi.zig`](../src/proto/udi.zig), and the
@@ -87,10 +105,78 @@ Fixed-pitch and symbol selection are likewise preserved in state; the portable
 build currently falls back to the bundled Comic Neue atlases because it does
 not ship equivalent fixed-pitch or symbol faces.
 
-IRC CTCP actions use `\x01ACTION text\x01`. Incoming actions are unwrapped
-after UDI parsing and render with `BM_ACTION` (plus `BM_WHISPER` for a private
-message); `/me text` emits that interoperable form while carrying action mode
-in embedded or IRCX UDI metadata.
+IRC CTCP actions use `\x01ACTION text\x01` in Microsoft's text-mode fallback.
+Incoming actions are unwrapped and render with `BM_ACTION` (plus `BM_WHISPER`
+for a private message). In comic mode, `/me text` follows
+`PrepareComicsAction`: the readable message remains raw text and UDI serial
+mode `M5` selects the action box.
+
+Sounds are separate from UDI. `bChatSendSound` sends one source CTCP payload,
+`\x01SOUND <file> <accompanying-message>\x01`, in a `PRIVMSG`. The portable
+sound dialog mirrors that contract with a sound-file choice and editable
+accompanying message; receiving clients display the sender and message as an
+action box followed by the sound filename in parentheses.
+
+Enter Room sends `JOIN <room> [password]`. Create Room sends Microsoft IRCX's
+`CREATE <room> [creation-modes] [limit] [password]` and queues its optional
+topic after creation. Kick always sends the source trailing form
+`KICK <room> <nick> :<reason>`, including an empty reason; its optional ban is
+sent first as `MODE <room> +b <mask>`.
+
+Away has two synchronized layers: standard `AWAY :message` (or bare `AWAY` to
+clear it), followed by `\x01AWAY [message]\x01` in every joined room. Incoming
+controls update the roster indicator and are not inserted as comic speech.
+VERSION, PING, TIME, EMAIL, URL, and CLIENTINFO probes receive source-shaped
+NOTICE replies. EMAIL and URL are empty by default and return only values the
+user explicitly saved in the local preferences editor.
+
+### IRCX application workflows
+
+The Room menu exposes the IRCX draft's typed management paths after numeric
+800 state 1 enables IRCX:
+
+- `LISTX <query-list> [limit]`, with comma-separated query terms and a numeric
+  result bound. Non-IRCX servers receive ordinary `LIST`.
+- `PROP <channel> <property>[,<property>]` for queries and
+  `PROP <channel> <property> :<value>` for set/delete. The empty trailing value
+  is preserved for deletion.
+- `ACCESS <object> LIST`, `ADD|DELETE <level> <mask> [timeout [:reason]]`, and
+  `CLEAR [level]`. Timeouts are minutes; a reason without an entered timeout
+  emits the draft's unlimited `0` value.
+- `EVENT LIST [event]` and `EVENT ADD|DELETE <event> [mask]` for authorized
+  operators.
+
+The IRCX transport also implements all three draft §5.4 tagged-message verbs:
+`DATA`, `REQUEST`, and `REPLY`, with locally validated 1–15 character tags,
+plus contextual `WHISPER <channel> <nick-list> :<message>`. Incoming IRCX
+whispers remain in their channel context and render as private comic lines.
+ACCESS removal emits the normative `DELETE` token; the non-standard `DEL`
+abbreviation is never sent.
+
+For IRCX-only services, the client also exposes the draft §5.2 `AUTH` envelope
+with `I`, `S`, and abort (`*`) sequence validation. It accepts this only over
+verified TLS, marks the queued payload sensitive, and zeroes the caller's
+mutable credential bytes after queuing. CAP SASL remains the preferred modern
+registration path.
+
+Replies 801-819 and relevant IRCX errors 913-925 are shown in the active room
+as server action rows. The exact command bytes are pinned by unit tests against
+the [IRCX Internet-Draft](https://datatracker.ietf.org/doc/html/draft-pfenning-irc-extensions-04.txt)
+and the Microsoft client source.
+
+### DCC and call invitations
+
+Microsoft's DCC SEND payload and four-byte big-endian cumulative ACK loop are
+preserved. Incoming offers are not accepted automatically: the user reviews
+the sender, bounded size, and destination first. Received data is held until
+complete, then written with exclusive creation; an existing destination is
+never replaced, and failed/cancelled transfers retain no partial output.
+Outgoing transfers bind the chosen port before advertising the offer and can
+interrupt a blocked listener through socket shutdown.
+
+The retired `NETMEET` control is answered with `NETMEET NOHAVE`. Portable call
+invitations use `\x01X-COMICCHAT-CALL https://...\x01`; receipt opens a consent
+dialog, validates a one-line HTTPS URL, and never launches it automatically.
 
 ### IRCv3 CAP and SASL compatibility
 
@@ -154,6 +240,18 @@ the complete non-deprecated client-facing CAP set in the pinned tree:
 | `standard-replies` | The latest typed `FAIL`, `WARN`, or `NOTE` code and description are retained |
 | `sts` | Observed only, never requested; plaintext upgrades fail closed and verified-TLS duration policies persist by hostname |
 
+When connected to the pinned Onyx server, the client also exposes
+capability-gated builders for `SEARCH`, `EDIT`, `REDACT`, `MARKREAD`, and
+`METADATA`. Their exact Onyx registry comparison and wire forms are recorded
+in [`docs/audits/2026-07-22-comicchat-onyx-ircv3-parity.md`](audits/2026-07-22-comicchat-onyx-ircv3-parity.md).
+`onyx/e2ee` is intentionally never requested until its complete encryption and
+decryption control plane is implemented.
+
+The client exposes bounded `CHATHISTORY LATEST` requests after negotiating
+`draft/chathistory`, with `*`, `msgid=...`, or `timestamp=...` selectors.
+Onyx topic-filtered replay uses the same escaped `+onyx/topic` tag as live
+named-conversation messages.
+
 ### Onyx reusable sessions and same-nick clients
 
 After successful SASL and numeric `001`, the portable client follows the live
@@ -172,10 +270,18 @@ until it presents the first client's exact reusable credential. Successful
 disconnect the existing client.
 
 The pinned client-tag specifications are covered as well. Typed send methods
-produce `+reply`, `+draft/react`, `+draft/unreact`, and rate-limited `+typing`
-messages; incoming `TAGMSG` is not inserted into comic history by default.
-`+channel-context` and unknown future tags remain accessible through the
-generic tag iterator. `msgid`, bot/oper tags, UTF8ONLY, CLIENTTAGDENY,
+produce `+draft/reply`, `+draft/react`, `+draft/unreact`, and rate-limited `+typing`
+messages when either generic `message-tags` or their corresponding narrow Onyx
+draft capability is enabled; incoming `TAGMSG` is not inserted into comic
+history by default.
+Onyx named conversations use the narrow `onyx/topics` capability and emit
+escaped `+onyx/topic=<label>` tags on `PRIVMSG` or `NOTICE`, without requiring
+generic tags. Contextual direct messages use
+`+draft/channel-context=<channel>` only when both `draft/channel-context` and
+generic `message-tags` are negotiated. This is ComicChat's conservative
+semantic policy; the daemon's generic client-tag relay itself is authorized by
+`message-tags`. Unknown future tags remain accessible through the generic tag
+iterator. `msgid`, bot/oper tags, UTF8ONLY, CLIENTTAGDENY,
 CHATHISTORY, MSGREFTYPES, MONITOR, WHOX, BOT, NETWORK, and draft ICON
 advertisements are either interpreted by feature state or retained in the
 ISUPPORT map. WEBIRC and WebSocket are separate gateway/transport modes, not

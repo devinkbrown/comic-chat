@@ -88,6 +88,15 @@ pub const RenderOptions = struct {
     backdrop: []const u8 = field_background,
     /// `BF_NOZOOM` keeps the whole authored backdrop visible.
     backdrop_no_zoom: bool = false,
+    /// Number of panels placed across the rendered page. The source default
+    /// remains two for compatibility; desktop clients may choose a denser,
+    /// responsive presentation without changing panel internals.
+    page_columns: u8 = columns,
+    /// Keep the requested number of desktop grid columns even when the last
+    /// row is only partly populated. The source/export API leaves this false;
+    /// the interactive desktop enables it so a sparse page cannot magnify one
+    /// panel to the size of the entire conversation buffer.
+    reserve_page_columns: bool = false,
 };
 
 pub const Error = bgb.Error || original_layout.Error || original_balloon.Error ||
@@ -732,8 +741,12 @@ fn composePage(
     options: RenderOptions,
 ) Error!Image {
     const panel_count = scenes.len + 1;
-    const page_columns: u32 = @intCast(@min(panel_count, columns));
-    const rows: u32 = @intCast((panel_count - 1) / columns + 1);
+    const configured_columns: usize = std.math.clamp(@as(usize, options.page_columns), 1, 8);
+    const page_columns: u32 = @intCast(if (options.reserve_page_columns)
+        configured_columns
+    else
+        @min(panel_count, configured_columns));
+    const rows: u32 = @intCast((panel_count - 1) / configured_columns + 1);
     const width = page_columns * panel_width + (page_columns - 1) * device_interstice;
     const height = rows * panel_height + (rows - 1) * device_interstice;
     var page = try Canvas.init(gpa, width, height);
@@ -744,8 +757,8 @@ fn composePage(
     defer title.deinit(gpa);
     page.blit(title.pixels, title.width, title.height, 0, 0);
     for (scenes, 1..) |scene, panel_index| {
-        const column: u32 = @intCast(panel_index % columns);
-        const row: u32 = @intCast(panel_index / columns);
+        const column: u32 = @intCast(panel_index % configured_columns);
+        const row: u32 = @intCast(panel_index / configured_columns);
         const x: i32 = @intCast(column * (panel_width + device_interstice));
         const y: i32 = @intCast(row * (panel_height + device_interstice));
         page.blit(scene.image.pixels, scene.image.width, scene.image.height, x, y);
@@ -1169,8 +1182,74 @@ pub fn avatarByName(name: []const u8) ?[]const u8 {
     if (eql(name, "scotty")) return @embedFile("../assets/testdata/scotty.avb");
     if (eql(name, "susan")) return @embedFile("../assets/testdata/susan.avb");
     if (eql(name, "tiki")) return @embedFile("../assets/testdata/tiki.avb");
+    if (eql(name, "tiki hd")) return @embedFile("../assets/generated/tiki-reimagined-hd-v1.avb");
     if (eql(name, "tongtyed")) return @embedFile("../assets/testdata/tongtyed.avb");
     if (eql(name, "xeno")) return @embedFile("../assets/testdata/xeno.avb");
+    if (eql(name, "anna hd")) return @embedFile("../assets/generated/anna-reimagined-hd-v1.avb");
+    if (eql(name, "armando hd")) return @embedFile("../assets/generated/armando-reimagined-hd-v1.avb");
+    if (eql(name, "bolo hd")) return @embedFile("../assets/generated/bolo-reimagined-hd-v1.avb");
+    if (eql(name, "cro hd")) return @embedFile("../assets/generated/cro-reimagined-hd-v1.avb");
+    if (eql(name, "dan hd")) return @embedFile("../assets/generated/dan-reimagined-hd-v1.avb");
+    if (eql(name, "denise hd")) return @embedFile("../assets/generated/denise-reimagined-hd-v1.avb");
+    if (eql(name, "hugh hd")) return @embedFile("../assets/generated/hugh-reimagined-hd-v1.avb");
+    if (eql(name, "jordan hd")) return @embedFile("../assets/generated/jordan-reimagined-hd-v1.avb");
+    if (eql(name, "kevin hd")) return @embedFile("../assets/generated/kevin-reimagined-hd-v1.avb");
+    if (eql(name, "kwensa hd")) return @embedFile("../assets/generated/kwensa-reimagined-hd-v1.avb");
+    if (eql(name, "lance hd")) return @embedFile("../assets/generated/lance-reimagined-hd-v1.avb");
+    if (eql(name, "lynnea hd")) return @embedFile("../assets/generated/lynnea-reimagined-hd-v1.avb");
+    if (eql(name, "margaret hd")) return @embedFile("../assets/generated/margaret-reimagined-hd-v1.avb");
+    if (eql(name, "maynard hd")) return @embedFile("../assets/generated/maynard-reimagined-hd-v1.avb");
+    if (eql(name, "mike hd")) return @embedFile("../assets/generated/mike-reimagined-hd-v1.avb");
+    if (eql(name, "rebecca hd")) return @embedFile("../assets/generated/rebecca-reimagined-hd-v1.avb");
+    if (eql(name, "sage hd")) return @embedFile("../assets/generated/sage-reimagined-hd-v1.avb");
+    if (eql(name, "scotty hd")) return @embedFile("../assets/generated/scotty-reimagined-hd-v1.avb");
+    if (eql(name, "susan hd")) return @embedFile("../assets/generated/susan-reimagined-hd-v1.avb");
+    if (eql(name, "tongtyed hd")) return @embedFile("../assets/generated/tongtyed-reimagined-hd-v1.avb");
+    if (eql(name, "xeno hd")) return @embedFile("../assets/generated/xeno-reimagined-hd-v1.avb");
+    if (eql(name, "anna color")) return @embedFile("../assets/generated/anna-color-hd-v1.avb");
+    if (eql(name, "armando color")) return @embedFile("../assets/generated/armando-color-hd-v1.avb");
+    if (eql(name, "bolo color")) return @embedFile("../assets/generated/bolo-color-hd-v1.avb");
+    if (eql(name, "cro color")) return @embedFile("../assets/generated/cro-color-hd-v1.avb");
+    if (eql(name, "dan color")) return @embedFile("../assets/generated/dan-color-hd-v1.avb");
+    if (eql(name, "denise color")) return @embedFile("../assets/generated/denise-color-hd-v1.avb");
+    if (eql(name, "hugh color")) return @embedFile("../assets/generated/hugh-color-hd-v1.avb");
+    if (eql(name, "jordan color")) return @embedFile("../assets/generated/jordan-color-hd-v1.avb");
+    if (eql(name, "kevin color")) return @embedFile("../assets/generated/kevin-color-hd-v1.avb");
+    if (eql(name, "kwensa color")) return @embedFile("../assets/generated/kwensa-color-hd-v1.avb");
+    if (eql(name, "lance color")) return @embedFile("../assets/generated/lance-color-hd-v1.avb");
+    if (eql(name, "lynnea color")) return @embedFile("../assets/generated/lynnea-color-hd-v1.avb");
+    if (eql(name, "margaret color")) return @embedFile("../assets/generated/margaret-color-hd-v1.avb");
+    if (eql(name, "maynard color")) return @embedFile("../assets/generated/maynard-color-hd-v1.avb");
+    if (eql(name, "mike color")) return @embedFile("../assets/generated/mike-color-hd-v1.avb");
+    if (eql(name, "rebecca color")) return @embedFile("../assets/generated/rebecca-color-hd-v1.avb");
+    if (eql(name, "sage color")) return @embedFile("../assets/generated/sage-color-hd-v1.avb");
+    if (eql(name, "scotty color")) return @embedFile("../assets/generated/scotty-color-hd-v1.avb");
+    if (eql(name, "susan color")) return @embedFile("../assets/generated/susan-color-hd-v1.avb");
+    if (eql(name, "tiki color")) return @embedFile("../assets/generated/tiki-color-hd-v2.avb");
+    if (eql(name, "tongtyed color")) return @embedFile("../assets/generated/tongtyed-color-hd-v1.avb");
+    if (eql(name, "xeno color")) return @embedFile("../assets/generated/xeno-color-hd-v1.avb");
+    if (eql(name, "anna original")) return @embedFile("../assets/testdata/anna.avb");
+    if (eql(name, "armando original")) return @embedFile("../assets/testdata/armando.avb");
+    if (eql(name, "bolo original")) return @embedFile("../assets/testdata/bolo.avb");
+    if (eql(name, "cro original")) return @embedFile("../assets/testdata/cro.avb");
+    if (eql(name, "dan original")) return @embedFile("../assets/testdata/dan.avb");
+    if (eql(name, "denise original")) return @embedFile("../assets/testdata/denise.avb");
+    if (eql(name, "hugh original")) return @embedFile("../assets/testdata/hugh.avb");
+    if (eql(name, "jordan original")) return @embedFile("../assets/testdata/jordan.avb");
+    if (eql(name, "kevin original")) return @embedFile("../assets/testdata/kevin.avb");
+    if (eql(name, "kwensa original")) return @embedFile("../assets/testdata/kwensa.avb");
+    if (eql(name, "lance original")) return @embedFile("../assets/testdata/lance.avb");
+    if (eql(name, "lynnea original")) return @embedFile("../assets/testdata/lynnea.avb");
+    if (eql(name, "margaret original")) return @embedFile("../assets/testdata/margaret.avb");
+    if (eql(name, "maynard original")) return @embedFile("../assets/testdata/maynard.avb");
+    if (eql(name, "mike original")) return @embedFile("../assets/testdata/mike.avb");
+    if (eql(name, "rebecca original")) return @embedFile("../assets/testdata/rebecca.avb");
+    if (eql(name, "sage original")) return @embedFile("../assets/testdata/sage.avb");
+    if (eql(name, "scotty original")) return @embedFile("../assets/testdata/scotty.avb");
+    if (eql(name, "susan original")) return @embedFile("../assets/testdata/susan.avb");
+    if (eql(name, "tiki original")) return @embedFile("../assets/testdata/tiki.avb");
+    if (eql(name, "tongtyed original")) return @embedFile("../assets/testdata/tongtyed.avb");
+    if (eql(name, "xeno original")) return @embedFile("../assets/testdata/xeno.avb");
     return null;
 }
 
@@ -1195,6 +1274,38 @@ test "repeated speaker starts a fresh panel and wraps after two columns" {
     defer image.deinit(gpa);
     try std.testing.expectEqual(@as(u32, 2 * panel_width + device_interstice), image.width);
     try std.testing.expectEqual(@as(u32, 2 * panel_height + device_interstice), image.height);
+}
+
+test "desktop page density can place four panels across without changing panel geometry" {
+    const gpa = std.testing.allocator;
+    const lines = [_]Line{
+        .{ .speaker = "anna", .text = "One." },
+        .{ .speaker = "anna", .text = "Two." },
+        .{ .speaker = "anna", .text = "Three." },
+    };
+    var image = try renderWithOptions(gpa, &lines, .{ .page_columns = 4 });
+    defer image.deinit(gpa);
+    try std.testing.expectEqual(@as(u32, 4 * panel_width + 3 * device_interstice), image.width);
+    try std.testing.expectEqual(panel_height, image.height);
+}
+
+test "desktop reserved grid keeps sparse and break-only pages at selected density" {
+    const gpa = std.testing.allocator;
+    var sparse = try renderWithOptions(gpa, &.{.{ .speaker = "anna", .text = "One." }}, .{
+        .page_columns = 4,
+        .reserve_page_columns = true,
+    });
+    defer sparse.deinit(gpa);
+    try std.testing.expectEqual(@as(u32, 4 * panel_width + 3 * device_interstice), sparse.width);
+    try std.testing.expectEqual(panel_height, sparse.height);
+
+    var break_only = try renderWithOptions(gpa, &.{.{ .speaker = "anna", .text = "<Brk>" }}, .{
+        .page_columns = 4,
+        .reserve_page_columns = true,
+    });
+    defer break_only.deinit(gpa);
+    try std.testing.expectEqual(sparse.width, break_only.width);
+    try std.testing.expectEqual(sparse.height, break_only.height);
 }
 
 test "render is deterministic and rejects an unknown avatar" {

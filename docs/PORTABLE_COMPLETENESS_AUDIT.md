@@ -1,19 +1,22 @@
 # Portable ComicChat Completeness Audit
 
-**Date:** 2026-07-19  
+**Date:** 2026-07-20
 **Scope:** the complete repository, with product reachability evaluated from
 the portable executable rather than inferred from module or test existence.
 
 ## Verdict
 
-The repository contains a complete, integrity-checked copy of the pinned
-Microsoft source and a substantial portable rendering, protocol, transport and
-native-window foundation. The portable desktop application now has an
-interactive Microsoft-shaped shell, unified pointer input, multi-room chat,
-Unicode editing, and an exhaustive dialog registry. It is not yet feature
-complete: clipboard/IME/accessibility, native file pickers, complete typed
-behavior for every legacy dialog, DCC transfer ownership, and persistent
-automation/notification editors remain.
+The repository contains a portable rendering, protocol, transport and
+native-window foundation. The historical Microsoft source is an external,
+pinned behavioral reference; it is not vendored. The portable desktop application now has an
+interactive Microsoft-shaped shell, unified pointer/touch input, multi-room and
+multi-window chat, Unicode/IME editing, an exhaustive dialog registry,
+persistent automation and notification workflows, IRCX administration,
+backdrop application, and owned DCC transfer state. All source-facing product
+workflows are reachable or explicitly retired for security. The remaining
+platform boundary is exposing the existing semantic accessibility tree through
+full UIA/AT-SPI provider adapters; it is not a missing Microsoft Comic Chat
+workflow.
 
 This distinction is important:
 
@@ -28,15 +31,17 @@ This distinction is important:
 
 - The historical upstream checkout was previously verified against its pinned
   revision before this repository was migrated to the portable-only layout.
-- The portable tree contains 82 files under `src/`. `src/root.zig:68-118`
+- The portable tree is rooted under `src/`. `src/root.zig`
   explicitly references every portable module and the four source-parity test
   modules so their inline tests are compiled and run.
-- There are 359 named Zig test blocks. The Win32 runtime smoke is intentionally
-  platform-conditional (`src/platform/win32.zig:643-653`).
-- Native Linux, `x86_64-linux-gnu`, and `x86_64-windows-gnu` builds pass.
-- The package allow-list now includes `source_ui_assets.zig`
-  (`build.zig.zon:12-22`), which is required by `build.zig` and was previously
-  missing from packaged source archives.
+- The current release test gate reports 440 passed tests and one intentionally
+  skipped platform-conditional test.
+- Native Linux plus x86_64 Windows, FreeBSD, and OpenBSD release builds pass.
+- Published binaries are stripped so source paths and other build-machine debug
+  metadata are not retained. The source archive includes the source tree and the crypto,
+  protocol, and certificate-loader subset exported from the exact pinned Onyx
+  revision. Binary archives contain only the executable, current documentation,
+  licenses, and third-party notices.
 
 ## Product completeness matrix
 
@@ -45,28 +50,29 @@ This distinction is important:
 | Repository shape | Portable-first | The live tree contains the Zig product, runtime assets, documentation, and tooling; the retired MFC/C++ source is external-only. |
 | Source comic rendering | Reachable | Original page, title, layout, balloon, figure and raster modules feed the shared strip path; CLI render commands and the app use them. Golden/source-parity tests cover the rendering pipeline. |
 | AVB/BGB content | Reachable | Authored character/backdrop decoding, icons, masks and figure composition are used by the renderer and UI. Program chrome uses modern glyphs; product art remains original. |
-| Shell geometry | Reachable | Source menu order, toolbar grouping, 29px tabs, 80/20 main split, 30/70 comic side split, 23px composer and status panes render through `src/client/geometry.zig` and `src/client/view.zig:100-133`. |
-| Comic/text buffers | Partial | Both modes, bounded history paging, wheel input, per-room transcripts/drafts, atomic `.ccc` open/save, and PNG export are reachable. Selection/copy, page-break editing, native pickers, and printing remain. |
-| Body camera | Partial | Original emotion art and source wheel thresholds render. Pointer selection previews and emits the explicitly authored pose; freeze, double-click, and context-menu behavior remain. |
-| Member list | Partial | Comic icon and text modes render; pointer selection drives whisper targeting. Role state, keyboard roving, and scrolling remain incomplete. |
-| Menus/toolbars/buttons | Partial | Shared hit testing activates source menu, toolbar, say, tab, member, and emotion surfaces on all native backends. Full menu popups and command enablement remain incomplete. |
-| Composer | Partial | UTF-8 scalar insertion, codepoint-safe movement/delete, selection, per-room drafts, bounded copy/cut/paste, undo/redo, and the 400-byte wire bound are live. Native clipboard, multiline input, IME, and formatting controls remain. |
-| Live IRC/IRCX comic chat | Reachable core | Connect/register/reconnect, multi-room JOIN/PART, per-room roster/transcript routing, IRCX `DATA CCUDI1`, embedded UDI, avatar announcements and all five say modes are wired. |
+| Shell geometry | Reachable | The modern seven-menu/condensed-toolbar chrome retains the 29px tabs, 80/20 main split, 30/70 comic side split, 23px composer and status panes through shared geometry. |
+| Comic/text buffers | Reachable | Both modes, one-to-six-column density, sparse/break-only geometry, history paging, range selection/copy/delete, page-break insertion, native Open/Save, atomic `.ccc` persistence, PNG export, and dependency-free PDF open/print are reachable. |
+| Body camera | Reachable | The reimagined dial uses source thresholds. Pointer drag, touch, keyboard arrows/Home, Freeze, Character, Neutral, source-shaped double-click Character, and immediate `<Chr>` Send Expression are live. |
+| Member list | Reachable | NAMES/JOIN/PART/QUIT/NICK/MODE update roster membership and voice/half-op/operator/owner badges. Icon/list modes, bounded scrolling, keyboard reveal, selection, character preview, and right-click actions are reachable. |
+| Menus/toolbars/buttons | Reachable | Seven complete menus and the condensed toolbar route to typed workflows. Permission-aware Room/Member commands visibly disable and refuse activation for non-moderators. |
+| Composer | Reachable | UTF-8-safe multiline editing, selection, mouse caret placement, native/internal clipboard fallback, undo/redo, source formatting controls, Windows IME, Wayland text-input-v3 commits, and the 400-byte per-line wire bound are live. |
+| Live IRC/IRCX comic chat | Reachable core | Connect/register/reconnect, source-ordered two-stage IRCX discovery, multi-room JOIN/PART, password JOIN, CREATE/TOPIC, reasoned KICK/ban/invite, exact PROP/ACCESS/LISTX/EVENT workflows and visible replies, channel and private-message routing, source-exact IRCX `DATA CCUDI1` versus embedded UDI, raw comic action text, UDI talk-to recipients, SOUND/AWAY/information CTCP controls, avatar/profile/backdrop controls, and all five say modes are wired. |
 | TLS, proxies, CAP, SASL, STS | Reachable | The live client composes verified TLS, proxy connection, IRCv3 negotiation, SASL and persisted STS. Credential input is file-based and refused over plaintext. |
+| Resolver and sockets | Reachable | The Onyx DNS wire codec and resolv.conf policy drive hostname lookup. Pure-Zig native socket adapters cover Unix and direct Winsock; Wine falls back to the Windows DNS service only when direct UDP resolution is unavailable. No C transport or resolver source is shipped. |
 | Onyx reusable sessions | Reachable | TOKEN/MTOKEN parsing, host/account-scoped persistence, expiry and resume preference are implemented in `src/net/session_store.zig:19-187` and connected through `ConnectionRuntime`. This supports separate same-account/same-nick clients when the server honors `SESSION RESUME`. |
-| Modern IRC feature state | Reachable internally, limited UI | `net/client.zig` owns `ircv3.Session` and `features.State`; CAP and negotiated state are live. Most identity, metadata, batch, read-marker, standard-reply and moderation state has no visible UI. |
-| Profiles/backdrops | Partial | Character and backdrop dialogs invoke the live avatar/backdrop helpers; the complete profile editor and persistent browser remain. |
-| DCC transfer | Substrate | Offer codec and transfer loops exist; `Client.offerFile` sends an offer (`src/net/client.zig:493-501`). No receive dispatch, consent dialog, file picker, progress, cancellation or safe destination workflow exists. |
-| IRCX key strings | Substrate | Parsing, mutation and diffing are implemented in `src/proto/keystring.zig`; no live PROP query/send application path uses them. |
-| Automation rules | Substrate | Source event/action model, matching, substitution, flood control and snapshot diffing exist in `src/comic/rules.zig`; there is no live event dispatcher, action executor, editor or persistence. |
-| Notifications | Substrate | Mask construction and WHO snapshot folding exist in `src/comic/notify.zig`; there is no polling owner, notification UI or persistence. |
-| `.ccc` / `.ccr` | Partial | Bounded codecs exist; `.ccc` open/save and PNG export are live and atomic. Locator application, recent files, and native pickers remain. |
-| Multiple rooms/windows | Reachable core | Up to 64 case-insensitive room tabs own independent transcript, roster, draft, joined, and unread state. `/join`, `/switch`, `/part`, and clickable tabs are live; favorites and separate child windows remain. |
-| Microsoft dialogs | Partial | All 40 templates have typed IDs, source dimensions, modal routing, keyboard editing, and shared controls. Room, appearance, identity, away, moderation, invite, and whisper acceptance is wired; remaining template-specific models are incomplete. |
-| Pointer/touch | Partial | X11, Wayland, and Win32 emit shared motion/button/wheel events and activate stable targets. Touch gestures are not implemented. |
-| Clipboard/IME/accessibility | Partial | The shared event contract carries modifiers; the app owns UTF-8-safe clipboard/selection state and a stable semantic UI snapshot. Native clipboard, compose/IME, AT-SPI, and UIA bridges remain. |
-| DPI scaling | Partial | Geometry resizes proportionally inside the framebuffer, but Wayland stays at scale 1 and Win32 is system-DPI aware rather than per-monitor-v2. |
-| Printing | Missing/decision required | No portable print or print-preview backend. PNG/PPM diagnostic output exists, but no desktop export workflow invokes it. |
+| Modern IRC feature state | Reachable | `net/client.zig` owns `ircv3.Session` and `features.State`; visible server replies and Connection Features expose transport, SASL, IRCX, and enabled IRCv3 capability state. |
+| Profiles/backdrops | Reachable core | Personal profile, display name, optional email/homepage, and selected backdrop persist in `.comicchat-preferences`. Member profile requests and replies are visible. Received bundled `BDrop`/`BDrop2` controls update the room renderer; remote backdrop and avatar downloads remain deliberately disabled. |
+| DCC transfer | Reachable | Source-shaped DCC SEND offers and cumulative ACK loops are owned by a consent dialog and background worker. Native selection, exclusive bounded receive creation, no partial file, progress, cancellation, and validated send input are live. |
+| IRCX key strings | Reachable protocol, separate substrate | PROP query/set/delete, ACCESS list/add/delete/clear, LISTX query/limit, and operator EVENT list/add/delete are live and use draft-exact wire grammar. The standalone key-string mutation/diff helper remains available for future structured CLIENT-property editing. |
+| Automation rules | Reachable | Greeting/flood controls, persistent rules, rule sets, rename/assignment, bounded import/export, case matching, occurrence limits, and notify/reply/action/sound/join/ignore actions are live. |
+| Notifications | Reachable | Persistent WHO masks drive transcript transitions, native desktop notification delivery, and refresh/clear/whisper/invite/join actions. |
+| `.ccc` / `.ccr` | Reachable | Bounded codecs, native pickers, atomic conversation open/save, locator server/room/character/backdrop application, recent files, direct document startup, and optional file associations are live. |
+| Multiple rooms/windows | Reachable | Up to 64 room tabs own independent state; favorites, commands, clickable tabs, and separately spawned room windows are live. |
+| Microsoft dialogs | Reachable | All 40 historical templates plus 13 portable workflows have typed IDs, adaptive geometry, modal routing, validation, selection, live preview, native browse, and connected acceptance behavior. |
+| Pointer/touch | Reachable | X11, Wayland, and Win32 share motion/button/wheel targeting; Wayland binds `wl_touch`, while Windows/X11 retain their native pointer-emulation paths. |
+| Clipboard/IME/accessibility | Reachable with adapter boundary | Windows Unicode clipboard/IME and X11/Wayland desktop clipboard services are live. Wayland accepts text-input-v3 commits. A 128-node semantic tree exposes menus, fields, states, focus, and bounds; full external UIA/AT-SPI provider transport remains platform integration work. |
+| DPI scaling | Reachable | Wayland binds output scale and submits scaled buffers; Win32 uses per-monitor-v2 logical geometry and scaled presentation. |
+| Printing | Reachable | A dependency-free PDF 1.4 backend exports the current view; the print dialog can save, open, or submit it to the native desktop print service. |
 
 ## Source UI contract status
 
@@ -78,16 +84,10 @@ characters, backdrops, panels and emotion-face art remain authored source art.
 The portable UI must not be called complete until each of these source-facing
 contracts is either reachable or deliberately classified obsolete:
 
-1. Modifiers, clipboard, IME, output-scale, and accessibility events in the
-   unified native contract.
-2. Scrollbars, text selection, popup menus, and complete keyboard roving.
-3. Retained ownership for transfers, favorites, automation, notifications, and
-   persistent preferences.
-4. Complete typed behavior for all 40 dialog contracts, including connection,
-   moderation, personal profile, fonts/colors, notifications, rules and transfer.
-   backdrop, personal profile, fonts/colors, notifications, rules and transfer.
-5. `.ccr` application, recent files, native file selection, and an explicit print decision.
-6. Clipboard, Unicode/IME, DPI, accessibility and safe native file selection.
+1. Source-facing Microsoft workflows must remain reachable or explicitly
+   classified as retired for security.
+2. The stable semantic tree must stay aligned with draw/hit geometry while
+   native UIA/AT-SPI provider work proceeds independently.
 
 ## Verification performed
 
@@ -95,18 +95,25 @@ contracts is either reachable or deliberately classified obsolete:
 PASS  zig fmt --check build.zig source_ui_assets.zig src
 PASS  zig build test --summary all
 PASS  zig build --summary all
-PASS  zig build -Dtarget=x86_64-windows-gnu --summary all
-PASS  zig build -Dtarget=x86_64-linux-gnu --summary all
+PASS  zig build -Dtarget=x86_64-windows -Doptimize=ReleaseSafe
+PASS  zig build -Dtarget=x86_64-linux -Doptimize=ReleaseSafe
+PASS  zig build -Dtarget=x86_64-freebsd -Doptimize=ReleaseSafe
+PASS  zig build -Dtarget=x86_64-openbsd -Doptimize=ReleaseSafe
 PASS  git diff --check
 PASS  portable-only tree contains no retired MFC/C++ source directory
 PASS  record-codec demo, 650x1655 strip PPM, and 315x315 backdrop PNG
-PASS  Xvfb X11 viewer smoke and offline/reconnect application-shell smoke
-PASS  live eshmaki.me SASL EXTERNAL login as kain; TOKEN and MTOKEN persisted;
-      a second concurrent client resumed with the same account and nickname
-PASS  zig fetch . --debug-hash includes source_ui_assets.zig in package input
+PASS  all 53 dialogs at 640x480, 800x600, and 960x720 without field/action overlap
+PASS  every compact menu popup and command row remains on-screen and clickable
+PASS  Xvfb X11 menu, Settings input/Tab, Escape, and composer event smoke
+PASS  headless Wine live TLS connect, status dialog, native Open picker,
+      reconnect, member scroll/select/context menu, top menu, and composer input
+PASS  six Linux/Windows deterministic UI surfaces are byte-identical
+PASS  release archive checksums verified for all four binary packages and the
+      source archive containing the required pinned Onyx TLS source subset
 ```
 
-Not claimed by this audit: a VS2022/MFC build, native Win32 runtime smoke,
-real-compositor Wayland clipboard/scale behavior (not implemented). Those
-require their respective environment or the missing feature implementation
-rather than more unit tests.
+Environment-only acceptance still required for a supplied client certificate:
+a live `eshmaki.me` SASL EXTERNAL login and two simultaneous same-nickname
+session attachments, plus physical Windows and real-compositor Wayland assistive
+technology checks. No personal certificate is embedded or retained by this
+repository or its release packages.

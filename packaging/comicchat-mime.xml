@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-comicchat-conversation">
+    <comment>Comic Chat conversation</comment>
+    <glob pattern="*.ccc"/>
+  </mime-type>
+  <mime-type type="application/x-comicchat-locator">
+    <comment>Comic Chat locator</comment>
+    <glob pattern="*.ccr"/>
+  </mime-type>
+</mime-info>

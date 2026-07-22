@@ -19,6 +19,11 @@ pub const Role = enum {
     status,
     dialog,
     button,
+    menu,
+    menu_item,
+    input,
+    combo_box,
+    list_item,
 };
 
 pub const Node = struct {
@@ -28,15 +33,21 @@ pub const Node = struct {
     label: []const u8,
     selected: bool = false,
     focused: bool = false,
+    enabled: bool = true,
 };
 
 pub const Snapshot = struct {
-    nodes: [64]Node = undefined,
+    pub const max_nodes = 256;
+    nodes: [max_nodes]Node = undefined,
     len: usize = 0,
     status: []const u8 = "",
+    truncated: bool = false,
 
     pub fn append(self: *Snapshot, node: Node) void {
-        if (self.len >= self.nodes.len) return;
+        if (self.len >= self.nodes.len) {
+            self.truncated = true;
+            return;
+        }
         self.nodes[self.len] = node;
         self.len += 1;
     }

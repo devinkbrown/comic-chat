@@ -3,6 +3,8 @@
 
 const std = @import("std");
 const net = std.Io.net;
+const resolver = @import("resolver.zig");
+const ConnectedSocket = @import("socket.zig").ConnectedSocket;
 const TlsTransport = @import("tls.zig").TlsTransport;
 const policy = @import("connection_policy.zig");
 
@@ -123,7 +125,7 @@ const PlainTransport = struct {
     gpa: std.mem.Allocator,
     threaded: std.Io.Threaded,
     io: std.Io,
-    stream: net.Stream,
+    stream: ConnectedSocket,
 
     /// Resolve `host` and open a TCP stream to `host:port`. Returns a heap
     /// pointer: the `Io` vtable references `self.threaded`, so it must not move.
@@ -154,7 +156,7 @@ const PlainTransport = struct {
     }
 
     pub fn deinit(self: *PlainTransport) void {
-        self.stream.close(self.io);
+        self.stream.close();
         self.threaded.deinit();
         self.gpa.destroy(self);
     }
@@ -162,52 +164,26 @@ const PlainTransport = struct {
     /// Native socket handle for integration with a platform event loop.
     /// The caller does not own the handle and must not close it.
     pub fn fd(self: *const PlainTransport) i32 {
-        return self.stream.socket.handle;
+        return self.stream.fd();
     }
 
     /// Send all bytes (e.g. a CRLF-terminated command). Loops until every byte
     /// is written. Uses the Io vtable directly to avoid buffered-writer flush
     /// semantics.
     pub fn send(self: *PlainTransport, bytes: []const u8) !void {
-        const handle = self.stream.socket.handle;
-        var off: usize = 0;
-        while (off < bytes.len) {
-            // header empty; the payload is the sole `data` buffer, written once
-            // (splat = 1). netWrite requires a non-empty `data` slice.
-            const n = try self.io.vtable.netWrite(
-                self.io.userdata,
-                handle,
-                "",
-                &[_][]const u8{bytes[off..]},
-                1,
-            );
-            if (n == 0) return error.WriteZero;
-            off += n;
-        }
+        try self.stream.sendAll(bytes);
     }
 
     /// One read into `dst`; returns bytes read, or 0 at end of stream. Does NOT
     /// block waiting to fill `dst` (unlike Reader.readSliceShort).
     pub fn recv(self: *PlainTransport, dst: []u8) !usize {
-        var iov = [_][]u8{dst};
-        return self.stream.read(self.io, iov[0..]);
+        return self.stream.recv(dst);
     }
 
     /// Read once, returning null when `milliseconds` elapse without data.
     /// Win32 uses this to interleave its non-pollable message queue with IRC.
     pub fn recvTimeout(self: *PlainTransport, dst: []u8, milliseconds: i64) !?usize {
-        var iov = [_][]u8{dst};
-        const result = self.io.operateTimeout(.{ .net_read = .{
-            .socket_handle = self.stream.socket.handle,
-            .data = iov[0..],
-        } }, .{ .duration = .{
-            .raw = std.Io.Duration.fromMilliseconds(milliseconds),
-            .clock = .awake,
-        } }) catch |err| switch (err) {
-            error.Timeout => return null,
-            else => return err,
-        };
-        return try result.net_read;
+        return self.stream.recvTimeout(dst, @intCast(@max(0, milliseconds)));
     }
 };
 
@@ -217,14 +193,14 @@ fn connectStream(
     target_host: []const u8,
     target_port: u16,
     options: ConnectOptions,
-) !net.Stream {
+) !ConnectedSocket {
     const endpoint = switch (options.proxy) {
         .direct => ProxyEndpoint{ .host = target_host, .port = target_port },
         .socks5 => |proxy| proxy,
         .http_connect => |proxy| proxy,
     };
     var stream = try connectEndpoint(io, endpoint, options.connect_timeout_ms);
-    errdefer stream.close(io);
+    errdefer stream.close();
     switch (options.proxy) {
         .direct => {},
         .socks5 => try performSocks5(gpa, io, &stream, target_host, target_port, options.connect_timeout_ms),
@@ -233,55 +209,36 @@ fn connectStream(
     return stream;
 }
 
-fn connectEndpoint(io: std.Io, endpoint: ProxyEndpoint, timeout_ms: u32) !net.Stream {
+fn connectEndpoint(io: std.Io, endpoint: ProxyEndpoint, timeout_ms: u32) !ConnectedSocket {
     // Zig 0.17's Threaded POSIX backend currently panics when netConnectIp is
     // given a non-null timeout. The whole connect runs on Connector's owned
     // worker, so keep the UI nonblocking and let the bounded proxy reads and
     // TLS handshake enforce their own deadlines until std supports this.
-    _ = timeout_ms;
     if (net.IpAddress.resolve(io, endpoint.host, endpoint.port)) |address| {
-        return address.connect(io, .{ .mode = .stream });
+        return ConnectedSocket.connect(io, address, .stream, timeout_ms);
     } else |_| {}
-    const host_name = try net.HostName.init(endpoint.host);
-    // HostName.connect resolves both families, races a bounded 32-address
-    // queue concurrently, cancels losing sockets, and returns the first
-    // successful stream.
-    return host_name.connect(io, endpoint.port, .{ .mode = .stream });
-}
-
-fn streamWriteAll(io: std.Io, stream: *const net.Stream, bytes: []const u8) !void {
-    var offset: usize = 0;
-    while (offset < bytes.len) {
-        const n = try io.vtable.netWrite(
-            io.userdata,
-            stream.socket.handle,
-            "",
-            &[_][]const u8{bytes[offset..]},
-            1,
-        );
-        if (n == 0) return error.WriteZero;
-        offset += n;
+    var addresses: [resolver.max_results]net.IpAddress = undefined;
+    const resolved = try resolver.resolve(io, endpoint.host, endpoint.port, timeout_ms, &addresses);
+    var last_error: ?anyerror = null;
+    for (resolved) |address| {
+        if (ConnectedSocket.connect(io, address, .stream, timeout_ms)) |stream| return stream else |err| last_error = err;
     }
+    return last_error orelse error.NameResolutionFailed;
 }
 
-fn streamReadTimeout(io: std.Io, stream: *const net.Stream, dst: []u8, timeout_ms: u32) !usize {
-    var iov = [_][]u8{dst};
-    const result = io.operateTimeout(.{ .net_read = .{
-        .socket_handle = stream.socket.handle,
-        .data = iov[0..],
-    } }, .{ .duration = .{
-        .raw = std.Io.Duration.fromMilliseconds(timeout_ms),
-        .clock = .awake,
-    } }) catch |err| switch (err) {
-        error.Timeout => return error.ProxyHandshakeTimeout,
-        else => return err,
-    };
-    const received = try result.net_read;
+fn streamWriteAll(io: std.Io, stream: *const ConnectedSocket, bytes: []const u8) !void {
+    _ = io;
+    try stream.sendAll(bytes);
+}
+
+fn streamReadTimeout(io: std.Io, stream: *const ConnectedSocket, dst: []u8, timeout_ms: u32) !usize {
+    _ = io;
+    const received = (try stream.recvTimeout(dst, timeout_ms)) orelse return error.ProxyHandshakeTimeout;
     if (received == 0) return error.ProxyClosed;
     return received;
 }
 
-fn streamReadExact(io: std.Io, stream: *const net.Stream, dst: []u8, timeout_ms: u32) !void {
+fn streamReadExact(io: std.Io, stream: *const ConnectedSocket, dst: []u8, timeout_ms: u32) !void {
     var offset: usize = 0;
     while (offset < dst.len) offset += try streamReadTimeout(io, stream, dst[offset..], timeout_ms);
 }
@@ -289,7 +246,7 @@ fn streamReadExact(io: std.Io, stream: *const net.Stream, dst: []u8, timeout_ms:
 fn performSocks5(
     gpa: std.mem.Allocator,
     io: std.Io,
-    stream: *const net.Stream,
+    stream: *const ConnectedSocket,
     host: []const u8,
     port: u16,
     timeout_ms: u32,
@@ -327,7 +284,7 @@ fn performSocks5(
 fn performHttpConnect(
     gpa: std.mem.Allocator,
     io: std.Io,
-    stream: *const net.Stream,
+    stream: *const ConnectedSocket,
     host: []const u8,
     port: u16,
     timeout_ms: u32,

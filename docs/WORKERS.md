@@ -1,9 +1,12 @@
 # Worker brief — Comic Chat
 
+For model selection, parallel-lane sizing, escalation, and cross-model handoff,
+follow [`.ai/WORKFLOW.md`](../.ai/WORKFLOW.md). Repository invariants and build
+gates in this document remain authoritative.
+
 This repository ships one portable implementation under `src/`. It uses a
 software framebuffer renderer with direct X11, Wayland, and Win32 backends and
 no SDL. TLS is supplied by the pinned portable Onyx TLS implementation.
-implementation.
 
 The portable tree is currently tested with Zig
 `0.17.0-dev.1282+c0f9b51d8`. Its standard gates are:
@@ -79,8 +82,12 @@ hash.
 ## Change rules
 
 - Keep rendering and platform presentation in Zig with no SDL. Onyx TLS at the
-  exact `build.zig.zon` revision is the deliberate transport exception; do not
+  exact `third_party/onyx-server` gitlink revision is the deliberate transport exception; do not
   replace it with an unpinned system library or weaken certificate checks.
+- A source checkout must initialize that submodule with
+  `git submodule update --init --recursive`. The published source archive
+  already contains the pinned crypto, protocol, and certificate-loader subset
+  used by ComicChat.
 - Add focused inline tests and aggregate a new test-only module from
   `src/root.zig` when necessary.
 - Do not add or redistribute AVB/BGB files without an exact source path,
@@ -124,11 +131,16 @@ Keep `src/net/` ownership-oriented and transport-independent above the socket:
 - `proto/dcc.zig` owns the live comic-tag side protocols carried outside
   `.ccc` archives: the CTCP `DCC SEND` avatar/file offer (with its CTCP
   low-level quoting) and the stop-and-wait, ACK'd chunked transfer socket
-  state machine (`sendFile`/`receiveFile`). `client.zig`'s `offerFile` only
-  composes and sends the offer; callers drive the transfer directly.
+  state machine (`sendFileControlled`/`receiveFileControlled`). `main.zig`
+  owns the consent, progress, cancellation, listener readiness, exclusive
+  destination, and worker lifetime; `client.zig` only serializes the offer.
 - `proto/keystring.zig` owns IRCX semicolon-delimited client-data key strings,
   bounded pure property mutation, enumeration, and two-pass property diffing;
-  live PROP query/send plumbing remains a caller concern.
+  `client.zig` owns typed PROP/ACCESS/LISTX/EVENT command serialization and the
+  app owns their dialogs and visible replies.
+- `client/preferences.zig` owns bounded, percent-escaped profile, backdrop,
+  automation-rule, flood, and notification persistence. It replaces the old
+  Windows Registry boundary and must never store credentials or certificates.
 
 The native app opens its window before connection setup. `AsyncNetwork` polls
 the connector, performs first-contact STS TLS upgrades, and schedules jittered

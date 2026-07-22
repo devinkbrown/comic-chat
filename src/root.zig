@@ -36,10 +36,12 @@ pub const render = struct {
     pub const canvas = @import("render/canvas.zig");
     pub const font = @import("render/font.zig");
     pub const png = @import("render/png.zig");
+    pub const pdf = @import("render/pdf.zig");
 };
 
 pub const platform = struct {
     pub const event = @import("platform/event.zig");
+    pub const services = @import("platform/services.zig");
     pub const x11 = @import("platform/x11.zig");
     pub const win32 = @import("platform/win32.zig");
     pub const wayland = if (builtin.os.tag == .linux) @import("platform/wayland.zig") else struct {};
@@ -51,9 +53,11 @@ pub const client = struct {
     pub const dialogs = @import("client/dialogs.zig");
     pub const workspace = @import("client/workspace.zig");
     pub const files = @import("client/files.zig");
+    pub const preferences = @import("client/preferences.zig");
     pub const accessibility = @import("client/accessibility.zig");
     pub const input = @import("client/input.zig");
     pub const shell = @import("client/shell.zig");
+    pub const ui = @import("client/ui.zig");
     pub const view = @import("client/view.zig");
 };
 
@@ -100,7 +104,9 @@ test {
     _ = @import("comic/source_strip_test.zig");
     _ = @import("comic/source_modes_test.zig");
     _ = @import("render/png.zig");
+    _ = @import("render/pdf.zig");
     _ = @import("platform/event.zig");
+    _ = @import("platform/services.zig");
     _ = @import("platform/x11.zig");
     _ = @import("platform/win32.zig");
     if (builtin.os.tag == .linux) {
@@ -112,8 +118,10 @@ test {
     _ = @import("client/dialogs.zig");
     _ = @import("client/workspace.zig");
     _ = @import("client/files.zig");
+    _ = @import("client/preferences.zig");
     _ = @import("client/input.zig");
     _ = @import("client/shell.zig");
+    _ = @import("client/ui.zig");
     _ = @import("client/view.zig");
     _ = @import("net/message.zig");
     _ = @import("net/ircv3.zig");

@@ -14,6 +14,7 @@ const std = @import("std");
 const linux = std.os.linux;
 const net = std.Io.net;
 const shared_event = @import("event.zig");
+const services = @import("services.zig");
 
 const image_depth = 24;
 const z_pixmap = 2;
@@ -178,10 +179,17 @@ pub const Window = struct {
     width: u32,
     height: u32,
     keymap: Keymap,
+    last_primary_click_ms: u32 = 0,
+    last_primary_x: i32 = 0,
+    last_primary_y: i32 = 0,
 
     pub fn open(gpa: std.mem.Allocator, w: u32, h: u32, title: []const u8) !*Window {
         const display = try readDisplay(gpa);
         defer gpa.free(display);
+        return openWithDisplay(gpa, w, h, title, display);
+    }
+
+    pub fn openWithDisplay(gpa: std.mem.Allocator, w: u32, h: u32, title: []const u8, display: []const u8) !*Window {
         const parsed = try parseDisplay(display);
 
         const self = try gpa.create(Window);
@@ -228,6 +236,30 @@ pub const Window = struct {
         try putImage(self.gpa, &self.conn, self.window, self.gc, pixels, w, h);
     }
 
+    pub fn writeClipboard(self: *Window, text: []const u8) !void {
+        return services.writeClipboard(self.conn.io, .x11, text);
+    }
+
+    pub fn readClipboard(self: *Window, gpa: std.mem.Allocator) !?[]u8 {
+        return services.readClipboard(gpa, self.conn.io, .x11);
+    }
+
+    pub fn chooseFile(self: *Window, gpa: std.mem.Allocator, save: bool, title: []const u8) !?[]u8 {
+        return services.chooseFile(gpa, self.conn.io, save, title);
+    }
+
+    pub fn openPath(self: *Window, gpa: std.mem.Allocator, path: []const u8) !void {
+        return services.openPath(gpa, self.conn.io, path);
+    }
+
+    pub fn printPath(self: *Window, gpa: std.mem.Allocator, path: []const u8) !void {
+        return services.printPath(gpa, self.conn.io, path);
+    }
+
+    pub fn notify(self: *Window, gpa: std.mem.Allocator, title: []const u8, body: []const u8) !void {
+        return services.notify(gpa, self.conn.io, title, body);
+    }
+
     /// Blocking read of the next event. Call only when data is available
     /// (after poll) to avoid stalling, or when blocking is intended.
     pub fn nextEvent(self: *Window) !Event {
@@ -269,11 +301,21 @@ pub const Window = struct {
                     3 => .secondary,
                     else => .none,
                 };
+                var clicks: u8 = 1;
+                if (kind == 4 and button == .primary) {
+                    const now = get32(event[4..8]);
+                    const near = @abs(x - self.last_primary_x) <= 4 and @abs(y - self.last_primary_y) <= 4;
+                    if (near and now -% self.last_primary_click_ms <= 500) clicks = 2;
+                    self.last_primary_click_ms = now;
+                    self.last_primary_x = x;
+                    self.last_primary_y = y;
+                }
                 return .{ .pointer = .{
                     .kind = if (kind == 4) .down else .up,
                     .x = x,
                     .y = y,
                     .button = button,
+                    .clicks = clicks,
                 } };
             },
             12 => return .expose,

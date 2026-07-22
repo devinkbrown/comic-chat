@@ -607,6 +607,23 @@ test "simple avatars decode whole-body records without a fake head layer" {
     try std.testing.expect(white > black);
 }
 
+test "generated Tiki HD AVB decodes its icon and every authored body pose" {
+    const data = @embedFile("generated/tiki-reimagined-hd-v1.avb");
+    var icon = try decodeIcon(std.testing.allocator, data);
+    defer icon.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u32, 64), icon.width);
+    try std.testing.expectEqual(@as(u32, 64), icon.height);
+
+    var table = try avb.parsePoseTable(std.testing.allocator, data);
+    defer table.deinit(std.testing.allocator);
+    for (table.records) |record| {
+        var image = try decodeImageRef(std.testing.allocator, data, record.images[0]);
+        defer image.deinit(std.testing.allocator);
+        try std.testing.expectEqual(@as(u32, 240), image.width);
+        try std.testing.expectEqual(@as(u32, 280), image.height);
+    }
+}
+
 test "every distinct primary pose in bundled avatars decodes from its record offset" {
     const gpa = std.testing.allocator;
     const blobs = [_][]const u8{

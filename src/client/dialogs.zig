@@ -46,9 +46,22 @@ pub const Id = enum {
     servers,
     password,
     create_set,
+    open_conversation,
+    save_conversation,
+    export_image,
+    ircx_properties,
+    room_access,
+    ircx_events,
+    call_link,
+    member_profile,
+    open_locator,
+    recent_files,
+    favorite_rooms,
+    print_preview,
+    connection_features,
 };
 
-pub const Group = enum { connection, rooms, automation, files };
+pub const Group = enum { application, connection, rooms, automation, files };
 
 pub const Spec = struct {
     id: Id,
@@ -59,12 +72,18 @@ pub const Spec = struct {
     source_h: u16,
 };
 
+/// Visible controls for the portable dialog surface. The first editable field
+/// is bound to the shared modal editor; remaining rows expose the rest of the
+/// established dialog contract without collapsing every dialog into one placeholder.
+pub const FieldKind = enum { text, password, choice, list, preview, readonly };
+pub const Field = struct { label: []const u8, hint: []const u8 = "", kind: FieldKind = .text };
+
 pub const specs = [_]Spec{
-    .{ .id = .about, .resource = "IDD_ABOUTBOX", .title = "About Comic Chat", .group = .files, .source_w = 279, .source_h = 137 },
+    .{ .id = .about, .resource = "IDD_ABOUTBOX", .title = "About Reinked", .group = .files, .source_w = 279, .source_h = 137 },
     .{ .id = .room_list, .resource = "IDD_ROOMLIST", .title = "Room List", .group = .rooms, .source_w = 400, .source_h = 255 },
-    .{ .id = .settings, .resource = "IDD_SETTINGSPAGE", .title = "Settings", .group = .connection, .source_w = 252, .source_h = 218 },
+    .{ .id = .settings, .resource = "IDD_SETTINGSPAGE", .title = "Settings", .group = .application, .source_w = 360, .source_h = 300 },
     .{ .id = .personal, .resource = "IDD_PERSONALPAGE_IRC", .title = "Personal Profile", .group = .connection, .source_w = 252, .source_h = 218 },
-    .{ .id = .character, .resource = "IDD_CHARACTERPAGE", .title = "Character", .group = .connection, .source_w = 252, .source_h = 218 },
+    .{ .id = .character, .resource = "IDD_CHARACTERPAGE", .title = "Choose Character", .group = .connection, .source_w = 360, .source_h = 260 },
     .{ .id = .background, .resource = "IDD_BACKGROUNDPAGE", .title = "Background", .group = .connection, .source_w = 252, .source_h = 218 },
     .{ .id = .kick, .resource = "IDD_KICK", .title = "Kick Member", .group = .rooms, .source_w = 186, .source_h = 89 },
     .{ .id = .nickname, .resource = "IDD_NICKNAME", .title = "Nickname", .group = .connection, .source_w = 188, .source_h = 71 },
@@ -82,7 +101,7 @@ pub const specs = [_]Spec{
     .{ .id = .edit_rule, .resource = "IDD_EDITRULE", .title = "Edit Rule", .group = .automation, .source_w = 265, .source_h = 260 },
     .{ .id = .channel_create, .resource = "IDD_CHANNELCREATE", .title = "Create Room", .group = .rooms, .source_w = 186, .source_h = 194 },
     .{ .id = .channel_password, .resource = "IDD_CHANPASSWORD", .title = "Room Password", .group = .rooms, .source_w = 173, .source_h = 86 },
-    .{ .id = .file_transfer, .resource = "IDD_FILE_TRANSFER", .title = "File Transfer", .group = .files, .source_w = 186, .source_h = 93 },
+    .{ .id = .file_transfer, .resource = "IDD_FILE_TRANSFER", .title = "File Transfer", .group = .files, .source_w = 300, .source_h = 236 },
     .{ .id = .motd, .resource = "IDD_MOTD", .title = "Message of the Day", .group = .rooms, .source_w = 298, .source_h = 146 },
     .{ .id = .setup, .resource = "IDD_SETUPDIALOG", .title = "Connection Setup", .group = .connection, .source_w = 252, .source_h = 218 },
     .{ .id = .away, .resource = "IDD_AWAYDLG", .title = "Away", .group = .rooms, .source_w = 186, .source_h = 87 },
@@ -100,7 +119,22 @@ pub const specs = [_]Spec{
     .{ .id = .servers, .resource = "IDD_SERVERSPAGE", .title = "Servers", .group = .connection, .source_w = 252, .source_h = 218 },
     .{ .id = .password, .resource = "IDD_PASSWORD", .title = "Password", .group = .connection, .source_w = 198, .source_h = 127 },
     .{ .id = .create_set, .resource = "IDD_CREATESET", .title = "Create Rule Set", .group = .automation, .source_w = 226, .source_h = 79 },
+    .{ .id = .open_conversation, .resource = "PORTABLE_OPEN_CONVERSATION", .title = "Open Conversation", .group = .files, .source_w = 300, .source_h = 108 },
+    .{ .id = .save_conversation, .resource = "PORTABLE_SAVE_CONVERSATION", .title = "Save Conversation", .group = .files, .source_w = 300, .source_h = 108 },
+    .{ .id = .export_image, .resource = "PORTABLE_EXPORT_IMAGE", .title = "Export Comic Image", .group = .files, .source_w = 300, .source_h = 108 },
+    .{ .id = .ircx_properties, .resource = "PORTABLE_IRCX_PROPERTIES", .title = "IRCX Properties", .group = .rooms, .source_w = 300, .source_h = 210 },
+    .{ .id = .room_access, .resource = "PORTABLE_ROOM_ACCESS", .title = "Room Access", .group = .rooms, .source_w = 300, .source_h = 236 },
+    .{ .id = .ircx_events, .resource = "PORTABLE_IRCX_EVENTS", .title = "IRCX Operator Events", .group = .rooms, .source_w = 300, .source_h = 184 },
+    .{ .id = .call_link, .resource = "PORTABLE_CALL_LINK", .title = "Call Link", .group = .connection, .source_w = 300, .source_h = 184 },
+    .{ .id = .member_profile, .resource = "PORTABLE_MEMBER_PROFILE", .title = "Member Profile", .group = .connection, .source_w = 300, .source_h = 132 },
+    .{ .id = .open_locator, .resource = "PORTABLE_OPEN_LOCATOR", .title = "Open Chat Locator", .group = .files, .source_w = 300, .source_h = 108 },
+    .{ .id = .recent_files, .resource = "PORTABLE_RECENT_FILES", .title = "Recent Conversations", .group = .files, .source_w = 340, .source_h = 150 },
+    .{ .id = .favorite_rooms, .resource = "PORTABLE_FAVORITE_ROOMS", .title = "Favorite Rooms", .group = .rooms, .source_w = 320, .source_h = 184 },
+    .{ .id = .print_preview, .resource = "PORTABLE_PRINT_PREVIEW", .title = "Print and PDF Preview", .group = .files, .source_w = 320, .source_h = 150 },
+    .{ .id = .connection_features, .resource = "PORTABLE_CONNECTION_FEATURES", .title = "Connection Features", .group = .connection, .source_w = 360, .source_h = 210 },
 };
+
+pub const microsoft_dialog_count: usize = 40;
 
 pub fn get(id: Id) Spec {
     return specs[@intFromEnum(id)];
@@ -115,7 +149,7 @@ pub fn prompt(id: Id) ?[]const u8 {
     return switch (id) {
         .channel, .channel_create => "Room name",
         .nickname => "Nickname",
-        .kick, .ban, .invite, .whisper, .notification_users => "Member nickname",
+        .kick, .ban, .invite, .whisper, .call_link, .member_profile => "Member nickname",
         .away => "Away message",
         .password, .channel_password => "Password",
         .choose_color => "Color value",
@@ -124,6 +158,11 @@ pub fn prompt(id: Id) ?[]const u8 {
         .rename_loaded_set, .rename_set, .create_set => "Rule set name",
         .advanced_event_params => "Event parameters",
         .file_transfer => "File path",
+        .open_conversation, .recent_files => "Conversation file",
+        .open_locator => "Chat locator file",
+        .save_conversation => "Conversation file",
+        .export_image => "PNG file",
+        .print_preview => "PDF file",
         .background => "Backdrop name",
         .character => "Character name",
         .personal => "Profile text",
@@ -131,21 +170,209 @@ pub fn prompt(id: Id) ?[]const u8 {
     };
 }
 
+pub fn fields(id: Id) []const Field {
+    return switch (id) {
+        .setup, .servers => &.{ .{ .label = "Server", .hint = "Secure IRC endpoint" }, .{ .label = "Port", .hint = "6697" }, .{ .label = "Security", .hint = "Verified TLS", .kind = .choice } },
+        .settings => &.{
+            .{ .label = "Color theme", .kind = .choice },
+            .{ .label = "Accent color", .kind = .choice },
+            .{ .label = "Contrast", .kind = .choice },
+            .{ .label = "Conversation view", .kind = .choice },
+            .{ .label = "Panels across", .kind = .choice },
+            .{ .label = "Member pane", .kind = .choice },
+            .{ .label = "Member layout", .kind = .choice },
+            .{ .label = "Status details", .kind = .choice },
+        },
+        .personal => &.{ .{ .label = "Profile text" }, .{ .label = "Display name" }, .{ .label = "Homepage", .hint = "Optional" }, .{ .label = "Email", .hint = "Optional" } },
+        .character => &.{
+            .{ .label = "Character", .kind = .choice },
+            .{ .label = "Expression preview", .kind = .choice },
+            .{ .label = "Character gallery", .hint = "Previous, selected, and next", .kind = .preview },
+        },
+        .background => &.{ .{ .label = "Backdrop name", .kind = .choice }, .{ .label = "Preview", .hint = "Bundled background", .kind = .preview } },
+        .nickname => &.{.{ .label = "Nickname" }},
+        .password => &.{ .{ .label = "Account" }, .{ .label = "Password", .kind = .password } },
+        .channel => &.{ .{ .label = "Room name" }, .{ .label = "Optional password", .kind = .password } },
+        .channel_create => &.{
+            .{ .label = "Room name" },
+            .{ .label = "Topic", .hint = "Optional" },
+            .{ .label = "Initial modes", .hint = "+nt" },
+            .{ .label = "Maximum users", .hint = "Optional" },
+            .{ .label = "Optional password", .kind = .password },
+        },
+        .channel_properties => &.{ .{ .label = "Topic" }, .{ .label = "Room modes", .hint = "+nt" }, .{ .label = "Maximum users", .hint = "Optional" }, .{ .label = "Optional password", .kind = .password }, .{ .label = "Apply", .hint = "Topic, modes and limits", .kind = .readonly } },
+        .channel_password => &.{.{ .label = "Room password" }},
+        .room_list => &.{ .{ .label = "LISTX query", .hint = "For example N=#root,>10" }, .{ .label = "Room to join", .hint = "Optional, for example #root" }, .{ .label = "Result limit", .hint = "Optional; blank means unlimited" } },
+        .user_list => &.{ .{ .label = "Member nickname", .hint = "Choose a visible room member" }, .{ .label = "Filter", .hint = "Optional nickname filter" } },
+        .kick => &.{ .{ .label = "Member nickname" }, .{ .label = "Reason", .hint = "Optional" }, .{ .label = "Also ban mask", .hint = "Optional" } },
+        .ban => &.{.{ .label = "Ban mask", .hint = "nick!*@*" }},
+        .invite, .whisper => &.{.{ .label = "Member nickname" }},
+        .notification_users => &.{ .{ .label = "Online now", .hint = "Refresh to query saved notifications", .kind = .readonly }, .{ .label = "Member", .hint = "Select an online nickname" }, .{ .label = "Action", .kind = .choice }, .{ .label = "Room", .hint = "For Join room, for example #root" } },
+        .away => &.{.{ .label = "Away message" }},
+        .sound => &.{ .{ .label = "Sound file", .kind = .choice }, .{ .label = "Accompanying message", .hint = "Optional" } },
+        .set_text_font, .text_font => &.{ .{ .label = "Font name and size", .kind = .choice }, .{ .label = "Style", .hint = "Bold", .kind = .choice } },
+        .choose_color => &.{ .{ .label = "Color value" }, .{ .label = "Preview", .hint = "Current theme color", .kind = .preview } },
+        .comics_view => &.{ .{ .label = "View mode", .hint = "Comic", .kind = .choice }, .{ .label = "Panels across", .hint = "4 panels", .kind = .choice } },
+        .automation => &.{ .{ .label = "Greeting mode", .kind = .choice }, .{ .label = "Greeting", .hint = "Use %nick% for the arriving member" }, .{ .label = "Flood message count", .hint = "8" }, .{ .label = "Flood interval seconds", .hint = "10" } },
+        .rules, .edit_rule => &.{ .{ .label = "Rule name" }, .{ .label = "Event", .kind = .choice }, .{ .label = "Filter", .hint = "Optional text or nickname mask" }, .{ .label = "Action", .kind = .choice }, .{ .label = "Action value", .hint = "Message, room or sound" } },
+        .rule_sets => &.{ .{ .label = "Action", .kind = .choice }, .{ .label = "Rule set name" }, .{ .label = "Import or export file", .hint = "Optional .ccrules path" } },
+        .add_to_sets => &.{ .{ .label = "Rule name" }, .{ .label = "Rule set" } },
+        .rename_loaded_set, .rename_set => &.{ .{ .label = "Current rule set" }, .{ .label = "New name" } },
+        .create_set => &.{.{ .label = "Rule set name" }},
+        .advanced_event_params => &.{ .{ .label = "Rule name" }, .{ .label = "Maximum occurrences", .hint = "0 means unlimited" }, .{ .label = "Interval seconds", .hint = "0 means any interval" } },
+        .advanced_rule_settings => &.{ .{ .label = "Rule name" }, .{ .label = "Enabled", .kind = .choice }, .{ .label = "Case-sensitive match", .kind = .choice } },
+        .notifications => &.{ .{ .label = "Nickname", .hint = "Nickname or * pattern" }, .{ .label = "User mask", .hint = "*" }, .{ .label = "Host mask", .hint = "*" }, .{ .label = "Network", .hint = "Optional server" }, .{ .label = "Delivery", .kind = .choice } },
+        .file_transfer => &.{ .{ .label = "Direction", .kind = .choice }, .{ .label = "Member" }, .{ .label = "File or save path" }, .{ .label = "Address / size", .hint = "IPv4 when sending" }, .{ .label = "Port / status", .hint = "Port when sending" } },
+        .open_conversation => &.{.{ .label = "Conversation file", .hint = "Path to a .ccc file" }},
+        .save_conversation => &.{.{ .label = "Conversation file", .hint = "Save as .ccc" }},
+        .export_image => &.{.{ .label = "Image file", .hint = "Export as .png" }},
+        .open_locator => &.{.{ .label = "Locator file", .hint = "Path to a .ccr file" }},
+        .recent_files => &.{ .{ .label = "Recent conversation", .hint = "Most recent path; edit to choose another" }, .{ .label = "Action", .kind = .choice } },
+        .favorite_rooms => &.{ .{ .label = "Room", .hint = "#room" }, .{ .label = "Action", .kind = .choice } },
+        .print_preview => &.{ .{ .label = "PDF file", .hint = "Save printable preview as .pdf" }, .{ .label = "Action", .kind = .choice } },
+        .connection_features => &.{ .{ .label = "Transport", .kind = .readonly }, .{ .label = "Authentication", .kind = .readonly }, .{ .label = "IRCX", .kind = .readonly }, .{ .label = "Enabled IRCv3 capabilities", .kind = .readonly } },
+        .motd => &.{.{ .label = "Message of the day", .hint = "Server supplied", .kind = .readonly }},
+        .invitation => &.{ .{ .label = "Room" }, .{ .label = "Invitation note" } },
+        .about => &.{ .{ .label = "Reinked", .hint = "Portable Zig client", .kind = .readonly }, .{ .label = "License", .hint = "AGPL-3.0-or-later", .kind = .readonly } },
+        .ircx_properties => &.{ .{ .label = "Channel", .hint = "Current room by default" }, .{ .label = "Property list", .hint = "For example TOPIC,ONJOIN" }, .{ .label = "Value", .hint = "Empty deletes when setting" }, .{ .label = "Action", .kind = .choice } },
+        .room_access => &.{ .{ .label = "Action", .kind = .choice }, .{ .label = "Level", .kind = .choice }, .{ .label = "Nickname mask", .hint = "*!*@*" }, .{ .label = "Timeout minutes", .hint = "Optional; 0 means unlimited" }, .{ .label = "Reason", .hint = "Optional" } },
+        .ircx_events => &.{ .{ .label = "Action", .kind = .choice }, .{ .label = "Event", .hint = "CHANNEL, MEMBER, SERVER, CONNECTION, SOCKET or USER" }, .{ .label = "Mask", .hint = "Optional" } },
+        .call_link => &.{ .{ .label = "Member" }, .{ .label = "Meeting link", .hint = "https://..." }, .{ .label = "Compatibility", .hint = "Portable secure-link invitation", .kind = .readonly } },
+        .member_profile => &.{ .{ .label = "Member" }, .{ .label = "Result", .hint = "Profile is shown in the conversation", .kind = .readonly } },
+    };
+}
+
+pub fn acceptsText(id: Id) bool {
+    for (fields(id)) |field| if (field.kind == .text or field.kind == .password) return true;
+    return false;
+}
+
+pub fn fieldAcceptsText(id: Id, index: usize) bool {
+    const all = fields(id);
+    if (index >= all.len) return false;
+    return all[index].kind == .text or all[index].kind == .password;
+}
+
+pub fn choiceOptions(id: Id, index: usize) []const []const u8 {
+    return switch (id) {
+        .setup, .servers => if (index == 2) &.{ "Verified TLS", "Plaintext (unsafe)" } else &.{},
+        .settings => switch (index) {
+            0 => &.{ "Light studio", "Dark studio" },
+            1 => &.{ "Cobalt", "Violet", "Forest" },
+            2 => &.{ "Standard", "High contrast" },
+            3 => &.{ "Comic", "Text" },
+            4 => &.{ "4 panels", "3 panels", "2 panels", "1 panel", "5 panels", "6 panels" },
+            5 => &.{ "Shown", "Hidden" },
+            6 => &.{ "Icons", "List" },
+            7 => &.{ "Detailed", "Compact" },
+            else => &.{},
+        },
+        .character => if (index == 0)
+            &.{
+                "Anna HD",         "Armando HD",        "Bolo HD",          "Cro HD",        "Dan HD",           "Denise HD",       "Hugh HD",         "Jordan HD",       "Kevin HD",       "Kwensa HD",         "Lance HD",
+                "Lynnea HD",       "Margaret HD",       "Maynard HD",       "Mike HD",       "Rebecca HD",       "Sage HD",         "Scotty HD",       "Susan HD",        "Tiki HD",        "Tongtyed HD",       "Xeno HD",
+                "Anna Color",      "Armando Color",     "Bolo Color",       "Cro Color",     "Dan Color",        "Denise Color",    "Hugh Color",      "Jordan Color",    "Kevin Color",    "Kwensa Color",      "Lance Color",
+                "Lynnea Color",    "Margaret Color",    "Maynard Color",    "Mike Color",    "Rebecca Color",    "Sage Color",      "Scotty Color",    "Susan Color",     "Tiki Color",     "Tongtyed Color",    "Xeno Color",
+                "Anna Original",   "Armando Original",  "Bolo Original",    "Cro Original",  "Dan Original",     "Denise Original", "Hugh Original",   "Jordan Original", "Kevin Original", "Kwensa Original",   "Lance Original",
+                "Lynnea Original", "Margaret Original", "Maynard Original", "Mike Original", "Rebecca Original", "Sage Original",   "Scotty Original", "Susan Original",  "Tiki Original",  "Tongtyed Original", "Xeno Original",
+            }
+        else if (index == 1)
+            &.{ "Neutral", "Happy", "Laughing", "Angry", "Sad", "Surprised" }
+        else
+            &.{},
+        .background => if (index == 0) &.{
+            "Field",                   "Volcano",                  "Den",                        "Room",                    "Pastoral",
+            "HD Apartment",            "HD Rooftop",               "HD Cafe",                    "HD Park",                 "HD Space Corridor",
+            "HD Boardwalk",            "HD School Hall",           "HD Rainy Street",            "HD Library",              "HD Campsite",
+            "Color Apartment",         "Color Rooftop",            "Color Cafe",                 "Color Park",              "Color Space Corridor",
+            "Color Boardwalk",         "Color School Hall",        "Color Rainy Street",         "Color Library",           "Color Campsite",
+            "Whacky Spaceship Bridge", "Whacky Asteroid Diner",    "Whacky Sky Island Market",   "Whacky Underwater Dome",  "Whacky Friendly Castle",
+            "Whacky Pinball Interior", "Whacky Cosmic Laundromat", "Whacky Cloud Train Station", "Whacky Mushroom Village", "Whacky Arcade Planetarium",
+        } else &.{},
+        .sound => if (index == 0) &.{ "Chime.wav", "Knock.wav", "Laugh.wav", "Applause.wav" } else &.{},
+        .set_text_font, .text_font => if (index == 0) &.{ "Comic Neue 14", "Comic Neue 16", "Comic Neue 18" } else &.{ "Regular", "Bold", "Italic" },
+        .comics_view => if (index == 0) &.{ "Comic", "Text" } else &.{ "4 panels", "3 panels", "2 panels", "1 panel", "5 panels", "6 panels" },
+        .automation => if (index == 0) &.{ "None", "Whisper", "Say" } else &.{},
+        .rules, .edit_rule => if (index == 1)
+            &.{ "Message", "Whisper", "Join", "Leave", "Kick", "Invitation" }
+        else if (index == 3)
+            &.{ "Notify", "Reply", "Action", "Sound", "Join room", "Ignore" }
+        else
+            &.{},
+        .notifications => if (index == 4) &.{ "In-app banner", "Sound and banner", "Disabled" } else &.{},
+        .file_transfer => if (index == 0) &.{ "Send file", "Receive offer" } else &.{},
+        .notification_users => if (index == 2) &.{ "Refresh", "Whisper", "Invite to current room", "Join room", "Clear list" } else &.{},
+        .ircx_properties => if (index == 3) &.{ "Get", "Get common", "Set", "Delete" } else &.{},
+        .room_access => if (index == 0)
+            &.{ "List", "Add", "Delete", "Clear" }
+        else if (index == 1)
+            &.{ "VOICE", "HOST", "OWNER", "GRANT", "DENY" }
+        else
+            &.{},
+        .ircx_events => if (index == 0) &.{ "List", "Add", "Delete" } else &.{},
+        .rule_sets => if (index == 0) &.{ "Create", "Rename", "Assign rule", "Advanced limits", "Advanced matching", "Import", "Export" } else &.{},
+        .advanced_rule_settings => if (index == 1 or index == 2) &.{ "Yes", "No" } else &.{},
+        .recent_files => if (index == 1) &.{ "Open", "Remove from list" } else &.{},
+        .favorite_rooms => if (index == 1) &.{ "Join", "Add current room", "Remove" } else &.{},
+        .print_preview => if (index == 1) &.{ "Save PDF", "Save PDF and open", "Save PDF and print" } else &.{},
+        else => &.{},
+    };
+}
+
+pub fn requiresInput(id: Id) bool {
+    return switch (id) {
+        .about, .motd, .comics_view, .automation, .rules, .rule_sets, .notifications, .notification_users, .servers, .settings, .setup, .room_list, .recent_files, .favorite_rooms, .ircx_properties, .room_access, .ircx_events, .connection_features => false,
+        else => true,
+    };
+}
+
 pub fn primaryLabel(id: Id) []const u8 {
     return switch (id) {
-        .channel, .channel_create => "Join",
+        .setup => "Connect",
+        .settings => "Apply settings",
+        .servers => "Save changes",
+        .personal, .character, .background, .text_font, .set_text_font, .choose_color, .comics_view => "Apply",
+        .room_list => "Join room",
+        .user_list => "Select",
+        .channel => "Join",
+        .channel_create => "Create",
         .kick => "Kick",
         .ban => "Apply",
         .invite => "Invite",
         .whisper => "Open",
-        .file_transfer => "Send",
+        .file_transfer => "Start transfer",
+        .open_conversation => "Open",
+        .save_conversation => "Save",
+        .export_image => "Export",
+        .open_locator => "Open locator",
+        .recent_files => "Apply",
+        .favorite_rooms => "Apply",
+        .print_preview => "Create PDF",
         .away => "Set Away",
+        .automation, .rules, .edit_rule, .rule_sets, .add_to_sets, .rename_loaded_set, .rename_set, .create_set, .advanced_event_params, .advanced_rule_settings => "Save rule",
+        .notifications, .notification_users => "Save notifications",
+        .ircx_properties => "Run property action",
+        .room_access => "Apply access action",
+        .ircx_events => "Apply event action",
+        .call_link => "Send call link",
+        .member_profile => "Request profile",
+        .about, .motd, .connection_features => "Close",
         else => "OK",
     };
 }
 
-test "registry covers all forty Microsoft dialog templates exactly once" {
-    try std.testing.expectEqual(@as(usize, 40), specs.len);
+/// Informational surfaces have one unambiguous way out. Editing workflows
+/// retain Cancel so their pending values can be dismissed without applying.
+pub fn showsCancel(id: Id) bool {
+    return switch (id) {
+        .about, .motd, .connection_features => false,
+        else => true,
+    };
+}
+
+test "registry covers all forty Microsoft dialog templates plus portable dialogs" {
+    try std.testing.expectEqual(@as(usize, 53), specs.len);
+    try std.testing.expectEqual(@as(usize, 40), microsoft_dialog_count);
     var seen: [specs.len]bool = @splat(false);
     for (specs) |spec| {
         const index = @intFromEnum(spec.id);
@@ -153,4 +380,19 @@ test "registry covers all forty Microsoft dialog templates exactly once" {
         seen[index] = true;
         try std.testing.expectEqual(spec.id, fromResource(spec.resource).?);
     }
+}
+
+test "application settings are distinct from connection setup" {
+    try std.testing.expectEqual(Group.application, get(.settings).group);
+    try std.testing.expectEqualStrings("Color theme", fields(.settings)[0].label);
+    try std.testing.expectEqualStrings("Server", fields(.setup)[0].label);
+    try std.testing.expectEqualStrings("Light studio", choiceOptions(.settings, 0)[0]);
+    try std.testing.expectEqualStrings("Verified TLS", choiceOptions(.setup, 2)[0]);
+}
+
+test "informational dialogs use one close action" {
+    try std.testing.expect(!showsCancel(.about));
+    try std.testing.expect(!showsCancel(.motd));
+    try std.testing.expect(!showsCancel(.connection_features));
+    try std.testing.expect(showsCancel(.settings));
 }
