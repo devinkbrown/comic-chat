@@ -25,16 +25,26 @@ with `sha256sum -c assets/generated/AVB_SHA256SUMS.txt`.
 ## Colored portrait packages
 
 The 22 `*-color-hd-v1.avb` packages (and the deliberately newer
-`tiki-color-hd-v2.avb`) are selectable Color variants. They are packaged from
-the corresponding project-generated portrait inputs in
-`assets/generated/avatar-color-hd-v1/`; `tiki-color-hd-v2.png` is the Tiki
-source selected for the v2 package. Each package is a native simple-avatar
-AVB with a valid neutral, laugh, surprised, angry, sad, and action record so
-the same asset used in the character gallery is also the runtime avatar.
-Their gallery and roster icons are derived from the same complete figure as
-their runtime pose records; the client does not substitute a separate,
-potentially cropped head preview.
+`tiki-color-hd-v2.avb`) are selectable Color variants. Each is rebuilt from
+its matching six-pose sheet in `assets/generated/avatar-pose-sheets-v1/` and
+uses the corresponding portrait in `assets/generated/avatar-color-hd-v1/` as
+its palette reference; `tiki-color-hd-v2.png` is the Tiki reference selected
+for the v2 package. Each package is a native simple-avatar AVB with distinct
+neutral, laugh, surprised, angry, sad, and action records, so the same asset
+used in the character gallery is also the runtime avatar. Their gallery and
+roster icons are derived from the neutral complete figure; the client does
+not substitute a separate, potentially cropped head preview.
 `COLOR_AVB_SHA256SUMS.txt` records the exact runtime output digests.
+
+Rebuild a color package with:
+
+```sh
+python3 tools/package_generated_avb.py \
+  --name "Anna Color" --copyright "Generated color pose reconstruction" \
+  --portrait-icon --color-reference assets/generated/avatar-color-hd-v1/anna-color-hd-v1.png \
+  --output src/assets/generated/anna-color-hd-v1.avb \
+  assets/generated/avatar-pose-sheets-v1/anna/pose-{00,01,02,03,04,05}.png
+```
 
 Rebuild it after installing the repository's pinned Pillow dependency:
 

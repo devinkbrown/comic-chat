@@ -468,6 +468,34 @@ test "text rules select simple-avatar whole-body expressions" {
     try std.testing.expect(!std.mem.eql(u32, neutral.pixels, laughing.pixels));
 }
 
+test "generated color avatars produce distinct requested mood poses" {
+    const gpa = std.testing.allocator;
+    const avatars = [_][]const u8{
+        @embedFile("../assets/generated/anna-color-hd-v1.avb"),     @embedFile("../assets/generated/armando-color-hd-v1.avb"),
+        @embedFile("../assets/generated/bolo-color-hd-v1.avb"),     @embedFile("../assets/generated/cro-color-hd-v1.avb"),
+        @embedFile("../assets/generated/dan-color-hd-v1.avb"),      @embedFile("../assets/generated/denise-color-hd-v1.avb"),
+        @embedFile("../assets/generated/hugh-color-hd-v1.avb"),     @embedFile("../assets/generated/jordan-color-hd-v1.avb"),
+        @embedFile("../assets/generated/kevin-color-hd-v1.avb"),    @embedFile("../assets/generated/kwensa-color-hd-v1.avb"),
+        @embedFile("../assets/generated/lance-color-hd-v1.avb"),    @embedFile("../assets/generated/lynnea-color-hd-v1.avb"),
+        @embedFile("../assets/generated/margaret-color-hd-v1.avb"), @embedFile("../assets/generated/maynard-color-hd-v1.avb"),
+        @embedFile("../assets/generated/mike-color-hd-v1.avb"),     @embedFile("../assets/generated/rebecca-color-hd-v1.avb"),
+        @embedFile("../assets/generated/sage-color-hd-v1.avb"),     @embedFile("../assets/generated/scotty-color-hd-v1.avb"),
+        @embedFile("../assets/generated/susan-color-hd-v1.avb"),    @embedFile("../assets/generated/tiki-color-hd-v2.avb"),
+        @embedFile("../assets/generated/tongtyed-color-hd-v1.avb"), @embedFile("../assets/generated/xeno-color-hd-v1.avb"),
+    };
+    inline for (avatars) |avatar| {
+        const happy = try poseStateForEmotion(gpa, avatar, .happy, 255);
+        const angry = try poseStateForEmotion(gpa, avatar, .angry, 255);
+        try std.testing.expect(happy.requested and angry.requested);
+        try std.testing.expect(happy.gesture.index != angry.gesture.index or happy.expression.index != angry.expression.index);
+        var happy_image = try assembleDetailedForSourcePose(gpa, avatar, happy);
+        defer happy_image.deinit(gpa);
+        var angry_image = try assembleDetailedForSourcePose(gpa, avatar, angry);
+        defer angry_image.deinit(gpa);
+        try std.testing.expect(!std.mem.eql(u32, happy_image.image.pixels, angry_image.image.pixels));
+    }
+}
+
 test "cooked UDI selects raw face and torso record ordinals" {
     const gpa = std.testing.allocator;
     const anna = @embedFile("../assets/testdata/anna.avb");

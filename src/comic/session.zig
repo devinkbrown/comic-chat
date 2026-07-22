@@ -777,7 +777,7 @@ pub const Transcript = struct {
 pub fn bundledBackdropByName(name: []const u8) ?[]const u8 {
     const dot = std.mem.indexOfScalar(u8, name, '.');
     const base = if (dot) |index| name[0..index] else name;
-    for ([_][]const u8{ "field", "volcano", "den", "room", "pastoral", "color apartment", "color rooftop", "color cafe", "color park", "color space corridor", "color boardwalk", "color school hall", "color rainy street", "color library", "color campsite", "whacky spaceship bridge", "whacky asteroid diner", "whacky sky island market", "whacky underwater dome", "whacky friendly castle", "whacky pinball interior", "whacky cosmic laundromat", "whacky cloud train station", "whacky mushroom village", "whacky arcade planetarium" }) |candidate| {
+    for ([_][]const u8{ "field", "volcano", "den", "room", "pastoral", "hd apartment", "hd rooftop", "hd cafe", "hd park", "hd space corridor", "hd boardwalk", "hd school hall", "hd rainy street", "hd library", "hd campsite", "color apartment", "color rooftop", "color cafe", "color park", "color space corridor", "color boardwalk", "color school hall", "color rainy street", "color library", "color campsite", "whacky spaceship bridge", "whacky asteroid diner", "whacky sky island market", "whacky underwater dome", "whacky friendly castle", "whacky pinball interior", "whacky cosmic laundromat", "whacky cloud train station", "whacky mushroom village", "whacky arcade planetarium" }) |candidate| {
         if (std.ascii.eqlIgnoreCase(base, candidate)) return candidate;
     }
     return null;
@@ -791,6 +791,21 @@ test "transcript applies only bundled backdrop names" {
     try std.testing.expectEqualStrings("volcano", transcript.resolvedBackdrop());
     try std.testing.expectError(error.UnknownBackdrop, transcript.setBackdrop("https://example.test/remote.bgb"));
     try std.testing.expectEqualStrings("volcano", transcript.resolvedBackdrop());
+}
+
+test "every generated backdrop is accepted for local and remote comic state" {
+    const generated = [_][]const u8{
+        "hd apartment",            "hd rooftop",            "hd cafe",                  "hd park",                "hd space corridor",      "hd boardwalk",            "hd school hall",           "hd rainy street",            "hd library",              "hd campsite",
+        "color apartment",         "color rooftop",         "color cafe",               "color park",             "color space corridor",   "color boardwalk",         "color school hall",        "color rainy street",         "color library",           "color campsite",
+        "whacky spaceship bridge", "whacky asteroid diner", "whacky sky island market", "whacky underwater dome", "whacky friendly castle", "whacky pinball interior", "whacky cosmic laundromat", "whacky cloud train station", "whacky mushroom village", "whacky arcade planetarium",
+    };
+    var transcript = Transcript.init(std.testing.allocator);
+    defer transcript.deinit();
+    inline for (generated) |name| {
+        try transcript.setBackdrop(name);
+        try std.testing.expectEqualStrings(name, transcript.resolvedBackdrop());
+        try std.testing.expectEqualStrings(name, bundledBackdropByName(name ++ ".bgb").?);
+    }
 }
 
 fn isNickStatus(ch: u8) bool {

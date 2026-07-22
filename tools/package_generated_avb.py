@@ -12,7 +12,9 @@ the original simple-avatar art.
 from __future__ import annotations
 
 import argparse
+import colorsys
 import hashlib
+import math
 import struct
 from pathlib import Path
 
@@ -82,6 +84,51 @@ def normalize_pose(path: Path) -> Image.Image:
     return canvas
 
 
+def color_signature(path: Path) -> tuple[float, float]:
+    """Derive a stable hue and saturation from a colored character reference."""
+    reference = Image.open(path).convert("RGB")
+    hue_x = 0.0
+    hue_y = 0.0
+    saturation_total = 0.0
+    weight_total = 0.0
+    for red, green, blue in reference.getdata():
+        hue, saturation, value = colorsys.rgb_to_hsv(red / 255, green / 255, blue / 255)
+        if value > 0.96 or saturation < 0.16:
+            continue
+        weight = saturation * (1.0 - abs(value - 0.56))
+        hue_x += weight * math.cos(hue * 2.0 * math.pi)
+        hue_y += weight * math.sin(hue * 2.0 * math.pi)
+        saturation_total += saturation * weight
+        weight_total += weight
+    if weight_total == 0.0:
+        raise ValueError(f"{path} contains no usable colored reference pixels")
+    hue = 0.0 if hue_x == 0.0 and hue_y == 0.0 else (math.atan2(hue_y, hue_x) / (2.0 * math.pi)) % 1.0
+    return hue, max(0.28, min(0.72, saturation_total / weight_total))
+
+
+def colorize_pose(pose: Image.Image, reference: Path) -> Image.Image:
+    """Tint a monochrome authored pose while preserving ink, shading, and matte."""
+    hue, base_saturation = color_signature(reference)
+    result = pose.copy()
+    pixels = result.load()
+    for y in range(result.height):
+        for x in range(result.width):
+            red, green, blue = pixels[x, y]
+            value = (red * 0.2126 + green * 0.7152 + blue * 0.0722) / 255.0
+            if red >= 245 and green >= 245 and blue >= 245:
+                continue
+            # Keep the generated line art crisp and nearly black; color the
+            # material areas proportionally to their original lightness.
+            if value < 0.30:
+                ink = int(18 + value * 75)
+                pixels[x, y] = (ink, ink, ink)
+                continue
+            saturation = base_saturation * (0.54 + (1.0 - value) * 0.46)
+            colored = colorsys.hsv_to_rgb(hue, saturation, min(0.94, value * 1.08))
+            pixels[x, y] = tuple(round(channel * 255) for channel in colored)
+    return result
+
+
 def bmp24(image: Image.Image) -> bytes:
     """Return a bottom-up BI_RGB BMP stream accepted by CAvatarDIB::Load."""
     image = image.convert("RGB")
@@ -101,11 +148,14 @@ def bmp24(image: Image.Image) -> bytes:
     return file_header + info_header + pixels
 
 
-def build(name: str, copyright_text: str, pose_paths: list[Path], portrait_icon: bool = False) -> bytes:
+def build(name: str, copyright_text: str, pose_paths: list[Path], portrait_icon: bool = False, color_reference: Path | None = None) -> bytes:
     if len(pose_paths) != len(POSES):
         raise ValueError(f"expected {len(POSES)} pose PNGs")
-    pose_bmps = [bmp24(normalize_pose(path)) for path in pose_paths]
-    icon_source = normalize_pose(pose_paths[0])
+    normalized_poses = [normalize_pose(path) for path in pose_paths]
+    if color_reference is not None:
+        normalized_poses = [colorize_pose(pose, color_reference) for pose in normalized_poses]
+    pose_bmps = [bmp24(pose) for pose in normalized_poses]
+    icon_source = normalized_poses[0]
     if portrait_icon:
         # Gallery and roster icons need a readable face at 64px. Keep the
         # upper body while the pose records below retain the complete figure.
@@ -162,12 +212,15 @@ def main() -> None:
     parser.add_argument("--copyright", required=True, dest="copyright_text")
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--portrait-icon", action="store_true", help="crop the icon to a readable head-and-shoulders portrait")
+    parser.add_argument("--color-reference", type=Path, help="derive a character color treatment from this portrait")
     parser.add_argument("poses", nargs=len(POSES), type=Path, metavar="POSE")
     args = parser.parse_args()
     for pose in args.poses:
         if not pose.is_file():
             parser.error(f"pose file not found: {pose}")
-    data = build(args.name, args.copyright_text, args.poses, args.portrait_icon)
+    if args.color_reference is not None and not args.color_reference.is_file():
+        parser.error(f"color reference not found: {args.color_reference}")
+    data = build(args.name, args.copyright_text, args.poses, args.portrait_icon, args.color_reference)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(data)
     print(f"wrote {args.output} ({len(data)} bytes, sha256 {hashlib.sha256(data).hexdigest()})")

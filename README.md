@@ -65,12 +65,12 @@ zig build run -- app eshmaki.me your-nick '#root' \
 Each `comicchat-portable-*` GitHub release contains a portable source archive,
 Windows x86_64 ZIP, Linux x86_64 tarball, FreeBSD x86_64 tarball, OpenBSD
 x86_64 tarball, and a SHA-256 manifest. Download the archive for your
-platform, extract it, and run `comicchat` (or `comicchat.exe` on Windows).
+platform, extract it, and run `reinked` (or `reinked.exe` on Windows).
 
 Verify downloaded artifacts before use:
 
 ```sh
-sha256sum -c comicchat-*-SHA256SUMS.txt
+sha256sum -c reinked-*-SHA256SUMS.txt
 ```
 
 To produce the same release set locally from a clean committed checkout:
@@ -84,9 +84,9 @@ The tag workflow runs the portable tests, creates this exact artifact set, and
 publishes it with its checksum manifest. Historical Microsoft/MFC workflows
 are not part of the portable release contract.
 
-On Windows, double-clicking `comicchat.exe` opens the desktop client directly
-with the configured `eshmaki.me`, `comicchat`, and `#root` defaults. Use
-`comicchat.exe app <nick>` or the full command form above to override them.
+On Windows, double-clicking `reinked.exe` opens the desktop client directly
+with the configured `eshmaki.me`, `ircx.us`, and `#root` defaults. Use
+`reinked.exe app <nick>` or the full command form above to override them.
 Passing a `.ccc` conversation or `.ccr` locator as the only argument opens it
 directly. Optional per-user Windows and freedesktop file-association helpers
 are included under `packaging/`.

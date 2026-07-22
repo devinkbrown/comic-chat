@@ -606,6 +606,35 @@ test "every generated HD avatar package has six decodable body poses" {
     }
 }
 
+test "every generated color avatar package has six distinct mood-ready body poses" {
+    const gpa = std.testing.allocator;
+    const blobs = [_][]const u8{
+        @embedFile("generated/anna-color-hd-v1.avb"),     @embedFile("generated/armando-color-hd-v1.avb"),
+        @embedFile("generated/bolo-color-hd-v1.avb"),     @embedFile("generated/cro-color-hd-v1.avb"),
+        @embedFile("generated/dan-color-hd-v1.avb"),      @embedFile("generated/denise-color-hd-v1.avb"),
+        @embedFile("generated/hugh-color-hd-v1.avb"),     @embedFile("generated/jordan-color-hd-v1.avb"),
+        @embedFile("generated/kevin-color-hd-v1.avb"),    @embedFile("generated/kwensa-color-hd-v1.avb"),
+        @embedFile("generated/lance-color-hd-v1.avb"),    @embedFile("generated/lynnea-color-hd-v1.avb"),
+        @embedFile("generated/margaret-color-hd-v1.avb"), @embedFile("generated/maynard-color-hd-v1.avb"),
+        @embedFile("generated/mike-color-hd-v1.avb"),     @embedFile("generated/rebecca-color-hd-v1.avb"),
+        @embedFile("generated/sage-color-hd-v1.avb"),     @embedFile("generated/scotty-color-hd-v1.avb"),
+        @embedFile("generated/susan-color-hd-v1.avb"),    @embedFile("generated/tiki-color-hd-v2.avb"),
+        @embedFile("generated/tongtyed-color-hd-v1.avb"), @embedFile("generated/xeno-color-hd-v1.avb"),
+    };
+    inline for (blobs) |blob| {
+        var table = try parsePoseTable(gpa, blob);
+        defer table.deinit(gpa);
+        try std.testing.expectEqual(@as(usize, 6), table.records.len);
+        var offsets: [6]u32 = undefined;
+        for (table.records, 0..) |record, index| {
+            try std.testing.expectEqual(PoseLayer.body, record.layer);
+            offsets[index] = record.images[0].offset;
+        }
+        for (offsets, 0..) |offset, index| for (offsets[index + 1 ..]) |other|
+            try std.testing.expect(offset != other);
+    }
+}
+
 test "parse rejects bad magic and truncation" {
     try std.testing.expectError(error.BadMagic, parse("\x00\x00\x02\x00\x02\x00"));
     try std.testing.expectError(error.Truncated, parse("\x81\x81\x02"));
