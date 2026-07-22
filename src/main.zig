@@ -176,6 +176,7 @@ fn isStartupDocument(path: []const u8) bool {
 
 const default_tls_port: u16 = 6697;
 const default_server = "eshmaki.me";
+const default_server_alternative = "ircx.us";
 const default_channel = "#root";
 const default_nick = "comicchat";
 
@@ -433,7 +434,7 @@ fn parseProxyEndpoint(raw: []const u8) ?cc.net.transport.ProxyEndpoint {
 
 fn printConnectionUsage(command: []const u8, allow_extra: bool) void {
     std.debug.print(
-        "usage: comicchat {s} <nick> (defaults: eshmaki.me #root) | <host> <nick> [#channel] | <host> [port=6697] <nick> <#channel>{s} [--ca-file <pem>] [--tls-cert <cert-and-key.pem>] [--plaintext] [--socks5 host:port|--http-proxy host:port] [--connect-timeout-ms <ms>] [--sasl-user <name> --sasl-password-file <path>] [--sasl-mechanism SCRAM-SHA-256|EXTERNAL|PLAIN] [--sts-file <path>] [--session-file <path>]\n",
+        "usage: reinked {s} <nick> (hosts: eshmaki.me or ircx.us; default: eshmaki.me #root) | <host> <nick> [#channel] | <host> [port=6697] <nick> <#channel>{s} [--ca-file <pem>] [--tls-cert <cert-and-key.pem>] [--plaintext] [--socks5 host:port|--http-proxy host:port] [--connect-timeout-ms <ms>] [--sasl-user <name> --sasl-password-file <path>] [--sasl-mechanism SCRAM-SHA-256|EXTERNAL|PLAIN] [--sts-file <path>] [--session-file <path>]\n",
         .{ command, if (allow_extra) " [maxlines]" else "" },
     );
 }
@@ -444,6 +445,10 @@ test "connection defaults use eshmaki root" {
     try std.testing.expectEqualStrings("eshmaki.me", connection.host);
     try std.testing.expectEqualStrings("alex", connection.nick);
     try std.testing.expectEqualStrings("#root", connection.channel);
+}
+
+test "built-in host choices include the IRCX service" {
+    try std.testing.expectEqualStrings("ircx.us", default_server_alternative);
 }
 
 test "empty app arguments open the configured desktop default" {
